@@ -1,9 +1,6 @@
 # Efficience Co
 
 > Software sob medida para escritórios. Menos retrabalho, mais resultado.
-# Efficience Co
-
-> Software sob medida para escritórios. Menos retrabalho, mais resultado.
 
 ---
 
@@ -19,63 +16,124 @@ O modelo é simples: entramos no escritório, mapeamos como tudo funciona, e ent
 
 ```
 efficience-co/
-├── docs/               # Documentação técnica e funcional
-├── src/                # Código-fonte da aplicação
-│   ├── frontend/       # Interface do usuário
-│   ├── backend/        # API e regras de negócio
-│   └── database/       # Migrations e seeds
-├── infra/              # Configurações de infraestrutura e deploy
-├── .env.example        # Variáveis de ambiente (não commitar o .env real)
-└── README.md
+│
+├── README.md
+├── .gitignore
+├── .env.example
+├── setup.py                        # Gera toda a estrutura do projeto automaticamente
+│
+├── docs/                           # Documentação geral
+│   ├── arquitetura.md
+│   ├── divisao-time.md
+│   ├── especificacao-funcional.md
+│   └── decisoes-tecnicas.md
+│
+├── backend/                        # João — API + Pagamento (Node.js + Express)
+│   ├── src/
+│   │   ├── routes/
+│   │   ├── controllers/
+│   │   ├── middlewares/
+│   │   ├── services/
+│   │   └── config/
+│   └── tests/
+│
+├── frontend/                       # Victor — Interface (React + Next.js)
+│   └── src/
+│       ├── app/
+│       ├── components/
+│       ├── hooks/
+│       ├── services/
+│       └── context/
+│
+├── agente/                         # Gabriel — Agente local (Python)
+│   ├── core/
+│   ├── automacoes/
+│   ├── comunicacao/
+│   └── build/
+│
+└── database/                       # Vinícius — Banco de dados (PostgreSQL + Supabase)
+    ├── migrations/
+    └── seeds/
 ```
 
 ---
 
 ## 🛠️ Stack Tecnológica
 
-> A definir conforme levantamento de requisitos do primeiro cliente.
-
-Candidatos em avaliação:
-
-| Camada | Opções |
+| Camada | Tecnologia |
 |---|---|
-| Front-end | React, Vue |
-| Back-end | Node.js, Python |
-| Banco de dados | PostgreSQL (via Supabase) |
-| Infra / Deploy | Railway, Vercel |
-| Automação / IA | Claude Code, N8N, Make |
+| Frontend | React + Next.js |
+| Backend / API | Node.js + Express |
+| Banco de dados | PostgreSQL via Supabase |
+| Agente local | Python |
+| Pagamento / Licença | Stripe |
+| Deploy frontend | Vercel |
+| Deploy backend | Railway |
 
 ---
 
 ## 👥 Time
 
-| Papel | Responsabilidade |
-|---|---|
-| Tech Lead / Dev Web | Gestão do projeto, frontend, integração geral |
-| Back-end / Engenharia | APIs, banco de dados, regras de negócio |
-| UX / Produto | Pesquisa com cliente, fluxos, protótipos |
+| Quem | Área | Tecnologia |
+|---|---|---|
+| João | Backend + Licença + Pagamento | Node.js + Express + Stripe |
+| Gabriel | Agente local | Python |
+| Vinícius | Banco de dados | PostgreSQL + Supabase |
+| Victor | Frontend | React + Next.js |
+
+---
+
+## 🏗️ Arquitetura
+
+O sistema é híbrido: parte roda na nuvem, parte roda na máquina do cliente.
+
+```
+[Victor — Frontend]
+        ↓ requisições HTTP (JWT)
+[João — Backend + API]
+        ↓ queries SQL
+[Vinícius — Banco de dados]
+
+[Gabriel — Agente local]
+        ↓ valida licença + busca regras + reporta eventos
+[João — Backend + API]
+        ↓ lê/salva
+[Vinícius — Banco de dados]
+```
+
+- **Frontend + Backend** — hospedados na nuvem (Vercel + Railway)
+- **Agente local** — instalado na máquina do cliente, roda em segundo plano, sem interface
+- **Licença** — o agente valida o token na API a cada 24h. Se o pagamento falhar, a licença é desativada automaticamente e o agente para de funcionar
 
 ---
 
 ## 🚀 Como Rodar Localmente
 
-> Instruções serão adicionadas após definição do stack.
-
 ```bash
-# Clone o repositório
+# 1. Clone o repositório
 git clone https://github.com/seu-usuario/efficience-co.git
-
-# Entre na pasta
 cd efficience-co
 
-# Instale as dependências
-# (comando a definir conforme stack)
+# 2. Gere a estrutura de arquivos (apenas na primeira vez)
+python setup.py
 
-# Configure as variáveis de ambiente
+# 3. Backend
+cd backend
 cp .env.example .env
+npm install
+npm run dev
 
-# Rode o projeto
-# (comando a definir conforme stack)
+# 4. Frontend
+cd ../frontend
+cp .env.example .env
+npm install
+npm run dev
+
+# 5. Agente local
+cd ../agente
+cp .env.example .env
+pip install -r requirements.txt
+python main.py
 ```
 
 ---
@@ -91,12 +149,26 @@ cp .env.example .env
 
 ---
 
+## 🌿 Regras de Git
+
+- Nunca commitar direto na branch `main`
+- Cada membro trabalha na própria branch:
+  - `joao/backend`
+  - `gabriel/agente`
+  - `vinicius/database`
+  - `victor/frontend`
+- Abrir Pull Request pra `main` quando uma funcionalidade estiver pronta
+- João revisa todos os PRs antes de aprovar
+
+---
+
 ## 🔒 Segurança & Compliance
 
 - Dados tratados conforme a **LGPD**
-- Autenticação com controle de permissões por perfil de usuário
-- Backups automáticos configurados
-- Variáveis sensíveis nunca versionadas
+- Autenticação via JWT com controle de permissões por perfil
+- Backups automáticos configurados via Supabase
+- Variáveis sensíveis nunca versionadas (usar `.env`)
+- Row Level Security (RLS) no banco — cada cliente só acessa os próprios dados
 
 ---
 
