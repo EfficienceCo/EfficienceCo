@@ -1,0 +1,2 @@
+-- Dados iniciais de usuários para desenvolvimento
+-- Lembre de usar hash real para a senha em produção

@@ -1,0 +1,1 @@
+-- Schema completo (gerado automaticamente após todas as migrations)
