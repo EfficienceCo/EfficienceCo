@@ -1,0 +1,14 @@
+
+> efficience-frontend@1.0.0 dev
+> next dev --port 3010
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3010
+
+ ✓ Starting...
+ ✓ Ready in 6.1s
+ ○ Compiling / ...
+ ✓ Compiled / in 11.5s (455 modules)
+ GET / 200 in 12074ms
+ GET / 200 in 233ms
+ ✓ Compiled in 1529ms (455 modules)
