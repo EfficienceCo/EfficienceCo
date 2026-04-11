@@ -21,5 +21,13 @@ app.get('/health', (req, res) => {
 });
 console.log('[app.js] Rota GET /health registrada');
 
+console.log('[app.js] Registrando rotas de autenticacao...');
+app.use('/auth', require('./routes/auth.routes'));
+console.log('[app.js] Rota /auth registrada');
+
+console.log('[app.js] Registrando rotas de usuarios...');
+app.use('/usuarios', require('./routes/usuarios.routes'));
+console.log('[app.js] Rota /usuarios registrada');
+
 console.log('[app.js] Exportando app...');
 module.exports = app;
