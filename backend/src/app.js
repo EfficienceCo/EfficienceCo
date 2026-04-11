@@ -21,5 +21,8 @@ app.get('/health', (req, res) => {
 });
 console.log('[app.js] Rota GET /health registrada');
 
+app.use('/auth', require('./routes/auth.routes'));
+app.use('/usuarios', require('./routes/usuarios.routes'));
+
 console.log('[app.js] Exportando app...');
 module.exports = app;
