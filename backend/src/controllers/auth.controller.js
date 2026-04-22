@@ -1,13 +1,13 @@
 // Controller de autenticacao
 // Recebe a requisicao de login, valida credenciais e gera o token JWT
 
-const jwt = require('jsonwebtoken');
-const { validarCredenciais } = require('../services/auth.service');
+import jwt from 'jsonwebtoken';
+import { validarCredenciais } from '../services/auth.service.js';
 
 // POST /auth/login
 // Espera receber { email, senha } no body
 // Retorna { token } se valido, ou { erro } se invalido
-function login(req, res) {
+export function login(req, res) {
   console.log('[auth.controller] Requisicao de login recebida');
 
   const { email, senha } = req.body;
@@ -33,5 +33,3 @@ function login(req, res) {
   console.log('[auth.controller] Login bem-sucedido — token gerado para usuario:', usuario.id);
   return res.json({ token });
 }
-
-module.exports = { login };
