@@ -1,6 +1,7 @@
 {
   "name": "efficience-backend",
   "version": "1.0.0",
+  "type": "module",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -9,7 +10,8 @@
   "dependencies": {
     "express": "^4.18.2",
     "dotenv": "^16.0.3",
-    "jsonwebtoken": "^9.0.0"
+    "jsonwebtoken": "^9.0.0",
+    "@supabase/supabase-js": "^2.45.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"

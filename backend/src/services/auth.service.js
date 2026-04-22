@@ -7,7 +7,7 @@ const usuario = { id: '1', email: 'admin@teste.com', senha: '123456', perfil: 'a
 
 // Compara email e senha recebidos com o usuario fixo
 // Retorna o objeto do usuario se bater, ou null se nao bater
-function validarCredenciais(email, senha) {
+export function validarCredenciais(email, senha) {
   console.log('[auth.service] Validando credenciais para:', email);
 
   if (email === usuario.email && senha === usuario.senha) {
@@ -18,5 +18,3 @@ function validarCredenciais(email, senha) {
   console.log('[auth.service] Credenciais invalidas para:', email);
   return null;
 }
-
-module.exports = { validarCredenciais };

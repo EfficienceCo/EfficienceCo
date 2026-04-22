@@ -1,6 +1,7 @@
-const express = require('express');
+import express from 'express';
+
 const router = express.Router();
 
 router.post('/', (req, res) => res.json({ message: 'registrar evento — a implementar' }));
 
-module.exports = router;
+export default router;

@@ -3,9 +3,9 @@
 // Se valido, anexa os dados do usuario em req.usuario e segue
 // Se invalido ou ausente, retorna 401
 
-const jwt = require('jsonwebtoken');
+import jwt from 'jsonwebtoken';
 
-function autenticar(req, res, next) {
+export function autenticar(req, res, next) {
   console.log('[auth.middleware] Verificando autenticacao para:', req.method, req.originalUrl);
 
   // Busca o header Authorization (formato esperado: "Bearer <token>")
@@ -33,5 +33,3 @@ function autenticar(req, res, next) {
     return res.status(401).json({ erro: 'Token inválido' });
   }
 }
-
-module.exports = { autenticar };
