@@ -9,23 +9,27 @@ export async function login(req, res) {
     return res.status(400).json({ message: 'Email e senha são obrigatórios' });
   }
 
-  const usuario = await findUserByEmail(email);
+  try {
+    const usuario = await findUserByEmail(email);
 
-  if (!usuario) {
-    return res.status(401).json({ message: 'Credenciais inválidas' });
+    if (!usuario) {
+      return res.status(401).json({ message: 'Credenciais inválidas' });
+    }
+
+    const senhaCorreta = await bcrypt.compare(senha, usuario.senha_hash);
+
+    if (!senhaCorreta) {
+      return res.status(401).json({ message: 'Credenciais inválidas' });
+    }
+
+    const token = jwt.sign(
+      { id: usuario.id, email: usuario.email, perfil: usuario.perfil },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.status(200).json({ token });
+  } catch (err) {
+    return res.status(500).json({ message: 'Erro interno no servidor' });
   }
-
-  const senhaCorreta = await bcrypt.compare(senha, usuario.senha);
-
-  if (!senhaCorreta) {
-    return res.status(401).json({ message: 'Credenciais inválidas' });
-  }
-
-  const token = jwt.sign(
-    { id: usuario.id, email: usuario.email },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' }
-  );
-
-  return res.status(200).json({ token });
 }
