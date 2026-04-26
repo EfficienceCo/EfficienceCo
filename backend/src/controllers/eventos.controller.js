@@ -22,7 +22,7 @@ export async function registrarEvento(req, res) {
 
   const { data, error } = await supabase
     .from('eventos')
-    .insert({ cliente_id, descricao, sucesso, timestamp: new Date().toISOString() })
+    .insert({ cliente_id, descricao, sucesso })
     .select()
     .single();
 
