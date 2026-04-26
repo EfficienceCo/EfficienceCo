@@ -7,6 +7,8 @@ console.log('[app.js] Express importado com sucesso');
 import authRoutes from './routes/auth.routes.js';
 import usuariosRoutes from './routes/usuarios.routes.js';
 import licencaRoutes from './routes/licenca.routes.js';
+import regrasRoutes from './routes/regras.routes.js';
+import eventosRoutes from './routes/eventos.routes.js';
 
 console.log('[app.js] Criando instancia do app...');
 const app = express();
@@ -35,6 +37,12 @@ console.log('[app.js] Rota /usuarios registrada');
 
 app.use('/licenca', licencaRoutes);
 console.log('[app.js] Rota /licenca registrada');
+
+app.use('/regras', regrasRoutes);
+console.log('[app.js] Rota /regras registrada');
+
+app.use('/eventos', eventosRoutes);
+console.log('[app.js] Rota /eventos registrada');
 
 console.log('[app.js] Exportando app...');
 export default app;
