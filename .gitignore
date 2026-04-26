@@ -7,3 +7,5 @@ dist/
 build/
 .next/
 .claude/
+.postman/
+postman/
