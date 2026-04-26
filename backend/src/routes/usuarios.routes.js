@@ -1,9 +1,10 @@
 // Rotas de usuarios
 // Todas as rotas aqui sao protegidas pelo middleware de autenticacao
 
-const express = require('express');
+import express from 'express';
+import { autenticar } from '../middlewares/auth.middleware.js';
+
 const router = express.Router();
-const { autenticar } = require('../middlewares/auth.middleware');
 
 // GET /usuarios — lista usuarios (protegida, exige token valido)
 router.get('/', autenticar, (req, res) => {
@@ -13,4 +14,4 @@ router.get('/', autenticar, (req, res) => {
 
 console.log('[usuarios.routes] Rotas de usuarios registradas');
 
-module.exports = router;
+export default router;

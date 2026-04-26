@@ -1,6 +1,10 @@
-const express = require('express');
+import express from 'express';
+import { registrarEvento } from '../controllers/eventos.controller.js';
+
 const router = express.Router();
 
-router.post('/', (req, res) => res.json({ message: 'registrar evento — a implementar' }));
+router.post('/', registrarEvento);
 
-module.exports = router;
+console.log('[eventos.routes] Rotas de eventos registradas');
+
+export default router;

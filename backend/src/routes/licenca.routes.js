@@ -1,9 +1,8 @@
-const express = require('express');
+import express from 'express';
+import { validarLicenca } from '../controllers/licenca.controller.js';
+
 const router = express.Router();
 
-// GET /licenca/validar — chamado pelo agente local
-router.get('/validar', (req, res) => {
-  res.json({ ativa: false, message: 'validação de licença — a implementar' });
-});
+router.get('/validar', validarLicenca);
 
-module.exports = router;
+export default router;

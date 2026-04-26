@@ -1,8 +1,14 @@
 console.log('[app.js] Arquivo app.js foi carregado');
 
 console.log('[app.js] Importando express...');
-const express = require('express');
+import express from 'express';
 console.log('[app.js] Express importado com sucesso');
+
+import authRoutes from './routes/auth.routes.js';
+import usuariosRoutes from './routes/usuarios.routes.js';
+import licencaRoutes from './routes/licenca.routes.js';
+import regrasRoutes from './routes/regras.routes.js';
+import eventosRoutes from './routes/eventos.routes.js';
 
 console.log('[app.js] Criando instancia do app...');
 const app = express();
@@ -22,12 +28,21 @@ app.get('/health', (req, res) => {
 console.log('[app.js] Rota GET /health registrada');
 
 console.log('[app.js] Registrando rotas de autenticacao...');
-app.use('/auth', require('./routes/auth.routes'));
+app.use('/auth', authRoutes);
 console.log('[app.js] Rota /auth registrada');
 
 console.log('[app.js] Registrando rotas de usuarios...');
-app.use('/usuarios', require('./routes/usuarios.routes'));
+app.use('/usuarios', usuariosRoutes);
 console.log('[app.js] Rota /usuarios registrada');
 
+app.use('/licenca', licencaRoutes);
+console.log('[app.js] Rota /licenca registrada');
+
+app.use('/regras', regrasRoutes);
+console.log('[app.js] Rota /regras registrada');
+
+app.use('/eventos', eventosRoutes);
+console.log('[app.js] Rota /eventos registrada');
+
 console.log('[app.js] Exportando app...');
-module.exports = app;
+export default app;
