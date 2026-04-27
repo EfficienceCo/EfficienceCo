@@ -1,4 +1,4 @@
-import { autenticar } from './auth.middleware.js';
+import { autenticar } from "./auth.middleware.js";
 
 // Retorna um array [autenticar, checker] que pode ser usado diretamente nas rotas.
 // Ao passar exigirPerfil(...) numa rota, o autenticar já vem embutido —
@@ -11,12 +11,16 @@ export function exigirPerfil(...perfis) {
     autenticar,
     (req, res, next) => {
       console.log(
-        `[permissao.middleware] Perfil requerido: [${perfis.join(', ')}] | Perfil do token: ${req.usuario?.perfil}`
+        `[permissao.middleware] Perfil requerido: [${perfis.join(", ")}] | Perfil do token: ${req.usuario?.perfil}`,
       );
 
       if (!perfis.includes(req.usuario.perfil)) {
-        console.log(`[permissao.middleware] Acesso negado — perfil '${req.usuario.perfil}' não autorizado`);
-        return res.status(403).json({ erro: 'Acesso negado: perfil sem permissão' });
+        console.log(
+          `[permissao.middleware] Acesso negado — perfil '${req.usuario.perfil}' não autorizado`,
+        );
+        return res
+          .status(403)
+          .json({ erro: "Acesso negado: perfil sem permissão" });
       }
 
       return next();
