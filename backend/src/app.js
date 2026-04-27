@@ -10,10 +10,15 @@ import usuariosRoutes from './routes/usuarios.routes.js';
 import licencaRoutes from './routes/licenca.routes.js';
 import regrasRoutes from './routes/regras.routes.js';
 import eventosRoutes from './routes/eventos.routes.js';
+import webhookRoutes from './routes/webhook.routes.js';
 
 console.log('[app.js] Criando instancia do app...');
 const app = express();
 console.log('[app.js] Instancia do app criada');
+
+// webhook ANTES do express.json() — Stripe exige body como Buffer para verificar assinatura
+app.use('/webhook', webhookRoutes);
+console.log('[app.js] Rota /webhook registrada');
 
 console.log('[app.js] Registrando middleware express.json()...');
 app.use(express.json());

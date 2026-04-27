@@ -1,4 +1,5 @@
 import supabase from '../config/database.js';
+import { criarSessaoPagamento } from '../services/stripe.service.js';
 
 export async function listarClientes(req, res) {
   const { data, error } = await supabase
@@ -52,4 +53,31 @@ export async function criarCliente(req, res) {
   }
 
   return res.status(201).json(data);
+}
+
+export async function iniciarPagamento(req, res) {
+  const { id } = req.params;
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ erro: 'Campo obrigatório: email' });
+  }
+
+  const { data: cliente, error } = await supabase
+    .from('clientes')
+    .select('id, nome')
+    .eq('id', id)
+    .single();
+
+  if (error || !cliente) {
+    return res.status(404).json({ erro: 'Cliente não encontrado' });
+  }
+
+  try {
+    const session = await criarSessaoPagamento({ clienteId: id, email });
+    return res.status(200).json({ url: session.url });
+  } catch (err) {
+    console.error('[clientes.controller] Erro ao criar sessão Stripe:', err.message);
+    return res.status(500).json({ erro: 'Erro ao criar sessão de pagamento' });
+  }
 }
