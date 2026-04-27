@@ -5,6 +5,7 @@ import express from 'express';
 console.log('[app.js] Express importado com sucesso');
 
 import authRoutes from './routes/auth.routes.js';
+import clientesRoutes from './routes/clientes.routes.js';
 import usuariosRoutes from './routes/usuarios.routes.js';
 import licencaRoutes from './routes/licenca.routes.js';
 import regrasRoutes from './routes/regras.routes.js';
@@ -30,6 +31,9 @@ console.log('[app.js] Rota GET /health registrada');
 console.log('[app.js] Registrando rotas de autenticacao...');
 app.use('/auth', authRoutes);
 console.log('[app.js] Rota /auth registrada');
+
+app.use('/clientes', clientesRoutes);
+console.log('[app.js] Rota /clientes registrada');
 
 console.log('[app.js] Registrando rotas de usuarios...');
 app.use('/usuarios', usuariosRoutes);
