@@ -4,6 +4,8 @@ import { listarClientes, buscarCliente, criarCliente, iniciarPagamento } from '.
 
 const router = express.Router();
 
+// Todas as rotas de clientes são exclusivas para admin_efficience —
+// operações de gestão do painel interno da Efficience
 router.get('/', exigirPerfil('admin_efficience'), listarClientes);
 router.get('/:id', exigirPerfil('admin_efficience'), buscarCliente);
 router.post('/', exigirPerfil('admin_efficience'), criarCliente);
