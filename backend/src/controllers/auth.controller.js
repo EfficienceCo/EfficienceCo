@@ -23,7 +23,7 @@ export async function login(req, res) {
     }
 
     const token = jwt.sign(
-      { id: usuario.id, email: usuario.email, perfil: usuario.perfil },
+      { id: usuario.id, email: usuario.email, perfil: usuario.perfil, cliente_id: usuario.cliente_id },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
