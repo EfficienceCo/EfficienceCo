@@ -14,17 +14,16 @@ if __name__ == '__main__':
         print("Comunicando com o servidor")
         api = True
 
-        licenca = validar_licenca("/licenca/validar")
+        licenca = validar_licenca()
 
         #validação licença
-        if not licenca:
+        if licenca == "ativa":
+            print('Licença válida')
+        elif licenca == "inativa":
             print('Licença inativa. Agente encerrado.')
             exit(1)
-        elif licenca==True:
-            print('Licença válida')
-        else:
-            print('Não foi possível validar a licença')
-   #configuracoes = buscar_configuracoes()
+            
+    #configuracoes = buscar_configuracoes()
     #iniciar_agendador(configuracoes)
     except RuntimeError as e:
         print(e)
