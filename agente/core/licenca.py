@@ -1,6 +1,12 @@
-import os
-import requests
+import comunicacao.api_client as client
 
-def validar_licenca(endpoint = str):
-   #A ser feito
-    pass
+def validar_licenca():
+   try:
+        response = client.get("/licenca/validar", addToHeaders={"x-licenca-token": client.LICENSE_TOKEN})
+        dados = response.json()
+        if dados.get("ativa"):
+            return "ativa"
+        else:
+            return "inativa"
+   except RuntimeError:
+        raise
