@@ -1,6 +1,7 @@
 import comunicacao.api_client as client
+from comunicacao.reportar_evento import reportar_evento
 from core.licenca import validar_licenca
-from core.configuracao import buscar_configuracoes
+from core.configuracao import gerenciar_configuracoes
 from core.agendador import iniciar_agendador
 
 api = False
@@ -19,11 +20,14 @@ if __name__ == '__main__':
         #validação licença
         if licenca == "ativa":
             print('Licença válida')
+            configuracoes = gerenciar_configuracoes() #carrega configurações
+            reportar_evento("Testando função reportar evento", True)
+
+
         elif licenca == "inativa":
             print('Licença inativa. Agente encerrado.')
             exit(1)
             
-    #configuracoes = buscar_configuracoes()
     #iniciar_agendador(configuracoes)
     except RuntimeError as e:
         print(e)

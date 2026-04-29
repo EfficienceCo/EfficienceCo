@@ -7,6 +7,7 @@ load_dotenv()
 API_URL = os.getenv('API_URL', 'http://localhost:3001')
 TOKEN = os.getenv('AUTH_TOKEN', '')
 LICENSE_TOKEN = os.getenv('LICENSE_TOKEN')
+CLIENTE_ID = os.getenv('CLIENTE_ID')
 
 if not TOKEN:
     raise EnvironmentError("AUTH_TOKEN não definido nas variáveis de ambiente")
@@ -25,7 +26,8 @@ def _headers(extra=None):
 def _handle_response(response, method, endpoint):
     if not response.ok:
         try:
-            mensagem = response.json().get("message", "Erro desconhecido")
+            body = response.json()
+            mensagem = body.get("message") or body.get("erro") or "Erro desconhecido"
         except Exception:
             mensagem = response.text or "Erro desconhecido"
         raise RuntimeError(f"Erro {response.status_code} em {method} {endpoint}: {mensagem}")

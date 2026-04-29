@@ -145,6 +145,10 @@ export async function buscarRegras(req, res) {
       .json({ erro: "Token de licença inválido ou expirado" });
   }
 
+  console.log('clienteId da URL:', clienteId);
+  console.log('licenca.cliente_id:', licenca?.cliente_id);
+  console.log('são iguais?', licenca?.cliente_id === clienteId);
+
   if (licenca.cliente_id !== clienteId) {
     return res.status(403).json({ erro: "Token não pertence a este cliente" });
   }
