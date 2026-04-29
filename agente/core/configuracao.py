@@ -11,13 +11,18 @@ def _cache_existe():
     return os.path.exists(CACHE_PATH)
 
 def _ler_cache():
-    with open(CACHE_PATH, "r") as f:
-        return json.load(f)
+    try:
+        with open(CACHE_PATH, "r") as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return None
 
 def _cache_valido():
     if not _cache_existe():
         return False
     cache = _ler_cache()
+    if cache is None:  # arquivo corrompido
+        return False
     timestamp = datetime.fromisoformat(cache["timestamp"])
     return datetime.now() - timestamp < timedelta(hours=CACHE_TTL_HORAS)
 

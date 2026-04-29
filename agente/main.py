@@ -21,7 +21,6 @@ if __name__ == '__main__':
         if licenca == "ativa":
             print('Licença válida')
             configuracoes = gerenciar_configuracoes() #carrega configurações
-            reportar_evento("Testando função reportar evento", True)
 
 
         elif licenca == "inativa":
