@@ -2,6 +2,7 @@ console.log("[app.js] Arquivo app.js foi carregado");
 
 console.log("[app.js] Importando express...");
 import express from "express";
+import cors from "cors";
 console.log("[app.js] Express importado com sucesso");
 
 import authRoutes from "./routes/auth.routes.js";
@@ -15,6 +16,8 @@ import webhookRoutes from "./routes/webhook.routes.js";
 console.log("[app.js] Criando instancia do app...");
 const app = express();
 console.log("[app.js] Instancia do app criada");
+
+app.use(cors({ origin: process.env.FRONTEND_URL }));
 
 // webhook ANTES do express.json() — Stripe exige body como Buffer para verificar assinatura
 app.use("/webhook", webhookRoutes);
