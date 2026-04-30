@@ -63,3 +63,4 @@ def iniciar_monitoramento(regras, pastas):
         observer.stop()
 
     observer.join()
+    
