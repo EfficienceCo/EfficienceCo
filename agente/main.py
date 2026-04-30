@@ -1,6 +1,8 @@
 import comunicacao.api_client as client
+from comunicacao.reportar_evento import reportar_evento
 from core.licenca import validar_licenca
-from core.configuracao import buscar_configuracoes
+from core.configuracao import gerenciar_configuracoes, extrair_pastas
+from automacoes.monitorar_pasta import iniciar_monitoramento
 from core.agendador import iniciar_agendador
 
 api = False
@@ -19,11 +21,15 @@ if __name__ == '__main__':
         #validação licença
         if licenca == "ativa":
             print('Licença válida')
+            regras = gerenciar_configuracoes() #carrega configurações
+            pastas = extrair_pastas(regras)
+            iniciar_monitoramento(regras, pastas)
+
+
         elif licenca == "inativa":
             print('Licença inativa. Agente encerrado.')
             exit(1)
             
-    #configuracoes = buscar_configuracoes()
     #iniciar_agendador(configuracoes)
     except RuntimeError as e:
         print(e)
