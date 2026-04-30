@@ -2,6 +2,7 @@ import express from "express";
 import { exigirPerfil } from "../middlewares/permissao.middleware.js";
 import {
   buscarRegras,
+  buscarVersaoRegras,
   listarRegras,
   criarRegra,
   atualizarRegra,
@@ -18,7 +19,8 @@ router.post("/", admins, criarRegra);
 router.patch("/:id", admins, atualizarRegra);
 router.delete("/:id", admins, deletarRegra);
 
-// Rota do agente — autenticada via x-licenca-token (mantida para compatibilidade)
+// Rotas do agente — autenticadas via x-licenca-token
+router.get("/:clienteId/versao", buscarVersaoRegras);
 router.get("/:clienteId", buscarRegras);
 
 console.log("[regras.routes] Rotas de regras registradas");
