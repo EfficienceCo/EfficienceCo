@@ -43,8 +43,8 @@ def _buscar_configuracoes():
     except RuntimeError:
         raise
 
-def gerenciar_configuracoes():
-    if _cache_valido():
+def gerenciar_configuracoes():      #pega as regras na API
+    if _cache_valido():             
         print("[configuracao] Usando cache local")
         return _ler_cache()["regras"]
     
@@ -58,3 +58,14 @@ def gerenciar_configuracoes():
             print("[configuracao] API indisponível — usando cache antigo")
             return _ler_cache()["regras"]
         raise
+
+def extrair_pastas(regras):
+    pastas = set(r["pasta_origem"] for r in regras if r.get("ativa")) #extrai as pastas que serão utilizadas nas regras
+    
+    if not pastas:
+        pasta_padrao = os.getenv("PASTA_PADRAO")
+        if pasta_padrao:
+            return {pasta_padrao}
+        return None
+    
+    return pastas
