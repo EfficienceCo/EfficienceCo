@@ -2,7 +2,7 @@ import comunicacao.api_client as client
 
 def validar_licenca():
    try:
-        response = client.get("/licenca/validar", addToHeaders={"x-licenca-token": client.LICENSE_TOKEN})
+        response = client.get("/licenca/validar", 5, {"x-licenca-token": client.LICENSE_TOKEN})
         dados = response.json()
         if dados.get("ativa"):
             return "ativa"
