@@ -134,6 +134,35 @@ export async function deletarRegra(req, res) {
   return res.status(204).send();
 }
 
+export async function buscarVersaoRegras(req, res) {
+  const { clienteId } = req.params;
+  const token = req.headers["x-licenca-token"];
+
+  const licenca = await validarTokenLicenca(token);
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  if (licenca.cliente_id !== clienteId) {
+    return res.status(403).json({ erro: "Token não pertence a este cliente" });
+  }
+
+  const { data, error } = await supabase
+    .from("regras")
+    .select("atualizado_em")
+    .eq("cliente_id", clienteId)
+    .order("atualizado_em", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("[regras.controller] Erro ao buscar versão:", error.message);
+    return res.status(500).json({ erro: "Erro ao buscar versão das regras" });
+  }
+
+  return res.status(200).json({ versao: data?.atualizado_em ?? null });
+}
+
 export async function buscarRegras(req, res) {
   const { clienteId } = req.params;
   const token = req.headers["x-licenca-token"];
