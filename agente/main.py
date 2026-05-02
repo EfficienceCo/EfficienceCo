@@ -21,9 +21,7 @@ if __name__ == '__main__':
         #validação licença
         if licenca == "ativa":
             print('Licença válida')
-            regras = gerenciar_configuracoes() #carrega configurações
-            pastas = extrair_pastas(regras)
-            iniciar_monitoramento(regras, pastas)
+            iniciar_agendador()
 
 
         elif licenca == "inativa":
