@@ -78,7 +78,6 @@ def verificar_atualizacao():
 
 def gerenciar_configuracoes():
     if _cache_valido():
-        print("[configuracao] Usando cache local")
         return _ler_cache()["regras"]
     
     try:

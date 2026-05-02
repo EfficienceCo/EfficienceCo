@@ -23,6 +23,7 @@ def _polling_regras():
 def iniciar_agendador():
     regras = gerenciar_configuracoes()
     pastas = extrair_pastas(regras)
+    print(f"[configuracao] {len(regras)} regra(s) carregada(s)")
 
     threading.Thread(target=_revalidar_licenca, daemon=True).start()
     threading.Thread(target=_polling_regras, daemon=True).start()
