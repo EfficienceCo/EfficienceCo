@@ -1,18 +1,40 @@
-const MOCK_STATUS_LICENCA = {
-  status: 'active',
-  plano: 'Profissional',
-  expiraEm: '2026-12-31T23:59:59.000Z',
-  limiteAutomacoes: 1500,
-  automacoesUtilizadas: 437,
-  suportePrioritario: true,
-};
+import { buscarLicenca } from './licenca.service';
+import { obterSessao } from './session.service';
 
-export async function getStatusLicencaClienteLogado() {
-  // TODO: substituir pela chamada real quando a rota estiver disponivel.
-  // Exemplo esperado:
-  // const response = await api.get('/clientes/me/licenca/status');
-  // return response.data;
-  return new Promise((resolve) => {
-    setTimeout(() => resolve(MOCK_STATUS_LICENCA), 450);
-  });
+function resolverStatus({ ativa, validade }) {
+  if (ativa) {
+    return 'active';
+  }
+
+  if (validade && new Date(validade) <= new Date()) {
+    return 'expired';
+  }
+
+  return 'suspended';
+}
+
+export async function getStatusLicencaClienteLogado({ clienteId } = {}) {
+  const sessao = obterSessao();
+  const perfil = sessao.usuario?.perfil;
+  const clienteIdToken = sessao.usuario?.cliente_id;
+  const clienteIdResolvido = clienteId || clienteIdToken;
+
+  if (!clienteIdResolvido) {
+    if (perfil === 'admin_efficience') {
+      throw new Error(
+        'Seu usuario e admin global. Informe o cliente para consultar a licenca.',
+      );
+    }
+
+    throw new Error('Usuario sem cliente vinculado no token JWT.');
+  }
+
+  const licenca = await buscarLicenca(clienteIdResolvido);
+
+  return {
+    clienteId: clienteIdResolvido,
+    ativa: Boolean(licenca?.ativa),
+    validade: licenca?.validade || null,
+    status: resolverStatus(licenca || {}),
+  };
 }
