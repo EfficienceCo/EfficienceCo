@@ -28,6 +28,7 @@ function obterMensagemErro(error) {
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
+    error?.message ||
     'Nao foi possivel carregar os logs do agente.'
   );
 }

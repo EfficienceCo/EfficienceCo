@@ -1,23 +1,37 @@
-﻿'use client';
+'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { login } from '../services/auth.service';
+import { salvarToken } from '../services/session.service';
+
+const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 function getErrorMessage(error) {
   const apiMessage = error?.response?.data?.message;
+  const apiErro = error?.response?.data?.erro;
 
   if (apiMessage) {
     return apiMessage;
   }
 
+  if (apiErro) {
+    return apiErro;
+  }
+
+  if (error?.response?.status === 404) {
+    return 'Endpoint de login nao encontrado na API. Confira as portas do frontend e backend.';
+  }
+
   if (error?.code === 'ERR_NETWORK') {
-    return 'Nao foi possivel conectar com a API em http://localhost:3001.';
+    return `Nao foi possivel conectar com a API em ${apiUrl}.`;
   }
 
   return 'Nao foi possivel realizar login. Tente novamente.';
 }
 
 export default function Home() {
+  const router = useRouter();
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -48,7 +62,9 @@ export default function Home() {
       const data = await login(formData.email, formData.password);
 
       if (data?.token) {
-        localStorage.setItem('token', data.token);
+        salvarToken(data.token);
+        router.push('/dashboard');
+        return;
       }
 
       setSuccessMessage(data?.message || 'Login enviado com sucesso.');
