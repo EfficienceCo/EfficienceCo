@@ -2,7 +2,7 @@ import axios from 'axios';
 import { limparToken, obterSessao } from './session.service';
 
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002',
+  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001',
 });
 
 api.interceptors.request.use((config) => {

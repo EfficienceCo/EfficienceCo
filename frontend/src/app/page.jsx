@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { login } from '../services/auth.service';
 import { salvarToken } from '../services/session.service';
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002';
+const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 function getErrorMessage(error) {
   const apiMessage = error?.response?.data?.message;
