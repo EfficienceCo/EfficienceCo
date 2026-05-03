@@ -53,7 +53,9 @@ def _arquivo_pertence_origem(caminho, pasta_origem):
     return os.path.dirname(os.path.abspath(caminho)) == os.path.abspath(pasta_origem)
 
 def _bate_condicao(caminho, condicao):
-    if condicao and condicao.startswith("extensao="):
+    if not condicao:
+        return True
+    if condicao.startswith("extensao="):
         ext = condicao.split("=")[1]
         return caminho.endswith(ext)
     return False

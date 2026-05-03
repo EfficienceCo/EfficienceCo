@@ -1,3 +1,4 @@
+import os
 import time
 import threading
 from core.configuracao import gerenciar_configuracoes, extrair_pastas, verificar_atualizacao, INTERVALO_POLLING_SEGUNDOS
@@ -12,7 +13,7 @@ def _revalidar_licenca():
         licenca = validar_licenca()
         if licenca != "ativa":
             print("[agendador] Licença inválida. Encerrando agente.")
-            exit(1)
+            os._exit(1)
         print("[agendador] Licença revalidada.")
 
 def _polling_regras():
