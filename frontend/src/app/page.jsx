@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { login } from '../services/auth.service';
-import { salvarToken } from '../services/session.service';
+import { login as loginService } from '../services/auth.service';
+import { useAuth } from '../context/AuthContext';
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -32,6 +32,7 @@ function getErrorMessage(error) {
 
 export default function Home() {
   const router = useRouter();
+  const { login } = useAuth();
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -59,10 +60,10 @@ export default function Home() {
     setIsLoading(true);
 
     try {
-      const data = await login(formData.email, formData.password);
+      const data = await loginService(formData.email, formData.password);
 
       if (data?.token) {
-        salvarToken(data.token);
+        login(data.token);
         router.push('/dashboard');
         return;
       }

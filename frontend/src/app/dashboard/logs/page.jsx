@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '../../../hooks/useAuth';
+import { useAuth } from '../../../context/AuthContext';
 import { listarEventos } from '../../../services/eventos.service';
 
 const LIMITE_PADRAO = 50;
