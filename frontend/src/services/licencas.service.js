@@ -1,4 +1,4 @@
-import { buscarLicenca } from './licenca.service';
+import { buscarLicenca, validarLicencaClienteLogado } from './licenca.service';
 import { obterSessao } from './session.service';
 
 function resolverStatus({ ativa, validade }) {
@@ -13,28 +13,25 @@ function resolverStatus({ ativa, validade }) {
   return 'suspended';
 }
 
-export async function getStatusLicencaClienteLogado({ clienteId } = {}) {
-  const sessao = obterSessao();
-  const perfil = sessao.usuario?.perfil;
-  const clienteIdToken = sessao.usuario?.cliente_id;
-  const clienteIdResolvido = clienteId || clienteIdToken;
-
-  if (!clienteIdResolvido) {
-    if (perfil === 'admin_efficience') {
-      throw new Error(
-        'Seu usuario e admin global. Informe o cliente para consultar a licenca.',
-      );
-    }
-
-    throw new Error('Usuario sem cliente vinculado no token JWT.');
-  }
-
-  const licenca = await buscarLicenca(clienteIdResolvido);
-
+function normalizarStatusLicenca(licenca, clienteIdFallback) {
   return {
-    clienteId: clienteIdResolvido,
+    clienteId: licenca?.clienteId || clienteIdFallback || null,
     ativa: Boolean(licenca?.ativa),
     validade: licenca?.validade || null,
-    status: resolverStatus(licenca || {}),
+    status: licenca?.status || resolverStatus(licenca || {}),
   };
+}
+
+export async function getStatusLicencaClienteLogado({ clienteId } = {}) {
+  // Mantem suporte ao fluxo legado quando um clienteId explicito for informado.
+  if (clienteId) {
+    const licenca = await buscarLicenca(clienteId);
+    return normalizarStatusLicenca(licenca, clienteId);
+  }
+
+  const sessao = obterSessao();
+  const clienteIdToken = sessao.usuario?.cliente_id || null;
+
+  const licenca = await validarLicencaClienteLogado();
+  return normalizarStatusLicenca(licenca, clienteIdToken);
 }

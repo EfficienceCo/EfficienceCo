@@ -8,3 +8,8 @@ export async function buscarLicenca(clienteId) {
   const response = await api.get(`/licenca/${clienteId}`);
   return response.data;
 }
+
+export async function validarLicencaClienteLogado() {
+  const response = await api.get('/licenca/validar');
+  return response.data;
+}

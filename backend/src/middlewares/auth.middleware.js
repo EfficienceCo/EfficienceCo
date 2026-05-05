@@ -1,9 +1,18 @@
 // Middleware de autenticacao
-// Protege rotas — verifica se a requisicao tem um token JWT valido
-// Se valido, anexa os dados do usuario em req.usuario e segue
-// Se invalido ou ausente, retorna 401
+// Protege rotas, verifica se a requisicao tem um token JWT valido.
+// Se valido, anexa os dados do usuario em req.usuario e segue.
+// Se invalido ou ausente, retorna 401.
 
 import jwt from "jsonwebtoken";
+
+function decodificarTokenBearer(authHeader) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return null;
+  }
+
+  const token = authHeader.split(" ")[1];
+  return jwt.verify(token, process.env.JWT_SECRET);
+}
 
 export function autenticar(req, res, next) {
   console.log(
@@ -17,28 +26,50 @@ export function autenticar(req, res, next) {
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     console.log("[auth.middleware] Token nao fornecido ou formato invalido");
-    return res.status(401).json({ erro: "Token não fornecido" });
+    return res.status(401).json({ erro: "Token nao fornecido" });
   }
 
-  // Extrai somente o token, removendo o prefixo "Bearer "
-  const token = authHeader.split(" ")[1];
-
   try {
-    // Verifica se o token e valido e nao expirou
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Verifica se o token e valido e nao expirou.
+    const decoded = decodificarTokenBearer(authHeader);
     console.log(
-      "[auth.middleware] Token valido — usuario:",
+      "[auth.middleware] Token valido, usuario:",
       decoded.id,
       "| perfil:",
       decoded.perfil,
     );
 
     // Anexa os dados decodificados do token em req.usuario
-    // para que as rotas seguintes saibam quem esta acessando
+    // para que as rotas seguintes saibam quem esta acessando.
     req.usuario = decoded;
     return next();
   } catch (err) {
     console.log("[auth.middleware] Token invalido ou expirado:", err.message);
-    return res.status(401).json({ erro: "Token inválido" });
+    return res.status(401).json({ erro: "Token invalido" });
+  }
+}
+
+export function autenticarOpcional(req, res, next) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return next();
+  }
+
+  if (!authHeader.startsWith("Bearer ")) {
+    console.log("[auth.middleware] Header Authorization invalido");
+    return res.status(401).json({ erro: "Token nao fornecido" });
+  }
+
+  try {
+    const decoded = decodificarTokenBearer(authHeader);
+    req.usuario = decoded;
+    return next();
+  } catch (err) {
+    console.log(
+      "[auth.middleware] Token invalido em autenticarOpcional:",
+      err.message,
+    );
+    return res.status(401).json({ erro: "Token invalido" });
   }
 }
