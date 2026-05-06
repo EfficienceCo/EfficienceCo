@@ -70,7 +70,7 @@ export default function AdminClientes() {
       const data = await listarClientes();
       setClientes(Array.isArray(data) ? data : []);
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Nao foi possivel carregar os clientes.'));
+      setErroLista(obterMensagemErro(error, 'Não foi possível carregar os clientes.'));
     } finally {
       setIsLoadingClientes(false);
     }
@@ -136,7 +136,7 @@ export default function AdminClientes() {
       setFormData({ nome: '', cnpj: '' });
       setSucessoFormulario('Cliente criado com sucesso.');
     } catch (error) {
-      setErroFormulario(obterMensagemErro(error, 'Nao foi possivel criar o cliente.'));
+      setErroFormulario(obterMensagemErro(error, 'Não foi possível criar o cliente.'));
     } finally {
       setIsCreating(false);
     }
@@ -173,7 +173,7 @@ export default function AdminClientes() {
       <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-zinc-900">Novo cliente</h2>
         <p className="mt-1 text-sm text-zinc-500">
-          Nome e obrigatorio. CNPJ e opcional.
+          Nome é obrigatório. CNPJ é opcional.
         </p>
 
         <form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={handleSubmit}>
@@ -186,7 +186,7 @@ export default function AdminClientes() {
               name="nome"
               value={formData.nome}
               onChange={handleChange}
-              placeholder="Ex: Escritorio Alfa"
+              placeholder="Ex: Escritório Alfa"
               disabled={isCreating}
               className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
               required
@@ -246,7 +246,7 @@ export default function AdminClientes() {
 
       {!erroLista && !isLoadingClientes && clientes.length === 0 ? (
         <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-zinc-600">Nenhum cliente cadastrado ate agora.</p>
+          <p className="text-sm text-zinc-600">Nenhum cliente cadastrado até agora.</p>
         </section>
       ) : null}
 
@@ -258,7 +258,7 @@ export default function AdminClientes() {
                 <th className="px-4 py-3">Nome</th>
                 <th className="px-4 py-3">CNPJ</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Usuarios</th>
+                <th className="px-4 py-3">Usuários</th>
                 <th className="px-4 py-3">Criado em</th>
               </tr>
             </thead>
