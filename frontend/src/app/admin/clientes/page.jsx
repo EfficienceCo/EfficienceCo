@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
-import { criarCliente, listarClientes } from '../../../services/clientes.service';
+import { atualizarCliente, criarCliente, listarClientes } from '../../../services/clientes.service';
 
 const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
 
@@ -60,6 +60,8 @@ export default function AdminClientes() {
   const [erroFormulario, setErroFormulario] = useState('');
   const [sucessoFormulario, setSucessoFormulario] = useState('');
 
+  const [atualizandoId, setAtualizandoId] = useState(null);
+
   const isAdminEfficience = user?.perfil === PERFIL_ADMIN_EFFICIENCE;
 
   const carregarClientes = useCallback(async () => {
@@ -99,6 +101,22 @@ export default function AdminClientes() {
       carregarClientes();
     }
   }, [carregarClientes, isAdminEfficience, isAuthenticated, isLoading]);
+
+  async function handleToggleStatus(cliente) {
+    const novoStatus = cliente.status === 'ativo' ? 'inativo' : 'ativo';
+    setAtualizandoId(cliente.id);
+
+    try {
+      const atualizado = await atualizarCliente(cliente.id, { status: novoStatus });
+      setClientes((prev) =>
+        prev.map((c) => (c.id === atualizado.id ? atualizado : c)),
+      );
+    } catch (error) {
+      setErroLista(obterMensagemErro(error, 'Não foi possível alterar o status.'));
+    } finally {
+      setAtualizandoId(null);
+    }
+  }
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -260,6 +278,7 @@ export default function AdminClientes() {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Usuários</th>
                 <th className="px-4 py-3">Criado em</th>
+                <th className="px-4 py-3">Ações</th>
               </tr>
             </thead>
 
@@ -286,6 +305,24 @@ export default function AdminClientes() {
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-zinc-600">
                       {formatarDataHora(cliente.criado_em)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleStatus(cliente)}
+                        disabled={atualizandoId === cliente.id}
+                        className={`rounded-md px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                          cliente.status === 'ativo'
+                            ? 'bg-rose-100 text-rose-700 hover:bg-rose-200'
+                            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                        }`}
+                      >
+                        {atualizandoId === cliente.id
+                          ? '...'
+                          : cliente.status === 'ativo'
+                            ? 'Desativar'
+                            : 'Ativar'}
+                      </button>
                     </td>
                   </tr>
                 );
