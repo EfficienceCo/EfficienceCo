@@ -93,10 +93,17 @@ export async function atualizarCliente(req, res) {
     return res.status(404).json({ erro: "Cliente não encontrado" });
   }
 
-  const { nome, cnpj } = req.body;
+  const STATUSES_VALIDOS = ["ativo", "inativo", "suspenso"];
+  const { nome, cnpj, status } = req.body;
   const updates = {};
   if (nome !== undefined) updates.nome = nome;
   if (cnpj !== undefined) updates.cnpj = cnpj;
+  if (status !== undefined) {
+    if (!STATUSES_VALIDOS.includes(status)) {
+      return res.status(400).json({ erro: "Status inválido. Use: ativo, inativo ou suspenso" });
+    }
+    updates.status = status;
+  }
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ erro: "Nenhum campo para atualizar" });
