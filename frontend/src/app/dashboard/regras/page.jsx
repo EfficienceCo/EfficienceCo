@@ -13,11 +13,11 @@ import {
 const PERFIS_AUTORIZADOS = new Set(['admin_cliente', 'admin_efficience']);
 
 const CONDICAO_OPCOES = [
-  { value: 'extensao=.pdf', label: 'Extensao .pdf' },
-  { value: 'extensao=.xml', label: 'Extensao .xml' },
-  { value: 'extensao=.csv', label: 'Extensao .csv' },
-  { value: 'extensao=.txt', label: 'Extensao .txt' },
-  { value: 'extensao=.xlsx', label: 'Extensao .xlsx' },
+  { value: 'extensao=.pdf', label: 'Extensão .pdf' },
+  { value: 'extensao=.xml', label: 'Extensão .xml' },
+  { value: 'extensao=.csv', label: 'Extensão .csv' },
+  { value: 'extensao=.txt', label: 'Extensão .txt' },
+  { value: 'extensao=.xlsx', label: 'Extensão .xlsx' },
 ];
 
 const ACAO_OPCOES = [
@@ -34,7 +34,7 @@ const FORM_INICIAL = {
   ativa: true,
 };
 
-function obterMensagemErro(error, fallback = 'Nao foi possivel processar sua solicitacao.') {
+function obterMensagemErro(error, fallback = 'Não foi possível processar sua solicitação.') {
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
@@ -50,7 +50,7 @@ function formatarCondicao(condicao) {
 
   if (condicao.startsWith('extensao=')) {
     const extensao = condicao.split('=')[1] || '';
-    return `Extensao ${extensao}`;
+    return `Extensão ${extensao}`;
   }
 
   return condicao;
@@ -115,7 +115,7 @@ export default function Regras() {
       setIsLoadingRegras(false);
       setRegras([]);
       setErroLista(
-        'Seu usuario admin_efficience nao possui cliente_id no token. Use um admin_cliente para configurar regras.',
+        'Seu usuário admin_efficience não possui cliente_id no token. Use um admin_cliente para configurar regras.',
       );
       return;
     }
@@ -127,7 +127,7 @@ export default function Regras() {
       const data = await listarRegras({ clienteId: clienteIdAdminGlobal || undefined });
       setRegras(Array.isArray(data) ? data : []);
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Nao foi possivel carregar as regras.'));
+      setErroLista(obterMensagemErro(error, 'Não foi possível carregar as regras.'));
     } finally {
       setIsLoadingRegras(false);
     }
@@ -191,7 +191,7 @@ export default function Regras() {
     }
 
     if (!formData.condicao || !formData.acao) {
-      setErroFormulario('Selecione condicao e acao.');
+      setErroFormulario('Selecione condição e ação.');
       return;
     }
 
@@ -254,7 +254,7 @@ export default function Regras() {
         currentValue.map((item) => (item.id === atualizada.id ? atualizada : item)),
       );
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Nao foi possivel atualizar o status da regra.'));
+      setErroLista(obterMensagemErro(error, 'Não foi possível atualizar o status da regra.'));
     } finally {
       setStatusEmAtualizacao((currentValue) => {
         const nextValue = { ...currentValue };
@@ -299,7 +299,7 @@ export default function Regras() {
       setIsDeleteModalAberto(false);
       setRegraParaDeletar(null);
     } catch (error) {
-      setErroDelete(obterMensagemErro(error, 'Nao foi possivel deletar a regra.'));
+      setErroDelete(obterMensagemErro(error, 'Não foi possível deletar a regra.'));
     } finally {
       setIsDeletingRegra(false);
     }
@@ -317,9 +317,9 @@ export default function Regras() {
     return (
       <main className="space-y-6 p-6">
         <header>
-          <h1 className="text-2xl font-semibold text-zinc-900">Regras de automacao</h1>
+          <h1 className="text-2xl font-semibold text-zinc-900">Regras de automação</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Apenas administradores podem visualizar esta area.
+            Apenas administradores podem visualizar esta área.
           </p>
         </header>
       </main>
@@ -331,7 +331,7 @@ export default function Regras() {
       <main className="space-y-6 p-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-900">Regras de automacao</h1>
+            <h1 className="text-2xl font-semibold text-zinc-900">Regras de automação</h1>
             <p className="mt-1 text-sm text-zinc-500">
               Configure as regras que o agente deve aplicar nos arquivos monitorados.
             </p>
@@ -385,10 +385,10 @@ export default function Regras() {
                 <tr>
                   <th className="px-4 py-3">Pasta origem</th>
                   <th className="px-4 py-3">Pasta destino</th>
-                  <th className="px-4 py-3">Condicao</th>
-                  <th className="px-4 py-3">Acao</th>
+                  <th className="px-4 py-3">Condição</th>
+                  <th className="px-4 py-3">Ação</th>
                   <th className="px-4 py-3">Status ativa</th>
-                  <th className="px-4 py-3">Acoes</th>
+                  <th className="px-4 py-3">Ações</th>
                 </tr>
               </thead>
 
@@ -461,7 +461,7 @@ export default function Regras() {
                   {modoFormulario === 'criar' ? 'Nova regra' : 'Editar regra'}
                 </h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Defina origem, destino, condicao, acao e status da regra.
+                  Defina origem, destino, condição, ação e status da regra.
                 </p>
               </div>
 
@@ -512,7 +512,7 @@ export default function Regras() {
 
                 <div className="space-y-2">
                   <label htmlFor="condicao" className="block text-sm font-medium text-zinc-700">
-                    Condicao
+                    Condição
                   </label>
                   <select
                     id="condicao"
@@ -533,7 +533,7 @@ export default function Regras() {
 
                 <div className="space-y-2">
                   <label htmlFor="acao" className="block text-sm font-medium text-zinc-700">
-                    Acao
+                    Ação
                   </label>
                   <select
                     id="acao"
@@ -593,7 +593,7 @@ export default function Regras() {
                     ? 'Salvando...'
                     : modoFormulario === 'criar'
                       ? 'Criar regra'
-                      : 'Salvar alteracoes'}
+                      : 'Salvar alterações'}
                 </button>
               </footer>
             </form>
@@ -604,7 +604,7 @@ export default function Regras() {
       {isDeleteModalAberto && regraParaDeletar ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
           <section className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl">
-            <h2 className="text-lg font-semibold text-zinc-900">Confirmar delecao</h2>
+            <h2 className="text-lg font-semibold text-zinc-900">Confirmar exclusão</h2>
             <p className="mt-2 text-sm text-zinc-600">
               Deseja realmente deletar esta regra?
             </p>

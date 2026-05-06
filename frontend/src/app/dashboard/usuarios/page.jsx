@@ -12,7 +12,7 @@ function obterMensagemErro(error) {
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
     error?.message ||
-    'Nao foi possivel carregar os usuarios.'
+    'Não foi possível carregar os usuários.'
   );
 }
 
@@ -91,9 +91,9 @@ export default function Usuarios() {
     return (
       <main className="space-y-6 p-6">
         <header>
-          <h1 className="text-2xl font-semibold text-zinc-900">Usuarios</h1>
+          <h1 className="text-2xl font-semibold text-zinc-900">Usuários</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Apenas administradores podem visualizar esta area.
+            Apenas administradores podem visualizar esta área.
           </p>
         </header>
       </main>
@@ -104,9 +104,9 @@ export default function Usuarios() {
     <main className="space-y-6 p-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-900">Usuarios</h1>
+          <h1 className="text-2xl font-semibold text-zinc-900">Usuários</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Lista de usuarios vinculados ao cliente logado.
+            Lista de usuários vinculados ao cliente logado.
           </p>
         </div>
 
@@ -128,14 +128,14 @@ export default function Usuarios() {
 
       {!erro && isLoadingUsuarios ? (
         <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-zinc-500">Carregando usuarios...</p>
+          <p className="text-sm text-zinc-500">Carregando usuários...</p>
         </section>
       ) : null}
 
       {!erro && !isLoadingUsuarios && usuarios.length === 0 ? (
         <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
           <p className="text-sm text-zinc-600">
-            Nenhum usuario encontrado para este cliente.
+            Nenhum usuário encontrado para este cliente.
           </p>
         </section>
       ) : null}
