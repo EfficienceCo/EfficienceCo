@@ -78,6 +78,75 @@ export async function criarCliente(req, res) {
   return res.status(201).json(data);
 }
 
+export async function atualizarCliente(req, res) {
+  const { id } = req.params;
+
+  console.log(`[clientes.controller] Atualizando cliente: ${id}`);
+
+  const { data: cliente, error: erroBusca } = await supabase
+    .from("clientes")
+    .select("id")
+    .eq("id", id)
+    .single();
+
+  if (erroBusca || !cliente) {
+    return res.status(404).json({ erro: "Cliente não encontrado" });
+  }
+
+  const { nome, cnpj } = req.body;
+  const updates = {};
+  if (nome !== undefined) updates.nome = nome;
+  if (cnpj !== undefined) updates.cnpj = cnpj;
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ erro: "Nenhum campo para atualizar" });
+  }
+
+  const { data, error } = await supabase
+    .from("clientes")
+    .update(updates)
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ erro: "CNPJ já cadastrado" });
+    }
+    console.error("[clientes.controller] Erro ao atualizar cliente:", error.message);
+    return res.status(500).json({ erro: "Erro ao atualizar cliente" });
+  }
+
+  console.log(`[clientes.controller] Cliente atualizado: ${id}`);
+  return res.status(200).json(data);
+}
+
+export async function deletarCliente(req, res) {
+  const { id } = req.params;
+
+  console.log(`[clientes.controller] Deletando cliente: ${id}`);
+
+  const { data: cliente, error: erroBusca } = await supabase
+    .from("clientes")
+    .select("id")
+    .eq("id", id)
+    .single();
+
+  if (erroBusca || !cliente) {
+    return res.status(404).json({ erro: "Cliente não encontrado" });
+  }
+
+  const { error } = await supabase.from("clientes").delete().eq("id", id);
+
+  if (error) {
+    console.error("[clientes.controller] Erro ao deletar cliente:", error.message);
+    return res.status(500).json({ erro: "Erro ao deletar cliente" });
+  }
+
+  console.log(`[clientes.controller] Cliente deletado: ${id}`);
+  return res.status(204).send();
+}
+
 export async function iniciarPagamento(req, res) {
   const { id } = req.params;
   const { email } = req.body;
