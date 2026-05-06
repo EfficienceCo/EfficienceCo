@@ -4,6 +4,8 @@ import {
   listarClientes,
   buscarCliente,
   criarCliente,
+  atualizarCliente,
+  deletarCliente,
   iniciarPagamento,
 } from "../controllers/clientes.controller.js";
 
@@ -14,6 +16,8 @@ const router = express.Router();
 router.get("/", exigirPerfil("admin_efficience"), listarClientes);
 router.get("/:id", exigirPerfil("admin_efficience"), buscarCliente);
 router.post("/", exigirPerfil("admin_efficience"), criarCliente);
+router.patch("/:id", exigirPerfil("admin_efficience"), atualizarCliente);
+router.delete("/:id", exigirPerfil("admin_efficience"), deletarCliente);
 router.post(
   "/:id/sessao-pagamento",
   exigirPerfil("admin_efficience"),
