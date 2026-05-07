@@ -1,33 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '../../../hooks/useAuth';
+import LogCard from '../../../components/dashboard/LogCard';
+import { useAuth } from '../../../context/AuthContext';
 import { listarEventos } from '../../../services/eventos.service';
 
 const LIMITE_PADRAO = 50;
-
-function formatarDataHora(data) {
-  if (!data) {
-    return '-';
-  }
-
-  const valor = new Date(data);
-
-  if (Number.isNaN(valor.getTime())) {
-    return '-';
-  }
-
-  return new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'short',
-    timeStyle: 'medium',
-  }).format(valor);
-}
 
 function obterMensagemErro(error) {
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
+    error?.message ||
     'Nao foi possivel carregar os logs do agente.'
   );
 }
@@ -40,13 +25,7 @@ export default function Logs() {
   const [isLoadingEventos, setIsLoadingEventos] = useState(true);
   const [erro, setErro] = useState('');
 
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.replace('/');
-    }
-  }, [isAuthenticated, isLoading, router]);
-
-  async function carregarEventos() {
+  const carregarEventos = useCallback(async () => {
     setIsLoadingEventos(true);
     setErro('');
 
@@ -58,13 +37,19 @@ export default function Logs() {
     } finally {
       setIsLoadingEventos(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.replace('/');
+    }
+  }, [isAuthenticated, isLoading, router]);
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
       carregarEventos();
     }
-  }, [isLoading, isAuthenticated]);
+  }, [carregarEventos, isAuthenticated, isLoading]);
 
   if (isLoading) {
     return <p>Carregando...</p>;
@@ -80,7 +65,7 @@ export default function Logs() {
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900">Logs do Agente</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Historico das execucoes realizadas pelo agente.
+            Historico das execucoes realizadas pelo agente local.
           </p>
         </div>
 
@@ -113,43 +98,16 @@ export default function Logs() {
       ) : null}
 
       {!erro && !isLoadingEventos && eventos.length > 0 ? (
-        <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-zinc-200">
-              <thead className="bg-zinc-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Evento
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Data
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Status
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100">
-                {eventos.map((evento) => (
-                  <tr key={evento.id}>
-                    <td className="px-4 py-3 text-sm text-zinc-800">{evento.descricao || '-'}</td>
-                    <td className="px-4 py-3 text-sm text-zinc-600">{formatarDataHora(evento.criado_em)}</td>
-                    <td className="px-4 py-3 text-sm">
-                      <span
-                        className={
-                          evento.sucesso
-                            ? 'inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700'
-                            : 'inline-flex rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700'
-                        }
-                      >
-                        {evento.sucesso ? 'Sucesso' : 'Erro'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <section className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
+          <p className="text-xs text-zinc-500">Mostrando os {LIMITE_PADRAO} eventos mais recentes.</p>
+          <ul className="space-y-3">
+            {eventos.map((evento, index) => (
+              <LogCard
+                key={evento.id || `${evento.criado_em || 'evento'}-${index}`}
+                log={evento}
+              />
+            ))}
+          </ul>
         </section>
       ) : null}
     </main>

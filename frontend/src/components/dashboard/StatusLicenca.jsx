@@ -5,14 +5,12 @@ import { getStatusLicencaClienteLogado } from '../../services/licencas.service';
 
 const STATUS_LABELS = {
   active: 'Ativa',
-  trial: 'Em teste',
   expired: 'Expirada',
-  suspended: 'Suspensa',
+  suspended: 'Inativa',
 };
 
 const STATUS_BADGE_STYLES = {
   active: 'bg-emerald-100 text-emerald-700',
-  trial: 'bg-amber-100 text-amber-800',
   expired: 'bg-rose-100 text-rose-700',
   suspended: 'bg-zinc-200 text-zinc-800',
 };
@@ -22,7 +20,21 @@ function formatarData(data) {
     return 'Sem data definida';
   }
 
-  return new Intl.DateTimeFormat('pt-BR').format(new Date(data));
+  const valor = new Date(data);
+  if (Number.isNaN(valor.getTime())) {
+    return 'Data invalida';
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(valor);
+}
+
+function formatarErro(error) {
+  return (
+    error?.response?.data?.erro ||
+    error?.response?.data?.message ||
+    error?.message ||
+    'Nao foi possivel carregar o status da licenca.'
+  );
 }
 
 export default function StatusLicenca() {
@@ -38,7 +50,7 @@ export default function StatusLicenca() {
       const data = await getStatusLicencaClienteLogado();
       setStatusLicenca(data);
     } catch (error) {
-      setErro('Nao foi possivel carregar o status da licenca.');
+      setErro(formatarErro(error));
     } finally {
       setIsLoading(false);
     }
@@ -89,25 +101,18 @@ export default function StatusLicenca() {
 
       <dl className="mt-4 grid gap-4 text-sm text-zinc-700 md:grid-cols-2">
         <div>
-          <dt className="text-zinc-500">Plano</dt>
-          <dd className="font-medium text-zinc-900">{statusLicenca.plano}</dd>
+          <dt className="text-zinc-500">Cliente</dt>
+          <dd className="font-medium text-zinc-900">{statusLicenca.clienteId}</dd>
         </div>
 
         <div>
-          <dt className="text-zinc-500">Expira em</dt>
-          <dd className="font-medium text-zinc-900">{formatarData(statusLicenca.expiraEm)}</dd>
+          <dt className="text-zinc-500">Validade</dt>
+          <dd className="font-medium text-zinc-900">{formatarData(statusLicenca.validade)}</dd>
         </div>
 
         <div>
-          <dt className="text-zinc-500">Uso de automacoes</dt>
-          <dd className="font-medium text-zinc-900">
-            {statusLicenca.automacoesUtilizadas} de {statusLicenca.limiteAutomacoes}
-          </dd>
-        </div>
-
-        <div>
-          <dt className="text-zinc-500">Suporte prioritario</dt>
-          <dd className="font-medium text-zinc-900">{statusLicenca.suportePrioritario ? 'Sim' : 'Nao'}</dd>
+          <dt className="text-zinc-500">Ativa no backend</dt>
+          <dd className="font-medium text-zinc-900">{statusLicenca.ativa ? 'Sim' : 'Nao'}</dd>
         </div>
       </dl>
     </section>
