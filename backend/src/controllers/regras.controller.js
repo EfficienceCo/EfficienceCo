@@ -149,9 +149,9 @@ export async function buscarVersaoRegras(req, res) {
 
   const { data, error } = await supabase
     .from("regras")
-    .select("atualizado_em")
+    .select("versao")
     .eq("cliente_id", clienteId)
-    .order("atualizado_em", { ascending: false })
+    .order("versao", { ascending: false })
     .limit(1)
     .single();
 
@@ -160,7 +160,7 @@ export async function buscarVersaoRegras(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar versão das regras" });
   }
 
-  return res.status(200).json({ versao: data?.atualizado_em ?? null });
+  return res.status(200).json({ versao: data?.versao ?? null });
 }
 
 export async function buscarRegras(req, res) {
