@@ -9,14 +9,11 @@ TOKEN = os.getenv('AUTH_TOKEN', '')
 LICENSE_TOKEN = os.getenv('LICENSE_TOKEN')
 CLIENTE_ID = os.getenv('CLIENTE_ID')
 
-if not TOKEN:
-    raise EnvironmentError("AUTH_TOKEN não definido nas variáveis de ambiente")
-
 def _headers(extra=None):
-    headers = {
-        "Authorization": f"Bearer {TOKEN}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
+
+    if TOKEN:
+        headers["Authorization"] = f"Bearer {TOKEN}"
 
     if extra:
         headers.update(extra)
