@@ -1,61 +1,81 @@
-# Efficience Co — Especificação Funcional por Área
+# EfficienceCo — Especificação Funcional por Área
+
+> Atualizado em 2026-05-08.
 
 ---
 
-## João — Backend + API + Pagamento
-**Stack:** Node.js + Express + Stripe
+## João — Backend + API
+**Stack:** Node.js + Express
 
 ### O que essa camada faz
-É o centro do sistema. Toda comunicação entre frontend, banco de dados, agente local e pagamento passa por aqui. Nenhuma outra parte do sistema fala diretamente com outra sem passar pelo backend.
+Centro do sistema. Toda comunicação entre frontend, banco de dados e agente local passa aqui. Nenhuma outra parte fala diretamente com outra sem passar pelo backend.
 
 ### Funcionalidades
 
 #### Autenticação
-- Receber login (email + senha) e retornar um token JWT
-- Validar o token em toda requisição protegida
-- Controlar permissões por perfil (admin da Efficience, admin do cliente, funcionário)
+- Login (email + senha) → retorna JWT
+- Validar token em toda requisição protegida
+- Controlar permissões por perfil: `admin` e `funcionario`
 
-#### Gestão de clientes
-- Cadastrar um novo cliente (escritório)
-- Listar, editar e desativar clientes
-- Associar usuários a um cliente específico
+#### Gestão de clientes contábeis
+- CRUD de clientes (empresas que o escritório atende)
+- Listar, editar, ativar, desativar
 
 #### Gestão de usuários
-- Cadastrar usuários dentro de um cliente
-- Definir nível de acesso de cada usuário
+- CRUD de usuários do escritório
+- Definir perfil de acesso
 - Redefinição de senha
 
-#### Licença
-- Gerar um token de licença único por cliente
-- Ativar e desativar licença manualmente
-- Expor uma rota pública que o agente local bate pra validar se a licença está ativa
-- Registrar data de validade da licença
-
-#### Pagamento (Stripe)
-- Criar assinatura mensal por cliente
-- Receber webhook do Stripe confirmando pagamento
-- Ao confirmar pagamento, renovar automaticamente a licença do cliente
-- Ao falhar pagamento, desativar licença automaticamente
-
-#### Regras e configurações por cliente
-- Salvar as configurações de automação de cada cliente (quais pastas monitorar, quais regras aplicar)
-- Expor essas configurações pra o agente local buscar
+#### Regras de automação
+- CRUD de regras por cliente contábil (pasta_origem, pasta_destino, condição, ação)
+- Rota para o agente buscar as regras configuradas
+- Rota de versão para o agente verificar se houve mudança sem baixar tudo
 
 #### Logs e eventos
-- Receber relatórios do agente local (o que foi executado, quando, com sucesso ou erro)
-- Salvar esses eventos no banco
-- Expor esses eventos pro frontend exibir
+- Receber relatórios do agente (o que foi executado, quando, sucesso ou erro)
+- Expor eventos para o frontend exibir
+- Suporte a paginação (limit + offset)
 
-### Rotas principais da API
+#### Obrigações fiscais
+- CRUD de obrigações por cliente contábil (tipo, data_vencimento, recorrência, status)
+- Endpoint de obrigações dos próximos N dias (para dashboard e alertas)
+- Atualização de status (pendente → concluída)
+
+#### Processos e checklists
+- CRUD de processos por cliente (folha_pagamento, abertura_empresa)
+- Etapas por processo com status individual
+- Endpoint para o agente marcar etapas via token
+- Geração automática de processos mensais de folha para clientes ativos
+
+#### Notificações
+- Geração automática de notificações (obrigação vencendo, processo atrasado, arquivo recebido)
+- Endpoint para frontend listar notificações não-lidas
+- Marcar como lida
+
+### Rotas principais
+
 | Método | Rota | O que faz |
 |---|---|---|
 | POST | /auth/login | Autentica usuário |
-| GET | /licenca/validar | Agente local valida token |
-| GET | /regras/:clienteId | Agente busca configurações |
+| GET | /clientes | Lista clientes contábeis |
+| POST | /clientes | Cadastra cliente contábil |
+| PATCH | /clientes/:id | Edita cliente contábil |
+| GET | /regras | Lista regras do escritório |
+| POST | /regras | Cria regra |
+| PATCH | /regras/:id | Edita regra |
+| DELETE | /regras/:id | Remove regra |
+| GET | /regras/:clienteId | Agente busca regras (auth por token) |
+| GET | /regras/:clienteId/versao | Agente verifica versão |
 | POST | /eventos | Agente reporta execução |
-| POST | /webhook/stripe | Stripe confirma pagamento |
-| GET | /clientes | Lista clientes (admin) |
-| POST | /clientes | Cadastra novo cliente |
+| GET | /eventos | Frontend lista eventos |
+| GET | /obrigacoes | Lista obrigações |
+| POST | /obrigacoes | Cria obrigação |
+| PATCH | /obrigacoes/:id | Atualiza status |
+| GET | /processos | Lista processos |
+| POST | /processos | Cria processo |
+| PATCH | /processos/:id/etapas/:etapaId | Marca etapa como concluída |
+| GET | /notificacoes | Lista notificações não-lidas |
+| PATCH | /notificacoes/:id/lida | Marca como lida |
 
 ---
 
@@ -63,125 +83,117 @@
 **Stack:** Python
 
 ### O que essa camada faz
-Um programa instalado na máquina do cliente que roda em segundo plano, invisível. Ele não tem interface. Ele valida a licença, busca as regras configuradas e executa as automações no computador do cliente.
+Programa instalado no PC do escritório, roda em segundo plano, sem interface. Busca regras configuradas e executa automações nos arquivos locais.
 
 ### Funcionalidades
 
-#### Validação de licença
-- Ao iniciar, bater na API do João pra verificar se o token de licença está ativo
-- Se inativo, parar de funcionar e registrar o motivo
-- Repetir essa validação periodicamente (ex: a cada 24h)
-
-#### Busca de configurações
-- Após validar licença, buscar na API as regras configuradas pra aquele cliente
-- Armazenar localmente em cache pra funcionar mesmo com instabilidade de internet por curto período
+#### Busca e cache de configurações
+- Busca regras na API após inicialização
+- Cache local com TTL de 24h
+- Antes de baixar as regras completas, verifica versão — só baixa se mudou
+- Funciona com internet instável por curto período (usa cache)
 
 #### Monitoramento de pastas
-- Observar pastas definidas nas configurações em tempo real
-- Detectar quando um arquivo novo é criado, modificado ou deletado
-- Disparar a ação correspondente quando um evento ocorre
+- Observa pastas definidas nas regras em tempo real (watchdog)
+- Detecta criação de arquivos
+- Dispara ação correspondente
 
 #### Execução de automações
-- Mover ou copiar arquivos seguindo regras (ex: "PDF com nome X vai pra pasta Y")
-- Renomear arquivos seguindo padrões definidos
-- Organizar arquivos por data, tipo ou nome automaticamente
+- **Mover arquivo:** move para pasta destino com deduplicação de nome
+- **Renomear arquivo:** padrão `YYYYMMDD_HHMMSS_[nome_original]`
+- **Criar estrutura de pastas:** para abertura de empresa (`CLIENTES/ATIVO/[nome]/Documentos`, `/NFs`, `/Folha`, `/Declarações`)
 
 #### Agendamento de tarefas
-- Rodar tarefas em horários definidos (ex: "todo dia às 18h, compactar os arquivos da pasta Z")
-- Gerar relatórios simples de atividade em texto ou CSV
+- Loop de sync de regras com intervalo via `INTERVALO_SYNC_HORAS` (padrão: 1h)
+- Atualiza regras em memória sem reiniciar o processo
+- Relatório diário em CSV às 18h
 
 #### Comunicação com o backend
-- Após executar qualquer automação, reportar pra API o que foi feito
-- Reportar erros e falhas também
-- Nunca travar o sistema local se a API estiver fora do ar
+- Reporta toda execução (incluindo erros) para a API
+- Nunca trava o sistema local se API estiver fora do ar
+- Metadados do evento: caminho final, tipo, tamanho do arquivo
 
 #### Instalação
-- Ser empacotado como um executável (.exe no Windows) que o cliente instala uma vez
-- Iniciar automaticamente junto com o sistema operacional
-- Se atualizar automaticamente quando houver nova versão disponível no servidor
+- Empacotado como `.exe` (PyInstaller)
+- Inicia automaticamente com o OS
 
 ---
 
 ## Vinícius — Banco de Dados
 **Stack:** PostgreSQL + Supabase
 
-### O que essa camada faz
-Armazena todos os dados do sistema de forma organizada e segura. Nenhum dado some, nenhum dado vaza pra quem não deveria ver.
+### Tabelas
 
-### Funcionalidades
+| Tabela | Finalidade |
+|---|---|
+| `usuarios` | Funcionários do escritório com perfil e senha hash |
+| `clientes` | Empresas que o escritório atende (Padaria do João, MEIs, etc.) |
+| `regras` | Configurações de automação do agente (pasta_origem, pasta_destino, condição, ação) |
+| `eventos` | Log de tudo que o agente executou |
+| `obrigacoes` | Obrigações fiscais por cliente (DAS, DCTF, SPED...) com vencimento e status |
+| `processos` | Checklists de folha de pagamento, abertura de empresa por cliente |
+| `etapas_processo` | Etapas individuais de cada processo com status |
+| `notificacoes` | Alertas internos para os funcionários do escritório |
 
-#### Modelagem das tabelas principais
-- **clientes** — cada escritório cadastrado (nome, CNPJ, plano, status)
-- **usuarios** — funcionários de cada cliente + admins da Efficience
-- **licencas** — token, validade, status ativo/inativo, vinculado ao cliente
-- **regras** — configurações de automação por cliente (pasta origem, pasta destino, condição)
-- **eventos** — log de tudo que o agente local executou (o quê, quando, sucesso ou erro)
-- **pagamentos** — histórico de cobranças por cliente
-
-#### Relacionamentos
-- Um cliente tem muitos usuários
-- Um cliente tem uma licença ativa
-- Um cliente tem muitas regras
-- Um cliente tem muitos eventos
-- Um cliente tem muitos pagamentos
-
-#### Segurança dos dados (RLS no Supabase)
-- Garantir que um cliente nunca veja dados de outro cliente
-- Apenas admins da Efficience têm visão global de todos os clientes
-- Cada usuário só acessa o que o seu perfil permite
-
-#### Migrations
-- Versionar toda mudança no banco (nunca alterar tabela na mão)
-- Garantir que qualquer membro do time consiga recriar o banco do zero com um comando
-
-#### Performance
-- Criar índices nas colunas mais consultadas (ex: token de licença, id do cliente)
-- Garantir que queries de log não travem o sistema quando a tabela de eventos crescer
-
-#### Backup
-- Configurar backup automático pelo Supabase
-- Definir política de retenção de dados (quanto tempo guardar logs antigos)
+### Responsabilidades
+- Migrations versionadas — banco recriável do zero
+- Seeds de desenvolvimento completos (usuários BCrypt, clientes de exemplo, regras realistas)
+- Índices nas colunas mais consultadas
+- RLS configurado: cada usuário vê apenas os dados do próprio escritório
+- `service_role` key usada no backend (bypass de RLS server-side)
 
 ---
 
 ## Victor — Frontend
 **Stack:** React + Next.js + Tailwind CSS
 
-### O que essa camada faz
-É tudo que o usuário vê e toca. Tem duas faces: o painel do cliente (funcionários do escritório) e o painel admin (João gerenciando todos os clientes).
+### Páginas
 
-### Funcionalidades
+#### Dashboard principal (`/dashboard`)
+- Resumo do dia: obrigações vencendo nos próximos 7 dias
+- Status do processo de folha do mês atual
+- Últimos 5 eventos do agente
+- Contador de notificações não-lidas
 
-#### Autenticação
-- Tela de login com email e senha
-- Guardar token JWT após login
-- Redirecionar pra área correta conforme o perfil do usuário
-- Tela de esqueci minha senha
+#### Logs do agente (`/dashboard/logs`)
+- Histórico de execuções do agente
+- Filtro por sucesso/erro
+- Paginação
 
-#### Painel do cliente (funcionários do escritório)
-- Dashboard inicial com resumo de atividades recentes
-- Visualizar logs do agente local (o que foi executado, quando)
-- Configurar regras de automação (quais pastas monitorar, quais ações executar)
-- Gerenciar usuários da própria empresa (cadastrar, editar, remover)
-- Ver status da licença (ativa, vencendo, inativa)
+#### Regras de automação (`/dashboard/regras`)
+- CRUD completo de regras
+- Ativar/desativar regra por toggle
+- Formulário com origem, destino, condição e ação
 
-#### Painel admin (João — visão global)
-- Listar todos os clientes cadastrados
-- Ativar, desativar ou editar qualquer cliente
-- Ver status de pagamento de cada cliente
-- Gerar ou revogar token de licença manualmente
-- Ver logs globais de todos os agentes
+#### Obrigações fiscais (`/dashboard/obrigacoes`)
+- Lista com vencimento + badge de status (verde/amarelo/vermelho)
+- Filtro por mês
+- Marcar como concluída
 
-#### UX e usabilidade
-- Interface simples, sem jargão técnico — o usuário final é um contador, não um dev
-- Responsivo (funcionar bem em telas menores)
-- Mensagens de erro claras quando algo dá errado
-- Feedback visual em toda ação (carregando, salvo, erro)
+#### Processos e checklists (`/dashboard/processos`)
+- Processos mensais de folha com progresso de etapas
+- Processos de abertura de empresa com responsável
+- Marcar etapas como concluídas
 
-#### Comunicação com o backend
-- Toda requisição usa o token JWT no header
-- Tratar erros da API (token expirado, sem permissão, servidor fora do ar)
-- Nunca expor dados sensíveis no frontend
+#### Comunicação e notificações (`/dashboard/comunicacao`)
+- Histórico de notificações do escritório
+- Marcar como lida individual ou em massa
+- Indicador de não-lidas no header
+
+#### Usuários (`/dashboard/usuarios`)
+- Gerenciar funcionários do escritório
+- Criar, editar, remover
+
+#### Admin (`/admin`)
+- Visão geral do escritório
+- Gerenciar clientes contábeis
+- Logs globais
+
+### UX
+- Interface sem jargão técnico — usuário final é contador
+- Responsivo
+- Feedback visual em toda ação (loading, salvo, erro)
+- Erros da API tratados com mensagem clara
 
 ---
 
@@ -195,10 +207,8 @@ Armazena todos os dados do sistema de forma organizada e segura. Nenhum dado som
 [Vinícius — Banco de dados]
 
 [Gabriel — Agente local]
-        ↓ valida licença + busca regras + reporta eventos
+        ↓ busca regras + reporta eventos (auth por service token)
 [João — Backend + API]
         ↓ lê/salva
 [Vinícius — Banco de dados]
 ```
-
-> **Primeira tarefa do time:** João e Vinícius sentam juntos e definem as tabelas principais antes de qualquer um começar a codar. Sem isso, ninguém consegue avançar com segurança.
