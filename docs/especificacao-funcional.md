@@ -17,8 +17,8 @@ Centro do sistema. Toda comunicação entre frontend, banco de dados e agente lo
 - Validar token em toda requisição protegida
 - Controlar permissões por perfil: `admin` e `funcionario`
 
-#### Gestão de clientes contábeis
-- CRUD de clientes (empresas que o escritório atende)
+#### Gestão de clientes
+- CRUD de clientes (escritórios contratantes da EfficienceCo)
 - Listar, editar, ativar, desativar
 
 #### Gestão de usuários

@@ -17,20 +17,22 @@ O primeiro nicho sendo trabalhado é o escritório contábil (empresa exemplo: S
 - EfficienceCo entrega um software dedicado para cada cliente contratante
 - O cliente paga uma **licença recorrente** (mensal ou anual — a definir) para continuar usando
 - Se parar de pagar → software para de funcionar
-- Cada cliente tem seu próprio sistema, URL própria (ex: `souza.efficience.com.br`), dados completamente separados
+- Cada cliente tem sua própria URL (ex: `souza.efficience.com.br`), backend e frontend dedicados
+- Banco de dados compartilhado (Supabase único), com isolamento por `cliente_id` via RLS
 
 ---
 
 ## Modelo Técnico — Agora vs Futuro
 
 ### Agora (fase de captação de clientes)
-- Um repositório independente por cliente
-- Deploy separado por cliente
-- Próximo cliente = fork deste repositório + adaptações
+- Banco compartilhado (Supabase único com RLS por `cliente_id`) — desde o início
+- Backend e frontend separados por cliente (deploy independente por escritório)
+- Agente local (.exe) separado por cliente
+- Próximo cliente = fork do backend/frontend + novo deploy + mesmo banco
 
 ### Futuro (após ter clientes reais pagando)
-- Migrar para infraestrutura compartilhada
-- Um backend, um banco com isolamento por cliente, subdomínios
+- Migrar backend e frontend para infraestrutura compartilhada também
+- Um único backend, subdomínios por cliente, banco já é compartilhado
 - Muito mais barato de operar com escala
 
 ---
@@ -47,34 +49,33 @@ Não contém: sistema de licença, Stripe, painel de gestão da Efficience. Esse
 
 ## Custos de Infraestrutura
 
-### Modelo atual — deploy separado por cliente
+### Modelo atual — banco compartilhado, backend/frontend separados
 
-| Serviço | Custo por cliente/mês |
+| Serviço | Custo |
 |---|---|
-| Vercel (frontend) | ~$0 (free tier) |
-| Railway (backend) | ~$5–10 |
-| Supabase (banco) | $0 nos 2 primeiros, **$25 cada depois** |
-| **Total estimado** | **~$30–35/cliente/mês** |
+| Vercel (frontend) | ~$0/cliente (free tier por projeto) |
+| Railway (backend) | ~$5–10/cliente/mês |
+| Supabase (banco) | **$25/mês fixo** — compartilhado entre todos os clientes |
+| **Total estimado** | **~$5–10/cliente/mês + $25 fixo** |
 
-### Modelo futuro — infraestrutura compartilhada
+Exemplos reais:
+- 1 cliente → ~$30–35/mês
+- 3 clientes → ~$40–55/mês
+- 5 clientes → ~$50–75/mês
+- 10 clientes → ~$75–125/mês
+
+### Modelo futuro — backend e frontend também compartilhados
 
 | Serviço | Custo total/mês |
 |---|---|
-| Vercel Pro | ~$20 |
-| Railway | ~$10–15 |
-| Supabase Pro | $25 |
-| **Total fixo** | **~$55–60/mês para qualquer número de clientes** |
+| Vercel Pro (todos os frontends) | ~$20 |
+| Railway (um backend) | ~$10–15 |
+| Supabase Pro (já compartilhado) | $25 |
+| **Total fixo** | **~$55–60/mês independente do número de clientes** |
 
 ### Ponto de virada
 
-| Clientes | Separado | Compartilhado |
-|---|---|---|
-| 1–2 | ~$0–35/mês | ~$55/mês |
-| 3 | ~$60–80/mês | ~$55/mês |
-| 5 | ~$130–160/mês | ~$55/mês |
-| 10 | ~$300–350/mês | ~$55/mês |
-
-**Conclusão:** a partir do 3º cliente, migrar para infraestrutura compartilhada se paga.
+A partir do 3º–4º cliente, migrar o backend/frontend para infra compartilhada começa a se pagar.
 
 ### Domínio
 - 1 domínio `efficience.com.br` → ~R$80/ano (Registro.br)
