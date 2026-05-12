@@ -1,5 +1,4 @@
 import supabase from "../config/database.js";
-import { criarSessaoPagamento } from "../services/stripe.service.js";
 
 // Lista todos os clientes ordenados do mais recente para o mais antigo.
 // Exclusivo para admin_efficience — painel interno da Efficience.
@@ -152,45 +151,4 @@ export async function deletarCliente(req, res) {
 
   console.log(`[clientes.controller] Cliente deletado: ${id}`);
   return res.status(204).send();
-}
-
-export async function iniciarPagamento(req, res) {
-  const { id } = req.params;
-  const { email } = req.body;
-
-  console.log(
-    `[clientes.controller] Iniciando pagamento para cliente: ${id} | email: ${email}`,
-  );
-
-  if (!email) {
-    console.log("[clientes.controller] Pagamento rejeitado — email ausente");
-    return res.status(400).json({ erro: "Campo obrigatório: email" });
-  }
-
-  const { data: cliente, error } = await supabase
-    .from("clientes")
-    .select("id, nome")
-    .eq("id", id)
-    .single();
-
-  if (error || !cliente) {
-    console.log(
-      `[clientes.controller] Cliente não encontrado para pagamento: ${id}`,
-    );
-    return res.status(404).json({ erro: "Cliente não encontrado" });
-  }
-
-  try {
-    const session = await criarSessaoPagamento({ clienteId: id, email });
-    console.log(
-      `[clientes.controller] URL de pagamento gerada para cliente: ${id}`,
-    );
-    return res.status(200).json({ url: session.url });
-  } catch (err) {
-    console.error(
-      "[clientes.controller] Erro ao criar sessão Stripe:",
-      err.message,
-    );
-    return res.status(500).json({ erro: "Erro ao criar sessão de pagamento" });
-  }
 }
