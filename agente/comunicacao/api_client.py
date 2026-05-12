@@ -5,15 +5,11 @@ import requests
 load_dotenv()
 
 API_URL = os.getenv('API_URL', 'http://localhost:3001')
-TOKEN = os.getenv('AUTH_TOKEN', '')
 LICENSE_TOKEN = os.getenv('LICENSE_TOKEN')
 CLIENTE_ID = os.getenv('CLIENTE_ID')
 
 def _headers(extra=None):
     headers = {"Content-Type": "application/json"}
-
-    if TOKEN:
-        headers["Authorization"] = f"Bearer {TOKEN}"
 
     if extra:
         headers.update(extra)

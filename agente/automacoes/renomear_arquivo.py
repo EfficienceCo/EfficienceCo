@@ -6,17 +6,21 @@ def renomear_arquivo(origem):
     nome = os.path.basename(origem)
     nome_sem_ext, ext = os.path.splitext(nome)
     
-    # remove timestamp anterior se já existir
-    nome_sem_ext = re.sub(r'_\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(\-\d+)?$', '', nome_sem_ext)
+    # remove prefixo de timestamp anterior se já existir
+    nome_sem_ext = re.sub(r'^\d{8}_\d{6}_', '', nome_sem_ext)
     
-    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    nome_novo = f"{nome_sem_ext}_{timestamp}{ext}"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    nome_novo = f"{timestamp}_{nome_sem_ext}{ext}"
     destino = os.path.join(os.path.dirname(origem), nome_novo)
 
     if os.path.exists(destino):
-        timestamp2 = datetime.now().strftime("%Y-%m-%dT%H-%M-%S-%f")
-        nome_novo = f"{nome_sem_ext}_{timestamp2}{ext}"
-        destino = os.path.join(os.path.dirname(origem), nome_novo)
+        contador = 1
+        while True:
+            nome_novo = f"{timestamp}_{nome_sem_ext}_{contador}{ext}"
+            destino = os.path.join(os.path.dirname(origem), nome_novo)
+            if not os.path.exists(destino):
+                break
+            contador += 1
 
     try:
         os.rename(origem, destino)
