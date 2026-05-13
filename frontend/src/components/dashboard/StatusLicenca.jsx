@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { getStatusLicencaClienteLogado } from '../../services/licencas.service';
 
 const STATUS_LABELS = {
@@ -37,7 +38,7 @@ function formatarErro(error) {
   );
 }
 
-export default function StatusLicenca() {
+export default function StatusLicenca({ detalhesHref = '/admin/licencas' }) {
   const [statusLicenca, setStatusLicenca] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [erro, setErro] = useState('');
@@ -63,7 +64,17 @@ export default function StatusLicenca() {
   if (isLoading) {
     return (
       <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-zinc-900">Status da Licenca</h2>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-lg font-semibold text-zinc-900">Status da Licenca</h2>
+          {detalhesHref ? (
+            <Link
+              href={detalhesHref}
+              className="whitespace-nowrap rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+            >
+              Ver detalhes
+            </Link>
+          ) : null}
+        </div>
         <p className="mt-2 text-sm text-zinc-500">Carregando informacoes da licenca...</p>
       </section>
     );
@@ -72,7 +83,17 @@ export default function StatusLicenca() {
   if (erro) {
     return (
       <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-rose-900">Status da Licenca</h2>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-lg font-semibold text-rose-900">Status da Licenca</h2>
+          {detalhesHref ? (
+            <Link
+              href={detalhesHref}
+              className="whitespace-nowrap rounded-md border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
+            >
+              Ver detalhes
+            </Link>
+          ) : null}
+        </div>
         <p className="mt-2 text-sm text-rose-700">{erro}</p>
         <button
           type="button"
@@ -94,9 +115,21 @@ export default function StatusLicenca() {
 
   return (
     <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-start justify-between gap-3">
         <h2 className="text-lg font-semibold text-zinc-900">Status da Licenca</h2>
-        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeStyle}`}>{badgeLabel}</span>
+        <div className="flex items-center gap-2">
+          {detalhesHref ? (
+            <Link
+              href={detalhesHref}
+              className="whitespace-nowrap rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+            >
+              Ver detalhes
+            </Link>
+          ) : null}
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeStyle}`}>
+            {badgeLabel}
+          </span>
+        </div>
       </div>
 
       <dl className="mt-4 grid gap-4 text-sm text-zinc-700 md:grid-cols-2">

@@ -4,6 +4,10 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 import StatusLicenca from '../../components/dashboard/StatusLicenca';
+import ProximasObrigacoesWidget from '../../components/dashboard/ProximasObrigacoesWidget';
+import ProcessosWidget from '../../components/dashboard/ProcessosWidget';
+import NotificacoesWidget from '../../components/dashboard/NotificacoesWidget';
+import AgenteEventosWidget from '../../components/dashboard/AgenteEventosWidget';
 
 export default function Dashboard() {
   const router = useRouter();
@@ -27,10 +31,18 @@ export default function Dashboard() {
     <main className="space-y-6 p-6">
       <header>
         <h1 className="text-2xl font-semibold text-zinc-900">Dashboard</h1>
-        <p className="mt-1 text-sm text-zinc-500">Acompanhe os dados da sua conta e da sua licenca.</p>
+        <p className="mt-1 text-sm text-zinc-500">
+          Acompanhe os principais dados dos modulos em tempo real.
+        </p>
       </header>
 
-      <StatusLicenca />
+      <section className="grid gap-4 md:grid-cols-2">
+        <StatusLicenca />
+        <ProximasObrigacoesWidget />
+        <ProcessosWidget />
+        <NotificacoesWidget />
+        <AgenteEventosWidget />
+      </section>
     </main>
   );
 }
