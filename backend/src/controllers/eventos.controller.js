@@ -34,6 +34,49 @@ export async function listarEventos(req, res) {
   return res.status(200).json({ data, total: count, limit, offset });
 }
 
+export async function listarEventosAgente(req, res) {
+  const token = req.headers["x-licenca-token"];
+
+  const licenca = await validarTokenLicenca(token);
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  const clienteId = licenca.cliente_id;
+  const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+  console.log(
+    `[eventos.controller] listarEventosAgente — cliente: ${clienteId} | limit: ${limit} | offset: ${offset}`,
+  );
+
+  let query = supabase
+    .from("eventos")
+    .select("*", { count: "exact" })
+    .eq("cliente_id", clienteId)
+    .order("data_vinculo", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (req.query.data) {
+    const dia = req.query.data;
+    query = query
+      .gte("data_vinculo", `${dia}T00:00:00`)
+      .lte("data_vinculo", `${dia}T23:59:59`);
+  }
+
+  const { data, count, error } = await query;
+
+  if (error) {
+    if (error.message === "Requested range not satisfiable") {
+      return res.status(200).json({ data: [], total: count ?? 0, limit, offset });
+    }
+    console.error("[eventos.controller] Erro ao listar eventos (agente):", error.message);
+    return res.status(500).json({ erro: "Erro ao listar eventos" });
+  }
+
+  return res.status(200).json({ data, total: count, limit, offset });
+}
+
 export async function registrarEvento(req, res) {
   const token = req.headers["x-licenca-token"];
   const { cliente_id, descricao, sucesso } = req.body;
