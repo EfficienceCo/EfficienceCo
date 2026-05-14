@@ -29,7 +29,6 @@ if __name__ == '__main__':
             
     #iniciar_agendador(configuracoes)
     except RuntimeError as e:
-        print("[Sem conexão com o servidor ~ impossivel validar licença]")
         print(e)
     except Exception as e:
         print(f"Erro inesperado: {e}")

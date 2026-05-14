@@ -3,6 +3,7 @@ from watchdog.events import FileSystemEventHandler
 from automacoes.mover_arquivo import mover_arquivo
 from comunicacao.reportar_evento import reportar_evento
 from core.configuracao import gerenciar_configuracoes
+from automacoes.renomear_arquivo import renomear_arquivo
 from datetime import datetime
 import time
 import os
@@ -20,7 +21,7 @@ class MonitorPasta(FileSystemEventHandler):
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"\n[{timestamp}] Arquivo detectado: {nome}")
+        print(f"\n[{timestamp}] Arquivo detectado em {os.path.dirname(event.src_path)}: {nome}")
 
         try:
             regras = gerenciar_configuracoes()
@@ -37,16 +38,23 @@ def _processar_arquivo(caminho, regras):
             continue
         if _arquivo_pertence_origem(caminho, regra["pasta_origem"]):
             if _bate_condicao(caminho, regra["condicao"]):
+                acao = regra.get("acao")
                 try:
-                    nome_final = mover_arquivo(caminho, regra)
-                    print(f"[monitor] Arquivo movido: {nome} → {regra['pasta_destino']}")
+                    if acao == "mover":
+                        nome_final = mover_arquivo(caminho, regra)
+                    elif acao == "renomear":
+                        nome_final = renomear_arquivo(caminho)
+                    else:
+                        print(f"[monitor] Ação desconhecida: {acao}")
+                        return
+                    print(f"[monitor] Arquivo {acao}: {nome} → {nome_final}")
                     reportar_evento(
-                        f"Arquivo {nome_final} movido para {regra['pasta_destino']}",
+                        f"Arquivo {nome_final} processado ({acao}) em {regra['pasta_origem']}",
                         True
                     )
                 except RuntimeError as e:
-                    print(f"[monitor] Falha ao mover: {nome} — {e}")
-                    reportar_evento(f"Falha ao mover {nome}: {e}", False)
+                    print(f"[monitor] Falha ao processar: {nome} — {e}")
+                    reportar_evento(f"Falha ao processar {nome}: {e}", False)
                 return
 
 def _arquivo_pertence_origem(caminho, pasta_origem):
@@ -63,7 +71,7 @@ def _varredura_inicial(regras, pasta):
     for nome in os.listdir(pasta):
         caminho = os.path.join(pasta, nome)
         if os.path.isfile(caminho) and nome != "desktop.ini":
-            print(f"\n[monitor] Arquivo encontrado na varredura: {nome}")
+            print(f"\n[monitor] Arquivo encontrado na varredura em {pasta}: {nome}")
             _processar_arquivo(caminho, regras)
 
 def iniciar_monitoramento(regras, pastas):
