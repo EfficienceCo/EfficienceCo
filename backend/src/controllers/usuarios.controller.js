@@ -69,6 +69,61 @@ export async function criarUsuario(req, res) {
   return res.status(201).json(data);
 }
 
+export async function editarUsuario(req, res) {
+  const { perfil, cliente_id: clienteIdToken } = req.usuario;
+  const { id } = req.params;
+  const { nome, email, perfil: perfilNovo, senha } = req.body;
+
+  const { data: usuarioExistente, error: erroBusca } = await supabase
+    .from("usuarios")
+    .select("id, cliente_id")
+    .eq("id", id)
+    .single();
+
+  if (erroBusca || !usuarioExistente) {
+    return res.status(404).json({ erro: "Usuário não encontrado" });
+  }
+
+  if (
+    perfil === "admin_cliente" &&
+    usuarioExistente.cliente_id !== clienteIdToken
+  ) {
+    return res
+      .status(403)
+      .json({ erro: "Acesso negado: usuário pertence a outro cliente" });
+  }
+
+  const atualizacao = {};
+  if (nome !== undefined) atualizacao.nome = nome;
+  if (email !== undefined) atualizacao.email = email;
+  if (perfilNovo !== undefined) atualizacao.perfil = perfilNovo;
+  if (senha !== undefined) atualizacao.senha_hash = await bcrypt.hash(senha, 10);
+
+  if (Object.keys(atualizacao).length === 0) {
+    return res.status(400).json({ erro: "Nenhum campo para atualizar" });
+  }
+
+  const { data, error } = await supabase
+    .from("usuarios")
+    .update(atualizacao)
+    .eq("id", id)
+    .select(CAMPOS_PUBLICOS)
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ erro: "Email já em uso por outro usuário" });
+    }
+    console.error(
+      "[usuarios.controller] Erro ao editar usuario:",
+      error.message,
+    );
+    return res.status(500).json({ erro: "Erro ao editar usuário" });
+  }
+
+  return res.status(200).json(data);
+}
+
 export async function deletarUsuario(req, res) {
   const { perfil, cliente_id: clienteIdToken } = req.usuario;
   const { id } = req.params;
