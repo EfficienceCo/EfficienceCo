@@ -1,11 +1,22 @@
 import os
 import time
 import threading
+from datetime import datetime
 from core.configuracao import gerenciar_configuracoes, extrair_pastas, verificar_atualizacao, INTERVALO_POLLING_SEGUNDOS
 from core.licenca import validar_licenca
 from automacoes.monitorar_pasta import iniciar_monitoramento
+from automacoes.gerar_relatorio import gerar_relatorio
 
 INTERVALO_LICENCA_HORAS = 24
+
+def _aguardar_18h():
+    while True:
+        agora = datetime.now()
+        segundos_ate_18h = ((18 - agora.hour) * 3600) - (agora.minute * 60) - agora.second
+        if segundos_ate_18h <= 0:
+            segundos_ate_18h += 86400  # já passou das 18h, aguarda até amanhã
+        time.sleep(segundos_ate_18h)
+        gerar_relatorio()
 
 def _revalidar_licenca():
     while True:
@@ -28,5 +39,6 @@ def iniciar_agendador():
 
     threading.Thread(target=_revalidar_licenca, daemon=True).start()
     threading.Thread(target=_polling_regras, daemon=True).start()
+    threading.Thread(target=_aguardar_18h, daemon=True).start()
 
     iniciar_monitoramento(regras, pastas)
