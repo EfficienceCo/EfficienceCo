@@ -13,6 +13,7 @@ import regrasRoutes from "./routes/regras.routes.js";
 import eventosRoutes from "./routes/eventos.routes.js";
 import obrigacoesRoutes from "./routes/obrigacoes.routes.js";
 import processosRoutes from "./routes/processos.routes.js";
+import notificacoesRoutes from "./routes/notificacoes.routes.js";
 
 console.log("[app.js] Criando instancia do app...");
 const app = express();
@@ -58,6 +59,9 @@ console.log("[app.js] Rota /obrigacoes registrada");
 
 app.use("/processos", processosRoutes);
 console.log("[app.js] Rota /processos registrada");
+
+app.use("/notificacoes", notificacoesRoutes);
+console.log("[app.js] Rota /notificacoes registrada");
 
 console.log("[app.js] Exportando app...");
 export default app;
