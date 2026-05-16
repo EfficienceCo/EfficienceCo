@@ -12,6 +12,7 @@ import licencaRoutes from "./routes/licenca.routes.js";
 import regrasRoutes from "./routes/regras.routes.js";
 import eventosRoutes from "./routes/eventos.routes.js";
 import obrigacoesRoutes from "./routes/obrigacoes.routes.js";
+import processosRoutes from "./routes/processos.routes.js";
 
 console.log("[app.js] Criando instancia do app...");
 const app = express();
@@ -54,6 +55,9 @@ console.log("[app.js] Rota /eventos registrada");
 
 app.use("/obrigacoes", obrigacoesRoutes);
 console.log("[app.js] Rota /obrigacoes registrada");
+
+app.use("/processos", processosRoutes);
+console.log("[app.js] Rota /processos registrada");
 
 console.log("[app.js] Exportando app...");
 export default app;
