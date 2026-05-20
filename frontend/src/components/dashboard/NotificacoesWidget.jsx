@@ -1,76 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { listarNotificacoes } from '../../services/notificacoes.service';
+import { useMemo } from 'react';
+import { obterDataNotificacao, useNotificacoes } from '../../context/NotificacoesContext';
 import WidgetCard from './WidgetCard';
 
 const LIMITE_VISUAL = 4;
-
-function obterMensagemErro(error) {
-  return (
-    error?.response?.data?.erro ||
-    error?.response?.data?.message ||
-    error?.message ||
-    'Nao foi possivel carregar as notificacoes.'
-  );
-}
-
-function normalizarNotificacoes(payload) {
-  if (Array.isArray(payload)) {
-    return payload;
-  }
-
-  if (Array.isArray(payload?.data)) {
-    return payload.data;
-  }
-
-  if (Array.isArray(payload?.items)) {
-    return payload.items;
-  }
-
-  if (Array.isArray(payload?.notificacoes)) {
-    return payload.notificacoes;
-  }
-
-  return [];
-}
-
-function notificacaoNaoLida(notificacao) {
-  if (!notificacao) {
-    return false;
-  }
-
-  if (notificacao.nao_lida === true) {
-    return true;
-  }
-
-  if (notificacao.lida === false || notificacao.lido === false || notificacao.read === false) {
-    return true;
-  }
-
-  const status = String(notificacao.status || '').toLowerCase();
-  if (status === 'nao_lida' || status === 'nao lida' || status === 'unread') {
-    return true;
-  }
-
-  return false;
-}
-
-function contarNaoLidas(payload, notificacoes) {
-  if (typeof payload?.nao_lidas === 'number') {
-    return payload.nao_lidas;
-  }
-
-  if (typeof payload?.total_nao_lidas === 'number') {
-    return payload.total_nao_lidas;
-  }
-
-  if (typeof payload?.unread === 'number') {
-    return payload.unread;
-  }
-
-  return notificacoes.filter(notificacaoNaoLida).length;
-}
 
 function obterTitulo(notificacao, index) {
   return (
@@ -79,15 +13,6 @@ function obterTitulo(notificacao, index) {
     notificacao?.mensagem ||
     notificacao?.descricao ||
     `Notificacao ${index + 1}`
-  );
-}
-
-function obterData(notificacao) {
-  return (
-    notificacao?.criado_em ||
-    notificacao?.created_at ||
-    notificacao?.data ||
-    notificacao?.timestamp
   );
 }
 
@@ -108,33 +33,12 @@ function formatarDataHora(data) {
 }
 
 export default function NotificacoesWidget() {
-  const [payload, setPayload] = useState(null);
-  const [notificacoes, setNotificacoes] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [erro, setErro] = useState('');
+  const { notificacoes, naoLidas, isLoadingNotificacoes, erro, carregarNotificacoes } =
+    useNotificacoes();
 
-  const carregarNotificacoes = useCallback(async () => {
-    setIsLoading(true);
-    setErro('');
-
-    try {
-      const data = await listarNotificacoes();
-      setPayload(data);
-      setNotificacoes(normalizarNotificacoes(data));
-    } catch (error) {
-      setErro(obterMensagemErro(error));
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    carregarNotificacoes();
-  }, [carregarNotificacoes]);
-
-  const naoLidas = useMemo(
-    () => contarNaoLidas(payload, notificacoes),
-    [payload, notificacoes],
+  const listaResumida = useMemo(
+    () => notificacoes.slice(0, LIMITE_VISUAL),
+    [notificacoes],
   );
 
   return (
@@ -144,9 +48,9 @@ export default function NotificacoesWidget() {
       href="/comunicacao"
       linkLabel="Abrir comunicacao"
     >
-      {isLoading ? <p className="text-sm text-zinc-500">Carregando notificacoes...</p> : null}
+      {isLoadingNotificacoes ? <p className="text-sm text-zinc-500">Carregando notificacoes...</p> : null}
 
-      {!isLoading && erro ? (
+      {!isLoadingNotificacoes && erro ? (
         <div className="space-y-3 rounded-lg border border-rose-200 bg-rose-50 p-3">
           <p className="text-sm text-rose-800">{erro}</p>
           <button
@@ -159,7 +63,7 @@ export default function NotificacoesWidget() {
         </div>
       ) : null}
 
-      {!isLoading && !erro ? (
+      {!isLoadingNotificacoes && !erro ? (
         <div className="space-y-4">
           <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
             <p className="text-xs font-medium uppercase tracking-wide text-sky-700">
@@ -170,11 +74,11 @@ export default function NotificacoesWidget() {
             </p>
           </div>
 
-          {notificacoes.length > 0 ? (
+          {listaResumida.length > 0 ? (
             <ul className="space-y-2">
-              {notificacoes.slice(0, LIMITE_VISUAL).map((notificacao, index) => {
+              {listaResumida.map((notificacao, index) => {
                 const titulo = obterTitulo(notificacao, index);
-                const data = formatarDataHora(obterData(notificacao));
+                const data = formatarDataHora(obterDataNotificacao(notificacao));
 
                 return (
                   <li
