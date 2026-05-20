@@ -8,7 +8,15 @@ from comunicacao.reportar_evento import reportar_evento
 def gerar_relatorio():
     hoje = datetime.now().strftime("%Y-%m-%d")
     pasta = os.getenv("PASTA_RELATORIO", str(Path.home() / "relatorios_efficience"))
-    os.makedirs(pasta, exist_ok=True)
+    
+    try:
+        os.makedirs(pasta, exist_ok=True)
+    except PermissionError:
+        print(f"[relatorio] Sem permissão para criar pasta: {pasta}")
+        return
+    except Exception as e:
+        print(f"[relatorio] Erro ao criar pasta {pasta}: {e}")
+        return
 
     nome_arquivo = f"relatorio_{hoje}.csv"
     caminho = os.path.join(pasta, nome_arquivo)
@@ -28,10 +36,21 @@ def gerar_relatorio():
         if e.get("data_vinculo", "").startswith(hoje)
     ]
 
-    with open(caminho, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["data_vinculo", "descricao", "sucesso"])
-        writer.writeheader()
-        writer.writerows(eventos_hoje)
+    try:
+        with open(caminho, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["data_vinculo", "descricao", "sucesso"])
+            writer.writeheader()
+            writer.writerows(eventos_hoje)
+        print(f"[relatorio] Relatório gerado: {nome_arquivo} ({len(eventos_hoje)} evento(s))")
+    except PermissionError:
+        print(f"[relatorio] Sem permissão para escrever: {caminho}")
+        return
+    except Exception as e:
+        print(f"[relatorio] Erro ao escrever arquivo: {e}")
+        return
 
-    print(f"[relatorio] Relatório gerado: {nome_arquivo} ({len(eventos_hoje)} evento(s))")
-    reportar_evento(f"Relatório diário gerado: {nome_arquivo}", True)
+    try:
+        reportar_evento(f"Relatório diário gerado: {nome_arquivo}", True)
+    except Exception as e:
+        print(f"[relatorio] Falha ao reportar evento: {e}")
+        

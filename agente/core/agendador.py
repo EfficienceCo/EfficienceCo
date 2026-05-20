@@ -2,12 +2,18 @@ import os
 import time
 import threading
 from datetime import datetime
+from comunicacao.fila_eventos import reenviar_fila, INTERVALO_RETRY_MINUTOS
 from core.configuracao import gerenciar_configuracoes, extrair_pastas, verificar_atualizacao, INTERVALO_POLLING_SEGUNDOS
 from core.licenca import validar_licenca
 from automacoes.monitorar_pasta import iniciar_monitoramento
 from automacoes.gerar_relatorio import gerar_relatorio
 
 INTERVALO_LICENCA_HORAS = 24
+
+def _retry_fila():
+    while True:
+        time.sleep(INTERVALO_RETRY_MINUTOS * 60)
+        reenviar_fila()
 
 def _aguardar_18h():
     while True:
@@ -40,5 +46,7 @@ def iniciar_agendador():
     threading.Thread(target=_revalidar_licenca, daemon=True).start()
     threading.Thread(target=_polling_regras, daemon=True).start()
     threading.Thread(target=_aguardar_18h, daemon=True).start()
+    threading.Thread(target=_retry_fila, daemon=True).start()
+
 
     iniciar_monitoramento(regras, pastas)
