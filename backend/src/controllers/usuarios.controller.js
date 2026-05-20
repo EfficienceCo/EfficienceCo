@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import supabase from "../config/database.js";
+import { PERFIS } from "../middlewares/permissao.middleware.js";
 
 const CAMPOS_PUBLICOS = "id, cliente_id, nome, email, perfil, criado_em";
 
@@ -11,7 +12,7 @@ export async function listarUsuarios(req, res) {
     .select(CAMPOS_PUBLICOS)
     .order("criado_em", { ascending: false });
 
-  if (perfil === "admin_cliente") {
+  if (perfil === PERFIS.ADMIN_CLIENTE) {
     query = query.eq("cliente_id", clienteIdToken);
   } else if (req.query.cliente_id) {
     query = query.eq("cliente_id", req.query.cliente_id);
@@ -32,7 +33,7 @@ export async function listarUsuarios(req, res) {
 
 export async function criarUsuario(req, res) {
   const { perfil, cliente_id: clienteIdToken } = req.usuario;
-  const { nome, email, senha, perfil: perfilNovo = "funcionario" } = req.body;
+  const { nome, email, senha, perfil: perfilNovo = PERFIS.FUNCIONARIO } = req.body;
 
   if (!nome || !email || !senha) {
     return res
@@ -41,7 +42,7 @@ export async function criarUsuario(req, res) {
   }
 
   const cliente_id =
-    perfil === "admin_cliente" ? clienteIdToken : req.body.cliente_id;
+    perfil === PERFIS.ADMIN_CLIENTE ? clienteIdToken : req.body.cliente_id;
 
   if (!cliente_id) {
     return res.status(400).json({ erro: "Campo obrigatório: cliente_id" });
@@ -129,7 +130,7 @@ export async function deletarUsuario(req, res) {
   const { id } = req.params;
 
   const cliente_id =
-    perfil === "admin_cliente" ? clienteIdToken : req.query.cliente_id;
+    perfil === PERFIS.ADMIN_CLIENTE ? clienteIdToken : req.query.cliente_id;
 
   if (!cliente_id) {
     return res.status(400).json({ erro: "Parâmetro obrigatório: cliente_id" });

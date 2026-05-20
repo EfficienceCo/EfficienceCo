@@ -1,10 +1,10 @@
 import express from "express";
-import { exigirPerfil } from "../middlewares/permissao.middleware.js";
+import { exigirPerfil, PERFIS } from "../middlewares/permissao.middleware.js";
 import { registrarEvento, listarEventos, listarEventosAgente } from "../controllers/eventos.controller.js";
 
 const router = express.Router();
 
-const admins = exigirPerfil("admin_efficience", "admin_cliente");
+const admins = exigirPerfil(PERFIS.ADMIN_EFFICIENCE, PERFIS.ADMIN_CLIENTE);
 
 // Rota do frontend — autenticada via JWT
 router.get("/", admins, listarEventos);

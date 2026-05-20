@@ -1,12 +1,6 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
-
-function resolverClienteId(req) {
-  if (req.usuario?.perfil === "admin_efficience") {
-    return req.body.cliente_id || req.query.cliente_id;
-  }
-  return req.usuario?.cliente_id;
-}
+import { PERFIS, resolverClienteId } from "../middlewares/permissao.middleware.js";
 
 export async function listarRegras(req, res) {
   const clienteId = resolverClienteId(req);
@@ -67,7 +61,7 @@ export async function atualizarRegra(req, res) {
   }
 
   if (
-    req.usuario.perfil !== "admin_efficience" &&
+    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
     regra.cliente_id !== req.usuario.cliente_id
   ) {
     return res.status(403).json({ erro: "Sem permissão para alterar esta regra" });
@@ -116,7 +110,7 @@ export async function deletarRegra(req, res) {
   }
 
   if (
-    req.usuario.perfil !== "admin_efficience" &&
+    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
     regra.cliente_id !== req.usuario.cliente_id
   ) {
     return res.status(403).json({ erro: "Sem permissão para remover esta regra" });

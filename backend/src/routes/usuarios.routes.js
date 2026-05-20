@@ -1,5 +1,5 @@
 import express from "express";
-import { exigirPerfil } from "../middlewares/permissao.middleware.js";
+import { exigirPerfil, PERFIS } from "../middlewares/permissao.middleware.js";
 import {
   listarUsuarios,
   criarUsuario,
@@ -9,7 +9,7 @@ import {
 
 const router = express.Router();
 
-const admins = exigirPerfil("admin_efficience", "admin_cliente");
+const admins = exigirPerfil(PERFIS.ADMIN_EFFICIENCE, PERFIS.ADMIN_CLIENTE);
 
 router.get("/", admins, listarUsuarios);
 router.post("/", admins, criarUsuario);
