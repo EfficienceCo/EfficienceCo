@@ -58,8 +58,10 @@ def reenviar_fila():
             pendentes.append(evento)
 
     with _lock:
-        _salvar_fila(pendentes)
+        novos = _ler_fila()
+        _salvar_fila(pendentes + novos)  # ← junta pendentes com eventos que chegaram durante o reenvio
 
     reenviados = len(fila) - len(pendentes)
     if reenviados:
-        print(f"[fila] {reenviados} evento(s) reenviado(s), {len(pendentes)} ainda pendente(s)")
+        print(f"[fila] {reenviados} evento(s) reenviado(s), {len(pendentes + novos)} ainda pendente(s)")
+        

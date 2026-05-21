@@ -23,7 +23,8 @@ def gerar_relatorio():
 
     try:
         response = client.get(
-            f"/eventos/agente",
+            f"/eventos/agente", 
+            timeout=5,
             addToHeaders={"x-licenca-token": client.LICENSE_TOKEN}
         )
         eventos = response.json()
