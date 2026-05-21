@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 FILA_PATH = os.getenv("PASTA_FILA", str(Path.home() / ".config" / "efficience" / "fila_eventos.json"))
-INTERVALO_RETRY_MINUTOS = 1
+INTERVALO_RETRY_MINUTOS = 30
 
 _lock = threading.Lock()
 
