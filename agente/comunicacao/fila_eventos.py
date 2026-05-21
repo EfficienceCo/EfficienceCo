@@ -52,6 +52,7 @@ def reenviar_fila():
                     "descricao": evento["descricao"],
                     "sucesso": evento["sucesso"]
                 },
+                timeout=5,
                 addToHeaders={"x-licenca-token": client.LICENSE_TOKEN}
             )
         except Exception:
@@ -64,4 +65,3 @@ def reenviar_fila():
     reenviados = len(fila) - len(pendentes)
     if reenviados:
         print(f"[fila] {reenviados} evento(s) reenviado(s), {len(pendentes + novos)} ainda pendente(s)")
-        
