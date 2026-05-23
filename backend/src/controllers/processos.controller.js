@@ -1,5 +1,6 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
+import { PERFIS } from "../config/perfis.js";
 
 const ETAPAS_PADRAO = {
   folha_pagamento: [
@@ -21,7 +22,7 @@ const ETAPAS_PADRAO = {
 };
 
 function resolverClienteId(req) {
-  if (req.usuario?.perfil === "admin_efficience") {
+  if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
     return req.body.cliente_id || req.query.cliente_id;
   }
   return req.usuario?.cliente_id;
@@ -179,7 +180,7 @@ export async function concluirEtapaJwt(req, res) {
   const { id: processoId, etapaId } = req.params;
 
   const clienteId =
-    req.usuario.perfil === "admin_efficience"
+    req.usuario.perfil === PERFIS.ADMIN_EFFICIENCE
       ? req.body.cliente_id || req.query.cliente_id
       : req.usuario.cliente_id;
 

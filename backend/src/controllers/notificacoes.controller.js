@@ -1,7 +1,8 @@
 import supabase from "../config/database.js";
+import { PERFIS } from "../config/perfis.js";
 
 function resolverClienteId(req) {
-  if (req.usuario?.perfil === "admin_efficience") {
+  if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
     return req.query.cliente_id || req.body.cliente_id;
   }
   return req.usuario?.cliente_id;
@@ -49,7 +50,7 @@ export async function marcarComoLida(req, res) {
   }
 
   if (
-    req.usuario.perfil !== "admin_efficience" &&
+    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
     notificacao.cliente_id !== req.usuario.cliente_id
   ) {
     return res.status(403).json({ erro: "Sem permissão para esta notificação" });
