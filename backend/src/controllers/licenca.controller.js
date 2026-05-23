@@ -1,4 +1,5 @@
 import supabase from "../config/database.js";
+import { PERFIS } from "../middlewares/permissao.middleware.js";
 
 function calcularLicencaAtiva({ ativa, validade }) {
   return Boolean(ativa && (!validade || new Date(validade) > new Date()));
@@ -47,7 +48,7 @@ export async function buscarLicencaCliente(req, res) {
   const { clienteId } = req.params;
   const { perfil, cliente_id } = req.usuario;
 
-  if (perfil === "admin_cliente" && cliente_id !== clienteId) {
+  if (perfil === PERFIS.ADMIN_CLIENTE && cliente_id !== clienteId) {
     return res.status(403).json({ erro: "Acesso negado" });
   }
 

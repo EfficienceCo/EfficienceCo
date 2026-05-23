@@ -1,9 +1,10 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
+import { PERFIS } from "../middlewares/permissao.middleware.js";
 
 export async function listarEventos(req, res) {
   const { perfil, cliente_id: clienteIdJwt } = req.usuario;
-  const clienteId = perfil === "admin_efficience" ? req.query.cliente_id : clienteIdJwt;
+  const clienteId = perfil === PERFIS.ADMIN_EFFICIENCE ? req.query.cliente_id : clienteIdJwt;
 
   if (!clienteId) {
     return res.status(400).json({ erro: "cliente_id é obrigatório" });

@@ -1,5 +1,5 @@
 import express from "express";
-import { exigirPerfil } from "../middlewares/permissao.middleware.js";
+import { exigirPerfil, PERFIS } from "../middlewares/permissao.middleware.js";
 import {
   listarClientes,
   buscarCliente,
@@ -12,11 +12,11 @@ const router = express.Router();
 
 // Todas as rotas de clientes são exclusivas para admin_efficience —
 // operações de gestão do painel interno da Efficience
-router.get("/", exigirPerfil("admin_efficience"), listarClientes);
-router.get("/:id", exigirPerfil("admin_efficience"), buscarCliente);
-router.post("/", exigirPerfil("admin_efficience"), criarCliente);
-router.patch("/:id", exigirPerfil("admin_efficience"), atualizarCliente);
-router.delete("/:id", exigirPerfil("admin_efficience"), deletarCliente);
+router.get("/", exigirPerfil(PERFIS.ADMIN_EFFICIENCE), listarClientes);
+router.get("/:id", exigirPerfil(PERFIS.ADMIN_EFFICIENCE), buscarCliente);
+router.post("/", exigirPerfil(PERFIS.ADMIN_EFFICIENCE), criarCliente);
+router.patch("/:id", exigirPerfil(PERFIS.ADMIN_EFFICIENCE), atualizarCliente);
+router.delete("/:id", exigirPerfil(PERFIS.ADMIN_EFFICIENCE), deletarCliente);
 
 console.log("[clientes.routes] Rotas de clientes registradas");
 
