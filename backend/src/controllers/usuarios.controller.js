@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import supabase from "../config/database.js";
 import { PERFIS } from "../middlewares/permissao.middleware.js";
 
-const CAMPOS_PUBLICOS = "id, cliente_id, nome, email, perfil, criado_em";
+const CAMPOS_PUBLICOS = "id, cliente_id, nome, email, perfil, data_vinculo";
 
 export async function listarUsuarios(req, res) {
   const { perfil, cliente_id: clienteIdToken } = req.usuario;
@@ -77,12 +77,16 @@ export async function editarUsuario(req, res) {
 
   const { data: usuarioExistente, error: erroBusca } = await supabase
     .from("usuarios")
-    .select("id, cliente_id")
+    .select("id, cliente_id, email")
     .eq("id", id)
     .single();
 
   if (erroBusca || !usuarioExistente) {
     return res.status(404).json({ erro: "Usuário não encontrado" });
+  }
+
+  if (perfil === "funcionario") {
+    return res.status(403).json({ erro: "Acesso negado: perfil sem permissão" });
   }
 
   if (
@@ -94,11 +98,20 @@ export async function editarUsuario(req, res) {
       .json({ erro: "Acesso negado: usuário pertence a outro cliente" });
   }
 
+  if (perfil === "admin_cliente" && perfilNovo != null) {
+    return res.status(403).json({ erro: "Acesso negado: admin_cliente não pode alterar perfil" });
+  }
+
   const atualizacao = {};
-  if (nome !== undefined) atualizacao.nome = nome;
-  if (email !== undefined) atualizacao.email = email;
-  if (perfilNovo !== undefined) atualizacao.perfil = perfilNovo;
-  if (senha !== undefined) atualizacao.senha_hash = await bcrypt.hash(senha, 10);
+  if (nome != null) atualizacao.nome = nome;
+  if (email != null && email !== usuarioExistente.email) atualizacao.email = email;
+  if (perfilNovo != null) atualizacao.perfil = perfilNovo;
+  if (senha != null) {
+    if (typeof senha !== "string" || senha.length < 6) {
+      return res.status(400).json({ erro: "Senha deve ter no mínimo 6 caracteres" });
+    }
+    atualizacao.senha_hash = await bcrypt.hash(senha, 10);
+  }
 
   if (Object.keys(atualizacao).length === 0) {
     return res.status(400).json({ erro: "Nenhum campo para atualizar" });
