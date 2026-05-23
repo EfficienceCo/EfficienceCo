@@ -64,4 +64,3 @@ def reenviar_fila():
     reenviados = len(fila) - len(pendentes)
     if reenviados:
         print(f"[fila] {reenviados} evento(s) reenviado(s), {len(pendentes + novos)} ainda pendente(s)")
-        
