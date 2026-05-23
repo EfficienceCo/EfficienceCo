@@ -1,22 +1,20 @@
 import os
 import time
 import threading
-from datetime import datetime
+import schedule
+from comunicacao.fila_eventos import reenviar_fila, INTERVALO_RETRY_MINUTOS
 from core.configuracao import gerenciar_configuracoes, extrair_pastas, verificar_atualizacao, INTERVALO_POLLING_SEGUNDOS
 from core.licenca import validar_licenca
 from automacoes.monitorar_pasta import iniciar_monitoramento
 from automacoes.gerar_relatorio import gerar_relatorio
 
 INTERVALO_LICENCA_HORAS = 24
+HORARIO_RELATORIO = "18:00"
 
-def _aguardar_18h():
+def _retry_fila():
     while True:
-        agora = datetime.now()
-        segundos_ate_18h = ((18 - agora.hour) * 3600) - (agora.minute * 60) - agora.second
-        if segundos_ate_18h <= 0:
-            segundos_ate_18h += 86400  # já passou das 18h, aguarda até amanhã
-        time.sleep(segundos_ate_18h)
-        gerar_relatorio()
+        time.sleep(INTERVALO_RETRY_MINUTOS * 60)
+        reenviar_fila()
 
 def _revalidar_licenca():
     while True:
@@ -32,13 +30,31 @@ def _polling_regras():
         time.sleep(INTERVALO_POLLING_SEGUNDOS)
         verificar_atualizacao()
 
+def _agendar_tarefas_diarias():
+    def _gerar_relatorio_seguro():
+        try:
+            gerar_relatorio()
+        except Exception as e:
+            print(f"[agendador] Erro ao gerar relatório: {e}")
+
+    schedule.every().day.at(HORARIO_RELATORIO).do(_gerar_relatorio_seguro)
+    print(f"[agendador] Relatório agendado para {HORARIO_RELATORIO}")
+
+def _loop_schedule():
+    while True:
+        schedule.run_pending()
+        time.sleep(30)
+
 def iniciar_agendador():
     regras = gerenciar_configuracoes()
     pastas = extrair_pastas(regras)
     print(f"[configuracao] {len(regras)} regra(s) carregada(s)")
 
+    _agendar_tarefas_diarias()
+
     threading.Thread(target=_revalidar_licenca, daemon=True).start()
     threading.Thread(target=_polling_regras, daemon=True).start()
-    threading.Thread(target=_aguardar_18h, daemon=True).start()
+    threading.Thread(target=_loop_schedule, daemon=True).start()
+    threading.Thread(target=_retry_fila, daemon=True).start()
 
     iniciar_monitoramento(regras, pastas)

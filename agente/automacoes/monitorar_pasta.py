@@ -4,6 +4,7 @@ from automacoes.mover_arquivo import mover_arquivo
 from comunicacao.reportar_evento import reportar_evento
 from core.configuracao import gerenciar_configuracoes
 from automacoes.renomear_arquivo import renomear_arquivo
+from automacoes.abertura_empresa import criar_estrutura_empresa
 from datetime import datetime
 import time
 import os
@@ -44,6 +45,8 @@ def _processar_arquivo(caminho, regras):
                         nome_final = mover_arquivo(caminho, regra)
                     elif acao == "renomear":
                         nome_final = renomear_arquivo(caminho)
+                    elif acao == "abertura_empresa":
+                        nome_final = criar_estrutura_empresa(regra)
                     else:
                         print(f"[monitor] Ação desconhecida: {acao}")
                         return
