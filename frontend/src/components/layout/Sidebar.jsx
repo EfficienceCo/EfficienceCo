@@ -38,7 +38,7 @@ const NAV_ITEMS = [
     icon: UsuariosIcon,
   },
   {
-    href: '/comunicacao',
+    href: '/dashboard/comunicacao',
     label: 'Comunicacao',
     icon: NotificacoesIcon,
     badge: true,
