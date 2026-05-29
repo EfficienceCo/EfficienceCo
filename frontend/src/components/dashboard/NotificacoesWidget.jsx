@@ -45,7 +45,7 @@ export default function NotificacoesWidget() {
     <WidgetCard
       title="Notificacoes"
       description="Resumo das mensagens pendentes."
-      href="/comunicacao"
+      href="/dashboard/comunicacao"
       linkLabel="Abrir comunicacao"
     >
       {isLoadingNotificacoes ? <p className="text-sm text-zinc-500">Carregando notificacoes...</p> : null}
