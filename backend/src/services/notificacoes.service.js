@@ -1,6 +1,6 @@
 import supabase from "../config/database.js";
 
-export async function criarNotificacao(cliente_id, tipo, mensagem) {
+export async function criar(cliente_id, tipo, mensagem) {
   const { error } = await supabase
     .from("notificacoes")
     .insert({ cliente_id, tipo, mensagem });

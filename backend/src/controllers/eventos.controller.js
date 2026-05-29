@@ -1,6 +1,7 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../middlewares/permissao.middleware.js";
+import { criar as criarNotificacao } from "../services/notificacoes.service.js";
 
 export async function listarEventos(req, res) {
   const { perfil, cliente_id: clienteIdJwt } = req.usuario;
@@ -116,6 +117,10 @@ export async function registrarEvento(req, res) {
       error.message,
     );
     return res.status(500).json({ erro: "Erro ao registrar evento" });
+  }
+
+  if (sucesso) {
+    await criarNotificacao(cliente_id, "arquivo_recebido", descricao);
   }
 
   return res.status(201).json(data);
