@@ -11,8 +11,19 @@ import {
 import { limparToken, obterSessao, salvarToken } from '../services/session.service';
 
 const AuthContext = createContext(null);
+const DEV_BYPASS_AUTH = process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === 'true';
+const DEV_BYPASS_USER = {
+  sub: 'dev-bypass-user',
+  nome: process.env.NEXT_PUBLIC_DEV_BYPASS_NOME || 'Dev Local',
+  email: process.env.NEXT_PUBLIC_DEV_BYPASS_EMAIL || 'dev@localhost',
+  perfil: process.env.NEXT_PUBLIC_DEV_BYPASS_PERFIL || 'admin_efficience',
+};
 
 function obterEstadoAutenticacao() {
+  if (DEV_BYPASS_AUTH) {
+    return { token: 'dev-bypass-token', user: DEV_BYPASS_USER };
+  }
+
   const sessao = obterSessao();
 
   if (sessao.expirado && sessao.token) {
