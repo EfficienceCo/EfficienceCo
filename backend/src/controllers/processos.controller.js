@@ -87,9 +87,11 @@ export async function criarProcesso(req, res) {
     return res.status(400).json({ erro: `tipo inválido: ${tipo}` });
   }
 
+  const { nome_empresa, pasta_base } = req.body;
+
   const { data: processo, error: erroProcesso } = await supabase
     .from("processos")
-    .insert({ cliente_id: clienteId, tipo })
+    .insert({ cliente_id: clienteId, tipo, nome_empresa: nome_empresa || null, pasta_base: pasta_base || null })
     .select()
     .single();
 
@@ -165,12 +167,23 @@ async function _concluirEtapa(processoId, etapaId, clienteId) {
     .eq("processo_id", processoId);
 
   if (!erroTodasEtapas && todasEtapas.every((e) => e.concluida)) {
-    await supabase
+    const { data: processoFinalizado } = await supabase
       .from("processos")
       .update({ status: "concluido" })
-      .eq("id", processoId);
+      .eq("id", processoId)
+      .select("tipo, nome_empresa, pasta_base")
+      .single();
 
-    return { status: 200, body: { ...etapaAtualizada, processo_concluido: true } };
+    return {
+      status: 200,
+      body: {
+        ...etapaAtualizada,
+        processo_concluido: true,
+        tipo: processoFinalizado?.tipo,
+        nome_empresa: processoFinalizado?.nome_empresa,
+        pasta_base: processoFinalizado?.pasta_base,
+      },
+    };
   }
 
   return { status: 200, body: etapaAtualizada };
