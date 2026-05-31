@@ -1,0 +1,43 @@
+<!-- @dsCard group="Colors" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .grp { display:grid; grid-template-columns:1fr 1fr 1fr; gap:18px; }
+  .col3 { display:flex; flex-direction:column; gap:8px; }
+  .head { display:flex; align-items:center; gap:8px; }
+  .dot { width:12px; height:12px; border-radius:50%; }
+  .name { font-family:var(--font-sans); font-weight:600; font-size:13px; }
+  .ramp { display:flex; gap:4px; }
+  .ramp div { height:34px; flex:1; border-radius:6px; }
+  .use { font-size:11px; color:var(--fg-muted); }
+  .chip { display:inline-flex; align-items:center; gap:6px; align-self:flex-start; border-radius:var(--r-full); padding:3px 10px; font-size:11px; font-weight:600; }
+</style>
+</head><body>
+<div class="card">
+  <div class="t-label">Semantic — status</div>
+  <div class="grp">
+    <div class="col3">
+      <div class="head"><span class="dot" style="background:#10B981"></span><span class="name">Emerald</span></div>
+      <div class="ramp"><div style="background:#ECFDF5"></div><div style="background:#D1FAE5"></div><div style="background:#10B981"></div><div style="background:#059669"></div><div style="background:#047857"></div></div>
+      <span class="chip" style="background:#D1FAE5;color:#047857;">Ativa</span>
+      <span class="use">success · license valid</span>
+    </div>
+    <div class="col3">
+      <div class="head"><span class="dot" style="background:#F59E0B"></span><span class="name">Amber</span></div>
+      <div class="ramp"><div style="background:#FFFBEB"></div><div style="background:#FEF3C7"></div><div style="background:#F59E0B"></div><div style="background:#D97706"></div><div style="background:#B45309"></div></div>
+      <span class="chip" style="background:#FEF3C7;color:#B45309;">Em atraso</span>
+      <span class="use">warning · suspended</span>
+    </div>
+    <div class="col3">
+      <div class="head"><span class="dot" style="background:#F43F5E"></span><span class="name">Rose</span></div>
+      <div class="ramp"><div style="background:#FFF1F2"></div><div style="background:#FFE4E6"></div><div style="background:#F43F5E"></div><div style="background:#E11D48"></div><div style="background:#BE123C"></div></div>
+      <span class="chip" style="background:#FFE4E6;color:#BE123C;">Inativa</span>
+      <span class="use">error · destructive</span>
+    </div>
+  </div>
+</div>
+</body></html>

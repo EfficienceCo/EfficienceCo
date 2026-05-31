@@ -1,0 +1,36 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .btn{font-family:var(--font-sans);font-weight:600;font-size:13.5px;border-radius:var(--r-md);padding:9px 16px;border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:8px;line-height:1;}
+  .primary{background:var(--brand-500);color:var(--slate-950);}
+  .primary.hov{background:var(--brand-400);}
+  .dark{background:var(--slate-900);color:#fff;}
+  .secondary{background:#fff;color:var(--slate-700);border-color:var(--border-strong);}
+  .secondary.hov{background:var(--slate-100);}
+  .ghost{background:transparent;color:var(--slate-700);}
+  .ghost.hov{background:var(--slate-100);}
+  .disabled{background:var(--brand-600);color:#E2E8F0;opacity:.6;cursor:not-allowed;}
+  .tag{font-family:var(--font-mono);font-size:9px;color:var(--fg-subtle);text-align:center;margin-top:6px;}
+  .cell{display:flex;flex-direction:column;align-items:center;}
+</style>
+</head><body>
+<div class="card" style="gap:16px;">
+  <div class="t-label">Buttons</div>
+  <div class="row wrap" style="gap:14px;">
+    <div class="cell"><button class="btn primary">Entrar na plataforma</button><span class="tag">primary</span></div>
+    <div class="cell"><button class="btn primary hov">Entrar na plataforma</button><span class="tag">: hover</span></div>
+    <div class="cell"><button class="btn disabled">Entrando…</button><span class="tag">: disabled</span></div>
+  </div>
+  <div class="row wrap" style="gap:14px;">
+    <div class="cell"><button class="btn dark">Atualizar painel</button><span class="tag">dark / admin</span></div>
+    <div class="cell"><button class="btn secondary">Ver detalhes</button><span class="tag">secondary</span></div>
+    <div class="cell"><button class="btn secondary hov">Ver detalhes</button><span class="tag">: hover</span></div>
+    <div class="cell"><button class="btn ghost">Cancelar</button><span class="tag">ghost</span></div>
+  </div>
+</div>
+</body></html>

@@ -1,6 +1,6 @@
 # EfficienceCo — Arquitetura e Estrutura do Repositório
 
-> Atualizado em 2026-05-08.
+> Atualizado em 2026-05-31.
 
 ---
 
@@ -72,9 +72,11 @@ efficience-co/
 │       │   ├── auth.middleware.js       # Valida JWT
 │       │   └── permissao.middleware.js  # Controla acesso por perfil
 │       ├── services/
-│       │   └── auth.service.js
+│       │   ├── auth.service.js
+│       │   └── notificacoes.service.js # Geração interna de notificações
 │       └── config/
-│           └── database.js             # Supabase client (service_role)
+│           ├── database.js             # Supabase client (service_role)
+│           └── perfis.js               # Constantes PERFIS.* (sem strings hardcoded)
 │
 ├── frontend/                     # Victor — Next.js + Tailwind
 │   ├── package.json
@@ -138,16 +140,16 @@ efficience-co/
     ├── migrations/
     │   ├── 001_criar_clientes.sql
     │   ├── 002_criar_usuarios.sql
-    │   ├── 003_criar_licencas.sql      # mantido por ora, será removido
+    │   ├── 003_criar_licencas.sql
     │   ├── 004_criar_regras.sql
     │   ├── 005_criar_eventos.sql
     │   ├── 006_adicionar_atualizado_em_regras.sql
-    │   ├── 007_criar_obrigacoes.sql    # a criar
-    │   ├── 008_criar_processos.sql     # a criar
-    │   └── 009_criar_notificacoes.sql  # a criar
+    │   ├── 007_criar_obrigacoes.sql    # ✅ 2026-05-16
+    │   ├── 008_criar_processos.sql     # ✅ 2026-05-16 (tabelas processos + etapas)
+    │   └── 009_criar_notificacoes.sql  # ✅ 2026-05-16
     └── seeds/
-        ├── usuarios.sql               # 3 usuários BCrypt
-        ├── clientes.sql               # clientes contábeis de exemplo
+        ├── usuarios.sql               # ⚠️ vazio — seed documentado pendente
+        ├── clientes.sql               # escritórios de exemplo
         ├── licencas.sql               # licença ativa para dev
         └── 001_regras_exemplo.sql     # 5 regras realistas
 ```

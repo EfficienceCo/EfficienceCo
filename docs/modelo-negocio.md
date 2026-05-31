@@ -1,6 +1,6 @@
 # EfficienceCo — Modelo de Negócio
 
-> Atualizado em 2026-05-08.
+> Atualizado em 2026-05-31.
 
 ---
 

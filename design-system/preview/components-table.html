@@ -1,0 +1,34 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .tbl{width:100%;border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;background:#fff;box-shadow:var(--shadow-sm);}
+  table{border-collapse:collapse;width:100%;font-family:var(--font-sans);}
+  thead th{background:var(--slate-50);text-align:left;font-weight:600;font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--slate-500);padding:10px 16px;border-bottom:1px solid var(--border);}
+  td{padding:11px 16px;font-size:13.5px;color:var(--slate-700);border-bottom:1px solid var(--slate-100);}
+  tr:last-child td{border-bottom:none;}
+  .nm{font-weight:600;color:var(--slate-900);}
+  .dt{font-family:var(--font-mono);font-size:12px;color:var(--slate-500);}
+  .b{font-family:var(--font-sans);font-weight:600;font-size:11px;border-radius:var(--r-full);padding:3px 10px;}
+  .ok{background:#D1FAE5;color:#047857;} .warn{background:#FEF3C7;color:#B45309;} .err{background:#FFE4E6;color:#BE123C;}
+</style>
+</head><body>
+<div class="card">
+  <div class="t-label">Data table</div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Escritório</th><th>Status</th><th>Cadastro</th></tr></thead>
+      <tbody>
+        <tr><td class="nm">Contabilidade Andrade ME</td><td><span class="b ok">Ativo</span></td><td class="dt">12/05/2026</td></tr>
+        <tr><td class="nm">Nova Gestão Assessoria</td><td><span class="b warn">Suspenso</span></td><td class="dt">08/05/2026</td></tr>
+        <tr><td class="nm">Prisma Contábil Ltda</td><td><span class="b ok">Ativo</span></td><td class="dt">02/05/2026</td></tr>
+        <tr><td class="nm">Escritório Vértice</td><td><span class="b err">Inativo</span></td><td class="dt">27/04/2026</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</body></html>

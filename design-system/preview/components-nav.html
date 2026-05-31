@@ -1,0 +1,48 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .nav{display:flex;flex-direction:column;gap:4px;width:230px;}
+  .ni{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:var(--r-md);font-family:var(--font-sans);font-weight:500;font-size:14px;color:var(--slate-700);border:1px solid transparent;}
+  .ni svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.8;fill:none;}
+  .ni.active{background:var(--brand-50);color:var(--brand-800);border-color:var(--brand-200);font-weight:600;}
+  .ni.hover{background:var(--slate-100);color:var(--slate-900);}
+  .badge{margin-left:auto;background:var(--danger-600);color:#fff;border-radius:var(--r-full);min-width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;padding:0 5px;}
+  .tag{font-family:var(--font-mono);font-size:10px;color:var(--fg-subtle);}
+</style>
+</head><body>
+<div class="card">
+  <div class="t-label">Sidebar nav — states</div>
+  <div class="row" style="gap:24px;align-items:flex-start;">
+    <div class="nav">
+      <div class="ni active">
+        <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.2"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.2"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.2"/></svg>
+        <span>Dashboard</span>
+      </div>
+      <div class="ni hover">
+        <svg viewBox="0 0 24 24"><path d="M7 3.5v3"/><path d="M17 3.5v3"/><rect x="4" y="6.5" width="16" height="14" rx="2"/><path d="M4 10h16"/></svg>
+        <span>Obrigações</span>
+      </div>
+      <div class="ni">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="3"/><path d="M4.5 19c0-2.5 2-4.5 4.5-4.5S13.5 16.5 13.5 19"/><circle cx="17.5" cy="9.5" r="2.2"/><path d="M15.5 18.8c.3-2 1.9-3.6 3.9-3.9"/></svg>
+        <span>Usuários</span>
+      </div>
+      <div class="ni">
+        <svg viewBox="0 0 24 24"><path d="M12 4.5a4.5 4.5 0 0 0-4.5 4.5v2.7L6 14v1h12v-1l-1.5-2.3V9A4.5 4.5 0 0 0 12 4.5Z"/><path d="M9.5 17.5a2.5 2.5 0 0 0 5 0"/></svg>
+        <span>Comunicação</span>
+        <span class="badge">3</span>
+      </div>
+    </div>
+    <div class="col" style="gap:14px;padding-top:6px;">
+      <div class="row" style="gap:8px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--brand-50);border:1px solid var(--brand-200);"></span><span class="tag">active — brand-50 pill + ring</span></div>
+      <div class="row" style="gap:8px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--slate-100);"></span><span class="tag">hover — slate-100 wash</span></div>
+      <div class="row" style="gap:8px;"><span style="width:14px;height:14px;border-radius:4px;background:#fff;border:1px solid var(--border);"></span><span class="tag">rest — transparent</span></div>
+      <div class="row" style="gap:8px;"><span class="badge" style="margin:0;">N</span><span class="tag">unread count badge</span></div>
+    </div>
+  </div>
+</div>
+</body></html>

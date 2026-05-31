@@ -1,0 +1,33 @@
+/* Shared framing for Design System specimen cards.
+   Cards are ~700px wide, minimal chrome — the asset name renders outside. */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: var(--font-sans);
+  color: var(--fg);
+  background: var(--surface);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.card {
+  width: 700px;
+  padding: 22px 24px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.row { display: flex; gap: 12px; align-items: center; }
+.row.wrap { flex-wrap: wrap; }
+.col { display: flex; flex-direction: column; }
+.spread { justify-content: space-between; }
+.muted { color: var(--fg-muted); }
+.subtle { color: var(--fg-subtle); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.kicker {
+  font-family: var(--font-sans);
+  font-weight: 600; font-size: 11px;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+hr.div { border: none; border-top: 1px solid var(--border); margin: 2px 0; width: 100%; }

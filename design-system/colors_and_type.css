@@ -1,0 +1,240 @@
+/* ============================================================================
+   EFFICIENCE CO — Design Foundations
+   Colors, Type, Radii, Shadows, Spacing
+   ----------------------------------------------------------------------------
+   Source of truth: derived from EfficienceCo/EfficienceCo frontend (React +
+   Next.js + Tailwind). The product anchors on a sky-blue brand with slate
+   neutrals and emerald / amber / rose semantics. The Space Grotesk + Manrope +
+   JetBrains Mono type system is a NEW proposal layered on top (the codebase
+   ships system-sans only) — see README "Type substitution" note.
+
+   Load the fonts (Google Fonts) before this file:
+   <link rel="preconnect" href="https://fonts.googleapis.com">
+   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+   ============================================================================ */
+
+:root {
+  /* ---- BRAND SCALE (sky) ------------------------------------------------ */
+  --brand-50:  #F0F9FF;
+  --brand-100: #E0F2FE;
+  --brand-200: #BAE6FD;
+  --brand-300: #7DD3FC;
+  --brand-400: #38BDF8;
+  --brand-500: #0EA5E9;   /* primary */
+  --brand-600: #0284C7;
+  --brand-700: #0369A1;
+  --brand-800: #075985;
+  --brand-900: #0C4A6E;
+  --brand-950: #082F49;
+
+  /* ---- NEUTRAL SCALE (slate) ------------------------------------------- */
+  --slate-50:  #F8FAFC;
+  --slate-100: #F1F5F9;
+  --slate-200: #E2E8F0;
+  --slate-300: #CBD5E1;
+  --slate-400: #94A3B8;
+  --slate-500: #64748B;
+  --slate-600: #475569;
+  --slate-700: #334155;
+  --slate-800: #1E293B;
+  --slate-900: #0F172A;
+  --slate-950: #020617;
+
+  /* ---- SEMANTIC SCALES -------------------------------------------------- */
+  --success-50:  #ECFDF5;
+  --success-100: #D1FAE5;
+  --success-500: #10B981;
+  --success-600: #059669;
+  --success-700: #047857;
+
+  --warning-50:  #FFFBEB;
+  --warning-100: #FEF3C7;
+  --warning-500: #F59E0B;
+  --warning-600: #D97706;
+  --warning-700: #B45309;
+
+  --danger-50:  #FFF1F2;
+  --danger-100: #FFE4E6;
+  --danger-500: #F43F5E;
+  --danger-600: #E11D48;
+  --danger-700: #BE123C;
+
+  /* ---- SEMANTIC TOKENS — LIGHT (product default) ----------------------- */
+  --bg:             var(--slate-50);
+  --surface:        #FFFFFF;
+  --surface-subtle: var(--slate-50);
+  --surface-sunken: var(--slate-100);
+  --border:         var(--slate-200);
+  --border-strong:  var(--slate-300);
+  --fg:             var(--slate-900);
+  --fg-muted:       var(--slate-500);
+  --fg-subtle:      var(--slate-400);
+  --fg-on-brand:    var(--slate-950);
+
+  --brand:          var(--brand-500);
+  --brand-strong:   var(--brand-600);  /* links / text on light */
+  --brand-soft:     var(--brand-50);
+  --brand-soft-fg:  var(--brand-700);
+  --ring:           color-mix(in srgb, var(--brand-500) 22%, transparent);
+
+  /* ---- TYPE FAMILIES --------------------------------------------------- */
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-sans:    'Manrope', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ---- RADII ----------------------------------------------------------- */
+  --r-sm:   6px;
+  --r-md:   8px;
+  --r-lg:   12px;
+  --r-xl:   16px;
+  --r-2xl:  20px;
+  --r-full: 9999px;
+
+  /* ---- SHADOWS (cool slate tint) --------------------------------------- */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, .05);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 1px rgba(15, 23, 42, .04);
+  --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, .10), 0 2px 6px -2px rgba(15, 23, 42, .06);
+  --shadow-lg: 0 12px 32px -8px rgba(15, 23, 42, .18);
+  --shadow-xl: 0 24px 64px -16px rgba(15, 23, 42, .30);
+  --shadow-brand: 0 8px 24px -6px color-mix(in srgb, var(--brand-500) 45%, transparent);
+
+  /* ---- SPACING (4pt) --------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ---- MOTION ---------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 320ms;
+}
+
+/* ---- DARK SURFACE TOKENS (marketing hero / login / agent terminal) ----- */
+.theme-dark,
+[data-theme="dark"] {
+  --bg:             var(--slate-950);
+  --surface:        var(--slate-900);
+  --surface-subtle: rgba(255, 255, 255, .03);
+  --surface-sunken: var(--slate-950);
+  --border:         rgba(255, 255, 255, .10);
+  --border-strong:  rgba(255, 255, 255, .18);
+  --fg:             #FFFFFF;
+  --fg-muted:       var(--slate-400);
+  --fg-subtle:      var(--slate-500);
+  --brand-strong:   var(--brand-300);
+  --brand-soft:     rgba(56, 189, 248, .12);
+  --brand-soft-fg:  var(--brand-200);
+}
+
+/* ============================================================================
+   SEMANTIC TYPE CLASSES
+   ============================================================================ */
+.t-display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(40px, 5vw, 60px);
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+}
+.t-h1 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 36px;
+  line-height: 1.1;
+  letter-spacing: -0.018em;
+  color: var(--fg);
+}
+.t-h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 28px;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--fg);
+}
+.t-h3 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.t-title {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.t-body-lg {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+}
+.t-body {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--fg);
+}
+.t-body-sm {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+}
+.t-label {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.t-eyebrow {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brand-strong);
+}
+.t-caption {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-subtle);
+}
+.t-mono {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.t-num {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+}

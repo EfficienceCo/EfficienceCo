@@ -1,0 +1,42 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .widget{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:18px;flex:1;}
+  .wh{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;}
+  .wt{font-family:var(--font-sans);font-weight:700;font-size:17px;color:var(--slate-900);}
+  .wd{font-family:var(--font-sans);font-size:12.5px;color:var(--slate-500);margin-top:2px;}
+  .link{font-family:var(--font-sans);font-weight:500;font-size:12px;color:var(--slate-700);border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:5px 10px;white-space:nowrap;}
+  .li{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--slate-50);border:1px solid var(--border);border-radius:var(--r-md);padding:9px 11px;margin-bottom:7px;}
+  .li:last-child{margin-bottom:0;}
+  .ln{font-family:var(--font-sans);font-weight:600;font-size:13.5px;color:var(--slate-800);}
+  .lm{font-family:var(--font-sans);font-size:11.5px;color:var(--slate-500);margin-top:1px;}
+  .pill{font-family:var(--font-sans);font-weight:600;font-size:11px;border-radius:var(--r-full);padding:3px 9px;background:var(--slate-200);color:var(--slate-700);}
+</style>
+</head><body>
+<div class="card" style="background:var(--slate-50);">
+  <div class="t-label">Widget card</div>
+  <div class="widget">
+    <div class="wh">
+      <div><div class="wt">Próximas obrigações</div><div class="wd">Vencimentos dos próximos 7 dias.</div></div>
+      <span class="link">Ver detalhes</span>
+    </div>
+    <div class="li">
+      <div><div class="ln">DAS — Simples Nacional</div><div class="lm">Vence em: 20/05/2026</div></div>
+      <span class="pill" style="background:#FEF3C7;color:#B45309;">3 dias</span>
+    </div>
+    <div class="li">
+      <div><div class="ln">DCTFWeb · competência 04</div><div class="lm">Vence em: 23/05/2026</div></div>
+      <span class="pill">aberta</span>
+    </div>
+    <div class="li">
+      <div><div class="ln">FGTS Digital</div><div class="lm">Vence em: 28/05/2026</div></div>
+      <span class="pill">aberta</span>
+    </div>
+  </div>
+</div>
+</body></html>

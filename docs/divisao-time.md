@@ -1,6 +1,6 @@
 # EfficienceCo — Divisão do Time
 
-> Atualizado em 2026-05-08.
+> Atualizado em 2026-05-31.
 
 ---
 
@@ -63,4 +63,4 @@ Responsável pelas telas que o contador vai usar no dia a dia. Consome a API do 
 
 ---
 
-> **Atenção:** João e Vinícius precisam alinhar a modelagem das novas tabelas (obrigacoes, processos, etapas_processo, notificacoes) antes de qualquer um avançar nessas áreas.
+> **Status atual (mai/2026):** migrations 007/008/009 aplicadas. APIs de obrigacoes, processos e notificacoes implementadas. Foco agora: seed de dev documentado (Vinícius), bugs de recorrência (João/Victor), abertura_empresa.py (Gabriel).

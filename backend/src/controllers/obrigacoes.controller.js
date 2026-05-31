@@ -1,5 +1,5 @@
 import supabase from "../config/database.js";
-import { criarNotificacao } from "../services/notificacoes.service.js";
+import { criar as criarNotificacao } from "../services/notificacoes.service.js";
 
 function resolverClienteId(req) {
   if (req.usuario?.perfil === "admin_efficience") {

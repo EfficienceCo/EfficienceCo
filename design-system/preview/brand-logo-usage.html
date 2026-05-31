@@ -1,0 +1,43 @@
+<!-- @dsCard group="Brand" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .tile { display:flex; flex-direction:column; align-items:center; gap:10px; flex:1; }
+  .swatch { width:100%; height:96px; border-radius:var(--r-lg); display:flex; align-items:center; justify-content:center; border:1px solid var(--border); }
+  .cap { font-size:11px; color:var(--fg-muted); font-family:var(--font-sans); }
+  .wm { font-family: var(--font-display); font-weight:600; letter-spacing:-0.02em; font-size:15px; }
+</style>
+</head><body>
+<div class="card">
+  <div class="row" style="gap:14px;">
+    <div class="tile">
+      <div class="swatch" style="background:#fff;">
+        <div class="row" style="gap:8px;"><img src="../assets/logo-mark.svg" width="34" height="34" alt=""><span class="wm" style="color:var(--slate-900);">Efficience</span></div>
+      </div>
+      <span class="cap">On white</span>
+    </div>
+    <div class="tile">
+      <div class="swatch" style="background:var(--slate-100);">
+        <img src="../assets/logo-mark-solid.svg" width="40" height="40" alt="">
+      </div>
+      <span class="cap">Solid mark</span>
+    </div>
+    <div class="tile">
+      <div class="swatch" style="background:linear-gradient(135deg,#0F172A,#1E293B);">
+        <div class="row" style="gap:8px;"><img src="../assets/logo-mark.svg" width="34" height="34" alt=""><span class="wm" style="color:#fff;">Efficience</span></div>
+      </div>
+      <span class="cap">On dark</span>
+    </div>
+    <div class="tile">
+      <div class="swatch" style="background:var(--brand-500);color:#fff;">
+        <img src="../assets/logo-glyph.svg" width="40" height="40" alt="" style="filter:none;">
+      </div>
+      <span class="cap">Glyph / reversed</span>
+    </div>
+  </div>
+</div>
+</body></html>

@@ -1,0 +1,36 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .badge{font-family:var(--font-sans);font-weight:600;font-size:12px;border-radius:var(--r-full);padding:4px 12px;display:inline-flex;align-items:center;gap:6px;}
+  .dot{width:6px;height:6px;border-radius:50%;}
+  .ok{background:#D1FAE5;color:#047857;} .ok .dot{background:#10B981;}
+  .warn{background:#FEF3C7;color:#B45309;} .warn .dot{background:#F59E0B;}
+  .err{background:#FFE4E6;color:#BE123C;} .err .dot{background:#F43F5E;}
+  .neutral{background:var(--slate-200);color:var(--slate-700);} .neutral .dot{background:var(--slate-500);}
+  .brand{background:var(--brand-50);color:var(--brand-700);}
+  .count{background:var(--danger-600);color:#fff;border-radius:var(--r-full);min-width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-sans);font-weight:700;font-size:11px;padding:0 6px;}
+  .tag{font-family:var(--font-mono);font-size:9px;color:var(--fg-subtle);}
+</style>
+</head><body>
+<div class="card" style="gap:16px;">
+  <div class="t-label">Status badges &amp; chips</div>
+  <div class="row wrap" style="gap:10px;">
+    <span class="badge ok"><span class="dot"></span>Ativa</span>
+    <span class="badge warn"><span class="dot"></span>Suspensa</span>
+    <span class="badge err"><span class="dot"></span>Inativa</span>
+    <span class="badge neutral"><span class="dot"></span>Desconhecido</span>
+    <span class="badge brand">Em andamento</span>
+  </div>
+  <hr class="div">
+  <div class="row wrap" style="gap:18px;align-items:center;">
+    <div class="row" style="gap:8px;"><span class="count">3</span><span class="tag">notification count</span></div>
+    <div class="row" style="gap:8px;"><span class="badge neutral" style="padding:2px 9px;">Em atraso</span><span class="tag">list-row pill</span></div>
+    <div class="row" style="gap:8px;"><span class="badge ok" style="padding:2px 9px;font-size:11px;">PJ ativo</span><span class="tag">table cell</span></div>
+  </div>
+</div>
+</body></html>

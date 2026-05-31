@@ -1,0 +1,34 @@
+<!-- @dsCard group="Colors" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 18px; }
+  .tok { display:flex; align-items:center; gap:10px; }
+  .box { width:30px; height:30px; border-radius:7px; border:1px solid rgba(15,23,42,.10); flex:none; }
+  .tn { font-family:var(--font-mono); font-size:12px; color:var(--fg); }
+  .td { font-size:11px; color:var(--fg-muted); margin-left:auto; }
+</style>
+</head><body>
+<div class="card">
+  <div class="row spread">
+    <div class="t-label">Semantic tokens — light</div>
+    <span class="kicker">product default</span>
+  </div>
+  <div class="grid">
+    <div class="tok"><span class="box" style="background:var(--bg)"></span><span class="tn">--bg</span><span class="td">slate-50</span></div>
+    <div class="tok"><span class="box" style="background:var(--surface)"></span><span class="tn">--surface</span><span class="td">white</span></div>
+    <div class="tok"><span class="box" style="background:var(--surface-subtle)"></span><span class="tn">--surface-subtle</span><span class="td">slate-50</span></div>
+    <div class="tok"><span class="box" style="background:var(--surface-sunken)"></span><span class="tn">--surface-sunken</span><span class="td">slate-100</span></div>
+    <div class="tok"><span class="box" style="background:var(--border)"></span><span class="tn">--border</span><span class="td">slate-200</span></div>
+    <div class="tok"><span class="box" style="background:var(--border-strong)"></span><span class="tn">--border-strong</span><span class="td">slate-300</span></div>
+    <div class="tok"><span class="box" style="background:var(--fg)"></span><span class="tn">--fg</span><span class="td">slate-900</span></div>
+    <div class="tok"><span class="box" style="background:var(--fg-muted)"></span><span class="tn">--fg-muted</span><span class="td">slate-500</span></div>
+    <div class="tok"><span class="box" style="background:var(--brand)"></span><span class="tn">--brand</span><span class="td">sky-500</span></div>
+    <div class="tok"><span class="box" style="background:var(--brand-soft)"></span><span class="tn">--brand-soft</span><span class="td">sky-50</span></div>
+  </div>
+</div>
+</body></html>

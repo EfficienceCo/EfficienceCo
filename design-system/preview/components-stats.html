@@ -1,0 +1,25 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+  .tile{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:14px 16px;}
+  .tl{font-family:var(--font-sans);font-weight:600;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;color:var(--slate-500);}
+  .tv{font-family:var(--font-display);font-weight:600;font-size:34px;letter-spacing:-0.02em;color:var(--slate-900);font-variant-numeric:tabular-nums;margin-top:6px;line-height:1;}
+  .accent{border-color:var(--warning-200);background:var(--warning-50);}
+</style>
+</head><body>
+<div class="card" style="background:var(--slate-50);">
+  <div class="t-label">Stat tiles</div>
+  <div class="tiles">
+    <div class="tile"><div class="tl">Escritórios</div><div class="tv">128</div></div>
+    <div class="tile"><div class="tl">Ativos</div><div class="tv" style="color:var(--success-700);">119</div></div>
+    <div class="tile"><div class="tl">Suspensos</div><div class="tv" style="color:var(--warning-700);">06</div></div>
+    <div class="tile" style="background:var(--warning-50);border-color:#FDE68A;"><div class="tl" style="color:var(--warning-700);">Em atraso</div><div class="tv" style="color:var(--warning-800,#92400E);">07</div></div>
+  </div>
+</div>
+</body></html>

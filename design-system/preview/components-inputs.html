@@ -1,0 +1,44 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .field{display:flex;flex-direction:column;gap:6px;flex:1;}
+  label{font-family:var(--font-sans);font-weight:600;font-size:13px;color:var(--slate-700);}
+  .inp{font-family:var(--font-sans);font-size:14px;color:var(--slate-900);background:#fff;border:1px solid var(--border-strong);border-radius:var(--r-md);padding:10px 12px;}
+  .inp.focus{border-color:var(--brand-400);box-shadow:0 0 0 3px var(--ring);outline:none;}
+  .inp.ph{color:var(--fg-subtle);}
+  .tag{font-family:var(--font-mono);font-size:9px;color:var(--fg-subtle);}
+</style>
+</head><body>
+<div class="card" style="gap:14px;">
+  <div class="t-label">Form fields</div>
+  <div class="row" style="gap:16px;align-items:flex-start;">
+    <div class="field">
+      <label>E-mail</label>
+      <div class="inp ph">voce@empresa.com</div>
+      <span class="tag">default · placeholder</span>
+    </div>
+    <div class="field">
+      <label>Senha</label>
+      <div class="inp focus">•••••••••</div>
+      <span class="tag">: focus · brand ring</span>
+    </div>
+  </div>
+  <div class="row" style="gap:16px;align-items:flex-start;">
+    <div class="field">
+      <label>Nome do escritório</label>
+      <div class="inp">Contabilidade Andrade ME</div>
+      <span class="tag">filled</span>
+    </div>
+    <div class="field">
+      <label style="color:var(--danger-700);">CNPJ</label>
+      <div class="inp" style="border-color:var(--danger-500);box-shadow:0 0 0 3px color-mix(in srgb,var(--danger-500) 18%,transparent);">12.345.678/0001-90</div>
+      <span class="tag" style="color:var(--danger-600);">error</span>
+    </div>
+  </div>
+</div>
+</body></html>

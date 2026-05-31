@@ -1,6 +1,6 @@
 # EfficienceCo — Decisões Técnicas
 
-> Atualizado em 2026-05-08.
+> Atualizado em 2026-05-31.
 
 ---
 
@@ -36,11 +36,11 @@
 
 ---
 
-## 2 perfis de acesso
+## 3 perfis de acesso
 
-**Decisão:** `admin` (Roberto/Patrícia — gerenciam o escritório) e `funcionario` (Fernanda, Carlos, etc.).
+**Decisão:** `admin_efficience` (time EfficienceCo — acesso a todos os clientes), `admin_cliente` (Roberto/Patrícia — gerenciam o próprio escritório), `funcionario` (Fernanda, Carlos, etc.).
 
-**Por quê:** escritório contábil tem hierarquia simples. Perfil `admin_efficience` foi removido — este é um software dedicado ao escritório, não uma plataforma multi-tenant.
+**Por quê:** escritório contábil tem hierarquia simples. `admin_efficience` existe para que a equipe EfficienceCo consiga suportar e gerenciar qualquer escritório sem precisar de credenciais do cliente. `admin_cliente` é o admin do escritório contratante — só vê os dados do próprio `cliente_id`. `funcionario` tem acesso restrito a operações do dia a dia.
 
 ---
 
@@ -67,6 +67,22 @@
 **Decisão:** Stripe e sistema de licença não existem neste codebase.
 
 **Por quê:** este é o software de exemplo para captação de clientes. A cobrança de licença recorrente será gerenciada externamente até que haja clientes reais pagando e a infraestrutura compartilhada esteja montada.
+
+---
+
+## Perfis centralizados em config/perfis.js
+
+**Decisão:** strings de perfil (`admin_efficience`, `admin_cliente`, `funcionario`) vivem apenas em `src/config/perfis.js` como constantes `PERFIS.*`. Controllers e routes importam daqui — zero string hardcoded em outros arquivos.
+
+**Por quê:** com 3 perfis usados em 8+ arquivos, string hardcoded espalhada = refactor doloroso e bugs silenciosos de typo. Arquivo central = one source of truth, renomear perfil = 1 linha mudada.
+
+---
+
+## Fila offline no agente
+
+**Decisão:** agente mantém fila local de eventos quando backend está indisponível. Reenvio automático quando conexão volta.
+
+**Por quê:** escritórios têm internet instável. Sem fila, eventos de automação se perdem silenciosamente durante queda de conexão. Com fila, nenhum log é perdido.
 
 ---
 

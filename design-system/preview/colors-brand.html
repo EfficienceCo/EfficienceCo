@@ -1,0 +1,39 @@
+<!-- @dsCard group="Colors" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .scale { display:grid; grid-template-columns:repeat(11,1fr); gap:6px; }
+  .sw { height:54px; border-radius:8px; border:1px solid rgba(15,23,42,.06); }
+  .lab { display:grid; grid-template-columns:repeat(11,1fr); gap:6px; }
+  .lab span { font-family:var(--font-mono); font-size:10px; color:var(--fg-muted); text-align:center; }
+  .hex { font-family:var(--font-mono); font-size:9px; color:var(--fg-subtle); text-align:center; }
+</style>
+</head><body>
+<div class="card">
+  <div class="row spread">
+    <div class="t-label">Brand — Sky</div>
+    <div class="mono" style="font-size:11px;color:var(--fg-muted);">--brand-500 · #0EA5E9 · primary</div>
+  </div>
+  <div class="scale">
+    <div class="sw" style="background:#F0F9FF"></div>
+    <div class="sw" style="background:#E0F2FE"></div>
+    <div class="sw" style="background:#BAE6FD"></div>
+    <div class="sw" style="background:#7DD3FC"></div>
+    <div class="sw" style="background:#38BDF8"></div>
+    <div class="sw" style="background:#0EA5E9;outline:2px solid var(--brand-600);outline-offset:1px"></div>
+    <div class="sw" style="background:#0284C7"></div>
+    <div class="sw" style="background:#0369A1"></div>
+    <div class="sw" style="background:#075985"></div>
+    <div class="sw" style="background:#0C4A6E"></div>
+    <div class="sw" style="background:#082F49"></div>
+  </div>
+  <div class="lab">
+    <span>50</span><span>100</span><span>200</span><span>300</span><span>400</span>
+    <span style="color:var(--brand-600);font-weight:600">500</span><span>600</span><span>700</span><span>800</span><span>900</span><span>950</span>
+  </div>
+</div>
+</body></html>

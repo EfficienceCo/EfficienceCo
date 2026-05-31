@@ -1,0 +1,25 @@
+<!-- @dsCard group="Spacing" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="_card.css">
+<style>
+  .grid{display:flex;gap:20px;padding:6px 0 4px;}
+  .item{flex:1;display:flex;flex-direction:column;align-items:center;gap:12px;}
+  .box{width:100%;height:60px;background:#fff;border-radius:12px;}
+  .nm{font-family:var(--font-mono);font-size:11px;color:var(--slate-900);}
+</style>
+</head><body>
+<div class="card" style="background:var(--slate-50);">
+  <div class="row spread"><div class="t-label">Elevation — cool slate shadows</div><span class="kicker">restrained · hairline-first</span></div>
+  <div class="grid">
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-xs);"></div><span class="nm">xs</span></div>
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-sm);border:1px solid var(--border);"></div><span class="nm">sm · card</span></div>
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-md);"></div><span class="nm">md</span></div>
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-lg);"></div><span class="nm">lg</span></div>
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-xl);"></div><span class="nm">xl · modal</span></div>
+  </div>
+</div>
+</body></html>

@@ -1,6 +1,6 @@
 # EfficienceCo — Especificação Funcional por Área
 
-> Atualizado em 2026-05-08.
+> Atualizado em 2026-05-31.
 
 ---
 
@@ -68,6 +68,7 @@ Centro do sistema. Toda comunicação entre frontend, banco de dados e agente lo
 | GET | /regras/:clienteId/versao | Agente verifica versão |
 | POST | /eventos | Agente reporta execução |
 | GET | /eventos | Frontend lista eventos |
+| GET | /eventos/agente | Agente lista eventos próprios (auth por `x-licenca-token`) |
 | GET | /obrigacoes | Lista obrigações |
 | POST | /obrigacoes | Cria obrigação |
 | PATCH | /obrigacoes/:id | Atualiza status |
@@ -127,12 +128,12 @@ Programa instalado no PC do escritório, roda em segundo plano, sem interface. B
 | Tabela | Finalidade |
 |---|---|
 | `usuarios` | Funcionários do escritório com perfil e senha hash |
-| `clientes` | Empresas que o escritório atende (Padaria do João, MEIs, etc.) |
+| `clientes` | **Escritórios contábeis** que contratam a EfficienceCo (ex: Souza & Associados) — NÃO as empresas do escritório |
 | `regras` | Configurações de automação do agente (pasta_origem, pasta_destino, condição, ação) |
 | `eventos` | Log de tudo que o agente executou |
-| `obrigacoes` | Obrigações fiscais por cliente (DAS, DCTF, SPED...) com vencimento e status |
-| `processos` | Checklists de folha de pagamento, abertura de empresa por cliente |
-| `etapas_processo` | Etapas individuais de cada processo com status |
+| `obrigacoes` | Obrigações fiscais por cliente contábil (DAS, DCTF, SPED...) com vencimento e status |
+| `processos` | Checklists de folha de pagamento, abertura de empresa — referenciados por `nome_empresa` |
+| `etapas` | Etapas individuais de cada processo com status |
 | `notificacoes` | Alertas internos para os funcionários do escritório |
 
 ### Responsabilidades
