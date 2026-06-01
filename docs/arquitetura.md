@@ -37,12 +37,11 @@ efficience-co/
 ├── .env.example
 │
 ├── docs/
-│   ├── arquitetura.md            # Este arquivo
-│   ├── modelo-negocio.md         # Modelo de negócio e custos de infra
-│   ├── divisao-time.md           # Responsabilidades por membro
-│   ├── especificacao-funcional.md # O que cada área deve fazer
+│   ├── arquitetura.md            # Este arquivo — estrutura técnica + como rodar
+│   ├── modelo-negocio.md         # O que é a EfficienceCo, este repositório e o modelo de venda
+│   ├── especificacao-funcional.md # O que cada área do time deve implementar
 │   ├── decisoes-tecnicas.md      # Por que escolhemos cada tecnologia
-│   └── empresa-exemplo.md        # Souza & Associados — processos mapeados
+│   └── empresa-exemplo.md        # Souza & Associados — contexto de domínio e automações
 │
 ├── backend/                      # João — Node.js + Express (ESM)
 │   ├── package.json

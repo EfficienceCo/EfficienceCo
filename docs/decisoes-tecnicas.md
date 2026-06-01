@@ -38,9 +38,9 @@
 
 ## 3 perfis de acesso
 
-**Decisão:** `admin_efficience` (time EfficienceCo — acesso a todos os clientes), `admin_cliente` (Roberto/Patrícia — gerenciam o próprio escritório), `funcionario` (Fernanda, Carlos, etc.).
+**Decisão:** `admin_efficience` (qualquer integrante do time EfficienceCo — acesso a todos os clientes), `admin_cliente` (Roberto/Patrícia — gerenciam o próprio escritório), `funcionario` (Fernanda, Carlos, etc.).
 
-**Por quê:** escritório contábil tem hierarquia simples. `admin_efficience` existe para que a equipe EfficienceCo consiga suportar e gerenciar qualquer escritório sem precisar de credenciais do cliente. `admin_cliente` é o admin do escritório contratante — só vê os dados do próprio `cliente_id`. `funcionario` tem acesso restrito a operações do dia a dia.
+**Por quê:** escritório contábil tem hierarquia simples. `admin_efficience` existe para que qualquer membro da EfficienceCo consiga suportar e gerenciar qualquer escritório sem precisar de credenciais do cliente. `admin_cliente` é o admin do escritório contratante — só vê os dados do próprio `cliente_id`. `funcionario` tem acesso restrito a operações do dia a dia.
 
 ---
 
