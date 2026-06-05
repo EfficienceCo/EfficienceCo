@@ -39,6 +39,7 @@ def reenviar_fila():
         fila = _ler_fila()
         if not fila:
             return
+        _salvar_fila([])  # ← limpa a fila antes de começar — novos eventos chegam numa fila limpa
 
     print(f"[fila] Tentando reenviar {len(fila)} evento(s)...")
     pendentes = []
@@ -58,9 +59,10 @@ def reenviar_fila():
             pendentes.append(evento)
 
     with _lock:
-        novos = _ler_fila()
-        _salvar_fila(pendentes + novos)  # ← junta pendentes com eventos que chegaram durante o reenvio
+        novos = _ler_fila()  # ← agora só tem eventos que chegaram DURANTE o reenvio
+        _salvar_fila(pendentes + novos)
 
     reenviados = len(fila) - len(pendentes)
     if reenviados:
         print(f"[fila] {reenviados} evento(s) reenviado(s), {len(pendentes + novos)} ainda pendente(s)")
+        
