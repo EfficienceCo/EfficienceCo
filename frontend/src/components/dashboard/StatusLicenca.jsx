@@ -23,7 +23,7 @@ function formatarData(data) {
 
   const valor = new Date(data);
   if (Number.isNaN(valor.getTime())) {
-    return 'Data invalida';
+    return 'Data inválida';
   }
 
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(valor);
@@ -34,7 +34,7 @@ function formatarErro(error) {
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
     error?.message ||
-    'Nao foi possivel carregar o status da licenca.'
+    'Não foi possível carregar o status da licença.'
   );
 }
 
@@ -65,7 +65,7 @@ export default function StatusLicenca({ detalhesHref = '/admin/licencas' }) {
     return (
       <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
         <div className="flex items-start justify-between gap-3">
-          <h2 className="text-lg font-semibold text-zinc-900">Status da Licenca</h2>
+          <h2 className="text-lg font-semibold text-zinc-900">Status da Licença</h2>
           {detalhesHref ? (
             <Link
               href={detalhesHref}
@@ -75,7 +75,7 @@ export default function StatusLicenca({ detalhesHref = '/admin/licencas' }) {
             </Link>
           ) : null}
         </div>
-        <p className="mt-2 text-sm text-zinc-500">Carregando informacoes da licenca...</p>
+        <p className="mt-2 text-sm text-zinc-500">Carregando informações da licença...</p>
       </section>
     );
   }
@@ -84,7 +84,7 @@ export default function StatusLicenca({ detalhesHref = '/admin/licencas' }) {
     return (
       <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
         <div className="flex items-start justify-between gap-3">
-          <h2 className="text-lg font-semibold text-rose-900">Status da Licenca</h2>
+          <h2 className="text-lg font-semibold text-rose-900">Status da Licença</h2>
           {detalhesHref ? (
             <Link
               href={detalhesHref}
@@ -116,7 +116,7 @@ export default function StatusLicenca({ detalhesHref = '/admin/licencas' }) {
   return (
     <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
-        <h2 className="text-lg font-semibold text-zinc-900">Status da Licenca</h2>
+        <h2 className="text-lg font-semibold text-zinc-900">Status da Licença</h2>
         <div className="flex items-center gap-2">
           {detalhesHref ? (
             <Link
@@ -145,7 +145,7 @@ export default function StatusLicenca({ detalhesHref = '/admin/licencas' }) {
 
         <div>
           <dt className="text-zinc-500">Ativa no backend</dt>
-          <dd className="font-medium text-zinc-900">{statusLicenca.ativa ? 'Sim' : 'Nao'}</dd>
+          <dd className="font-medium text-zinc-900">{statusLicenca.ativa ? 'Sim' : 'Não'}</dd>
         </div>
       </dl>
     </section>

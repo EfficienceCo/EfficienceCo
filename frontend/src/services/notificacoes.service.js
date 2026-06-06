@@ -13,7 +13,7 @@ export async function listar({ limit, offset } = {}) {
 
 export async function marcarLida(id) {
   if (!id) {
-    throw new Error('Id da notificacao e obrigatorio para marcar como lida.');
+    throw new Error('ID da notificação é obrigatório para marcar como lida.');
   }
 
   const response = await api.patch(`/notificacoes/${id}/lida`);

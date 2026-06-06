@@ -32,7 +32,7 @@ export default function Dashboard() {
       <header>
         <h1 className="text-2xl font-semibold text-zinc-900">Dashboard</h1>
         <p className="mt-1 text-sm text-zinc-500">
-          Acompanhe os principais dados dos modulos em tempo real.
+          Acompanhe os principais dados dos módulos em tempo real.
         </p>
       </header>
 

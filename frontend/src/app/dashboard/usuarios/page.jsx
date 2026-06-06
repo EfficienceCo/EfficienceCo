@@ -13,7 +13,7 @@ import {
 const PERFIS_AUTORIZADOS = new Set(['admin_cliente', 'admin_efficience']);
 const PERFIS_CADASTRAVEIS = [
   { value: 'admin_cliente', label: 'Admin cliente' },
-  { value: 'funcionario', label: 'Funcionario' },
+  { value: 'funcionario', label: 'Funcionário' },
 ];
 const FORM_INICIAL = {
   nome: '',
@@ -22,7 +22,7 @@ const FORM_INICIAL = {
   perfil: PERFIS_CADASTRAVEIS[1].value,
 };
 
-function obterMensagemErro(error, fallback = 'Nao foi possivel processar sua solicitacao.') {
+function obterMensagemErro(error, fallback = 'Não foi possível processar sua solicitação.') {
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
@@ -50,6 +50,17 @@ function formatarDataHora(data) {
 function formatarPerfil(perfil) {
   if (!perfil) {
     return '-';
+  }
+
+  const PERFIS_LABELS = {
+    admin_cliente: 'Admin cliente',
+    admin_efficience: 'Admin Efficience',
+    funcionario: 'Funcionário',
+  };
+  const chave = String(perfil).trim().toLowerCase();
+
+  if (PERFIS_LABELS[chave]) {
+    return PERFIS_LABELS[chave];
   }
 
   return String(perfil)
@@ -111,7 +122,7 @@ export default function Usuarios() {
       setIsLoadingUsuarios(false);
       setUsuarios([]);
       setErroLista(
-        'Seu usuario admin_efficience nao possui cliente_id no token para gerir usuarios.',
+        'Seu usuário admin_efficience não possui cliente_id no token para gerir usuários.',
       );
       return;
     }
@@ -123,7 +134,7 @@ export default function Usuarios() {
       const data = await listarUsuarios({ clienteId: clienteIdAdminGlobal || undefined });
       setUsuarios(Array.isArray(data) ? data : []);
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Nao foi possivel carregar os usuarios.'));
+      setErroLista(obterMensagemErro(error, 'Não foi possível carregar os usuários.'));
     } finally {
       setIsLoadingUsuarios(false);
     }
@@ -188,18 +199,18 @@ export default function Usuarios() {
     }
 
     if (modoFormulario === 'criar' && !senha) {
-      setErroFormulario('Preencha a senha para criar o usuario.');
+      setErroFormulario('Preencha a senha para criar o usuário.');
       return;
     }
 
     if (!PERFIS_CADASTRAVEIS.some((item) => item.value === formData.perfil)) {
-      setErroFormulario('Selecione um perfil valido.');
+      setErroFormulario('Selecione um perfil válido.');
       return;
     }
 
     if (user?.perfil === 'admin_efficience' && !clienteIdAdminGlobal) {
       setErroFormulario(
-        'Seu usuario admin_efficience nao possui cliente_id no token para esta acao.',
+        'Seu usuário admin_efficience não possui cliente_id no token para esta ação.',
       );
       return;
     }
@@ -272,7 +283,7 @@ export default function Usuarios() {
 
     if (user?.perfil === 'admin_efficience' && !clienteIdAdminGlobal) {
       setErroDelete(
-        'Seu usuario admin_efficience nao possui cliente_id no token para esta acao.',
+        'Seu usuário admin_efficience não possui cliente_id no token para esta ação.',
       );
       return;
     }
@@ -291,7 +302,7 @@ export default function Usuarios() {
       setIsDeleteModalAberto(false);
       setUsuarioParaDeletar(null);
     } catch (error) {
-      setErroDelete(obterMensagemErro(error, 'Nao foi possivel deletar o usuario.'));
+      setErroDelete(obterMensagemErro(error, 'Não foi possível deletar o usuário.'));
     } finally {
       setIsDeletingUsuario(false);
     }
@@ -309,9 +320,9 @@ export default function Usuarios() {
     return (
       <main className="space-y-6 p-6">
         <header>
-          <h1 className="text-2xl font-semibold text-zinc-900">Usuarios</h1>
+          <h1 className="text-2xl font-semibold text-zinc-900">Usuários</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Apenas administradores podem visualizar esta area.
+            Apenas administradores podem visualizar esta área.
           </p>
         </header>
       </main>
@@ -323,9 +334,9 @@ export default function Usuarios() {
       <main className="space-y-6 p-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-900">Usuarios</h1>
+            <h1 className="text-2xl font-semibold text-zinc-900">Usuários</h1>
             <p className="mt-1 text-sm text-zinc-500">
-              Lista de usuarios vinculados ao cliente logado.
+              Lista de usuários vinculados ao cliente logado.
             </p>
           </div>
 
@@ -336,7 +347,7 @@ export default function Usuarios() {
                 onClick={abrirModalCriacao}
                 className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700"
               >
-                Novo usuario
+                Novo usuário
               </button>
             ) : null}
 
@@ -361,7 +372,7 @@ export default function Usuarios() {
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-3 text-sm text-zinc-600">
               <Spinner />
-              <span>Carregando usuarios...</span>
+              <span>Carregando usuários...</span>
             </div>
           </section>
         ) : null}
@@ -369,7 +380,7 @@ export default function Usuarios() {
         {!erroLista && !isLoadingUsuarios && usuarios.length === 0 ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-zinc-600">
-              Nenhum usuario encontrado para este cliente.
+              Nenhum usuário encontrado para este cliente.
             </p>
           </section>
         ) : null}
@@ -383,7 +394,7 @@ export default function Usuarios() {
                   <th className="px-4 py-3">E-mail</th>
                   <th className="px-4 py-3">Perfil</th>
                   <th className="px-4 py-3">Criado em</th>
-                  {exibeColunaAcoes ? <th className="px-4 py-3">Acoes</th> : null}
+                  {exibeColunaAcoes ? <th className="px-4 py-3">Ações</th> : null}
                 </tr>
               </thead>
 
@@ -442,12 +453,12 @@ export default function Usuarios() {
             <header className="flex items-start justify-between border-b border-zinc-200 p-5">
               <div>
                 <h2 className="text-lg font-semibold text-zinc-900">
-                  {modoFormulario === 'criar' ? 'Novo usuario' : 'Editar usuario'}
+                  {modoFormulario === 'criar' ? 'Novo usuário' : 'Editar usuário'}
                 </h2>
                 <p className="mt-1 text-sm text-zinc-500">
                   {modoFormulario === 'criar'
-                    ? 'Informe os dados para cadastrar o usuario.'
-                    : 'Atualize os dados do usuario. Nova senha e opcional.'}
+                    ? 'Informe os dados para cadastrar o usuário.'
+                    : 'Atualize os dados do usuário. Nova senha é opcional.'}
                 </p>
               </div>
 
@@ -563,8 +574,8 @@ export default function Usuarios() {
                   {isSavingFormulario
                     ? 'Salvando...'
                     : modoFormulario === 'criar'
-                      ? 'Criar usuario'
-                      : 'Salvar alteracoes'}
+                      ? 'Criar usuário'
+                      : 'Salvar alterações'}
                 </button>
               </footer>
             </form>
@@ -575,9 +586,9 @@ export default function Usuarios() {
       {isDeleteModalAberto && usuarioParaDeletar ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
           <section className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl">
-            <h2 className="text-lg font-semibold text-zinc-900">Confirmar exclusao</h2>
+            <h2 className="text-lg font-semibold text-zinc-900">Confirmar exclusão</h2>
             <p className="mt-2 text-sm text-zinc-600">
-              Deseja realmente deletar este usuario?
+              Deseja realmente deletar este usuário?
             </p>
             <p className="mt-2 rounded-md bg-zinc-100 px-3 py-2 text-xs text-zinc-700">
               {usuarioParaDeletar.nome || '-'} ({usuarioParaDeletar.email || '-'})
@@ -609,7 +620,7 @@ export default function Usuarios() {
                 className="inline-flex items-center gap-2 rounded-md bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isDeletingUsuario ? <Spinner /> : null}
-                {isDeletingUsuario ? 'Deletando...' : 'Deletar usuario'}
+                {isDeletingUsuario ? 'Deletando...' : 'Deletar usuário'}
               </button>
             </footer>
           </section>

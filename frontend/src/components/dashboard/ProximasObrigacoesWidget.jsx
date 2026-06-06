@@ -12,7 +12,7 @@ function obterMensagemErro(error) {
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
     error?.message ||
-    'Nao foi possivel carregar as obrigacoes.'
+    'Não foi possível carregar as obrigações.'
   );
 }
 
@@ -42,7 +42,7 @@ function obterTituloObrigacao(obrigacao, index) {
     obrigacao?.nome ||
     obrigacao?.descricao ||
     obrigacao?.tipo ||
-    `Obrigacao ${index + 1}`
+    `Obrigação ${index + 1}`
   );
 }
 
@@ -66,7 +66,7 @@ function formatarData(data) {
 
   const valor = new Date(data);
   if (Number.isNaN(valor.getTime())) {
-    return 'Data invalida';
+    return 'Data inválida';
   }
 
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(valor);
@@ -97,8 +97,8 @@ export default function ProximasObrigacoesWidget() {
 
   return (
     <WidgetCard
-      title="Proximas obrigacoes"
-      description={`Vencimentos dos proximos ${DIAS_PADRAO} dias.`}
+      title="Próximas obrigações"
+      description={`Vencimentos dos próximos ${DIAS_PADRAO} dias.`}
       href="/dashboard/obrigacoes"
     >
       {isLoading ? (
@@ -119,7 +119,7 @@ export default function ProximasObrigacoesWidget() {
       ) : null}
 
       {!isLoading && !erro && obrigacoes.length === 0 ? (
-        <p className="text-sm text-zinc-600">Nenhuma obrigacao para os proximos dias.</p>
+        <p className="text-sm text-zinc-600">Nenhuma obrigação para os próximos dias.</p>
       ) : null}
 
       {!isLoading && !erro && obrigacoes.length > 0 ? (
