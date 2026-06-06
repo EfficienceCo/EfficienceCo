@@ -10,4 +10,5 @@ build/
 CLAUDE.md
 .postman/
 postman/
-frontend/.env.localbackend/scripts/
+frontend/.env.local
+backend/scripts/
