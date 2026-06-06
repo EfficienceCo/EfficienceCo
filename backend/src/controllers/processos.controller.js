@@ -1,25 +1,7 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
-
-const ETAPAS_PADRAO = {
-  folha_pagamento: [
-    "Coletar holerites dos funcionários",
-    "Calcular impostos (FGTS, INSS, IR)",
-    "Gerar guias de pagamento",
-    "Realizar pagamentos",
-    "Arquivar documentos",
-  ],
-  abertura_empresa: [
-    "Verificar viabilidade do nome empresarial",
-    "Registrar na Junta Comercial",
-    "Obter CNPJ na Receita Federal",
-    "Registrar no município (Alvará)",
-    "Registrar no estado (Inscrição Estadual, se aplicável)",
-    "Abrir conta bancária pessoa jurídica",
-    "Configurar emissão de NFS-e",
-  ],
-};
+import { ETAPAS_PADRAO, criarProcessoComEtapas } from "../services/processos.service.js";
 
 function resolverClienteId(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
@@ -76,47 +58,24 @@ export async function criarProcesso(req, res) {
     return res.status(400).json({ erro: "cliente_id é obrigatório" });
   }
 
-  const { tipo } = req.body;
+  const { tipo, nome_empresa, pasta_base } = req.body;
 
   if (!tipo) {
     return res.status(400).json({ erro: "tipo é obrigatório" });
   }
 
-  const descricoesPadrao = ETAPAS_PADRAO[tipo];
-  if (!descricoesPadrao) {
+  if (!ETAPAS_PADRAO[tipo]) {
     return res.status(400).json({ erro: `tipo inválido: ${tipo}` });
   }
 
-  const { nome_empresa, pasta_base } = req.body;
+  const resultado = await criarProcessoComEtapas(clienteId, tipo, { nome_empresa, pasta_base });
 
-  const { data: processo, error: erroProcesso } = await supabase
-    .from("processos")
-    .insert({ cliente_id: clienteId, tipo, nome_empresa: nome_empresa || null, pasta_base: pasta_base || null })
-    .select()
-    .single();
-
-  if (erroProcesso) {
-    console.error("[processos.controller] Erro ao criar processo:", erroProcesso.message);
+  if (resultado.erro) {
+    console.error("[processos.controller] Erro ao criar processo:", resultado.erro);
     return res.status(500).json({ erro: "Erro ao criar processo" });
   }
 
-  const etapasParaInserir = descricoesPadrao.map((descricao, i) => ({
-    processo_id: processo.id,
-    descricao,
-    ordem: i + 1,
-  }));
-
-  const { data: etapas, error: erroEtapas } = await supabase
-    .from("etapas")
-    .insert(etapasParaInserir)
-    .select();
-
-  if (erroEtapas) {
-    console.error("[processos.controller] Erro ao criar etapas:", erroEtapas.message);
-    return res.status(500).json({ erro: "Erro ao criar etapas do processo" });
-  }
-
-  return res.status(201).json({ ...processo, etapas });
+  return res.status(201).json({ ...resultado.processo, etapas: resultado.etapas });
 }
 
 async function _concluirEtapa(processoId, etapaId, clienteId) {
