@@ -12,6 +12,7 @@ import {
 
 const PERFIS_AUTORIZADOS = new Set(['admin_cliente', 'admin_efficience']);
 const TIPO_OPCOES = ['mensal', 'anual', 'eventual'];
+const TIPOS_RECORRENTES = new Set(['mensal', 'anual']);
 const STATUS_OPCOES = [
   { value: '', label: 'Todos' },
   { value: 'pendente', label: 'Pendente' },
@@ -23,7 +24,7 @@ const FORM_INICIAL = {
   nome: '',
   tipo: TIPO_OPCOES[0],
   data_vencimento: '',
-  recorrente: false,
+  recorrente: true,
 };
 
 function obterMensagemErro(error, fallback = 'Não foi possível processar a solicitação.') {
@@ -171,6 +172,24 @@ function formatarTipo(tipo) {
   }
 
   return `${tipo.charAt(0).toUpperCase()}${tipo.slice(1)}`;
+}
+
+function tipoPermiteRecorrencia(tipo) {
+  return TIPOS_RECORRENTES.has(tipo);
+}
+
+function obterTextoRecorrencia(tipo, recorrente) {
+  if (!tipoPermiteRecorrencia(tipo)) {
+    return 'Obrigacoes eventuais sao sempre unicas.';
+  }
+
+  if (recorrente) {
+    return tipo === 'anual'
+      ? 'Sera enviada como recorrente anual.'
+      : 'Sera enviada como recorrente mensal.';
+  }
+
+  return 'Sera criada apenas uma obrigacao.';
 }
 
 function formatarStatus(status) {
@@ -423,6 +442,26 @@ export default function ObrigacoesPage() {
     setFormData((valorAtual) => ({
       ...valorAtual,
       [name]: type === 'checkbox' ? checked : value,
+      ...(name === 'tipo'
+        ? {
+            recorrente: tipoPermiteRecorrencia(value)
+              ? tipoPermiteRecorrencia(valorAtual.tipo)
+                ? Boolean(valorAtual.recorrente)
+                : true
+              : false,
+          }
+        : {}),
+    }));
+  }
+
+  function atualizarRecorrencia(recorrente) {
+    if (!tipoPermiteRecorrencia(formData.tipo)) {
+      return;
+    }
+
+    setFormData((valorAtual) => ({
+      ...valorAtual,
+      recorrente,
     }));
   }
 
@@ -443,7 +482,7 @@ export default function ObrigacoesPage() {
       nome,
       tipo: formData.tipo,
       data_vencimento: formData.data_vencimento,
-      recorrente: Boolean(formData.recorrente),
+      recorrente: tipoPermiteRecorrencia(formData.tipo) && Boolean(formData.recorrente),
     };
 
     try {
@@ -531,6 +570,10 @@ export default function ObrigacoesPage() {
   if (!isAuthenticated) {
     return null;
   }
+
+  const tipoSelecionadoPermiteRecorrencia = tipoPermiteRecorrencia(formData.tipo);
+  const recorrenciaAtiva =
+    tipoSelecionadoPermiteRecorrencia && Boolean(formData.recorrente);
 
   return (
     <>
@@ -870,18 +913,51 @@ export default function ObrigacoesPage() {
                   />
                 </div>
 
-                <div className="sm:col-span-2">
-                  <label className="inline-flex items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
-                    <input
-                      type="checkbox"
-                      name="recorrente"
-                      checked={Boolean(formData.recorrente)}
-                      onChange={handleFormChange}
+                <div className="space-y-2 sm:col-span-2">
+                  <span
+                    id="recorrencia-label"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Recorrencia
+                  </span>
+
+                  <div
+                    role="group"
+                    aria-labelledby="recorrencia-label"
+                    className="grid gap-2 sm:grid-cols-2"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => atualizarRecorrencia(true)}
+                      aria-pressed={recorrenciaAtiva}
+                      disabled={isSavingFormulario || !tipoSelecionadoPermiteRecorrencia}
+                      className={`rounded-md border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                        recorrenciaAtiva
+                          ? 'border-zinc-900 bg-zinc-900 text-white'
+                          : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100'
+                      }`}
+                    >
+                      Recorrente
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => atualizarRecorrencia(false)}
+                      aria-pressed={!recorrenciaAtiva}
                       disabled={isSavingFormulario}
-                      className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500"
-                    />
-                    Obrigação recorrente
-                  </label>
+                      className={`rounded-md border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                        !recorrenciaAtiva
+                          ? 'border-zinc-900 bg-zinc-900 text-white'
+                          : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100'
+                      }`}
+                    >
+                      Única
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-zinc-500">
+                    {obterTextoRecorrencia(formData.tipo, recorrenciaAtiva)}
+                  </p>
                 </div>
               </div>
 
