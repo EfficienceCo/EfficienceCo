@@ -12,7 +12,7 @@ function obterTitulo(notificacao, index) {
     notificacao?.assunto ||
     notificacao?.mensagem ||
     notificacao?.descricao ||
-    `Notificacao ${index + 1}`
+    `Notificação ${index + 1}`
   );
 }
 
@@ -43,12 +43,12 @@ export default function NotificacoesWidget() {
 
   return (
     <WidgetCard
-      title="Notificacoes"
+      title="Notificações"
       description="Resumo das mensagens pendentes."
       href="/dashboard/comunicacao"
-      linkLabel="Abrir comunicacao"
+      linkLabel="Abrir comunicação"
     >
-      {isLoadingNotificacoes ? <p className="text-sm text-zinc-500">Carregando notificacoes...</p> : null}
+      {isLoadingNotificacoes ? <p className="text-sm text-zinc-500">Carregando notificações...</p> : null}
 
       {!isLoadingNotificacoes && erro ? (
         <div className="space-y-3 rounded-lg border border-rose-200 bg-rose-50 p-3">
@@ -67,7 +67,7 @@ export default function NotificacoesWidget() {
         <div className="space-y-4">
           <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
             <p className="text-xs font-medium uppercase tracking-wide text-sky-700">
-              Nao lidas
+              Não lidas
             </p>
             <p className="mt-1 text-3xl font-bold leading-none text-sky-900 sm:text-4xl">
               {naoLidas}
@@ -92,7 +92,7 @@ export default function NotificacoesWidget() {
               })}
             </ul>
           ) : (
-            <p className="text-sm text-zinc-600">Nenhuma notificacao recebida.</p>
+            <p className="text-sm text-zinc-600">Nenhuma notificação recebida.</p>
           )}
         </div>
       ) : null}

@@ -14,7 +14,7 @@ function obterMensagemErro(error) {
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
     error?.message ||
-    'Nao foi possivel atualizar a notificacao.'
+    'Não foi possível atualizar a notificação.'
   );
 }
 
@@ -24,7 +24,7 @@ function obterTitulo(notificacao, index) {
     notificacao?.assunto ||
     notificacao?.mensagem ||
     notificacao?.descricao ||
-    `Notificacao ${index + 1}`
+    `Notificação ${index + 1}`
   );
 }
 
@@ -88,7 +88,7 @@ function obterTipoNotificacao(notificacao) {
   if (campos.includes('obrig')) {
     return {
       chave: 'obrigacao',
-      label: 'Obrigacao',
+      label: 'Obrigação',
       icon: ObrigacaoIcon,
       classes: 'bg-indigo-100 text-indigo-700',
     };
@@ -195,9 +195,9 @@ export default function ComunicacaoPage() {
     <main className="space-y-6 p-6">
       <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-900">Central de notificacoes</h1>
+          <h1 className="text-2xl font-semibold text-zinc-900">Central de notificações</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Acompanhe alertas de obrigacoes, processos e arquivos em tempo real.
+            Acompanhe alertas de obrigações, processos e arquivos em tempo real.
           </p>
         </div>
 
@@ -223,7 +223,7 @@ export default function ComunicacaoPage() {
 
       <section className="grid gap-3 sm:grid-cols-2">
         <article className="rounded-xl border border-sky-200 bg-sky-50 p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">Nao lidas</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">Não lidas</p>
           <p className="mt-2 text-4xl font-bold leading-none text-sky-900">{naoLidas}</p>
         </article>
         <article className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
@@ -246,13 +246,13 @@ export default function ComunicacaoPage() {
 
       {!erro && isLoadingNotificacoes && notificacoesOrdenadas.length === 0 ? (
         <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-zinc-500">Carregando notificacoes...</p>
+          <p className="text-sm text-zinc-500">Carregando notificações...</p>
         </section>
       ) : null}
 
       {!erro && !isLoadingNotificacoes && notificacoesOrdenadas.length === 0 ? (
         <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-zinc-600">Nenhuma notificacao encontrada.</p>
+          <p className="text-sm text-zinc-600">Nenhuma notificação encontrada.</p>
         </section>
       ) : null}
 
@@ -293,7 +293,7 @@ export default function ComunicacaoPage() {
                             : 'bg-emerald-100 text-emerald-700'
                         }`}
                       >
-                        {naoLida ? 'Nao lida' : 'Lida'}
+                        {naoLida ? 'Não lida' : 'Lida'}
                       </span>
 
                       <span className="text-xs text-zinc-500">{data}</span>

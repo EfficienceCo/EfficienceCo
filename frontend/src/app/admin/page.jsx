@@ -78,7 +78,7 @@ export default function Admin() {
       const data = await listarClientes();
       setClientes(Array.isArray(data) ? data : []);
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Nao foi possivel carregar os escritorios.'));
+      setErroLista(obterMensagemErro(error, 'Não foi possível carregar os escritórios.'));
       setClientes([]);
     } finally {
       setIsLoadingClientes(false);
@@ -149,7 +149,7 @@ export default function Admin() {
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900">Painel administrativo</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Visao geral dos escritorios cadastrados na plataforma.
+            Visão geral dos escritórios cadastrados na plataforma.
           </p>
         </div>
 
@@ -171,7 +171,7 @@ export default function Admin() {
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <article className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-zinc-500">Total de escritorios</p>
+          <p className="text-sm text-zinc-500">Total de escritórios</p>
           <p className="mt-2 text-3xl font-semibold text-zinc-900">{cardValue(metricas.total)}</p>
         </article>
 
@@ -194,7 +194,7 @@ export default function Admin() {
       <section className="grid gap-6 lg:grid-cols-3">
         <article className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm lg:col-span-2">
           <div className="border-b border-zinc-100 px-5 py-4">
-            <h2 className="text-lg font-semibold text-zinc-900">Ultimos 5 escritorios cadastrados</h2>
+            <h2 className="text-lg font-semibold text-zinc-900">Últimos 5 escritórios cadastrados</h2>
           </div>
 
           <div className="overflow-x-auto">
@@ -210,7 +210,7 @@ export default function Admin() {
                 {isLoadingClientes ? (
                   <tr>
                     <td colSpan={3} className="px-4 py-4 text-zinc-500">
-                      Carregando escritorios...
+                      Carregando escritórios...
                     </td>
                   </tr>
                 ) : null}
@@ -218,7 +218,7 @@ export default function Admin() {
                 {!isLoadingClientes && ultimosEscritorios.length === 0 ? (
                   <tr>
                     <td colSpan={3} className="px-4 py-4 text-zinc-500">
-                      {erroLista ? 'Dados indisponiveis no momento.' : 'Nenhum escritorio cadastrado.'}
+                      {erroLista ? 'Dados indisponíveis no momento.' : 'Nenhum escritório cadastrado.'}
                     </td>
                   </tr>
                 ) : null}
@@ -249,8 +249,8 @@ export default function Admin() {
         </article>
 
         <article className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-zinc-900">Links rapidos</h2>
-          <p className="mt-1 text-sm text-zinc-500">Acesso direto para as areas administrativas.</p>
+          <h2 className="text-lg font-semibold text-zinc-900">Links rápidos</h2>
+          <p className="mt-1 text-sm text-zinc-500">Acesso direto para as áreas administrativas.</p>
 
           <div className="mt-4 grid gap-3">
             <Link
@@ -264,7 +264,7 @@ export default function Admin() {
               href="/admin/usuarios"
               className="rounded-lg border border-zinc-200 px-4 py-3 text-sm font-medium text-zinc-800 transition hover:border-zinc-400 hover:bg-zinc-50"
             >
-              Gerenciar usuarios
+              Gerenciar usuários
             </Link>
           </div>
         </article>

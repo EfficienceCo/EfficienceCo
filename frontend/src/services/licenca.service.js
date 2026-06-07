@@ -2,7 +2,7 @@ import api from './api';
 
 export async function buscarLicenca(clienteId) {
   if (!clienteId) {
-    throw new Error('clienteId e obrigatorio para consultar licenca.');
+    throw new Error('clienteId é obrigatório para consultar licença.');
   }
 
   const response = await api.get(`/licenca/${clienteId}`);
