@@ -8,7 +8,7 @@ def reportar_evento(descricao: str, sucesso: bool):
         "sucesso": sucesso
     }
     try:
-        client.post("/eventos", evento, timeout=5, addToHeaders={"x-licenca-token": client.LICENSE_TOKEN}) 
+        client.post("/eventos", evento, timeout=5, addToHeaders={"x-licenca-token": client.LICENSE_TOKEN})
         reenviar_fila()  # aproveitou o sucesso — tenta esvaziar a fila
     except Exception as e:
         print(f"[reportar_evento] Falha ao reportar evento: {e}")
