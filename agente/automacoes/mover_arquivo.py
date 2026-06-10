@@ -15,7 +15,7 @@ def mover_arquivo(origem, regra):
     try:
         os.makedirs(regra["pasta_destino"], exist_ok=True)
         shutil.move(origem, destino)
-        return os.path.basename(destino)
+        return destino
     except PermissionError:
         raise RuntimeError(f"Sem permissão para mover {nome}")
     except Exception as e:
