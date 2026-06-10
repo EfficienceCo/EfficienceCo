@@ -20,14 +20,14 @@ function getErrorMessage(error) {
   }
 
   if (error?.response?.status === 404) {
-    return 'Endpoint de login nao encontrado na API. Confira as portas do frontend e backend.';
+    return 'Endpoint de login não encontrado na API. Confira as portas do frontend e backend.';
   }
 
   if (error?.code === 'ERR_NETWORK') {
-    return `Nao foi possivel conectar com a API em ${apiUrl}.`;
+    return `Não foi possível conectar com a API em ${apiUrl}.`;
   }
 
-  return 'Nao foi possivel realizar login. Tente novamente.';
+  return 'Não foi possível realizar login. Tente novamente.';
 }
 
 export default function Home() {

@@ -11,7 +11,7 @@ function obterMensagemErro(error) {
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
     error?.message ||
-    'Nao foi possivel carregar os eventos do agente.'
+    'Não foi possível carregar os eventos do agente.'
   );
 }
 
@@ -96,7 +96,7 @@ function eventoSucesso(evento) {
 }
 
 function eventoDescricao(evento) {
-  return evento?.descricao || evento?.mensagem || 'Evento sem descricao';
+  return evento?.descricao || evento?.mensagem || 'Evento sem descrição';
 }
 
 export default function AgenteEventosWidget() {
@@ -125,7 +125,7 @@ export default function AgenteEventosWidget() {
   return (
     <WidgetCard
       title="Agente"
-      description="Ultimos eventos executados pelo agente."
+      description="Últimos eventos executados pelo agente."
       href="/dashboard/logs"
       linkLabel="Ver todos os logs"
     >

@@ -66,6 +66,12 @@ function gerarOcorrencias({ clienteId, nome, tipo, data_vencimento }) {
 
   if (!total) return ocorrencias;
 
+  const limites = { mensal: 12, anual: 4 };
+  const incremento = tipo === "mensal" ? 1 : 12;
+  const total = limites[tipo];
+  if (!total) return [];
+
+  const ocorrencias = [];
   for (let i = 1; i <= total; i++) {
     ocorrencias.push({
       cliente_id: clienteId,

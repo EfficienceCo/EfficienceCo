@@ -13,7 +13,7 @@ function obterMensagemErro(error) {
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
     error?.message ||
-    'Nao foi possivel carregar os logs do agente.'
+    'Não foi possível carregar os logs do agente.'
   );
 }
 
@@ -65,7 +65,7 @@ export default function Logs() {
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900">Logs do Agente</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Historico das execucoes realizadas pelo agente local.
+            Histórico das execuções realizadas pelo agente local.
           </p>
         </div>
 

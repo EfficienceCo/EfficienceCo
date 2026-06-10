@@ -10,7 +10,7 @@ function obterMensagemErro(error) {
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
     error?.message ||
-    'Nao foi possivel carregar os processos.'
+    'Não foi possível carregar os processos.'
   );
 }
 
@@ -154,9 +154,28 @@ function obterResumoEtapas(processo) {
   };
 }
 
+const ROTULOS_PT_BR = {
+  admissao: 'Admissão',
+  atrasado: 'Atrasado',
+  contabil: 'Contábil',
+  concluida: 'Concluída',
+  concluido: 'Concluído',
+  em_andamento: 'Em andamento',
+  fiscal: 'Fiscal',
+  folha_pagamento: 'Folha de pagamento',
+  pendente: 'Pendente',
+  rescisao: 'Rescisão',
+  trabalhista: 'Trabalhista',
+};
+
 function formatarRotulo(valor) {
   if (!valor) {
     return '-';
+  }
+
+  const chave = String(valor).trim().toLowerCase().replace(/[-\s]+/g, '_');
+  if (ROTULOS_PT_BR[chave]) {
+    return ROTULOS_PT_BR[chave];
   }
 
   const texto = String(valor)
@@ -330,7 +349,7 @@ const PERFIL_PODE_CRIAR_PROCESSO = 'admin_cliente';
 const STATUS_OPCOES = [
   { value: '', label: 'Todos' },
   { value: 'em_andamento', label: 'Em andamento' },
-  { value: 'concluido', label: 'Concluido' },
+  { value: 'concluido', label: 'Concluído' },
   { value: 'atrasado', label: 'Atrasado' },
   { value: 'pendente', label: 'Pendente' },
 ];
@@ -479,7 +498,7 @@ export default function ProcessosPage() {
       setIsNovoModalAberto(false);
       await carregarProcessos();
     } catch (error) {
-      setErroNovoProcesso(obterMensagemErro(error, 'Nao foi possivel criar o processo.'));
+      setErroNovoProcesso(obterMensagemErro(error, 'Não foi possível criar o processo.'));
     } finally {
       setIsCriandoProcesso(false);
     }
@@ -525,7 +544,7 @@ export default function ProcessosPage() {
 
       await carregarProcessos({ silencioso: true });
     } catch (error) {
-      setErro(obterMensagemErro(error, 'Nao foi possivel atualizar a etapa.'));
+      setErro(obterMensagemErro(error, 'Não foi possível atualizar a etapa.'));
       await carregarProcessos({ silencioso: true });
     } finally {
       setEtapasEmAtualizacao((valorAtual) => {
@@ -580,7 +599,7 @@ export default function ProcessosPage() {
         {perfilUsuario && !podeCriarProcesso ? (
           <section className="rounded-xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
             <p className="text-sm text-sky-900">
-              Criacao de novos processos disponivel apenas para o perfil admin_cliente.
+              Criação de novos processos disponível apenas para o perfil admin_cliente.
             </p>
           </section>
         ) : null}
@@ -588,7 +607,7 @@ export default function ProcessosPage() {
         {perfilUsuario && !podeMarcarEtapa ? (
           <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
             <p className="text-sm text-amber-900">
-              Seu perfil esta em modo leitura para etapas. Somente funcionarios e administradores
+              Seu perfil está em modo leitura para etapas. Somente funcionários e administradores
               podem marcar progresso.
             </p>
           </section>
@@ -637,7 +656,7 @@ export default function ProcessosPage() {
               Total na lista
             </p>
             <p className="mt-2 text-4xl font-bold leading-none text-zinc-900">{totalProcessos}</p>
-            <p className="mt-2 text-xs text-zinc-600">{totalConcluidos} concluidos nos filtros.</p>
+            <p className="mt-2 text-xs text-zinc-600">{totalConcluidos} concluídos nos filtros.</p>
           </article>
         </section>
 
@@ -773,7 +792,7 @@ export default function ProcessosPage() {
                                   </span>
                                 ) : (
                                   <span className="text-xs text-zinc-500">
-                                    {concluida ? 'Concluida' : 'Pendente'}
+                                    {concluida ? 'Concluída' : 'Pendente'}
                                   </span>
                                 )}
                               </label>

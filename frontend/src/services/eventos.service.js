@@ -9,7 +9,7 @@ export async function listarEventos({ limit = 50, offset = 0, clienteId } = {}) 
 
   if (perfil === 'admin_efficience' && !clienteIdResolvido) {
     throw new Error(
-      'Seu usuario e admin global. Informe o cliente para visualizar os logs.',
+      'Seu usuário é admin global. Informe o cliente para visualizar os logs.',
     );
   }
 
