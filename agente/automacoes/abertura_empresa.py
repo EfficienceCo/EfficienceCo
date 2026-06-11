@@ -1,5 +1,6 @@
 import os
 from comunicacao.reportar_evento import reportar_evento
+from core.utils import validar_caminho, validar_nome
 
 SUBPASTAS = ["Documentos", "Contratos", "Requerimentos", "Comprovantes", "Correspondencias"]
 
@@ -11,7 +12,10 @@ def criar_estrutura_empresa(regra):
         raise RuntimeError("Condição inválida para abertura_empresa — esperado: nome_empresa=<nome>")
     
     nome_empresa = condicao.split("=", 1)[1]
+    validar_nome(nome_empresa)
     pasta_empresa = os.path.join(pasta_base, nome_empresa)
+
+    validar_caminho(pasta_base)
 
     try:
         criadas = []

@@ -1,10 +1,14 @@
 import os
 import shutil
 from datetime import datetime
+from core.utils import validar_caminho
 
 def mover_arquivo(origem, regra):
     nome = os.path.basename(origem)
     destino = os.path.join(regra["pasta_destino"], nome)
+
+    validar_caminho(origem)      # ← valida origem
+    validar_caminho(destino)     # ← valida destino
 
     if os.path.exists(destino):
         nome_sem_ext, ext = os.path.splitext(nome)

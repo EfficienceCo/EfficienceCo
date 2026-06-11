@@ -6,6 +6,7 @@ load_dotenv()
 
 API_URL = os.getenv('API_URL', 'http://localhost:3001')
 LICENSE_TOKEN = os.getenv('LICENSE_TOKEN')
+PASTA_BASE = os.getenv("PASTA_BASE", "")
 CLIENTE_ID = os.getenv('CLIENTE_ID')
 
 def _headers(extra=None):

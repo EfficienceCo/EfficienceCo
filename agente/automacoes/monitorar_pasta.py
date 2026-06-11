@@ -61,7 +61,7 @@ def _processar_arquivo(caminho, regras):
                 return
 
 def _arquivo_pertence_origem(caminho, pasta_origem):
-    return os.path.dirname(os.path.abspath(caminho)) == os.path.abspath(pasta_origem)
+    return os.path.abspath(caminho).startswith(os.path.abspath(pasta_origem))
 
 def _bate_condicao(caminho, condicao):
     if condicao and condicao.startswith("extensao="):
@@ -70,11 +70,19 @@ def _bate_condicao(caminho, condicao):
     return False
 
 def _varredura_inicial(regras, pasta):
-    print(f"[monitor] Buscando arquivos existentes em: {pasta}")
-    for nome in os.listdir(pasta):
-        caminho = os.path.join(pasta, nome)
-        if os.path.isfile(caminho) and nome != "desktop.ini":
-            print(f"\n[monitor] Arquivo encontrado na varredura em {pasta}: {nome}")
+    pastas_origem = set(
+        r["pasta_origem"] for r in regras 
+        if r.get("ativa") and r.get("pasta_origem")
+    )
+    for p in pastas_origem:
+        print(f"[monitor] Varrendo arquivos existentes em: {p}")
+    
+    for raiz, dirs, arquivos in os.walk(pasta):
+        for nome in arquivos:
+            if nome == "desktop.ini":
+                continue
+            caminho = os.path.join(raiz, nome)
+            print(f"[monitor] Arquivo encontrado na varredura: {nome}")
             _processar_arquivo(caminho, regras)
 
 def iniciar_monitoramento(regras, pastas):
@@ -95,13 +103,22 @@ def iniciar_monitoramento(regras, pastas):
 
         try:
             observer.schedule(MonitorPasta(regras), path=pasta, recursive=True)
-            _varredura_inicial(regras, pasta)
-            print(f"\n[monitor] Monitorando: {pasta}")
+            print(f"[monitor] Monitorando: {pasta}")
+            
+            # mostra subpastas monitoradas via regras
+            subpastas = set(
+                r["pasta_origem"] for r in regras 
+                if r.get("ativa") and r.get("pasta_origem") and 
+                os.path.abspath(r["pasta_origem"]).startswith(os.path.abspath(pasta))
+            )
+            for sub in subpastas:
+                print(f"[monitor] ↳ {sub}")
+            
             pastas_registradas += 1
         except PermissionError:
-            print(f"\n[monitor] Sem permissão para acessar: {pasta}")
+            print(f"[monitor] Sem permissão para acessar: {pasta}")
         except Exception as e:
-            print(f"\n[monitor] Erro ao registrar pasta {pasta}: {e}")
+            print(f"[monitor] Erro ao registrar pasta {pasta}: {e}")
 
     if pastas_registradas == 0:
         pasta_padrao = os.getenv("PASTA_PADRAO")
