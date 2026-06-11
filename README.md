@@ -175,3 +175,11 @@ python main.py
 ## 📄 Licença
 
 Repositório privado. Todos os direitos reservados © Efficience Co.
+
+## Como rodar o Agente
+- caso não tenha instalado rodar o comando
+pip install -r requirements.txt
+- Na pasta do backend rodar o comando 
+npm run dev
+- run no arquivo python main.py
+
