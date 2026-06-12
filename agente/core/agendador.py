@@ -45,8 +45,27 @@ def _loop_schedule():
         schedule.run_pending()
         time.sleep(30)
 
+def _criar_pastas_regras(regras):
+    pastas = set()
+    for regra in regras:
+        if regra.get("pasta_origem"):
+            pastas.add(regra["pasta_origem"])
+        if regra.get("pasta_destino"):
+            pastas.add(regra["pasta_destino"])
+    
+    for pasta in pastas:
+        try:
+            if not os.path.exists(pasta):
+                os.makedirs(pasta)
+                print(f"[agendador] Pasta criada: {pasta}")
+        except PermissionError:
+            print(f"[agendador] Sem permissão para criar: {pasta}")
+        except Exception as e:
+            print(f"[agendador] Erro ao criar {pasta}: {e}")
+
 def iniciar_agendador():
     regras = gerenciar_configuracoes()
+    _criar_pastas_regras(regras)
     pastas = extrair_pastas(regras)
     print(f"[configuracao] {len(regras)} regra(s) carregada(s)")
 
