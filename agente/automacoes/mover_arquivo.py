@@ -1,10 +1,14 @@
 import os
 import shutil
 from datetime import datetime
+from core.utils import validar_caminho
 
 def mover_arquivo(origem, regra):
     nome = os.path.basename(origem)
     destino = os.path.join(regra["pasta_destino"], nome)
+
+    validar_caminho(origem)      # ← valida origem
+    validar_caminho(destino)     # ← valida destino
 
     if os.path.exists(destino):
         nome_sem_ext, ext = os.path.splitext(nome)
@@ -15,7 +19,7 @@ def mover_arquivo(origem, regra):
     try:
         os.makedirs(regra["pasta_destino"], exist_ok=True)
         shutil.move(origem, destino)
-        return os.path.basename(destino)
+        return destino
     except PermissionError:
         raise RuntimeError(f"Sem permissão para mover {nome}")
     except Exception as e:

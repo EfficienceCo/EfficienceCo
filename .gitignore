@@ -1,5 +1,8 @@
 node_modules/
 .env
+.env.local
+.env*.local
+backend/scripts/seed-dev.js
 __pycache__/
 *.pyc
 .DS_Store
@@ -11,4 +14,3 @@ CLAUDE.md
 .postman/
 postman/
 frontend/.env.local
-backend/scripts/

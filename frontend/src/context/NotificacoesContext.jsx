@@ -115,7 +115,7 @@ export function NotificacoesProvider({ children }) {
       const payload = await listar();
       setNotificacoes(ordenarPorMaisRecente(normalizarNotificacoes(payload)));
     } catch (error) {
-      setErro(obterMensagemErro(error, 'Nao foi possivel carregar as notificacoes.'));
+      setErro(obterMensagemErro(error, 'Não foi possível carregar as notificações.'));
     } finally {
       setIsLoadingNotificacoes(false);
     }

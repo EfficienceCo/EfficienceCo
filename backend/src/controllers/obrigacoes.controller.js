@@ -47,6 +47,45 @@ export async function listarObrigacoes(req, res) {
   return res.status(200).json(data);
 }
 
+function adicionarMeses(dataStr, meses) {
+  const pura = dataStr.slice(0, 10);
+  const [ano, mes, dia] = pura.split("-").map(Number);
+  const totalMeses = mes - 1 + meses;
+  const novoAno = ano + Math.floor(totalMeses / 12);
+  const novoMes = totalMeses % 12;
+  const ultimoDia = new Date(novoAno, novoMes + 1, 0).getDate();
+  const novoDia = Math.min(dia, ultimoDia);
+  return `${novoAno}-${String(novoMes + 1).padStart(2, "0")}-${String(novoDia).padStart(2, "0")}`;
+}
+
+function gerarOcorrencias({ clienteId, nome, tipo, data_vencimento }) {
+  const ocorrencias = [];
+  const limites = { mensal: 12, anual: 4 };
+  const incremento = tipo === "mensal" ? 1 : 12;
+  const total = limites[tipo];
+
+  if (!total) return ocorrencias;
+
+  const limites = { mensal: 12, anual: 4 };
+  const incremento = tipo === "mensal" ? 1 : 12;
+  const total = limites[tipo];
+  if (!total) return [];
+
+  const ocorrencias = [];
+  for (let i = 1; i <= total; i++) {
+    ocorrencias.push({
+      cliente_id: clienteId,
+      nome,
+      tipo,
+      status: "pendente",
+      data_vencimento: adicionarMeses(data_vencimento, i * incremento),
+      recorrente: true,
+    });
+  }
+
+  return ocorrencias;
+}
+
 export async function criarObrigacao(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -59,15 +98,33 @@ export async function criarObrigacao(req, res) {
     return res.status(400).json({ erro: "nome, tipo e data_vencimento são obrigatórios" });
   }
 
+  if (recorrente === true && tipo === "eventual") {
+    return res.status(400).json({ erro: "Obrigações eventuais não podem ser recorrentes" });
+  }
+
   const { data, error } = await supabase
     .from("obrigacoes")
-    .insert({ cliente_id: clienteId, nome, tipo, data_vencimento, recorrente: recorrente ?? false })
+    .insert({ cliente_id: clienteId, nome, tipo, data_vencimento, recorrente: recorrente === true })
     .select()
     .single();
 
   if (error) {
     console.error("[obrigacoes.controller] Erro ao criar:", error.message);
     return res.status(500).json({ erro: "Erro ao criar obrigação" });
+  }
+
+  if (recorrente === true) {
+    const ocorrencias = gerarOcorrencias({ clienteId, nome, tipo, data_vencimento });
+    if (ocorrencias.length > 0) {
+      const { error: erroOcorrencias } = await supabase
+        .from("obrigacoes")
+        .insert(ocorrencias);
+
+      if (erroOcorrencias) {
+        console.error("[obrigacoes.controller] Erro ao gerar ocorrências:", erroOcorrencias.message);
+        return res.status(500).json({ erro: "Obrigação criada, mas falha ao gerar ocorrências recorrentes" });
+      }
+    }
   }
 
   return res.status(201).json(data);

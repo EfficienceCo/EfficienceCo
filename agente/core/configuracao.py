@@ -53,19 +53,45 @@ def _versao_cache():
     return cache.get("versao")
 
 def extrair_pastas(regras):
-    pastas = set(r["pasta_origem"] for r in regras if r.get("ativa"))
+    pasta_base = client.PASTA_BASE
+    if pasta_base:
+        return {pasta_base}  # watchdog monitora a raiz, regras fazem o filtro
     
+    # comportamento antigo — sem PASTA_BASE
+    pastas = set(r["pasta_origem"] for r in regras if r.get("ativa"))
     if not pastas:
         pasta_padrao = os.getenv("PASTA_PADRAO")
         if pasta_padrao:
             return {pasta_padrao}
         return None
-    
     return pastas
+    
+def _normalizar_caminho(caminho):
+    if not caminho:
+        return caminho
+    
+    pasta_base = client.PASTA_BASE
+    if not pasta_base:        
+        return caminho
+    
+    caminho_abs = os.path.abspath(caminho)
+    base_abs = os.path.abspath(pasta_base)
+    
+    if caminho_abs.startswith(base_abs):
+        return caminho
+    return os.path.join(pasta_base, caminho.lstrip("/").lstrip(r"\\"))
+
+def _normalizar_regras(regras):
+    for regra in regras:
+        regra["pasta_origem"] = _normalizar_caminho(regra["pasta_origem"])
+        regra["pasta_destino"] = _normalizar_caminho(regra["pasta_destino"])
+    return regras
 
 def verificar_atualizacao():
     try:
         versao_api = _buscar_versao()
+        if versao_api is None:
+            return None
         if versao_api != _versao_cache():
             print("[configuracao] Novas regras detectadas — atualizando...")
             regras = _buscar_configuracoes()
@@ -78,15 +104,15 @@ def verificar_atualizacao():
 
 def gerenciar_configuracoes():
     if _cache_valido():
-        return _ler_cache()["regras"]
+        return _normalizar_regras(_ler_cache()["regras"])
     
     try:
         regras = _buscar_configuracoes()
-        _salvar_cache(regras)
+        _salvar_cache(regras)  # salva caminhos originais — normaliza só em runtime
         print("[configuracao] Regras atualizadas da API")
-        return regras
+        return _normalizar_regras(regras)
     except RuntimeError:
         if _cache_existe():
             print("[configuracao] API indisponível — usando cache antigo")
-            return _ler_cache()["regras"]
+            return _normalizar_regras(_ler_cache()["regras"])
         raise

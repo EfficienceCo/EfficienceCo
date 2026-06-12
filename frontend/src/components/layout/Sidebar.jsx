@@ -14,7 +14,7 @@ const NAV_ITEMS = [
   },
   {
     href: '/dashboard/obrigacoes',
-    label: 'Obrigacoes',
+    label: 'Obrigações',
     icon: ObrigacoesIcon,
   },
   {
@@ -34,12 +34,12 @@ const NAV_ITEMS = [
   },
   {
     href: '/dashboard/usuarios',
-    label: 'Usuarios',
+    label: 'Usuários',
     icon: UsuariosIcon,
   },
   {
     href: '/dashboard/comunicacao',
-    label: 'Comunicacao',
+    label: 'Comunicação',
     icon: NotificacoesIcon,
     badge: true,
   },
@@ -98,7 +98,7 @@ export default function Sidebar() {
           </p>
           <p className="mt-1 text-lg font-semibold text-slate-900">Plataforma</p>
           <p className="mt-2 truncate text-sm text-slate-500">
-            {user?.nome || user?.email || 'Usuario autenticado'}
+            {user?.nome || user?.email || 'Usuário autenticado'}
           </p>
         </div>
 

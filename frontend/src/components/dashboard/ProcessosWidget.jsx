@@ -5,13 +5,20 @@ import { listarProcessosEmAndamento } from '../../services/processos.service';
 import WidgetCard from './WidgetCard';
 
 const LIMITE_VISUAL = 3;
+const ROTULOS_PROCESSO = {
+  em_andamento: 'Em andamento',
+  concluido: 'Concluído',
+  concluida: 'Concluída',
+  atrasado: 'Atrasado',
+  pendente: 'Pendente',
+};
 
 function obterMensagemErro(error) {
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
     error?.message ||
-    'Nao foi possivel carregar os processos.'
+    'Não foi possível carregar os processos.'
   );
 }
 
@@ -77,6 +84,21 @@ function obterTitulo(processo, index) {
 
 function obterStatus(processo) {
   return processo?.status || processo?.situacao || 'em_andamento';
+}
+
+function formatarStatus(status) {
+  const chave = String(status || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+
+  if (ROTULOS_PROCESSO[chave]) {
+    return ROTULOS_PROCESSO[chave];
+  }
+
+  return String(status || '')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map((parte) => `${parte.charAt(0).toUpperCase()}${parte.slice(1)}`)
+    .join(' ');
 }
 
 function calcularAtrasados(payload, processos) {
@@ -149,7 +171,7 @@ export default function ProcessosWidget() {
   return (
     <WidgetCard
       title="Processos"
-      description="Visao consolidada dos processos ativos."
+      description="Visão consolidada dos processos ativos."
       href="/dashboard/processos"
     >
       {isLoading ? <p className="text-sm text-zinc-500">Carregando processos...</p> : null}
@@ -198,7 +220,7 @@ export default function ProcessosWidget() {
                 >
                   <p className="text-sm font-medium text-zinc-800">{obterTitulo(processo, index)}</p>
                   <span className="whitespace-nowrap rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700">
-                    {obterStatus(processo)}
+                    {formatarStatus(obterStatus(processo))}
                   </span>
                 </li>
               ))}

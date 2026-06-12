@@ -55,7 +55,7 @@ function IconeErro() {
 }
 
 export default function LogCard({ log }) {
-  const descricao = log?.descricao || 'Sem descricao';
+  const descricao = log?.descricao || 'Sem descrição';
   const data = formatarDataHora(log?.criado_em);
   const sucesso = Boolean(log?.sucesso);
 
