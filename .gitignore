@@ -13,3 +13,4 @@ build/
 CLAUDE.md
 .postman/
 postman/
+frontend/.env.local

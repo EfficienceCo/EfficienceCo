@@ -8,8 +8,12 @@ console.log("[server.js] Importando app.js...");
 import app from "./app.js";
 console.log("[server.js] app.js importado com sucesso");
 
+import { iniciarJobFolhaMensal } from "./jobs/folha-mensal.job.js";
+
 const PORT = process.env.PORT;
 console.log(`[server.js] PORT lida do .env: ${PORT}`);
+
+iniciarJobFolhaMensal();
 
 console.log("[server.js] Iniciando app.listen()...");
 app.listen(PORT, () => {
