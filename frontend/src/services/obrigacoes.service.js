@@ -63,6 +63,13 @@ export async function deletar(id) {
   return response.data;
 }
 
+export async function concluir(id, arquivo) {
+  const formData = new FormData();
+  formData.append('comprovante', arquivo);
+  const response = await api.patch(`/obrigacoes/${id}/concluir`, formData);
+  return response.data;
+}
+
 export async function listarProximasObrigacoes({ dias = 7 } = {}) {
   const response = await api.get('/obrigacoes/proximas', {
     params: { dias },

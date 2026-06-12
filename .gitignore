@@ -13,4 +13,3 @@ build/
 CLAUDE.md
 .postman/
 postman/
-backend/scripts/seed-dev.js
