@@ -10,15 +10,26 @@ const ETAPAS_PADRAO = {
     "Realizar pagamentos",
     "Arquivar documentos",
   ],
-  abertura_empresa: [
-    "Verificar viabilidade do nome empresarial",
-    "Registrar na Junta Comercial",
-    "Obter CNPJ na Receita Federal",
-    "Registrar no município (Alvará)",
-    "Registrar no estado (Inscrição Estadual, se aplicável)",
-    "Abrir conta bancária pessoa jurídica",
-    "Configurar emissão de NFS-e",
-  ],
+  abertura_empresa: {
+    nova: [
+      "Verificar viabilidade do nome empresarial",
+      "Registrar na Junta Comercial (contrato social)",
+      "Obter CNPJ na Receita Federal",
+      "Cadastro interno da empresa",
+      "Registrar no município (Alvará)",
+      "Registrar no estado (Inscrição Estadual, se aplicável)",
+      "Abrir conta bancária pessoa jurídica",
+      "Configurar emissão de NFS-e",
+    ],
+    cliente_existente: [
+      "Verificar viabilidade do nome empresarial",
+      "Cadastro interno da empresa",
+      "Registrar no município (Alvará)",
+      "Registrar no estado (Inscrição Estadual, se aplicável)",
+      "Abrir conta bancária pessoa jurídica",
+      "Configurar emissão de NFS-e",
+    ],
+  },
 };
 
 function resolverClienteId(req) {
@@ -70,6 +81,10 @@ export async function listarProcessos(req, res) {
   return res.status(200).json(resultado);
 }
 
+function sanitizarPastaBase(nome) {
+  return nome.trim().replace(/\s+/g, "_");
+}
+
 export async function criarProcesso(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -82,16 +97,19 @@ export async function criarProcesso(req, res) {
     return res.status(400).json({ erro: "tipo é obrigatório" });
   }
 
-  const descricoesPadrao = ETAPAS_PADRAO[tipo];
-  if (!descricoesPadrao) {
+  if (!ETAPAS_PADRAO[tipo]) {
     return res.status(400).json({ erro: `tipo inválido: ${tipo}` });
   }
 
-  const { nome_empresa, pasta_base } = req.body;
+  if (tipo === "abertura_empresa") {
+    return _criarAberturaEmpresa(req, res, clienteId);
+  }
+
+  const descricoesPadrao = ETAPAS_PADRAO[tipo];
 
   const { data: processo, error: erroProcesso } = await supabase
     .from("processos")
-    .insert({ cliente_id: clienteId, tipo, nome_empresa: nome_empresa || null, pasta_base: pasta_base || null })
+    .insert({ cliente_id: clienteId, tipo })
     .select()
     .single();
 
@@ -117,6 +135,65 @@ export async function criarProcesso(req, res) {
   }
 
   return res.status(201).json({ ...processo, etapas });
+}
+
+async function _criarAberturaEmpresa(req, res, clienteId) {
+  const { nome_empresa, socios, capital_social, endereco, objeto_social, cenario } = req.body;
+
+  if (!nome_empresa) {
+    return res.status(400).json({ erro: "nome_empresa é obrigatório para abertura_empresa" });
+  }
+  if (!cenario || !["nova", "cliente_existente"].includes(cenario)) {
+    return res.status(400).json({ erro: "cenario deve ser 'nova' ou 'cliente_existente'" });
+  }
+
+  const pasta_base = sanitizarPastaBase(nome_empresa);
+
+  const { data: processo, error: erroProcesso } = await supabase
+    .from("processos")
+    .insert({
+      cliente_id: clienteId,
+      tipo: "abertura_empresa",
+      nome_empresa,
+      pasta_base,
+      cenario,
+      socios: socios || null,
+      capital_social: capital_social || null,
+      endereco: endereco || null,
+      objeto_social: objeto_social || null,
+    })
+    .select()
+    .single();
+
+  if (erroProcesso) {
+    console.error("[processos.controller] Erro ao criar abertura_empresa:", erroProcesso.message);
+    return res.status(500).json({ erro: "Erro ao criar processo de abertura de empresa" });
+  }
+
+  const descricoes = ETAPAS_PADRAO.abertura_empresa[cenario];
+  const etapasParaInserir = descricoes.map((descricao, i) => ({
+    processo_id: processo.id,
+    descricao,
+    ordem: i + 1,
+  }));
+
+  const { data: etapas, error: erroEtapas } = await supabase
+    .from("etapas")
+    .insert(etapasParaInserir)
+    .select();
+
+  if (erroEtapas) {
+    console.error("[processos.controller] Erro ao criar etapas de abertura_empresa:", erroEtapas.message);
+    return res.status(500).json({ erro: "Erro ao criar etapas do processo" });
+  }
+
+  return res.status(201).json({
+    processo_id: processo.id,
+    nome_empresa: processo.nome_empresa,
+    pasta_base: processo.pasta_base,
+    cenario: processo.cenario,
+    etapas,
+  });
 }
 
 async function _concluirEtapa(processoId, etapaId, clienteId) {

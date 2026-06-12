@@ -89,6 +89,13 @@ function adicionarMeses(dataStr, meses) {
 }
 
 function gerarOcorrencias({ clienteId, nome, tipo, data_vencimento }) {
+  const ocorrencias = [];
+  const limites = { mensal: 12, anual: 4 };
+  const incremento = tipo === "mensal" ? 1 : 12;
+  const total = limites[tipo];
+
+  if (!total) return ocorrencias;
+
   const limites = { mensal: 12, anual: 4 };
   const incremento = tipo === "mensal" ? 1 : 12;
   const total = limites[tipo];
@@ -105,6 +112,7 @@ function gerarOcorrencias({ clienteId, nome, tipo, data_vencimento }) {
       recorrente: true,
     });
   }
+
   return ocorrencias;
 }
 
