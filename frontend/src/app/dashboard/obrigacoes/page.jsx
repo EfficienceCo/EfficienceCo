@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
 import {
   atualizar as atualizarObrigacao,
+  concluir as concluirObrigacaoApi,
   criar as criarObrigacao,
   deletar as deletarObrigacao,
   listar as listarObrigacoes,
@@ -180,16 +181,16 @@ function tipoPermiteRecorrencia(tipo) {
 
 function obterTextoRecorrencia(tipo, recorrente) {
   if (!tipoPermiteRecorrencia(tipo)) {
-    return 'Obrigacoes eventuais sao sempre unicas.';
+    return 'Obrigações eventuais são sempre únicas.';
   }
 
   if (recorrente) {
     return tipo === 'anual'
-      ? 'Sera enviada como recorrente anual.'
-      : 'Sera enviada como recorrente mensal.';
+      ? 'Será enviada como recorrente anual.'
+      : 'Será enviada como recorrente mensal.';
   }
 
-  return 'Sera criada apenas uma obrigacao.';
+  return 'Será criada apenas uma obrigação.';
 }
 
 function formatarStatus(status) {
@@ -310,7 +311,11 @@ export default function ObrigacoesPage() {
   const [erroDelete, setErroDelete] = useState('');
   const [isDeletingObrigacao, setIsDeletingObrigacao] = useState(false);
 
-  const [statusEmAtualizacao, setStatusEmAtualizacao] = useState({});
+  const [obrigacaoParaConcluir, setObrigacaoParaConcluir] = useState(null);
+  const [arquivoComprovante, setArquivoComprovante] = useState(null);
+  const [isConcluindo, setIsConcluindo] = useState(false);
+  const [erroConcluir, setErroConcluir] = useState('');
+
 
   const podeGerenciarObrigacoes = PERFIS_AUTORIZADOS.has(user?.perfil);
   const filtroMesAno = useMemo(() => resolverMesAno(filtroMes), [filtroMes]);
@@ -503,27 +508,36 @@ export default function ObrigacoesPage() {
     }
   }
 
-  async function handleMarcarConcluida(obrigacao) {
-    if (!obrigacao?.id) {
-      return;
-    }
+  function resetarEstadoModalConcluir() {
+    setObrigacaoParaConcluir(null);
+    setArquivoComprovante(null);
+    setErroConcluir('');
+  }
 
-    setStatusEmAtualizacao((valorAtual) => ({
-      ...valorAtual,
-      [obrigacao.id]: true,
-    }));
+  function abrirModalConcluir(obrigacao) {
+    if (isConcluindo) return;
+    setObrigacaoParaConcluir(obrigacao);
+    setArquivoComprovante(null);
+    setErroConcluir('');
+  }
 
+  function fecharModalConcluir() {
+    if (isConcluindo) return;
+    resetarEstadoModalConcluir();
+  }
+
+  async function confirmarConcluirObrigacao() {
+    if (!obrigacaoParaConcluir?.id || !arquivoComprovante) return;
+    setIsConcluindo(true);
+    setErroConcluir('');
     try {
-      await atualizarObrigacao(obrigacao.id, { status: 'concluida' });
+      await concluirObrigacaoApi(obrigacaoParaConcluir.id, arquivoComprovante);
       await carregarObrigacoes();
+      resetarEstadoModalConcluir();
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Não foi possível atualizar o status.'));
+      setErroConcluir(obterMensagemErro(error, 'Não foi possível concluir a obrigação.'));
     } finally {
-      setStatusEmAtualizacao((valorAtual) => {
-        const proximo = { ...valorAtual };
-        delete proximo[obrigacao.id];
-        return proximo;
-      });
+      setIsConcluindo(false);
     }
   }
 
@@ -759,7 +773,6 @@ export default function ObrigacoesPage() {
               <tbody className="divide-y divide-zinc-100">
                 {obrigacoes.map((obrigacao, index) => {
                   const status = obterStatusObrigacao(obrigacao);
-                  const atualizandoStatus = Boolean(statusEmAtualizacao[obrigacao.id]);
                   const linhaAtrasada = status === 'atrasada';
 
                   return (
@@ -794,21 +807,23 @@ export default function ObrigacoesPage() {
                             {status !== 'concluida' ? (
                               <button
                                 type="button"
-                                onClick={() => handleMarcarConcluida(obrigacao)}
-                                disabled={atualizandoStatus}
+                                onClick={() => abrirModalConcluir(obrigacao)}
+                                disabled={isConcluindo}
                                 className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                {atualizandoStatus ? 'Salvando...' : 'Marcar concluída'}
+                                Marcar concluída
                               </button>
                             ) : null}
 
-                            <button
-                              type="button"
-                              onClick={() => abrirModalEdicao(obrigacao)}
-                              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
-                            >
-                              Editar
-                            </button>
+                            {status !== 'concluida' ? (
+                              <button
+                                type="button"
+                                onClick={() => abrirModalEdicao(obrigacao)}
+                                className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+                              >
+                                Editar
+                              </button>
+                            ) : null}
 
                             <button
                               type="button"
@@ -918,7 +933,7 @@ export default function ObrigacoesPage() {
                     id="recorrencia-label"
                     className="block text-sm font-medium text-zinc-700"
                   >
-                    Recorrencia
+                    Recorrência
                   </span>
 
                   <div
@@ -944,7 +959,7 @@ export default function ObrigacoesPage() {
                       type="button"
                       onClick={() => atualizarRecorrencia(false)}
                       aria-pressed={!recorrenciaAtiva}
-                      disabled={isSavingFormulario}
+                      disabled={isSavingFormulario || !tipoSelecionadoPermiteRecorrencia}
                       className={`rounded-md border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
                         !recorrenciaAtiva
                           ? 'border-zinc-900 bg-zinc-900 text-white'
@@ -991,6 +1006,60 @@ export default function ObrigacoesPage() {
                 </button>
               </footer>
             </form>
+          </section>
+        </div>
+      ) : null}
+
+      {obrigacaoParaConcluir !== null ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
+          <section className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-semibold text-zinc-900">Concluir obrigação</h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              Anexe o comprovante para registrar a conclusão.
+            </p>
+            <p className="mt-2 rounded-md bg-zinc-100 px-3 py-2 text-xs text-zinc-700">
+              {obrigacaoParaConcluir.nome}
+            </p>
+
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-zinc-700">
+                Comprovante <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.webp"
+                onChange={(e) => setArquivoComprovante(e.target.files?.[0] ?? null)}
+                disabled={isConcluindo}
+                className="mt-1 block w-full text-sm text-zinc-600 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-zinc-700 hover:file:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <p className="mt-1 text-xs text-zinc-500">PDF, JPEG, PNG ou WEBP — máx. 10 MB</p>
+            </div>
+
+            {erroConcluir ? (
+              <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {erroConcluir}
+              </p>
+            ) : null}
+
+            <footer className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={fecharModalConcluir}
+                disabled={isConcluindo}
+                className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarConcluirObrigacao}
+                disabled={isConcluindo || !arquivoComprovante}
+                className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isConcluindo ? <Spinner /> : null}
+                {isConcluindo ? 'Concluindo...' : 'Confirmar conclusão'}
+              </button>
+            </footer>
           </section>
         </div>
       ) : null}
