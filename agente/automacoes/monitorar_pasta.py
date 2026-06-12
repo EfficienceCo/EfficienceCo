@@ -103,6 +103,7 @@ def iniciar_monitoramento(regras, pastas):
 
         try:
             observer.schedule(MonitorPasta(regras), path=pasta, recursive=True)
+            _varredura_inicial(regras, pasta)
             print(f"[monitor] Monitorando: {pasta}")
             
             # mostra subpastas monitoradas via regras

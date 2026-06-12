@@ -13,6 +13,6 @@ def validar_caminho(caminho):
 
 def validar_nome(nome):
     import re
-    if not re.match(r'^[\w\s\-]+$', nome):
+    if not re.match(r'^[\w\s\-\.\,\&]+$', nome):
         raise ValueError(f"Nome inválido: {nome}")
     

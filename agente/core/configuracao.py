@@ -66,23 +66,20 @@ def extrair_pastas(regras):
         return None
     return pastas
     
-    return pastas
-
 def _normalizar_caminho(caminho):
     if not caminho:
         return caminho
     
     pasta_base = client.PASTA_BASE
+    if not pasta_base:        
+        return caminho
+    
     caminho_abs = os.path.abspath(caminho)
     base_abs = os.path.abspath(pasta_base)
     
-    if not pasta_base:
-        return caminho
     if caminho_abs.startswith(base_abs):
         return caminho
-    
-    resultado = os.path.join(pasta_base, caminho.lstrip("/").lstrip(r"\\"))
-    return resultado
+    return os.path.join(pasta_base, caminho.lstrip("/").lstrip(r"\\"))
 
 def _normalizar_regras(regras):
     for regra in regras:
