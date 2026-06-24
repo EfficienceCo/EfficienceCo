@@ -31,11 +31,20 @@ export async function criarRegra(req, res) {
 
   const { pasta_origem, pasta_destino, condicao, acao, ativa } = req.body;
 
+  let condicaoParsed = condicao;
+  if (typeof condicao === "string") {
+    try {
+      condicaoParsed = JSON.parse(condicao);
+    } catch {
+      return res.status(400).json({ erro: "condicao deve ser um objeto JSON válido" });
+    }
+  }
+
   console.log("[regras.controller] Criando regra para cliente:", clienteId);
 
   const { data, error } = await supabase
     .from("regras")
-    .insert({ cliente_id: clienteId, pasta_origem, pasta_destino, condicao, acao, ativa })
+    .insert({ cliente_id: clienteId, pasta_origem, pasta_destino, condicao: condicaoParsed, acao, ativa })
     .select()
     .single();
 
@@ -71,7 +80,17 @@ export async function atualizarRegra(req, res) {
   const updates = {};
   if (pasta_origem !== undefined) updates.pasta_origem = pasta_origem;
   if (pasta_destino !== undefined) updates.pasta_destino = pasta_destino;
-  if (condicao !== undefined) updates.condicao = condicao;
+  if (condicao !== undefined) {
+    if (typeof condicao === "string") {
+      try {
+        updates.condicao = JSON.parse(condicao);
+      } catch {
+        return res.status(400).json({ erro: "condicao deve ser um objeto JSON válido" });
+      }
+    } else {
+      updates.condicao = condicao;
+    }
+  }
   if (acao !== undefined) updates.acao = acao;
   if (ativa !== undefined) updates.ativa = ativa;
 
