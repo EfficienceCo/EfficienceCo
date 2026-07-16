@@ -120,7 +120,7 @@ export async function registrarEvento(req, res) {
   }
 
   if (sucesso) {
-    await criarNotificacao(cliente_id, "arquivo_recebido", descricao);
+    await criarNotificacao(cliente_id, "arquivo_processado", descricao);
   }
 
   return res.status(201).json(data);
