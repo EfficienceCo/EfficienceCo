@@ -55,3 +55,34 @@ export async function gerarTemplateFolha() {
 
   return workbook.xlsx.writeBuffer();
 }
+
+// Confere se a planilha enviada tem todas as colunas do contrato no cabeçalho (linha 1).
+// Não valida ordem nem células de dado — só que o cabeçalho não foi alterado/incompleto.
+export async function validarColunasPlanilha(buffer) {
+  const workbook = new ExcelJS.Workbook();
+
+  try {
+    await workbook.xlsx.load(buffer);
+  } catch {
+    return { valido: false, faltando: COLUNAS_FOLHA.map((coluna) => coluna.header) };
+  }
+
+  const sheet = workbook.worksheets[0];
+
+  if (!sheet) {
+    return { valido: false, faltando: COLUNAS_FOLHA.map((coluna) => coluna.header) };
+  }
+
+  const headersPresentes = new Set();
+  sheet.getRow(1).eachCell((cell) => {
+    if (typeof cell.value === "string") {
+      headersPresentes.add(cell.value.trim().toLowerCase());
+    }
+  });
+
+  const faltando = COLUNAS_FOLHA
+    .map((coluna) => coluna.header)
+    .filter((header) => !headersPresentes.has(header.toLowerCase()));
+
+  return { valido: faltando.length === 0, faltando };
+}
