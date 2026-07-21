@@ -42,3 +42,26 @@ export async function validarTokenLicenca(token) {
   );
   return data;
 }
+
+// Verifica se o cliente tem licença ativa e dentro da validade.
+// Usada por rotas do frontend (JWT) que exigem licença ativa, ex. folha de pagamento.
+export async function licencaAtivaParaCliente(clienteId) {
+  if (!clienteId) {
+    return false;
+  }
+
+  const { data, error } = await supabase
+    .from("licencas")
+    .select("ativa, validade")
+    .eq("cliente_id", clienteId)
+    .single();
+
+  if (error || !data) {
+    console.log(`[licenca.service] Licença não encontrada para cliente: ${clienteId}`);
+    return false;
+  }
+
+  const dentroDoValidade = !data.validade || new Date(data.validade) > new Date();
+
+  return Boolean(data.ativa && dentroDoValidade);
+}
