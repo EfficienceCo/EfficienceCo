@@ -50,11 +50,16 @@ export async function licencaAtivaParaCliente(clienteId) {
     return false;
   }
 
+  // .maybeSingle() em vez de .single(): não há UNIQUE(cliente_id) no schema de licencas,
+  // então mais de uma linha pra o mesmo cliente não pode virar erro (.single() falha nesse caso
+  // e bloquearia cliente com licença ativa de verdade). Pega a mais recente.
   const { data, error } = await supabase
     .from("licencas")
     .select("ativa, validade")
     .eq("cliente_id", clienteId)
-    .single();
+    .order("criado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (error || !data) {
     console.log(`[licenca.service] Licença não encontrada para cliente: ${clienteId}`);
