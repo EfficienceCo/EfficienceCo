@@ -1,0 +1,66 @@
+TUTORIAL - CLASSIFICADOR DE DOCUMENTOS (rede.py)
+==================================================
+
+O que o codigo faz
+------------------
+O arquivo rede.py recebe um arquivo PDF e classifica sua primeira pagina como:
+
+- cartao_cnpj
+- contrato_social
+- extrato_bancario
+- holerite
+
+Ele utiliza uma rede neural ResNet-18 treinada previamente. Os pesos do
+treinamento devem estar no arquivo classificador_documentos.pth. Coloque esse
+arquivo na pasta de execucao ou informe seu caminho no parametro model_path.
+
+Etapas da classificacao
+-----------------------
+1. Converte a primeira pagina do PDF em imagem.
+2. Redimensiona a imagem para 224 x 224 pixels e normaliza os dados.
+3. Carrega a ResNet-18 e os pesos salvos no arquivo .pth.
+4. Calcula a probabilidade para cada categoria.
+5. Retorna a categoria mais provavel se a confianca for de no minimo 75%.
+   Abaixo disso, retorna "nao_identificado".
+
+Instalacao das dependencias
+---------------------------
+Execute no terminal:
+
+python -m pip install --upgrade pip
+python -m pip install torch torchvision Pillow pdf2image
+
+Dependencia extra no Windows
+----------------------------
+O pdf2image precisa do Poppler para converter PDFs. Instale o Poppler para
+Windows e adicione a pasta Library\\bin ao PATH. Tambem e possivel informar o
+caminho diretamente na chamada:
+
+paginas = convert_from_path(
+    pdf_path,
+    first_page=1,
+    last_page=1,
+    poppler_path=r"C:\\caminho\\para\\poppler\\Library\\bin"
+)
+
+Exemplo de uso
+--------------
+from rede import classificar_documento_pdf
+
+resultado = classificar_documento_pdf(
+    "recebidos/documento.pdf",
+    model_path="classificador_documentos.pth",
+    threshold=0.75,
+)
+print(resultado)
+
+Exemplo de retorno:
+{'classe': 'holerite', 'confianca_obtida': 0.9231, 'limiar_configurado': 0.75}
+
+Observacoes
+-----------
+- A ordem da lista CLASS_NAMES deve ser a mesma do treinamento do modelo.
+- O programa usa GPU CUDA automaticamente quando disponivel; caso contrario,
+  utiliza a CPU.
+- Em caso de erro na leitura do PDF, a funcao retorna um dicionario com a
+  chave "erro".
