@@ -1,6 +1,6 @@
 import supabase from "../config/database.js";
 import { gerarTemplateFolha, validarColunasPlanilha } from "../services/folha.service.js";
-import { resolverClienteId } from "../middlewares/permissao.middleware.js";
+import { validarTokenLicenca } from "../services/licenca.service.js";
 
 const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/;
 
@@ -35,17 +35,20 @@ export async function baixarTemplate(req, res) {
   }
 }
 
-// Ponto único de entrada da planilha preenchida — chamado pelo agente local e pela web.
+// Entrada da planilha preenchida — chamado pelo agente local (x-licenca-token).
 export async function uploadFolha(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
   if (!req.file) {
     return res.status(400).json({ erro: "Planilha é obrigatória" });
   }
 
-  const clienteId = resolverClienteId(req);
-
-  if (!clienteId) {
-    return res.status(400).json({ erro: "cliente_id é obrigatório" });
-  }
+  const clienteId = licenca.cliente_id;
 
   const mesReferenciaBruto = req.body.mes_referencia?.trim();
 

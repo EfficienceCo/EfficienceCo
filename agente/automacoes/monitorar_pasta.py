@@ -5,6 +5,7 @@ from comunicacao.reportar_evento import reportar_evento
 from core.configuracao import gerenciar_configuracoes
 from automacoes.renomear_arquivo import renomear_arquivo
 from automacoes.abertura_empresa import criar_estrutura_empresa
+from automacoes.upload_folha import eh_planilha_folha, enviar_planilha_folha
 from datetime import datetime
 import time
 import os
@@ -34,6 +35,20 @@ class MonitorPasta(FileSystemEventHandler):
 
 def _processar_arquivo(caminho, regras):
     nome = os.path.basename(caminho)
+
+    if eh_planilha_folha(caminho):
+        try:
+            mes = enviar_planilha_folha(caminho)
+            print(f"[monitor] Planilha de folha enviada: {nome} (mês {mes})")
+            reportar_evento(
+                f"Planilha {nome} enviada para folha ({mes})",
+                True,
+            )
+        except RuntimeError as e:
+            print(f"[monitor] Falha no upload da folha: {nome} — {e}")
+            reportar_evento(f"Falha ao enviar planilha {nome}: {e}", False)
+        return
+
     for regra in regras:
         if not regra.get("ativa"):
             continue

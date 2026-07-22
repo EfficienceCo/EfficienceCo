@@ -38,7 +38,8 @@ function uploadPlanilha(req, res, next) {
 }
 
 router.get("/template", todos, exigirLicencaAtiva, baixarTemplate);
-router.post("/upload", todos, exigirLicencaAtiva, uploadPlanilha, uploadFolha);
+// Agente — autenticado via x-licenca-token no controller
+router.post("/upload", uploadPlanilha, uploadFolha);
 
 console.log("[folha.routes] Rotas de folha registradas");
 
