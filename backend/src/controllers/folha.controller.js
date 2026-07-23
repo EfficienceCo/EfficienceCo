@@ -141,15 +141,25 @@ export async function calcularFolha(req, res) {
     return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
   }
 
-  if (processamento.status === "processando") {
-    return res.status(409).json({ erro: "Processamento já está em andamento" });
+  // Reivindica o processamento de forma atômica: o UPDATE só afeta a linha se o status
+  // ainda for pendente/erro no momento exato da escrita. Evita a corrida entre duas
+  // chamadas simultâneas — sem isso, ambas podiam ler "pendente" antes de qualquer uma
+  // escrever "processando" e o cálculo rodava em duplicidade.
+  const { data: reivindicado, error: erroReivindicar } = await supabase
+    .from("processamentos_folha")
+    .update({ status: "processando" })
+    .eq("id", processamentoId)
+    .in("status", ["pendente", "erro"])
+    .select("id");
+
+  if (erroReivindicar) {
+    console.error("[folha.controller] Erro ao reivindicar processamento:", erroReivindicar.message);
+    return res.status(500).json({ erro: "Erro ao iniciar cálculo da folha" });
   }
 
-  if (processamento.status === "concluido") {
-    return res.status(409).json({ erro: "Processamento já foi concluído" });
+  if (!reivindicado || reivindicado.length === 0) {
+    return res.status(409).json({ erro: "Processamento já está em andamento ou já foi concluído" });
   }
-
-  await supabase.from("processamentos_folha").update({ status: "processando" }).eq("id", processamentoId);
 
   try {
     const { data: arquivo, error: erroDownload } = await supabase.storage
