@@ -35,20 +35,6 @@ class MonitorPasta(FileSystemEventHandler):
 
 def _processar_arquivo(caminho, regras):
     nome = os.path.basename(caminho)
-
-    if eh_planilha_folha(caminho):
-        try:
-            mes = enviar_planilha_folha(caminho)
-            print(f"[monitor] Planilha de folha enviada: {nome} (mês {mes})")
-            reportar_evento(
-                f"Planilha {nome} enviada para folha ({mes})",
-                True,
-            )
-        except RuntimeError as e:
-            print(f"[monitor] Falha no upload da folha: {nome} — {e}")
-            reportar_evento(f"Falha ao enviar planilha {nome}: {e}", False)
-        return
-
     for regra in regras:
         if not regra.get("ativa"):
             continue
@@ -62,6 +48,23 @@ def _processar_arquivo(caminho, regras):
                         nome_final = renomear_arquivo(caminho)
                     elif acao == "abertura_empresa":
                         nome_final = criar_estrutura_empresa(regra)
+                    elif acao == "upload_folha":
+                        if not eh_planilha_folha(caminho):
+                            print(
+                                f"[monitor] Ignorando {nome}: upload_folha exige "
+                                f".xlsx em Folha/YYYY-MM (fora de enviados)"
+                            )
+                            return
+                        mes, nome_final = enviar_planilha_folha(
+                            caminho,
+                            pasta_destino=regra.get("pasta_destino") or None,
+                        )
+                        print(f"[monitor] Planilha de folha enviada: {nome} (mês {mes}) → {nome_final}")
+                        reportar_evento(
+                            f"Planilha {os.path.basename(nome_final)} enviada para folha ({mes})",
+                            True,
+                        )
+                        return
                     else:
                         print(f"[monitor] Ação desconhecida: {acao}")
                         return

@@ -2,7 +2,7 @@ import express from "express";
 import multer from "multer";
 import { exigirPerfil } from "../middlewares/permissao.middleware.js";
 import { exigirLicencaAtiva } from "../middlewares/licenca.middleware.js";
-import { baixarTemplate, uploadFolha } from "../controllers/folha.controller.js";
+import { baixarTemplate, uploadFolha, uploadFolhaAgente } from "../controllers/folha.controller.js";
 
 const router = express.Router();
 
@@ -38,8 +38,12 @@ function uploadPlanilha(req, res, next) {
 }
 
 router.get("/template", todos, exigirLicencaAtiva, baixarTemplate);
+
+// Web/dashboard — autenticado via JWT
+router.post("/upload", todos, exigirLicencaAtiva, uploadPlanilha, uploadFolha);
+
 // Agente — autenticado via x-licenca-token no controller
-router.post("/upload", uploadPlanilha, uploadFolha);
+router.post("/upload/agente", uploadPlanilha, uploadFolhaAgente);
 
 console.log("[folha.routes] Rotas de folha registradas");
 

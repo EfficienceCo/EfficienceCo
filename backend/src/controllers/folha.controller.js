@@ -1,6 +1,7 @@
 import supabase from "../config/database.js";
 import { gerarTemplateFolha, validarColunasPlanilha } from "../services/folha.service.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
+import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 
 const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/;
 
@@ -35,20 +36,14 @@ export async function baixarTemplate(req, res) {
   }
 }
 
-// Entrada da planilha preenchida — chamado pelo agente local (x-licenca-token).
-export async function uploadFolha(req, res) {
-  const token = req.headers["x-licenca-token"];
-  const licenca = await validarTokenLicenca(token);
-
-  if (!licenca) {
-    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
-  }
-
+async function processarUploadFolha(req, res, clienteId) {
   if (!req.file) {
     return res.status(400).json({ erro: "Planilha é obrigatória" });
   }
 
-  const clienteId = licenca.cliente_id;
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
 
   const mesReferenciaBruto = req.body.mes_referencia?.trim();
 
@@ -112,4 +107,22 @@ export async function uploadFolha(req, res) {
     console.error("[folha.controller] Erro inesperado no upload da folha:", err.message);
     return res.status(500).json({ erro: "Erro ao processar upload da folha" });
   }
+}
+
+// Upload via web/dashboard — JWT + perfil.
+export async function uploadFolha(req, res) {
+  const clienteId = resolverClienteId(req);
+  return processarUploadFolha(req, res, clienteId);
+}
+
+// Upload via agente local — x-licenca-token.
+export async function uploadFolhaAgente(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  return processarUploadFolha(req, res, licenca.cliente_id);
 }
