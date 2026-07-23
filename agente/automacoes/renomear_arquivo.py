@@ -13,7 +13,10 @@ def renomear_arquivo(origem):
         return nome  # já tem tipo no nome — não renomeia
     
     # remove timestamp anterior se já existir
-    nome_sem_ext = re.sub(r'^\w+_\d{6}_\d{6}_', '', nome_sem_ext)
+    # remove prefixo antigo: YYYYMMDD_HHMMSS_
+    nome_sem_ext = re.sub(r'^\d{8}_\d{6}_', '', nome_sem_ext)
+    # remove prefixo novo: tipo_DDMMYY_HHMMSS_
+    nome_sem_ext = re.sub(r'^[a-z_]+_\d{6}_\d{6}_', '', nome_sem_ext)
     
     timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
     nome_novo = f"{tipo}_{timestamp}_{nome_sem_ext}{ext}"

@@ -26,6 +26,12 @@ def classificar_arquivo(caminho):
         from automacoes.rede_neural.rede import classificar_documento_pdf
         resultado = classificar_documento_pdf(caminho, threshold=0.75)
         return resultado["classe"]
+    except ImportError as e:
+        print(f"[identificar_tipo] Dependências da rede neural não instaladas: {e}")
+        return "nao_identificado"
+    except FileNotFoundError:
+        print(f"[identificar_tipo] Arquivo de pesos não encontrado (classificador_documentos.pth)")
+        return "nao_identificado"
     except Exception as e:
         print(f"[identificar_tipo] Falha ao classificar: {e}")
         return "nao_identificado"
