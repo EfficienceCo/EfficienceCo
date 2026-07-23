@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import PDFDocument from "pdfkit";
 
 // Spec de colunas da planilha de folha de pagamento — contrato entre
 // BK-FOLHA-TEMPLATE (gera) e BK-FOLHA-UPLOAD (valida). Ordem e nomes fixos.
@@ -304,4 +305,102 @@ export async function validarColunasPlanilha(buffer) {
     .filter((header) => !headersPresentes.has(header.toLowerCase()));
 
   return { valido: faltando.length === 0, faltando };
+}
+
+function formatarMoeda(valor) {
+  return Number(valor).toFixed(2).replace(".", ",");
+}
+
+// Sem modelo próprio da Souza para holerite/relatório — layout mínimo, mas com todas
+// as linhas de proventos/descontos, pra ser legível sem depender de explicação externa.
+function documentoParaBuffer(montarConteudo) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+    montarConteudo(doc);
+    doc.end();
+  });
+}
+
+// Holerite individual — 1 por funcionário, a partir da linha já calculada em folha_calculos.
+export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
+  return documentoParaBuffer((doc) => {
+    doc.fontSize(16).text("HOLERITE DE PAGAMENTO", { align: "center" });
+    doc.moveDown();
+
+    doc.fontSize(10);
+    doc.text(`Empresa: ${calculo.empresa}`);
+    doc.text(`Mês de referência: ${mesReferenciaFormatado}`);
+    doc.moveDown(0.5);
+    doc.text(`Funcionário: ${calculo.funcionario}`);
+    doc.text(`CPF: ${calculo.cpf}`);
+    doc.text(`Cargo: ${calculo.cargo}`);
+    doc.text(`Dias trabalhados: ${calculo.dias_trabalhados}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text("Proventos", { underline: true });
+    doc.fontSize(10);
+    doc.text(`Salário bruto: R$ ${formatarMoeda(calculo.salario_bruto)}`);
+    doc.text(`Horas extras (${calculo.horas_extras}h a 50%): R$ ${formatarMoeda(calculo.valor_horas_extras)}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text("Descontos", { underline: true });
+    doc.fontSize(10);
+    doc.text(`INSS: R$ ${formatarMoeda(calculo.inss)}`);
+    doc.text(`IRRF: R$ ${formatarMoeda(calculo.ir)}`);
+    doc.text(`Faltas (${calculo.faltas} dia(s)): R$ ${formatarMoeda(calculo.valor_faltas)}`);
+    doc.text(`Adiantamento: R$ ${formatarMoeda(calculo.adiantamento)}`);
+    doc.text(`Vale-transporte (6% do bruto): R$ ${formatarMoeda(calculo.desconto_vt)}`);
+    doc.moveDown();
+
+    doc.fontSize(9).text(`FGTS do mês (informativo, depositado pela empresa, não desconta do líquido): R$ ${formatarMoeda(calculo.fgts)}`);
+    doc.moveDown();
+
+    doc.fontSize(13).text(`Líquido a receber: R$ ${formatarMoeda(calculo.liquido)}`, { underline: true });
+  });
+}
+
+// Totais agregados de uma empresa dentro de um processamento — uma planilha pode ter
+// funcionários de mais de uma empresa-cliente da Souza, então isto roda por grupo.
+export function calcularTotaisEmpresa(calculosDaEmpresa) {
+  return calculosDaEmpresa.reduce(
+    (acc, calculo) => ({
+      totalFuncionarios: acc.totalFuncionarios + 1,
+      totalBruto: arredondar(acc.totalBruto + Number(calculo.salario_bruto)),
+      totalEncargos: arredondar(acc.totalEncargos + Number(calculo.inss) + Number(calculo.fgts) + Number(calculo.ir)),
+      totalLiquido: arredondar(acc.totalLiquido + Number(calculo.liquido)),
+    }),
+    { totalFuncionarios: 0, totalBruto: 0, totalEncargos: 0, totalLiquido: 0 },
+  );
+}
+
+// Relatório de fechamento — 1 por empresa por processamento, com o resumo agregado
+// e a lista de funcionários incluídos nesse fechamento.
+export function gerarRelatorioFechamentoPDF({ empresa, mesReferenciaFormatado, calculos, totais }) {
+  return documentoParaBuffer((doc) => {
+    doc.fontSize(16).text("RELATÓRIO DE FECHAMENTO DE FOLHA", { align: "center" });
+    doc.moveDown();
+
+    doc.fontSize(10);
+    doc.text(`Empresa: ${empresa}`);
+    doc.text(`Mês de referência: ${mesReferenciaFormatado}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text("Totais", { underline: true });
+    doc.fontSize(10);
+    doc.text(`Total de funcionários: ${totais.totalFuncionarios}`);
+    doc.text(`Total bruto: R$ ${formatarMoeda(totais.totalBruto)}`);
+    doc.text(`Total de encargos (INSS + FGTS + IRRF): R$ ${formatarMoeda(totais.totalEncargos)}`);
+    doc.text(`Total líquido: R$ ${formatarMoeda(totais.totalLiquido)}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text("Funcionários incluídos neste fechamento", { underline: true });
+    doc.fontSize(9);
+    calculos.forEach((calculo) => {
+      doc.text(`${calculo.funcionario} — ${calculo.cargo} — líquido: R$ ${formatarMoeda(calculo.liquido)}`);
+    });
+  });
 }

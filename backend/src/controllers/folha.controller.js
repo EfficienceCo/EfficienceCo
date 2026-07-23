@@ -4,6 +4,9 @@ import {
   validarColunasPlanilha,
   lerLinhasPlanilha,
   calcularFolhaFuncionario,
+  gerarHoleritePDF,
+  gerarRelatorioFechamentoPDF,
+  calcularTotaisEmpresa,
 } from "../services/folha.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { PERFIS } from "../config/perfis.js";
@@ -216,6 +219,173 @@ export async function calcularFolha(req, res) {
     console.error("[folha.controller] Erro inesperado ao calcular folha:", err.message);
     await marcarErro(processamentoId, "Erro inesperado ao calcular folha");
     return res.status(500).json({ erro: "Erro ao calcular folha" });
+  }
+}
+
+function formatarMesReferencia(mesReferencia) {
+  const [ano, mes] = mesReferencia.split("-");
+  return `${mes}/${ano}`;
+}
+
+// Gera holerite por funcionário + relatório de fechamento por empresa a partir dos
+// cálculos já persistidos (BK-FOLHA-CALC). Idempotente por item: só gera o que ainda
+// não existe (holerite_path nulo / linha ausente em folha_relatorios) — uma tentativa
+// anterior parcialmente falha (ex: caiu no meio do loop de funcionários) é retomada sem
+// duplicar upload, em vez de bloquear a chamada inteira.
+export async function gerarSaidaFolha(req, res) {
+  const { processamento_id: processamentoId } = req.params;
+
+  const { data: processamento, error: erroBusca } = await supabase
+    .from("processamentos_folha")
+    .select("id, cliente_id, status, mes_referencia")
+    .eq("id", processamentoId)
+    .maybeSingle();
+
+  if (erroBusca) {
+    console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar processamento" });
+  }
+
+  if (!processamento) {
+    return res.status(404).json({ erro: "Processamento não encontrado" });
+  }
+
+  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
+    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
+  }
+
+  if (processamento.status !== "concluido") {
+    return res.status(409).json({ erro: "Cálculo da folha ainda não foi concluído para este processamento" });
+  }
+
+  const { data: calculos, error: erroCalculos } = await supabase
+    .from("folha_calculos")
+    .select("*")
+    .eq("processamento_id", processamentoId);
+
+  if (erroCalculos) {
+    console.error("[folha.controller] Erro ao buscar cálculos:", erroCalculos.message);
+    return res.status(500).json({ erro: "Erro ao buscar cálculos da folha" });
+  }
+
+  if (!calculos || calculos.length === 0) {
+    return res.status(404).json({ erro: "Nenhum cálculo encontrado para este processamento" });
+  }
+
+  try {
+    // Formatação de mes_referencia fica dentro do try: mesmo padrão já corrigido em
+    // BK-FOLHA-TEMPLATE/BK-FOLHA-UPLOAD — uma exceção síncrona fora do try, dentro de
+    // uma rota async do Express 4 sem handler global de unhandledRejection, derruba
+    // o processo inteiro, não só a request.
+    const mesReferenciaArquivo = processamento.mes_referencia.slice(0, 7);
+    const mesReferenciaFormatado = formatarMesReferencia(processamento.mes_referencia);
+
+    let holeritesGerados = 0;
+
+    for (const calculo of calculos) {
+      if (calculo.holerite_path) continue;
+
+      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado);
+      // CPF no nome, não só o nome do funcionário — dois funcionários com o mesmo nome
+      // na mesma empresa (comum: "Maria Silva", "João Santos") colidiriam no path e o
+      // segundo upload falharia (upsert:false). CPF é o identificador que garante unicidade.
+      const nomeArquivo = `holerite_${sanitizarNomeArquivo(calculo.empresa)}_${sanitizarNomeArquivo(calculo.funcionario)}_${sanitizarNomeArquivo(calculo.cpf)}_${mesReferenciaArquivo}.pdf`;
+      // processamento_id no caminho evita colisão entre processamentos diferentes do
+      // mesmo cliente/mês (ex: planilha reenviada e recalculada após correção).
+      const caminhoStorage = `clientes/${processamento.cliente_id}/${mesReferenciaArquivo}/${processamentoId}/holerites/${nomeArquivo}`;
+
+      const { error: erroUpload } = await supabase.storage
+        .from("folhas-pagamento")
+        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: false });
+
+      if (erroUpload) {
+        console.error("[folha.controller] Erro ao salvar holerite:", erroUpload.message);
+        return res.status(500).json({ erro: `Erro ao gerar holerite de ${calculo.funcionario}` });
+      }
+
+      const { error: erroUpdate } = await supabase
+        .from("folha_calculos")
+        .update({ holerite_path: caminhoStorage })
+        .eq("id", calculo.id);
+
+      if (erroUpdate) {
+        console.error("[folha.controller] Erro ao registrar holerite gerado:", erroUpdate.message);
+        return res.status(500).json({ erro: "Erro ao registrar holerite gerado" });
+      }
+
+      holeritesGerados++;
+    }
+
+    const calculosPorEmpresa = new Map();
+    calculos.forEach((calculo) => {
+      const lista = calculosPorEmpresa.get(calculo.empresa) || [];
+      lista.push(calculo);
+      calculosPorEmpresa.set(calculo.empresa, lista);
+    });
+
+    let relatoriosGerados = 0;
+
+    for (const [empresa, calculosDaEmpresa] of calculosPorEmpresa) {
+      const { data: relatorioExistente, error: erroExistente } = await supabase
+        .from("folha_relatorios")
+        .select("id")
+        .eq("processamento_id", processamentoId)
+        .eq("empresa", empresa)
+        .maybeSingle();
+
+      if (erroExistente) {
+        console.error("[folha.controller] Erro ao checar relatório existente:", erroExistente.message);
+        return res.status(500).json({ erro: "Erro ao verificar relatório existente" });
+      }
+      if (relatorioExistente) continue;
+
+      const totais = calcularTotaisEmpresa(calculosDaEmpresa);
+      const buffer = await gerarRelatorioFechamentoPDF({
+        empresa,
+        mesReferenciaFormatado,
+        calculos: calculosDaEmpresa,
+        totais,
+      });
+
+      const nomeArquivo = `relatorio_fechamento_${sanitizarNomeArquivo(empresa)}_${mesReferenciaArquivo}.pdf`;
+      const caminhoStorage = `clientes/${processamento.cliente_id}/${mesReferenciaArquivo}/${processamentoId}/relatorios/${nomeArquivo}`;
+
+      const { error: erroUpload } = await supabase.storage
+        .from("folhas-pagamento")
+        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: false });
+
+      if (erroUpload) {
+        console.error("[folha.controller] Erro ao salvar relatório:", erroUpload.message);
+        return res.status(500).json({ erro: `Erro ao gerar relatório de ${empresa}` });
+      }
+
+      const { error: erroInsert } = await supabase.from("folha_relatorios").insert({
+        processamento_id: processamentoId,
+        empresa,
+        total_funcionarios: totais.totalFuncionarios,
+        total_bruto: totais.totalBruto,
+        total_encargos: totais.totalEncargos,
+        total_liquido: totais.totalLiquido,
+        arquivo_path: caminhoStorage,
+      });
+
+      if (erroInsert) {
+        console.error("[folha.controller] Erro ao registrar relatório gerado:", erroInsert.message);
+        return res.status(500).json({ erro: "Erro ao registrar relatório gerado" });
+      }
+
+      relatoriosGerados++;
+    }
+
+    return res.status(200).json({
+      processamento_id: processamentoId,
+      holerites_gerados: holeritesGerados,
+      relatorios_gerados: relatoriosGerados,
+      empresas: Array.from(calculosPorEmpresa.keys()),
+    });
+  } catch (err) {
+    console.error("[folha.controller] Erro inesperado ao gerar saída da folha:", err.message);
+    return res.status(500).json({ erro: "Erro ao gerar arquivos de saída da folha" });
   }
 }
 

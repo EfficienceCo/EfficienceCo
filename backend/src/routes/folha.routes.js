@@ -2,7 +2,7 @@ import express from "express";
 import multer from "multer";
 import { exigirPerfil } from "../middlewares/permissao.middleware.js";
 import { exigirLicencaAtiva } from "../middlewares/licenca.middleware.js";
-import { baixarTemplate, uploadFolha, calcularFolha } from "../controllers/folha.controller.js";
+import { baixarTemplate, uploadFolha, calcularFolha, gerarSaidaFolha } from "../controllers/folha.controller.js";
 
 const router = express.Router();
 
@@ -40,6 +40,7 @@ function uploadPlanilha(req, res, next) {
 router.get("/template", todos, exigirLicencaAtiva, baixarTemplate);
 router.post("/upload", todos, exigirLicencaAtiva, uploadPlanilha, uploadFolha);
 router.post("/:processamento_id/calcular", todos, exigirLicencaAtiva, calcularFolha);
+router.post("/:processamento_id/gerar-saida", todos, exigirLicencaAtiva, gerarSaidaFolha);
 
 console.log("[folha.routes] Rotas de folha registradas");
 
