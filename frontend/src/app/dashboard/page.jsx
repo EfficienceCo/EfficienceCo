@@ -8,6 +8,7 @@ import ProximasObrigacoesWidget from '../../components/dashboard/ProximasObrigac
 import ProcessosWidget from '../../components/dashboard/ProcessosWidget';
 import NotificacoesWidget from '../../components/dashboard/NotificacoesWidget';
 import AgenteEventosWidget from '../../components/dashboard/AgenteEventosWidget';
+import FolhaManualWidget from '../../components/dashboard/FolhaManualWidget';
 
 export default function Dashboard() {
   const router = useRouter();
@@ -40,6 +41,7 @@ export default function Dashboard() {
         <StatusLicenca />
         <ProximasObrigacoesWidget />
         <ProcessosWidget />
+        <FolhaManualWidget />
         <NotificacoesWidget />
         <AgenteEventosWidget />
       </section>
