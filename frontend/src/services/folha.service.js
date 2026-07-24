@@ -56,3 +56,19 @@ export async function obterProcessamentoFolha(processamentoId) {
   const response = await api.get(`/folha/${encodeURIComponent(processamentoId)}`);
   return response.data;
 }
+
+export async function baixarArquivoFolha({ processamentoId, arquivo } = {}) {
+  if (!processamentoId || !arquivo) {
+    throw new Error('Processamento e arquivo são obrigatórios para baixar a folha.');
+  }
+
+  const response = await api.get(
+    `/folha/${encodeURIComponent(processamentoId)}/download/${encodeURIComponent(arquivo)}`,
+    { responseType: 'blob' },
+  );
+
+  return {
+    blob: response.data,
+    headers: response.headers,
+  };
+}

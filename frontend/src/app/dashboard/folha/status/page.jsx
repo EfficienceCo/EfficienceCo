@@ -4,7 +4,10 @@ import Link from 'next/link';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '../../../../context/AuthContext';
-import { obterProcessamentoFolha } from '../../../../services/folha.service';
+import {
+  baixarArquivoFolha,
+  obterProcessamentoFolha,
+} from '../../../../services/folha.service';
 
 const STORAGE_KEY = 'efficience:folha:processamentos';
 const POLLING_INTERVAL_MS = 5000;
@@ -40,10 +43,12 @@ function obterMensagemErro(error, fallback = 'Não foi possível atualizar o pro
   );
 }
 
+const REGEX_MARCAS_DIACRITICAS = /[̀-ͯ]/g;
+
 function removerAcentos(valor) {
   return String(valor || '')
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+    .replace(REGEX_MARCAS_DIACRITICAS, '');
 }
 
 function normalizarStatus(valor) {
@@ -121,6 +126,190 @@ function formatarMesReferencia(valor) {
   }).format(data);
 }
 
+function obterNomeArquivo(caminho) {
+  const texto = String(caminho || '').trim();
+
+  if (!texto) {
+    return '';
+  }
+
+  return texto.split(/[\\/]/).filter(Boolean).pop() || texto;
+}
+
+function normalizarTipoArquivo(tipo, nome) {
+  const texto = removerAcentos(`${tipo || ''} ${nome || ''}`).trim().toLowerCase();
+
+  if (texto.includes('relatorio') || texto.includes('fechamento')) {
+    return 'relatorio';
+  }
+
+  if (texto.includes('holerite') || texto.includes('contracheque')) {
+    return 'holerite';
+  }
+
+  return 'arquivo';
+}
+
+function formatarTipoArquivo(tipo) {
+  if (tipo === 'relatorio') {
+    return 'Relatório';
+  }
+
+  if (tipo === 'holerite') {
+    return 'Holerite';
+  }
+
+  return 'Arquivo';
+}
+
+function obterIdentificadorArquivo(item) {
+  if (typeof item === 'string') {
+    return item;
+  }
+
+  return (
+    item?.nome ||
+    item?.arquivo ||
+    item?.arquivo_id ||
+    item?.download_id ||
+    item?.downloadId ||
+    item?.chave ||
+    item?.key ||
+    item?.slug ||
+    item?.nome_arquivo ||
+    item?.nomeArquivo ||
+    item?.filename ||
+    item?.caminho ||
+    item?.path ||
+    item?.storage_path ||
+    item?.storagePath ||
+    item?.arquivo_path ||
+    item?.arquivoPath ||
+    item?.relatorio_path ||
+    item?.relatorioPath ||
+    item?.holerite_path ||
+    item?.holeritePath ||
+    item?.id ||
+    ''
+  );
+}
+
+function normalizarArquivo(item, index, tipoPadrao = '') {
+  const identificador = String(obterIdentificadorArquivo(item) || '').trim();
+
+  if (!identificador) {
+    return null;
+  }
+
+  const nomeBase =
+    typeof item === 'string'
+      ? obterNomeArquivo(item)
+      : item?.nome_exibicao ||
+        item?.display_name ||
+        item?.nome ||
+        item?.label ||
+        item?.nome_arquivo ||
+        item?.nomeArquivo ||
+        item?.filename ||
+        obterNomeArquivo(identificador);
+  const tipo = normalizarTipoArquivo(
+    typeof item === 'string'
+      ? tipoPadrao
+      : item?.tipo || item?.tipo_arquivo || item?.tipoArquivo || item?.categoria || tipoPadrao,
+    `${nomeBase} ${identificador}`,
+  );
+
+  return {
+    chave: `${tipo}-${identificador}-${index}`,
+    identificador,
+    nome: nomeBase || `Arquivo ${index + 1}`,
+    tipo,
+    empresa: typeof item === 'string' ? '' : item?.empresa || item?.razao_social || '',
+    funcionario:
+      typeof item === 'string'
+        ? ''
+        : item?.funcionario || item?.funcionario_nome || item?.nome_funcionario || '',
+    tamanho: typeof item === 'string' ? null : item?.tamanho || item?.size || item?.bytes || null,
+    criadoEm:
+      typeof item === 'string'
+        ? ''
+        : item?.criado_em ||
+          item?.criadoEm ||
+          item?.created_at ||
+          item?.createdAt ||
+          item?.gerado_em ||
+          item?.geradoEm ||
+          item?.updated_at ||
+          item?.updatedAt ||
+          '',
+  };
+}
+
+function normalizarArquivos(payload) {
+  const arquivos = [];
+
+  function adicionarFonte(valor, tipoPadrao = '') {
+    if (Array.isArray(valor)) {
+      valor.forEach((item) => arquivos.push({ item, tipoPadrao }));
+      return;
+    }
+
+    if (!valor || typeof valor !== 'object') {
+      return;
+    }
+
+    adicionarFonte(valor.arquivos, tipoPadrao);
+    adicionarFonte(valor.arquivos_disponiveis || valor.arquivosDisponiveis, tipoPadrao);
+    adicionarFonte(valor.lista_arquivos || valor.listaArquivos, tipoPadrao);
+    adicionarFonte(valor.files, tipoPadrao);
+    adicionarFonte(valor.items, tipoPadrao);
+    adicionarFonte(valor.resultados, tipoPadrao);
+    adicionarFonte(valor.downloads, tipoPadrao);
+    adicionarFonte(valor.holerites, 'holerite');
+    adicionarFonte(valor.relatorios || valor.relatórios, 'relatorio');
+    adicionarFonte(valor.relatorios_fechamento || valor.relatoriosFechamento, 'relatorio');
+  }
+
+  adicionarFonte(payload?.arquivos);
+  adicionarFonte(payload?.arquivos_disponiveis || payload?.arquivosDisponiveis);
+  adicionarFonte(payload?.lista_arquivos || payload?.listaArquivos);
+  adicionarFonte(payload?.files);
+  adicionarFonte(payload?.resultados);
+  adicionarFonte(payload?.downloads);
+  adicionarFonte(payload?.holerites, 'holerite');
+  adicionarFonte(payload?.relatorios || payload?.relatórios, 'relatorio');
+  adicionarFonte(payload?.relatorios_fechamento || payload?.relatoriosFechamento, 'relatorio');
+
+  const vistos = new Set();
+
+  return arquivos
+    .map(({ item, tipoPadrao }, index) => normalizarArquivo(item, index, tipoPadrao))
+    .filter((arquivo) => {
+      if (!arquivo || vistos.has(arquivo.identificador)) {
+        return false;
+      }
+
+      vistos.add(arquivo.identificador);
+      return true;
+    });
+}
+
+function formatarTamanho(bytes) {
+  const numero = Number(bytes);
+
+  if (!Number.isFinite(numero) || numero <= 0) {
+    return '';
+  }
+
+  const megabytes = numero / (1024 * 1024);
+
+  if (megabytes >= 1) {
+    return `${megabytes.toFixed(1)} MB`;
+  }
+
+  return `${Math.max(1, Math.round(numero / 1024))} KB`;
+}
+
 function formatarDataHora(valor) {
   if (!valor) {
     return '-';
@@ -135,6 +324,46 @@ function formatarDataHora(valor) {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(data);
+}
+
+function obterReferenciaArquivo(arquivo) {
+  if (arquivo.tipo === 'holerite') {
+    return [arquivo.funcionario, arquivo.empresa].filter(Boolean).join(' · ') || '-';
+  }
+
+  return arquivo.empresa || '-';
+}
+
+function obterNomeDownload(headers, fallback) {
+  const contentDisposition = headers?.['content-disposition'] || headers?.['Content-Disposition'];
+
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  return filenameMatch?.[1] || fallback;
+}
+
+function dispararDownload(blob, nomeArquivo) {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = nomeArquivo;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 function desembrulharPayload(payload) {
@@ -166,11 +395,6 @@ function obterNomeCliente(processamento) {
     processamento?.clienteId ||
     ''
   );
-}
-
-function obterArquivos(processamento) {
-  const arquivos = processamento?.arquivos || processamento?.files || processamento?.resultados;
-  return Array.isArray(arquivos) ? arquivos : [];
 }
 
 function normalizarProcessamento(payload, fallback = {}) {
@@ -212,7 +436,7 @@ function normalizarProcessamento(payload, fallback = {}) {
       '',
     ultima_consulta_em: fallback.ultima_consulta_em || new Date().toISOString(),
     erro_consulta: fallback.erro_consulta || '',
-    arquivos: obterArquivos(processamento),
+    arquivos: normalizarArquivos(processamento),
   };
 }
 
@@ -348,6 +572,23 @@ function RefreshIcon() {
   );
 }
 
+function DownloadIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className="h-4 w-4"
+    >
+      <path d="M12 4v10" />
+      <path d="m8 10 4 4 4-4" />
+      <path d="M5 20h14" />
+    </svg>
+  );
+}
+
 function PlusIcon() {
   return (
     <svg
@@ -381,6 +622,47 @@ function StatusDot({ status }) {
   );
 }
 
+function ArquivosDownload({ processamentoId, arquivos, baixandoArquivo, onBaixar }) {
+  if (!arquivos.length) {
+    return <span className="text-sm text-zinc-400">-</span>;
+  }
+
+  return (
+    <ul className="space-y-1.5">
+      {arquivos.map((arquivo) => {
+        const chaveDownload = `${processamentoId}:${arquivo.chave}`;
+        const isBaixando = baixandoArquivo === chaveDownload;
+        const detalheTamanho = formatarTamanho(arquivo.tamanho);
+
+        return (
+          <li key={arquivo.chave} className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-zinc-800" title={arquivo.nome}>
+                {arquivo.nome}
+              </p>
+              <p className="text-xs text-zinc-500">
+                {formatarTipoArquivo(arquivo.tipo)}
+                {detalheTamanho ? ` · ${detalheTamanho}` : ''}
+                {' · '}
+                {obterReferenciaArquivo(arquivo)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onBaixar(processamentoId, arquivo)}
+              disabled={isBaixando}
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isBaixando ? <Spinner /> : <DownloadIcon />}
+              {isBaixando ? 'Baixando...' : 'Baixar'}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function StatusFolhaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -392,6 +674,8 @@ function StatusFolhaContent() {
   const [isAtualizando, setIsAtualizando] = useState(false);
   const [erroLista, setErroLista] = useState('');
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState('');
+  const [baixandoArquivo, setBaixandoArquivo] = useState('');
+  const [erroDownload, setErroDownload] = useState('');
 
   const processamentoDaUrl = useMemo(() => {
     const params = new URLSearchParams(parametrosUrl);
@@ -552,6 +836,25 @@ function StatusFolhaContent() {
     temProcessamentosEmAndamento,
   ]);
 
+  const handleBaixarArquivo = useCallback(async (processamentoId, arquivo) => {
+    const chaveDownload = `${processamentoId}:${arquivo.chave}`;
+    setErroDownload('');
+    setBaixandoArquivo(chaveDownload);
+
+    try {
+      const { blob, headers } = await baixarArquivoFolha({
+        processamentoId,
+        arquivo: arquivo.identificador,
+      });
+      const nomeDownload = obterNomeDownload(headers, arquivo.nome);
+      dispararDownload(blob, nomeDownload);
+    } catch (error) {
+      setErroDownload(obterMensagemErro(error, 'Não foi possível baixar o arquivo selecionado.'));
+    } finally {
+      setBaixandoArquivo('');
+    }
+  }, []);
+
   if (isLoading) {
     return <p>Carregando...</p>;
   }
@@ -566,7 +869,7 @@ function StatusFolhaContent() {
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900">Status da folha</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Acompanhe os processamentos por mês e empresa antes de baixar os resultados.
+            Acompanhe os processamentos por mês e empresa e baixe os arquivos finais quando estiverem prontos.
           </p>
         </div>
 
@@ -635,6 +938,12 @@ function StatusFolhaContent() {
         </section>
       ) : null}
 
+      {erroDownload ? (
+        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+          <p className="text-sm font-medium text-rose-800">{erroDownload}</p>
+        </section>
+      ) : null}
+
       {processamentos.length === 0 ? (
         <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
           <p className="text-sm font-medium text-zinc-800">
@@ -663,6 +972,9 @@ function StatusFolhaContent() {
                     Motivo do erro
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Arquivos
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
                     Atualizado
                   </th>
                 </tr>
@@ -673,6 +985,8 @@ function StatusFolhaContent() {
                   const statusNormalizado = normalizarStatus(processamento.status) || 'pendente';
                   const mostrarMotivoErro =
                     statusNormalizado === 'erro' && Boolean(processamento.motivo_erro);
+                  const arquivosDisponiveis =
+                    statusNormalizado === 'concluido' ? processamento.arquivos : [];
 
                   return (
                     <tr key={processamento.id} className="align-top">
@@ -714,6 +1028,20 @@ function StatusFolhaContent() {
                           </p>
                         ) : (
                           <span className="text-sm text-zinc-400">-</span>
+                        )}
+                      </td>
+                      <td className="max-w-xs px-4 py-4">
+                        {statusNormalizado === 'concluido' ? (
+                          <ArquivosDownload
+                            processamentoId={processamento.id}
+                            arquivos={arquivosDisponiveis}
+                            baixandoArquivo={baixandoArquivo}
+                            onBaixar={handleBaixarArquivo}
+                          />
+                        ) : (
+                          <span className="text-sm text-zinc-400">
+                            Disponível após conclusão
+                          </span>
                         )}
                       </td>
                       <td className="px-4 py-4 text-sm text-zinc-600">
