@@ -9,6 +9,11 @@ import { baixarTemplateFolha, uploadFolha } from '../../../../services/folha.ser
 const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
 const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])$/;
 const REGEX_ARQUIVO_XLSX = /\.xlsx$/i;
+// Precisa espelhar o limite do multer em backend/src/routes/folha.routes.js —
+// sem essa checagem no cliente, um arquivo grande demais só falha depois do
+// upload completo (desperdiçando banda e tempo do usuário).
+const TAMANHO_MAXIMO_ARQUIVO_BYTES = 10 * 1024 * 1024;
+const MENSAGEM_ARQUIVO_MUITO_GRANDE = 'Planilha excede o tamanho máximo permitido (10MB).';
 
 function obterMesAtual() {
   const hoje = new Date();
@@ -169,6 +174,13 @@ export default function UploadFolhaPage() {
       return;
     }
 
+    if (arquivoSelecionado.size > TAMANHO_MAXIMO_ARQUIVO_BYTES) {
+      event.target.value = '';
+      setArquivo(null);
+      setErroUpload(MENSAGEM_ARQUIVO_MUITO_GRANDE);
+      return;
+    }
+
     setErroUpload('');
     setArquivo(arquivoSelecionado);
   }
@@ -210,6 +222,11 @@ export default function UploadFolhaPage() {
 
     if (!arquivoEhXlsx(arquivo)) {
       setErroUpload('Envie uma planilha no formato .xlsx.');
+      return;
+    }
+
+    if (arquivo.size > TAMANHO_MAXIMO_ARQUIVO_BYTES) {
+      setErroUpload(MENSAGEM_ARQUIVO_MUITO_GRANDE);
       return;
     }
 
