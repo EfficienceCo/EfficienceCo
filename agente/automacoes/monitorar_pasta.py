@@ -52,7 +52,7 @@ def _processar_arquivo(caminho, regras):
                         if not eh_planilha_folha(caminho):
                             print(
                                 f"[monitor] Ignorando {nome}: upload_folha exige "
-                                f".xlsx em Folha/YYYY-MM (fora de enviados)"
+                                f".xlsx diretamente em Folha/YYYY-MM (não em subpastas)"
                             )
                             return
                         mes, nome_final = enviar_planilha_folha(

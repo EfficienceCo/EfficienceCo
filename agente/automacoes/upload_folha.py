@@ -5,9 +5,13 @@ from datetime import datetime
 import comunicacao.api_client as client
 from core.utils import validar_caminho
 
-# Folha/YYYY-MM/... — mês canônico alinhado ao backend
+# Folha/YYYY-MM — mês canônico alinhado ao backend.
+# Âncora no fim (`$`) exige que o arquivo esteja DIRETAMENTE na pasta do mês, não em
+# subpastas. Sem isso, qualquer subpasta sob Folha/YYYY-MM (ex.: um pasta_destino de
+# arquivamento customizado que não se chame "enviados") seria detectada de novo pelo
+# watcher recursivo e reenviada em loop — mesmo arquivo processado repetidamente.
 REGEX_FOLHA_MES = re.compile(
-    r"[\\/]Folha[\\/](\d{4}-(0[1-9]|1[0-2]))(?:[\\/]|$)",
+    r"[\\/]Folha[\\/](\d{4}-(0[1-9]|1[0-2]))$",
     re.IGNORECASE,
 )
 
@@ -15,8 +19,9 @@ PASTA_ENVIADOS = "enviados"
 
 
 def extrair_mes_folha(caminho):
-    """Retorna YYYY-MM se o path estiver sob Folha/YYYY-MM; senão None."""
-    match = REGEX_FOLHA_MES.search(os.path.abspath(caminho))
+    """Retorna YYYY-MM se o arquivo estiver diretamente em Folha/YYYY-MM; senão None."""
+    pasta = os.path.dirname(os.path.abspath(caminho))
+    match = REGEX_FOLHA_MES.search(pasta)
     if not match:
         return None
     return match.group(1)
@@ -90,5 +95,18 @@ def enviar_planilha_folha(caminho, pasta_destino=None):
         addToHeaders={"x-licenca-token": client.LICENSE_TOKEN},
     )
 
-    arquivado = _arquivar_apos_envio(caminho, pasta_destino)
+    # Upload já concluído com sucesso a partir daqui — se o arquivamento local falhar
+    # (permissão, disco cheio etc.), isso não pode ser reportado como falha de
+    # processamento (o backend já recebeu e persistiu a planilha). Do contrário o
+    # monitor reporta "falha" para um envio que na verdade deu certo, e o arquivo
+    # continua em Folha/YYYY-MM sujeito a reenvio duplicado numa próxima varredura.
+    try:
+        arquivado = _arquivar_apos_envio(caminho, pasta_destino)
+    except RuntimeError as e:
+        print(
+            f"[upload_folha] Upload de {os.path.basename(caminho)} concluído, "
+            f"mas falha ao arquivar localmente: {e}"
+        )
+        arquivado = caminho
+
     return mes, arquivado
