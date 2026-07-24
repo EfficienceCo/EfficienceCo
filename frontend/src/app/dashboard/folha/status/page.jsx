@@ -258,13 +258,17 @@ function mesclarProcessamentos(processamentosAtuais, novosProcessamentos) {
     .slice(0, LIMITE_PROCESSAMENTOS);
 }
 
-function lerProcessamentosSalvos() {
-  if (typeof window === 'undefined') {
+function chaveArmazenamento(userId) {
+  return `${STORAGE_KEY}:${userId}`;
+}
+
+function lerProcessamentosSalvos(userId) {
+  if (typeof window === 'undefined' || !userId) {
     return [];
   }
 
   try {
-    const bruto = window.localStorage.getItem(STORAGE_KEY);
+    const bruto = window.localStorage.getItem(chaveArmazenamento(userId));
     const dados = JSON.parse(bruto || '[]');
 
     if (!Array.isArray(dados)) {
@@ -281,15 +285,15 @@ function lerProcessamentosSalvos() {
   }
 }
 
-function salvarProcessamentos(processamentos) {
-  if (typeof window === 'undefined') {
+function salvarProcessamentos(userId, processamentos) {
+  if (typeof window === 'undefined' || !userId) {
     return;
   }
 
   const dadosPersistidos = processamentos.map(({ erro_consulta, ...processamento }) => processamento);
 
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(dadosPersistidos));
+    window.localStorage.setItem(chaveArmazenamento(userId), JSON.stringify(dadosPersistidos));
   } catch {
     // Falha de storage não deve bloquear a tela de acompanhamento.
   }
@@ -381,9 +385,10 @@ function StatusFolhaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const parametrosUrl = searchParams.toString();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
+  const userId = user?.id || user?.email || '';
 
-  const [processamentos, setProcessamentos] = useState(() => lerProcessamentosSalvos());
+  const [processamentos, setProcessamentos] = useState([]);
   const [isAtualizando, setIsAtualizando] = useState(false);
   const [erroLista, setErroLista] = useState('');
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState('');
@@ -400,16 +405,24 @@ function StatusFolhaContent() {
   }, [isAuthenticated, isLoading, router]);
 
   useEffect(() => {
-    if (!processamentoDaUrl) {
+    if (isLoading) {
       return;
     }
 
-    setProcessamentos((valorAtual) => mesclarProcessamentos(valorAtual, [processamentoDaUrl]));
-  }, [processamentoDaUrl]);
+    setProcessamentos(userId ? lerProcessamentosSalvos(userId) : []);
+  }, [isLoading, userId]);
 
   useEffect(() => {
-    salvarProcessamentos(processamentos);
-  }, [processamentos]);
+    if (!processamentoDaUrl || !userId) {
+      return;
+    }
+
+    setProcessamentos((valorAtual) => {
+      const mesclado = mesclarProcessamentos(valorAtual, [processamentoDaUrl]);
+      salvarProcessamentos(userId, mesclado);
+      return mesclado;
+    });
+  }, [processamentoDaUrl, userId]);
 
   const idsChave = useMemo(
     () => processamentos.map((processamento) => processamento.id).join('|'),
@@ -488,9 +501,11 @@ function StatusFolhaContent() {
           .map((resultado) => resultado.processamento)
           .filter(Boolean);
 
-        setProcessamentos((valorAtual) =>
-          mesclarProcessamentos(valorAtual, processamentosAtualizados),
-        );
+        setProcessamentos((valorAtual) => {
+          const mesclado = mesclarProcessamentos(valorAtual, processamentosAtualizados);
+          salvarProcessamentos(userId, mesclado);
+          return mesclado;
+        });
 
         setUltimaAtualizacao(consultadoEm);
 
@@ -508,7 +523,7 @@ function StatusFolhaContent() {
         }
       }
     },
-    [idsChave, isAuthenticated],
+    [idsChave, isAuthenticated, userId],
   );
 
   useEffect(() => {
