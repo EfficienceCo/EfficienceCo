@@ -2,11 +2,14 @@ import os
 import re
 from datetime import datetime
 from core.identificar_tipo import obter_tipo
+from core.utils import validar_caminho
 
 def renomear_arquivo(origem):
+    validar_caminho(origem)
+
     nome = os.path.basename(origem)
     nome_sem_ext, ext = os.path.splitext(nome)
-    
+
     tipo, precisa_renomear = obter_tipo(origem)
     
     if not precisa_renomear:
