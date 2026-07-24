@@ -47,3 +47,12 @@ export async function baixarTemplateFolha({ clienteId } = {}) {
     throw await converterBlobDeErroParaJson(error);
   }
 }
+
+export async function obterProcessamentoFolha(processamentoId) {
+  if (!processamentoId) {
+    throw new Error('processamento_id é obrigatório para consultar a folha.');
+  }
+
+  const response = await api.get(`/folha/${encodeURIComponent(processamentoId)}`);
+  return response.data;
+}
