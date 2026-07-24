@@ -2,7 +2,15 @@ import express from "express";
 import multer from "multer";
 import { exigirPerfil } from "../middlewares/permissao.middleware.js";
 import { exigirLicencaAtiva } from "../middlewares/licenca.middleware.js";
-import { baixarTemplate, uploadFolha, uploadFolhaAgente } from "../controllers/folha.controller.js";
+import {
+  baixarTemplate,
+  uploadFolha,
+  uploadFolhaAgente,
+  calcularFolha,
+  gerarSaidaFolha,
+  consultarStatusFolha,
+  baixarArquivoFolha,
+} from "../controllers/folha.controller.js";
 
 const router = express.Router();
 
@@ -42,8 +50,20 @@ router.get("/template", todos, exigirLicencaAtiva, baixarTemplate);
 // Web/dashboard — autenticado via JWT
 router.post("/upload", todos, exigirLicencaAtiva, uploadPlanilha, uploadFolha);
 
-// Agente — autenticado via x-licenca-token no controller
+// Agente — autenticado via x-licenca-token no controller (antes das rotas com param)
 router.post("/upload/agente", uploadPlanilha, uploadFolhaAgente);
+
+router.post("/:processamento_id/calcular", todos, exigirLicencaAtiva, calcularFolha);
+router.post("/:processamento_id/gerar-saida", todos, exigirLicencaAtiva, gerarSaidaFolha);
+
+// Status e download — depois de /template e /upload* para não sombrear rotas estáticas
+router.get("/:processamento_id", todos, exigirLicencaAtiva, consultarStatusFolha);
+router.get(
+  "/:processamento_id/download/:arquivo",
+  todos,
+  exigirLicencaAtiva,
+  baixarArquivoFolha,
+);
 
 console.log("[folha.routes] Rotas de folha registradas");
 
