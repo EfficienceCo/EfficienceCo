@@ -1,18 +1,118 @@
 'use client';
 
 import Link from 'next/link';
-import { Suspense, useEffect, useMemo } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '../../../../context/AuthContext';
+import { obterProcessamentoFolha } from '../../../../services/folha.service';
 
-const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])$/;
+const STORAGE_KEY = 'efficience:folha:processamentos';
+const POLLING_INTERVAL_MS = 5000;
+const LIMITE_PROCESSAMENTOS = 25;
+
+const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/;
+
+const STATUS_META = {
+  pendente: {
+    label: 'Pendente',
+    classes: 'bg-amber-100 text-amber-800 ring-amber-200',
+  },
+  processando: {
+    label: 'Processando',
+    classes: 'bg-sky-100 text-sky-800 ring-sky-200',
+  },
+  concluido: {
+    label: 'Concluído',
+    classes: 'bg-emerald-100 text-emerald-800 ring-emerald-200',
+  },
+  erro: {
+    label: 'Erro',
+    classes: 'bg-rose-100 text-rose-800 ring-rose-200',
+  },
+};
+
+function obterMensagemErro(error, fallback = 'Não foi possível atualizar o processamento.') {
+  return (
+    error?.response?.data?.erro ||
+    error?.response?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
+
+function removerAcentos(valor) {
+  return String(valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function normalizarStatus(valor) {
+  const status = removerAcentos(valor).trim().toLowerCase().replace(/[\s-]+/g, '_');
+
+  if (!status) {
+    return '';
+  }
+
+  if (status.includes('process')) {
+    return 'processando';
+  }
+
+  if (status.includes('concl')) {
+    return 'concluido';
+  }
+
+  if (status.includes('erro') || status.includes('falha')) {
+    return 'erro';
+  }
+
+  if (status.includes('pend')) {
+    return 'pendente';
+  }
+
+  return status;
+}
+
+function obterStatusMeta(status) {
+  const chave = normalizarStatus(status) || 'pendente';
+  return STATUS_META[chave] || {
+    label: chave,
+    classes: 'bg-zinc-100 text-zinc-700 ring-zinc-200',
+  };
+}
+
+function statusEmAndamento(status) {
+  const statusNormalizado = normalizarStatus(status);
+  return !statusNormalizado || statusNormalizado === 'pendente' || statusNormalizado === 'processando';
+}
+
+function normalizarMesReferencia(valor) {
+  if (!valor) {
+    return '';
+  }
+
+  const texto = String(valor).trim();
+  if (REGEX_MES_REFERENCIA.test(texto)) {
+    return texto.slice(0, 7);
+  }
+
+  const data = new Date(texto);
+  if (Number.isNaN(data.getTime())) {
+    return '';
+  }
+
+  const ano = data.getFullYear();
+  const mes = String(data.getMonth() + 1).padStart(2, '0');
+  return `${ano}-${mes}`;
+}
 
 function formatarMesReferencia(valor) {
-  if (!REGEX_MES_REFERENCIA.test(valor || '')) {
+  const mesReferencia = normalizarMesReferencia(valor);
+
+  if (!mesReferencia) {
     return '-';
   }
 
-  const [anoTexto, mesTexto] = valor.split('-');
+  const [anoTexto, mesTexto] = mesReferencia.split('-');
   const data = new Date(Number.parseInt(anoTexto, 10), Number.parseInt(mesTexto, 10) - 1, 1);
 
   return new Intl.DateTimeFormat('pt-BR', {
@@ -21,14 +121,277 @@ function formatarMesReferencia(valor) {
   }).format(data);
 }
 
+function formatarDataHora(valor) {
+  if (!valor) {
+    return '-';
+  }
+
+  const data = new Date(valor);
+  if (Number.isNaN(data.getTime())) {
+    return '-';
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(data);
+}
+
+function desembrulharPayload(payload) {
+  if (Array.isArray(payload)) {
+    return payload[0] || {};
+  }
+
+  return payload?.processamento || payload?.data?.processamento || payload?.data || payload || {};
+}
+
+function obterIdProcessamento(processamento) {
+  return (
+    processamento?.id ||
+    processamento?.processamento_id ||
+    processamento?.processamentoId ||
+    processamento?.folha_processamento_id ||
+    ''
+  );
+}
+
+function obterNomeCliente(processamento) {
+  return (
+    processamento?.cliente_nome ||
+    processamento?.nome_cliente ||
+    processamento?.cliente?.nome ||
+    processamento?.cliente?.razao_social ||
+    processamento?.empresa ||
+    processamento?.cliente_id ||
+    processamento?.clienteId ||
+    ''
+  );
+}
+
+function obterArquivos(processamento) {
+  const arquivos = processamento?.arquivos || processamento?.files || processamento?.resultados;
+  return Array.isArray(arquivos) ? arquivos : [];
+}
+
+function normalizarProcessamento(payload, fallback = {}) {
+  const processamento = desembrulharPayload(payload);
+  const id = String(obterIdProcessamento(processamento) || obterIdProcessamento(fallback) || '').trim();
+
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    cliente_id: processamento?.cliente_id || processamento?.clienteId || fallback.cliente_id || '',
+    cliente_nome: obterNomeCliente(processamento) || fallback.cliente_nome || '',
+    mes_referencia:
+      normalizarMesReferencia(processamento?.mes_referencia || processamento?.mesReferencia) ||
+      fallback.mes_referencia ||
+      '',
+    status: normalizarStatus(processamento?.status) || fallback.status || '',
+    motivo_erro:
+      processamento?.motivo_erro ||
+      processamento?.motivoErro ||
+      processamento?.erro ||
+      processamento?.mensagem_erro ||
+      fallback.motivo_erro ||
+      '',
+    criado_em:
+      processamento?.criado_em ||
+      processamento?.created_at ||
+      processamento?.createdAt ||
+      fallback.criado_em ||
+      '',
+    atualizado_em:
+      processamento?.atualizado_em ||
+      processamento?.updated_at ||
+      processamento?.updatedAt ||
+      fallback.atualizado_em ||
+      fallback.ultima_consulta_em ||
+      '',
+    ultima_consulta_em: fallback.ultima_consulta_em || new Date().toISOString(),
+    erro_consulta: fallback.erro_consulta || '',
+    arquivos: obterArquivos(processamento),
+  };
+}
+
+function compararProcessamentos(a, b) {
+  const dataA = new Date(a.atualizado_em || a.criado_em || `${a.mes_referencia || '1900-01'}-01`);
+  const dataB = new Date(b.atualizado_em || b.criado_em || `${b.mes_referencia || '1900-01'}-01`);
+  return dataB.getTime() - dataA.getTime();
+}
+
+function mesclarProcessamento(atual, novo) {
+  if (!atual) {
+    return novo;
+  }
+
+  return {
+    ...atual,
+    ...novo,
+    cliente_id: novo.cliente_id || atual.cliente_id,
+    cliente_nome: novo.cliente_nome || atual.cliente_nome,
+    mes_referencia: novo.mes_referencia || atual.mes_referencia,
+    status: novo.status || atual.status,
+    motivo_erro: novo.motivo_erro || atual.motivo_erro,
+    criado_em: novo.criado_em || atual.criado_em,
+    atualizado_em: novo.atualizado_em || atual.atualizado_em,
+    arquivos: novo.arquivos?.length ? novo.arquivos : atual.arquivos || [],
+  };
+}
+
+function mesclarProcessamentos(processamentosAtuais, novosProcessamentos) {
+  const mapa = new Map();
+
+  processamentosAtuais.filter(Boolean).forEach((processamento) => {
+    mapa.set(String(processamento.id), processamento);
+  });
+
+  novosProcessamentos.filter(Boolean).forEach((processamento) => {
+    const id = String(processamento.id);
+    mapa.set(id, mesclarProcessamento(mapa.get(id), processamento));
+  });
+
+  return Array.from(mapa.values())
+    .sort(compararProcessamentos)
+    .slice(0, LIMITE_PROCESSAMENTOS);
+}
+
+function lerProcessamentosSalvos() {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const bruto = window.localStorage.getItem(STORAGE_KEY);
+    const dados = JSON.parse(bruto || '[]');
+
+    if (!Array.isArray(dados)) {
+      return [];
+    }
+
+    return dados
+      .map((processamento) => normalizarProcessamento(processamento, processamento))
+      .filter(Boolean)
+      .sort(compararProcessamentos)
+      .slice(0, LIMITE_PROCESSAMENTOS);
+  } catch {
+    return [];
+  }
+}
+
+function salvarProcessamentos(processamentos) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const dadosPersistidos = processamentos.map(({ erro_consulta, ...processamento }) => processamento);
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(dadosPersistidos));
+  } catch {
+    // Falha de storage não deve bloquear a tela de acompanhamento.
+  }
+}
+
+function obterProcessamentoDaUrl(searchParams) {
+  const id = searchParams.get('processamento_id') || searchParams.get('id') || '';
+
+  if (!id) {
+    return null;
+  }
+
+  return normalizarProcessamento(
+    {
+      id,
+      processamento_id: id,
+      cliente_id: searchParams.get('cliente_id') || '',
+      cliente_nome: searchParams.get('cliente_nome') || '',
+      mes_referencia: searchParams.get('mes_referencia') || '',
+      status: '',
+    },
+    {
+      criado_em: new Date().toISOString(),
+    },
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700"
+    />
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className="h-4 w-4"
+    >
+      <path d="M20 12a8 8 0 0 1-13.7 5.6" />
+      <path d="M4 12A8 8 0 0 1 17.7 6.4" />
+      <path d="M18 3.8v3h-3" />
+      <path d="M6 20.2v-3h3" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className="h-4 w-4"
+    >
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function StatusDot({ status }) {
+  const statusNormalizado = normalizarStatus(status) || 'pendente';
+  const classes = {
+    pendente: 'bg-amber-500',
+    processando: 'bg-sky-500',
+    concluido: 'bg-emerald-500',
+    erro: 'bg-rose-500',
+  };
+
+  return (
+    <span
+      aria-hidden="true"
+      className={`h-2 w-2 rounded-full ${classes[statusNormalizado] || 'bg-zinc-500'}`}
+    />
+  );
+}
+
 function StatusFolhaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const parametrosUrl = searchParams.toString();
   const { isAuthenticated, isLoading } = useAuth();
 
-  const processamentoId = searchParams.get('processamento_id') || '';
-  const mesReferencia = searchParams.get('mes_referencia') || '';
-  const clienteNome = searchParams.get('cliente_nome') || '';
+  const [processamentos, setProcessamentos] = useState(() => lerProcessamentosSalvos());
+  const [isAtualizando, setIsAtualizando] = useState(false);
+  const [erroLista, setErroLista] = useState('');
+  const [ultimaAtualizacao, setUltimaAtualizacao] = useState('');
+
+  const processamentoDaUrl = useMemo(() => {
+    const params = new URLSearchParams(parametrosUrl);
+    return obterProcessamentoDaUrl(params);
+  }, [parametrosUrl]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -36,7 +399,143 @@ function StatusFolhaContent() {
     }
   }, [isAuthenticated, isLoading, router]);
 
-  const mesFormatado = useMemo(() => formatarMesReferencia(mesReferencia), [mesReferencia]);
+  useEffect(() => {
+    if (!processamentoDaUrl) {
+      return;
+    }
+
+    setProcessamentos((valorAtual) => mesclarProcessamentos(valorAtual, [processamentoDaUrl]));
+  }, [processamentoDaUrl]);
+
+  useEffect(() => {
+    salvarProcessamentos(processamentos);
+  }, [processamentos]);
+
+  const idsChave = useMemo(
+    () => processamentos.map((processamento) => processamento.id).join('|'),
+    [processamentos],
+  );
+
+  const temProcessamentosEmAndamento = useMemo(
+    () => processamentos.some((processamento) => statusEmAndamento(processamento.status)),
+    [processamentos],
+  );
+
+  const contadores = useMemo(() => {
+    const totais = {
+      pendente: 0,
+      processando: 0,
+      concluido: 0,
+      erro: 0,
+    };
+
+    processamentos.forEach((processamento) => {
+      const status = normalizarStatus(processamento.status) || 'pendente';
+      if (totais[status] === undefined) {
+        return;
+      }
+
+      totais[status] += 1;
+    });
+
+    return totais;
+  }, [processamentos]);
+
+  const carregarProcessamentos = useCallback(
+    async ({ silencioso = false } = {}) => {
+      const ids = idsChave ? idsChave.split('|').filter(Boolean) : [];
+
+      if (!isAuthenticated || ids.length === 0) {
+        return;
+      }
+
+      if (!silencioso) {
+        setIsAtualizando(true);
+      }
+
+      const consultadoEm = new Date().toISOString();
+
+      try {
+        const resultados = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const payload = await obterProcessamentoFolha(id);
+              return {
+                ok: true,
+                processamento: normalizarProcessamento(payload, {
+                  id,
+                  ultima_consulta_em: consultadoEm,
+                }),
+              };
+            } catch (error) {
+              return {
+                ok: false,
+                erro: obterMensagemErro(error),
+                processamento: normalizarProcessamento(
+                  { id, processamento_id: id },
+                  {
+                    id,
+                    erro_consulta: obterMensagemErro(error),
+                    ultima_consulta_em: consultadoEm,
+                  },
+                ),
+              };
+            }
+          }),
+        );
+
+        const processamentosAtualizados = resultados
+          .map((resultado) => resultado.processamento)
+          .filter(Boolean);
+
+        setProcessamentos((valorAtual) =>
+          mesclarProcessamentos(valorAtual, processamentosAtualizados),
+        );
+
+        setUltimaAtualizacao(consultadoEm);
+
+        const falhas = resultados.filter((resultado) => !resultado.ok);
+        if (falhas.length === resultados.length && falhas.length > 0) {
+          setErroLista(falhas[0].erro);
+        } else if (falhas.length > 0) {
+          setErroLista('Alguns processamentos não puderam ser atualizados agora.');
+        } else {
+          setErroLista('');
+        }
+      } finally {
+        if (!silencioso) {
+          setIsAtualizando(false);
+        }
+      }
+    },
+    [idsChave, isAuthenticated],
+  );
+
+  useEffect(() => {
+    if (isLoading || !isAuthenticated || !idsChave) {
+      return;
+    }
+
+    carregarProcessamentos({ silencioso: true });
+  }, [carregarProcessamentos, idsChave, isAuthenticated, isLoading]);
+
+  useEffect(() => {
+    if (isLoading || !isAuthenticated || !idsChave || !temProcessamentosEmAndamento) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      carregarProcessamentos({ silencioso: true });
+    }, POLLING_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [
+    carregarProcessamentos,
+    idsChave,
+    isAuthenticated,
+    isLoading,
+    temProcessamentosEmAndamento,
+  ]);
 
   if (isLoading) {
     return <p>Carregando...</p>;
@@ -52,83 +551,167 @@ function StatusFolhaContent() {
         <div>
           <h1 className="text-2xl font-semibold text-zinc-900">Status da folha</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Acompanhe o processamento iniciado pelo upload da planilha.
+            Acompanhe os processamentos por mês e empresa antes de baixar os resultados.
           </p>
         </div>
 
-        <Link
-          href="/dashboard/folha/upload"
-          className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-center text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
-        >
-          Novo upload
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => carregarProcessamentos()}
+            disabled={processamentos.length === 0 || isAtualizando}
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isAtualizando ? <Spinner /> : <RefreshIcon />}
+            {isAtualizando ? 'Atualizando...' : 'Atualizar lista'}
+          </button>
+
+          <Link
+            href="/dashboard/folha/upload"
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700"
+          >
+            <PlusIcon />
+            Novo upload
+          </Link>
+        </div>
       </header>
 
-      {!processamentoId ? (
-        <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
-          <p className="text-sm font-medium text-amber-900">
-            Nenhum processamento foi informado para consulta.
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <article className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Pendente</p>
+          <p className="mt-2 text-3xl font-bold leading-none text-amber-900">
+            {contadores.pendente}
+          </p>
+        </article>
+        <article className="rounded-xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+            Processando
+          </p>
+          <p className="mt-2 text-3xl font-bold leading-none text-sky-900">
+            {contadores.processando}
+          </p>
+        </article>
+        <article className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+            Concluído
+          </p>
+          <p className="mt-2 text-3xl font-bold leading-none text-emerald-900">
+            {contadores.concluido}
+          </p>
+        </article>
+        <article className="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">Erro</p>
+          <p className="mt-2 text-3xl font-bold leading-none text-rose-900">{contadores.erro}</p>
+        </article>
+      </section>
+
+      <section className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-sm md:flex-row md:items-center md:justify-between">
+        <p>
+          {temProcessamentosEmAndamento
+            ? 'Atualização automática ativa para processamentos em andamento.'
+            : 'Nenhum processamento em andamento no momento.'}
+        </p>
+        <p>Última atualização: {formatarDataHora(ultimaAtualizacao)}</p>
+      </section>
+
+      {erroLista ? (
+        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+          <p className="text-sm font-medium text-rose-800">{erroLista}</p>
+        </section>
+      ) : null}
+
+      {processamentos.length === 0 ? (
+        <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <p className="text-sm font-medium text-zinc-800">
+            Nenhum processamento de folha encontrado.
+          </p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Assim que uma planilha for enviada, o status dela aparece aqui.
           </p>
         </section>
       ) : (
-        <section className="grid gap-4 lg:grid-cols-3">
-          <article className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-2">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Processamento
-                </p>
-                <p className="mt-2 break-all text-lg font-semibold text-zinc-900">
-                  {processamentoId}
-                </p>
-              </div>
+        <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-zinc-200">
+              <thead className="bg-zinc-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Empresa
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Mês
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Motivo do erro
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Atualizado
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 bg-white">
+                {processamentos.map((processamento) => {
+                  const statusMeta = obterStatusMeta(processamento.status);
+                  const statusNormalizado = normalizarStatus(processamento.status) || 'pendente';
+                  const mostrarMotivoErro =
+                    statusNormalizado === 'erro' && Boolean(processamento.motivo_erro);
 
-              <span className="self-start rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
-                Pendente
-              </span>
-            </div>
-
-            <dl className="mt-5 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Mês
-                </dt>
-                <dd className="mt-1 text-sm font-medium text-zinc-800">{mesFormatado}</dd>
-              </div>
-
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Cliente
-                </dt>
-                <dd className="mt-1 text-sm font-medium text-zinc-800">
-                  {clienteNome || 'Cliente vinculado ao usuário'}
-                </dd>
-              </div>
-            </dl>
-
-            <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-              <p className="text-sm font-medium text-emerald-900">
-                Upload aceito. A planilha foi validada e registrada para processamento.
-              </p>
-            </div>
-          </article>
-
-          <aside className="rounded-xl border border-zinc-200 bg-zinc-50 p-5 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              Próximas etapas
-            </p>
-            <ol className="mt-4 space-y-3 text-sm text-zinc-700">
-              <li className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">
-                Planilha recebida
-              </li>
-              <li className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
-                Processamento pendente
-              </li>
-              <li className="rounded-lg border border-zinc-200 bg-white px-3 py-2">
-                Resultado da folha
-              </li>
-            </ol>
-          </aside>
+                  return (
+                    <tr key={processamento.id} className="align-top">
+                      <td className="px-4 py-4">
+                        <p className="max-w-xs text-sm font-semibold text-zinc-900">
+                          {processamento.cliente_nome || 'Empresa não informada'}
+                        </p>
+                        <p className="mt-1 max-w-xs break-all text-xs text-zinc-500">
+                          {processamento.id}
+                        </p>
+                      </td>
+                      <td className="px-4 py-4 text-sm font-medium text-zinc-700">
+                        {formatarMesReferencia(processamento.mes_referencia)}
+                      </td>
+                      <td className="px-4 py-4">
+                        <span
+                          className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${statusMeta.classes}`}
+                          aria-live="polite"
+                        >
+                          <StatusDot status={statusNormalizado} />
+                          {statusMeta.label}
+                        </span>
+                        {processamento.arquivos?.length ? (
+                          <p className="mt-2 text-xs text-zinc-500">
+                            {processamento.arquivos.length} arquivo
+                            {processamento.arquivos.length > 1 ? 's' : ''} gerado
+                            {processamento.arquivos.length > 1 ? 's' : ''}
+                          </p>
+                        ) : null}
+                      </td>
+                      <td className="max-w-sm px-4 py-4">
+                        {mostrarMotivoErro ? (
+                          <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                            {processamento.motivo_erro}
+                          </p>
+                        ) : processamento.erro_consulta ? (
+                          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                            {processamento.erro_consulta}
+                          </p>
+                        ) : (
+                          <span className="text-sm text-zinc-400">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 text-sm text-zinc-600">
+                        {formatarDataHora(
+                          processamento.atualizado_em || processamento.ultima_consulta_em,
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
     </main>
