@@ -8,6 +8,14 @@ import {
   gerarRelatorioFechamentoPDF,
   calcularTotaisEmpresa,
 } from "../services/folha.service.js";
+import {
+  montarListaArquivos,
+  arquivosParaResposta,
+  resolverPathDownload,
+  calcularTotaisProcessamento,
+  registrarEventoConclusaoFolha,
+} from "../services/folha-status.service.js";
+import { validarTokenLicenca } from "../services/licenca.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { PERFIS } from "../config/perfis.js";
 
@@ -44,13 +52,10 @@ export async function baixarTemplate(req, res) {
   }
 }
 
-// Ponto único de entrada da planilha preenchida — chamado pelo agente local e pela web.
-export async function uploadFolha(req, res) {
+async function processarUploadFolha(req, res, clienteId) {
   if (!req.file) {
     return res.status(400).json({ erro: "Planilha é obrigatória" });
   }
-
-  const clienteId = resolverClienteId(req);
 
   if (!clienteId) {
     return res.status(400).json({ erro: "cliente_id é obrigatório" });
@@ -118,6 +123,24 @@ export async function uploadFolha(req, res) {
     console.error("[folha.controller] Erro inesperado no upload da folha:", err.message);
     return res.status(500).json({ erro: "Erro ao processar upload da folha" });
   }
+}
+
+// Upload via web/dashboard — JWT + perfil.
+export async function uploadFolha(req, res) {
+  const clienteId = resolverClienteId(req);
+  return processarUploadFolha(req, res, clienteId);
+}
+
+// Upload via agente local — x-licenca-token.
+export async function uploadFolhaAgente(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  return processarUploadFolha(req, res, licenca.cliente_id);
 }
 
 // Lê a planilha salva em BK-FOLHA-UPLOAD, calcula INSS/FGTS/IR/líquido por funcionário
@@ -377,15 +400,170 @@ export async function gerarSaidaFolha(req, res) {
       relatoriosGerados++;
     }
 
+    const empresas = Array.from(calculosPorEmpresa.keys());
+
+    try {
+      await registrarEventoConclusaoFolha(supabase, {
+        processamentoId,
+        clienteId: processamento.cliente_id,
+        totalFuncionarios: calculos.length,
+        totalEmpresas: empresas.length,
+      });
+    } catch (erroEvento) {
+      // Arquivos já foram gerados — falha de notificação não deve quebrar a resposta.
+      console.error(
+        "[folha.controller] Erro ao registrar evento de conclusão da folha:",
+        erroEvento.message,
+      );
+    }
+
     return res.status(200).json({
       processamento_id: processamentoId,
       holerites_gerados: holeritesGerados,
       relatorios_gerados: relatoriosGerados,
-      empresas: Array.from(calculosPorEmpresa.keys()),
+      empresas,
     });
   } catch (err) {
     console.error("[folha.controller] Erro inesperado ao gerar saída da folha:", err.message);
     return res.status(500).json({ erro: "Erro ao gerar arquivos de saída da folha" });
+  }
+}
+
+// Status do processamento + lista de arquivos gerados (holerites e relatórios).
+export async function consultarStatusFolha(req, res) {
+  const { processamento_id: processamentoId } = req.params;
+
+  const { data: processamento, error: erroBusca } = await supabase
+    .from("processamentos_folha")
+    .select("id, cliente_id, status, mes_referencia, motivo_erro")
+    .eq("id", processamentoId)
+    .maybeSingle();
+
+  if (erroBusca) {
+    console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar processamento" });
+  }
+
+  if (!processamento) {
+    return res.status(404).json({ erro: "Processamento não encontrado" });
+  }
+
+  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
+    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
+  }
+
+  const { data: calculos, error: erroCalculos } = await supabase
+    .from("folha_calculos")
+    .select("empresa, holerite_path")
+    .eq("processamento_id", processamentoId);
+
+  if (erroCalculos) {
+    console.error("[folha.controller] Erro ao buscar cálculos:", erroCalculos.message);
+    return res.status(500).json({ erro: "Erro ao buscar arquivos do processamento" });
+  }
+
+  const { data: relatorios, error: erroRelatorios } = await supabase
+    .from("folha_relatorios")
+    .select("arquivo_path")
+    .eq("processamento_id", processamentoId);
+
+  if (erroRelatorios) {
+    console.error("[folha.controller] Erro ao buscar relatórios:", erroRelatorios.message);
+    return res.status(500).json({ erro: "Erro ao buscar arquivos do processamento" });
+  }
+
+  const arquivos = montarListaArquivos(calculos || [], relatorios || []);
+  const totais = calcularTotaisProcessamento(calculos || []);
+
+  return res.status(200).json({
+    processamento_id: processamento.id,
+    status: processamento.status,
+    mes_referencia: processamento.mes_referencia,
+    motivo_erro: processamento.motivo_erro,
+    total_funcionarios: totais.total_funcionarios,
+    total_empresas: totais.total_empresas,
+    arquivos: arquivosParaResposta(arquivos),
+  });
+}
+
+// Download de um arquivo gerado — somente quando status === concluido.
+export async function baixarArquivoFolha(req, res) {
+  const { processamento_id: processamentoId, arquivo: nomeArquivo } = req.params;
+
+  const { data: processamento, error: erroBusca } = await supabase
+    .from("processamentos_folha")
+    .select("id, cliente_id, status")
+    .eq("id", processamentoId)
+    .maybeSingle();
+
+  if (erroBusca) {
+    console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar processamento" });
+  }
+
+  if (!processamento) {
+    return res.status(404).json({ erro: "Processamento não encontrado" });
+  }
+
+  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
+    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
+  }
+
+  if (processamento.status !== "concluido") {
+    return res.status(409).json({
+      erro: "Download disponível apenas quando o processamento estiver concluído",
+    });
+  }
+
+  const { data: calculos, error: erroCalculos } = await supabase
+    .from("folha_calculos")
+    .select("holerite_path")
+    .eq("processamento_id", processamentoId);
+
+  if (erroCalculos) {
+    console.error("[folha.controller] Erro ao buscar holerites:", erroCalculos.message);
+    return res.status(500).json({ erro: "Erro ao buscar arquivo" });
+  }
+
+  const { data: relatorios, error: erroRelatorios } = await supabase
+    .from("folha_relatorios")
+    .select("arquivo_path")
+    .eq("processamento_id", processamentoId);
+
+  if (erroRelatorios) {
+    console.error("[folha.controller] Erro ao buscar relatórios:", erroRelatorios.message);
+    return res.status(500).json({ erro: "Erro ao buscar arquivo" });
+  }
+
+  const arquivos = montarListaArquivos(calculos || [], relatorios || []);
+  const caminhoStorage = resolverPathDownload(nomeArquivo, arquivos);
+
+  if (!caminhoStorage) {
+    return res.status(404).json({ erro: "Arquivo não encontrado para este processamento" });
+  }
+
+  try {
+    const { data: arquivo, error: erroDownload } = await supabase.storage
+      .from("folhas-pagamento")
+      .download(caminhoStorage);
+
+    if (erroDownload) {
+      console.error("[folha.controller] Erro ao baixar arquivo do storage:", erroDownload.message);
+      return res.status(500).json({ erro: "Erro ao baixar arquivo" });
+    }
+
+    const buffer = Buffer.from(await arquivo.arrayBuffer());
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${nomeArquivo}"`,
+    );
+
+    return res.status(200).send(buffer);
+  } catch (err) {
+    console.error("[folha.controller] Erro inesperado no download da folha:", err.message);
+    return res.status(500).json({ erro: "Erro ao baixar arquivo" });
   }
 }
 

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "seed:dev": "node scripts/seed-dev.js"
+    "seed:dev": "node scripts/seed-dev.js",
+    "test": "node --import ./tests/setup-env.js --experimental-test-module-mocks --test tests/folha-status.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

@@ -5,6 +5,7 @@ from comunicacao.reportar_evento import reportar_evento
 from core.configuracao import gerenciar_configuracoes
 from automacoes.renomear_arquivo import renomear_arquivo
 from automacoes.abertura_empresa import criar_estrutura_empresa
+from automacoes.upload_folha import eh_planilha_folha, enviar_planilha_folha
 from datetime import datetime
 import time
 import os
@@ -47,6 +48,23 @@ def _processar_arquivo(caminho, regras):
                         nome_final = renomear_arquivo(caminho)
                     elif acao == "abertura_empresa":
                         nome_final = criar_estrutura_empresa(regra)
+                    elif acao == "upload_folha":
+                        if not eh_planilha_folha(caminho):
+                            print(
+                                f"[monitor] Ignorando {nome}: upload_folha exige "
+                                f".xlsx em Folha/YYYY-MM (fora de enviados)"
+                            )
+                            return
+                        mes, nome_final = enviar_planilha_folha(
+                            caminho,
+                            pasta_destino=regra.get("pasta_destino") or None,
+                        )
+                        print(f"[monitor] Planilha de folha enviada: {nome} (mês {mes}) → {nome_final}")
+                        reportar_evento(
+                            f"Planilha {os.path.basename(nome_final)} enviada para folha ({mes})",
+                            True,
+                        )
+                        return
                     else:
                         print(f"[monitor] Ação desconhecida: {acao}")
                         return
