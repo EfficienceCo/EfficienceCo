@@ -15,10 +15,28 @@ export async function uploadFolha({ arquivo, mesReferencia, clienteId } = {}) {
 }
 
 export async function baixarTemplateFolha({ clienteId } = {}) {
-  const response = await api.get('/folha/template', {
-    params: clienteId ? { cliente_id: clienteId } : undefined,
-    responseType: 'blob',
-  });
+  try {
+    const response = await api.get('/folha/template', {
+      params: clienteId ? { cliente_id: clienteId } : undefined,
+      responseType: 'blob',
+    });
 
-  return response.data;
+    return response.data;
+  } catch (error) {
+    // Com responseType 'blob', erros da API (ex.: licença inativa) chegam como
+    // Blob em vez de JSON já parseado, escondendo a mensagem real do backend.
+    // Convertemos o blob de volta para JSON quando possível para preservar o erro.
+    const blob = error?.response?.data;
+
+    if (blob instanceof Blob && blob.type?.includes('json')) {
+      try {
+        const texto = await blob.text();
+        error.response.data = JSON.parse(texto);
+      } catch {
+        // Mantém o blob original se não for possível parsear.
+      }
+    }
+
+    throw error;
+  }
 }
