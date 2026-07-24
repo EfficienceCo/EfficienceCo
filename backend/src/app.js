@@ -14,12 +14,18 @@ import eventosRoutes from "./routes/eventos.routes.js";
 import obrigacoesRoutes from "./routes/obrigacoes.routes.js";
 import processosRoutes from "./routes/processos.routes.js";
 import notificacoesRoutes from "./routes/notificacoes.routes.js";
+import folhaRoutes from "./routes/folha.routes.js";
 
 console.log("[app.js] Criando instancia do app...");
 const app = express();
 console.log("[app.js] Instancia do app criada");
 
-app.use(cors({ origin: process.env.FRONTEND_URL }));
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL,
+    exposedHeaders: ["Content-Disposition"],
+  }),
+);
 
 console.log("[app.js] Registrando middleware express.json()...");
 app.use(express.json());
@@ -62,6 +68,9 @@ console.log("[app.js] Rota /processos registrada");
 
 app.use("/notificacoes", notificacoesRoutes);
 console.log("[app.js] Rota /notificacoes registrada");
+
+app.use("/folha", folhaRoutes);
+console.log("[app.js] Rota /folha registrada");
 
 console.log("[app.js] Exportando app...");
 export default app;

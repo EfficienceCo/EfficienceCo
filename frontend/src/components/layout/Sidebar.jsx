@@ -23,6 +23,12 @@ const NAV_ITEMS = [
     icon: ProcessosIcon,
   },
   {
+    href: '/dashboard/folha/upload',
+    label: 'Folha',
+    icon: FolhaIcon,
+    activePrefix: '/dashboard/folha',
+  },
+  {
     href: '/dashboard/logs',
     label: 'Logs',
     icon: LogsIcon,
@@ -51,13 +57,14 @@ const NAV_ITEMS = [
 ];
 
 function isRouteActive(pathname, item) {
-  const { href, exact } = item;
+  const { href, exact, activePrefix } = item;
+  const routeBase = activePrefix || href;
 
   if (!pathname) {
     return false;
   }
 
-  if (pathname === href) {
+  if (pathname === href || pathname === routeBase) {
     return true;
   }
 
@@ -65,7 +72,7 @@ function isRouteActive(pathname, item) {
     return false;
   }
 
-  return pathname.startsWith(`${href}/`);
+  return pathname.startsWith(`${routeBase}/`);
 }
 
 function sidebarLinkClasses(ativo) {
@@ -190,6 +197,18 @@ function ProcessosIcon() {
       <rect x="3.5" y="4" width="17" height="16.5" rx="2" />
       <path d="M8 12h8" />
       <path d="M8 15.5h5" />
+    </IconBase>
+  );
+}
+
+function FolhaIcon() {
+  return (
+    <IconBase>
+      <path d="M7 3.5h7l3.5 3.5v13.5H7z" />
+      <path d="M14 3.5V7h3.5" />
+      <path d="M9.5 11h5" />
+      <path d="M9.5 14h5" />
+      <path d="M9.5 17h3" />
     </IconBase>
   );
 }

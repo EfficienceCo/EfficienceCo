@@ -24,6 +24,7 @@ const ACAO_OPCOES = [
   { value: 'mover', label: 'Mover arquivo' },
   { value: 'copiar', label: 'Copiar arquivo' },
   { value: 'renomear', label: 'Renomear arquivo' },
+  { value: 'upload_folha', label: 'Upload folha (.xlsx em Folha/YYYY-MM)' },
 ];
 
 const FORM_INICIAL = {

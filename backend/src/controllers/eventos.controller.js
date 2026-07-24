@@ -119,9 +119,8 @@ export async function registrarEvento(req, res) {
     return res.status(500).json({ erro: "Erro ao registrar evento" });
   }
 
-  if (sucesso) {
-    await criarNotificacao(cliente_id, "arquivo_recebido", descricao);
-  }
+  const tipoNotificacao = sucesso ? "arquivo_processado" : "arquivo_erro";
+  await criarNotificacao(cliente_id, tipoNotificacao, descricao);
 
   return res.status(201).json(data);
 }
