@@ -50,3 +50,33 @@ def post(endpoint, dados, timeout=None, addToHeaders=None):
         raise RuntimeError(f"Falha de conexão em POST {endpoint}")
     except RuntimeError:
         raise
+
+MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+def postFile(endpoint, arquivo_path, campos=None, timeout=None, addToHeaders=None):
+    """POST multipart com arquivo no campo 'planilha' e campos de formulário extras."""
+    url = API_URL + endpoint
+    headers = {}
+    if addToHeaders:
+        headers.update(addToHeaders)
+
+    nome = os.path.basename(arquivo_path)
+    try:
+        with open(arquivo_path, "rb") as f:
+            files = {"planilha": (nome, f, MIME_XLSX)}
+            response = requests.post(
+                url,
+                headers=headers,
+                files=files,
+                data=campos or {},
+                timeout=timeout,
+            )
+        return _handle_response(response, "POST", endpoint)
+    except requests.exceptions.Timeout:
+        raise RuntimeError(f"Timeout em POST {endpoint}")
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(f"Falha de conexão em POST {endpoint}")
+    except RuntimeError:
+        raise
+    except OSError as e:
+        raise RuntimeError(f"Falha ao ler arquivo {arquivo_path}: {e}")
