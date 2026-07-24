@@ -8,7 +8,7 @@ export async function listarClientes(req, res) {
   const { data, error } = await supabase
     .from("clientes")
     .select("*")
-    .order("criado_em", { ascending: false });
+    .order("data_vinculo", { ascending: false });
 
   if (error) {
     console.error(
