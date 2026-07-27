@@ -141,7 +141,20 @@ function paraNumero(valor) {
   return NaN;
 }
 
-function paraBooleano(valor) {
+// ExcelJS entrega célula de fórmula como { formula, result } e célula de texto formatado
+// como { richText: [...] } — nenhum dos dois é boolean/number/string direto. Sem isso,
+// vale_transporte preenchido via fórmula (comum em checkbox do Excel ou cópia de outra
+// planilha) caía direto no `return false` abaixo, sem nenhum erro reportado.
+function desembrulharValorCelula(valor) {
+  if (valor && typeof valor === "object") {
+    if ("result" in valor) return desembrulharValorCelula(valor.result);
+    if (Array.isArray(valor.richText)) return valor.richText.map((parte) => parte.text).join("");
+  }
+  return valor;
+}
+
+function paraBooleano(valorBruto) {
+  const valor = desembrulharValorCelula(valorBruto);
   if (typeof valor === "boolean") return valor;
   if (typeof valor === "number") return valor === 1;
   if (typeof valor === "string") {
