@@ -311,8 +311,6 @@ function formatarMoeda(valor) {
   return Number(valor).toFixed(2).replace(".", ",");
 }
 
-// Sem modelo próprio da Souza para holerite/relatório — layout mínimo, mas com todas
-// as linhas de proventos/descontos, pra ser legível sem depender de explicação externa.
 function documentoParaBuffer(montarConteudo) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margin: 50 });
@@ -325,41 +323,252 @@ function documentoParaBuffer(montarConteudo) {
   });
 }
 
+// Desenha uma célula com borda e, opcionalmente, um rótulo pequeno acima do valor
+// (padrão "grid de holerite": rótulo em cima, valor embaixo, sem centralização vertical).
+function desenharCelula(doc, x, y, largura, altura, texto, opcoes = {}) {
+  const { rotulo, alinhamento = "left", negrito = false, tamanho = 8 } = opcoes;
+  const padding = 3;
+  doc.lineWidth(0.5).rect(x, y, largura, altura).stroke();
+  if (rotulo) {
+    doc.font("Helvetica").fontSize(6).fillColor("black")
+      .text(rotulo, x + padding, y + 2, { width: largura - padding * 2 });
+    doc.font(negrito ? "Helvetica-Bold" : "Helvetica").fontSize(tamanho).fillColor("black")
+      .text(texto, x + padding, y + 11, { width: largura - padding * 2, align: alinhamento });
+  } else {
+    const offsetY = (altura - tamanho) / 2;
+    doc.font(negrito ? "Helvetica-Bold" : "Helvetica").fontSize(tamanho).fillColor("black")
+      .text(texto, x + padding, y + offsetY, { width: largura - padding * 2, align: alinhamento });
+  }
+}
+
+// Uma linha de células lado a lado, cada uma com sua própria largura (em pt).
+function desenharLinhaCelulas(doc, x, y, altura, colunas) {
+  let cursorX = x;
+  colunas.forEach((coluna) => {
+    desenharCelula(doc, cursorX, y, coluna.largura, altura, coluna.texto, coluna);
+    cursorX += coluna.largura;
+  });
+}
+
+// Header da tabela de verbas — extraído à parte porque é redesenhado no topo de cada
+// página caso a lista de verbas precise quebrar (raro, mas o layout precisa suportar).
+function desenharHeaderTabelaVerbas(doc, x, y, colunas) {
+  let cursorX = x;
+  colunas.forEach((coluna) => {
+    doc.font("Helvetica-Bold").fontSize(7).fillColor("black")
+      .text(coluna.rotulo, cursorX + 3, y + 5, { width: coluna.largura - 6, align: coluna.alinhamento || "left" });
+    cursorX += coluna.largura;
+  });
+}
+
+function desenharLinhaVerba(doc, x, y, colunas, linha) {
+  let cursorX = x;
+  colunas.forEach((coluna) => {
+    doc.font("Helvetica").fontSize(8).fillColor("black")
+      .text(linha[coluna.chave] ?? "", cursorX + 3, y + 3, { width: coluna.largura - 6, align: coluna.alinhamento || "left" });
+    cursorX += coluna.largura;
+  });
+}
+
+// Fecha um segmento da tabela de verbas com moldura externa + divisórias verticais entre
+// colunas — sem linha entre as linhas de dado, só a moldura (padrão do holerite de referência).
+function fecharSegmentoTabelaVerbas(doc, x, yTopo, yFim, colunas) {
+  const larguraTotal = colunas.reduce((soma, coluna) => soma + coluna.largura, 0);
+  doc.lineWidth(0.5).rect(x, yTopo, larguraTotal, yFim - yTopo).stroke();
+  let cursorX = x;
+  for (let i = 0; i < colunas.length - 1; i++) {
+    cursorX += colunas[i].largura;
+    doc.moveTo(cursorX, yTopo).lineTo(cursorX, yFim).stroke();
+  }
+}
+
+// Linhas de verba (proventos/descontos) a partir dos campos já calculados em folha_calculos.
+// Códigos de verba são fictícios (não existe tabela de verbas real) — só servem pra imitar
+// o formato visual de um holerite de verdade. Linhas sem valor aplicável (ex: sem faltas,
+// sem adiantamento) são omitidas em vez de aparecer zeradas.
+function montarLinhasVerbas(calculo) {
+  const linhas = [
+    {
+      verba: "0001",
+      descricao: "SALARIO BASE",
+      referencia: String(calculo.dias_trabalhados),
+      proventos: formatarMoeda(calculo.salario_bruto),
+      descontos: "",
+    },
+  ];
+
+  if (Number(calculo.horas_extras) > 0) {
+    linhas.push({
+      verba: "0002",
+      descricao: "HORAS EXTRAS 50%",
+      referencia: String(calculo.horas_extras),
+      proventos: formatarMoeda(calculo.valor_horas_extras),
+      descontos: "",
+    });
+  }
+
+  if (Number(calculo.faltas) > 0) {
+    linhas.push({
+      verba: "0010",
+      descricao: "FALTAS",
+      referencia: String(calculo.faltas),
+      proventos: "",
+      descontos: formatarMoeda(calculo.valor_faltas),
+    });
+  }
+
+  linhas.push({
+    verba: "0011",
+    descricao: "INSS",
+    referencia: formatarMoeda(calculo.base_calculo),
+    proventos: "",
+    descontos: formatarMoeda(calculo.inss),
+  });
+
+  linhas.push({
+    verba: "0012",
+    descricao: "IRRF",
+    referencia: "",
+    proventos: "",
+    descontos: formatarMoeda(calculo.ir),
+  });
+
+  if (Number(calculo.adiantamento) > 0) {
+    linhas.push({
+      verba: "0013",
+      descricao: "ADIANTAMENTO SALARIAL",
+      referencia: "",
+      proventos: "",
+      descontos: formatarMoeda(calculo.adiantamento),
+    });
+  }
+
+  if (calculo.vale_transporte && Number(calculo.desconto_vt) > 0) {
+    linhas.push({
+      verba: "0014",
+      descricao: "VALE-TRANSPORTE (6%)",
+      referencia: "",
+      proventos: "",
+      descontos: formatarMoeda(calculo.desconto_vt),
+    });
+  }
+
+  return linhas;
+}
+
+const COLUNAS_TABELA_VERBAS = (larguraUtil) => [
+  { chave: "verba", largura: larguraUtil * 0.1, rotulo: "VERBA" },
+  { chave: "descricao", largura: larguraUtil * 0.44, rotulo: "DESCRIÇÃO DA VERBA" },
+  { chave: "referencia", largura: larguraUtil * 0.12, rotulo: "REFER" },
+  { chave: "proventos", largura: larguraUtil * 0.17, rotulo: "PROVENTOS", alinhamento: "right" },
+  { chave: "descontos", largura: larguraUtil * 0.17, rotulo: "DESCONTOS", alinhamento: "right" },
+];
+
 // Holerite individual — 1 por funcionário, a partir da linha já calculada em folha_calculos.
+// Layout imita o padrão de holerite brasileiro (caixa com borda, grid de dados, tabela de
+// verbas, linha de bases/totais) — sem logo/identidade de empresa, só texto e bordas.
 export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
   return documentoParaBuffer((doc) => {
-    doc.fontSize(16).text("HOLERITE DE PAGAMENTO", { align: "center" });
-    doc.moveDown();
+    const x0 = doc.page.margins.left;
+    const larguraUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const limiteInferior = doc.page.height - doc.page.margins.bottom;
+    const yInicio = doc.page.margins.top;
+    let y = yInicio;
+    let houvePaginacao = false;
 
-    doc.fontSize(10);
-    doc.text(`Empresa: ${calculo.empresa}`);
-    doc.text(`Mês de referência: ${mesReferenciaFormatado}`);
-    doc.moveDown(0.5);
-    doc.text(`Funcionário: ${calculo.funcionario}`);
-    doc.text(`CPF: ${calculo.cpf}`);
-    doc.text(`Cargo: ${calculo.cargo}`);
-    doc.text(`Dias trabalhados: ${calculo.dias_trabalhados}`);
-    doc.moveDown();
+    doc.font("Helvetica-Bold").fontSize(12).fillColor("black")
+      .text("DEMONSTRATIVO DE PAGAMENTO", x0, y + 6, { width: larguraUtil, align: "center" });
+    y += 26;
+    doc.lineWidth(0.5).moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 
-    doc.fontSize(12).text("Proventos", { underline: true });
-    doc.fontSize(10);
-    doc.text(`Salário bruto: R$ ${formatarMoeda(calculo.salario_bruto)}`);
-    doc.text(`Horas extras (${calculo.horas_extras}h a 50%): R$ ${formatarMoeda(calculo.valor_horas_extras)}`);
-    doc.moveDown();
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("black")
+      .text(calculo.empresa, x0 + 6, y + 8, { width: larguraUtil * 0.6 });
+    doc.font("Helvetica").fontSize(9)
+      .text(`Referência: ${mesReferenciaFormatado}`, x0 + larguraUtil * 0.6, y + 10, {
+        width: larguraUtil * 0.4 - 6,
+        align: "right",
+      });
+    y += 26;
+    doc.moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 
-    doc.fontSize(12).text("Descontos", { underline: true });
-    doc.fontSize(10);
-    doc.text(`INSS: R$ ${formatarMoeda(calculo.inss)}`);
-    doc.text(`IRRF: R$ ${formatarMoeda(calculo.ir)}`);
-    doc.text(`Faltas (${calculo.faltas} dia(s)): R$ ${formatarMoeda(calculo.valor_faltas)}`);
-    doc.text(`Adiantamento: R$ ${formatarMoeda(calculo.adiantamento)}`);
-    doc.text(`Vale-transporte (6% do bruto): R$ ${formatarMoeda(calculo.desconto_vt)}`);
-    doc.moveDown();
+    const alturaInfo = 24;
+    desenharLinhaCelulas(doc, x0, y, alturaInfo, [
+      { largura: larguraUtil * 0.4, rotulo: "TRABALHADOR", texto: calculo.funcionario },
+      { largura: larguraUtil * 0.2, rotulo: "CPF", texto: calculo.cpf },
+      { largura: larguraUtil * 0.25, rotulo: "CARGO", texto: calculo.cargo },
+      { largura: larguraUtil * 0.15, rotulo: "DIAS TRAB.", texto: String(calculo.dias_trabalhados) },
+    ]);
+    y += alturaInfo;
 
-    doc.fontSize(9).text(`FGTS do mês (informativo, depositado pela empresa, não desconta do líquido): R$ ${formatarMoeda(calculo.fgts)}`);
-    doc.moveDown();
+    const colunasVerba = COLUNAS_TABELA_VERBAS(larguraUtil);
+    const alturaHeaderTabela = 16;
+    const alturaLinhaVerba = 14;
 
-    doc.fontSize(13).text(`Líquido a receber: R$ ${formatarMoeda(calculo.liquido)}`, { underline: true });
+    let yTabelaTopo = y;
+    desenharHeaderTabelaVerbas(doc, x0, y, colunasVerba);
+    y += alturaHeaderTabela;
+
+    montarLinhasVerbas(calculo).forEach((linha) => {
+      if (y + alturaLinhaVerba > limiteInferior) {
+        fecharSegmentoTabelaVerbas(doc, x0, yTabelaTopo, y, colunasVerba);
+        doc.addPage();
+        houvePaginacao = true;
+        y = doc.page.margins.top;
+        yTabelaTopo = y;
+        desenharHeaderTabelaVerbas(doc, x0, y, colunasVerba);
+        y += alturaHeaderTabela;
+      }
+      desenharLinhaVerba(doc, x0, y, colunasVerba, linha);
+      y += alturaLinhaVerba;
+    });
+    fecharSegmentoTabelaVerbas(doc, x0, yTabelaTopo, y, colunasVerba);
+
+    const alturaBases = 26;
+    const alturaTotalLiquido = 32;
+    if (y + alturaBases + alturaTotalLiquido > limiteInferior) {
+      doc.addPage();
+      houvePaginacao = true;
+      y = doc.page.margins.top;
+    }
+
+    // BASE FGTS reaproveita base_calculo (não existe base de FGTS isolada persistida) e
+    // BASE IRRF fica em branco (idem para base de IR) — não fabricamos valor sem dado real.
+    const totalProventos = Number(calculo.salario_bruto) + Number(calculo.valor_horas_extras);
+    const totalDescontos =
+      Number(calculo.inss) + Number(calculo.ir) + Number(calculo.valor_faltas) +
+      Number(calculo.adiantamento) + Number(calculo.desconto_vt);
+
+    const celulasBases = [
+      { rotulo: "SALAR. BASE", texto: formatarMoeda(calculo.salario_bruto) },
+      { rotulo: "SAL. CONTR.", texto: formatarMoeda(calculo.base_calculo) },
+      { rotulo: "BASE FGTS", texto: formatarMoeda(calculo.base_calculo) },
+      { rotulo: "FGTS MES", texto: formatarMoeda(calculo.fgts) },
+      { rotulo: "BASE IRRF", texto: "-" },
+      { rotulo: "DEP IR", texto: String(calculo.num_dependentes) },
+      { rotulo: "TOT. PROVENTOS", texto: formatarMoeda(totalProventos) },
+      { rotulo: "TOT. DESCONTOS", texto: formatarMoeda(totalDescontos) },
+    ];
+    const larguraCelulaBase = larguraUtil / celulasBases.length;
+    desenharLinhaCelulas(
+      doc,
+      x0,
+      y,
+      alturaBases,
+      celulasBases.map((celula) => ({ ...celula, largura: larguraCelulaBase, alinhamento: "right", tamanho: 7 })),
+    );
+    y += alturaBases;
+
+    desenharCelula(doc, x0, y, larguraUtil, alturaTotalLiquido, `R$ ${formatarMoeda(calculo.liquido)}`, {
+      rotulo: "TOTAL LÍQUIDO",
+      alinhamento: "right",
+      negrito: true,
+      tamanho: 14,
+    });
+    y += alturaTotalLiquido;
+
+    if (!houvePaginacao) {
+      doc.lineWidth(0.8).rect(x0, yInicio, larguraUtil, y - yInicio).stroke();
+    }
   });
 }
 
@@ -377,30 +586,80 @@ export function calcularTotaisEmpresa(calculosDaEmpresa) {
   );
 }
 
+const COLUNAS_TABELA_FUNCIONARIOS = (larguraUtil) => [
+  { chave: "funcionario", largura: larguraUtil * 0.5, rotulo: "FUNCIONÁRIO" },
+  { chave: "cargo", largura: larguraUtil * 0.3, rotulo: "CARGO" },
+  { chave: "liquido", largura: larguraUtil * 0.2, rotulo: "LÍQUIDO", alinhamento: "right" },
+];
+
 // Relatório de fechamento — 1 por empresa por processamento, com o resumo agregado
-// e a lista de funcionários incluídos nesse fechamento.
+// e a lista de funcionários incluídos nesse fechamento. Mesmo vocabulário visual do
+// holerite (caixa com borda, tabela com header em negrito), simplificado: aqui não há
+// grid de verbas, só uma lista tabular de funcionários.
 export function gerarRelatorioFechamentoPDF({ empresa, mesReferenciaFormatado, calculos, totais }) {
   return documentoParaBuffer((doc) => {
-    doc.fontSize(16).text("RELATÓRIO DE FECHAMENTO DE FOLHA", { align: "center" });
-    doc.moveDown();
+    const x0 = doc.page.margins.left;
+    const larguraUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const limiteInferior = doc.page.height - doc.page.margins.bottom;
+    const yInicio = doc.page.margins.top;
+    let y = yInicio;
+    let houvePaginacao = false;
 
-    doc.fontSize(10);
-    doc.text(`Empresa: ${empresa}`);
-    doc.text(`Mês de referência: ${mesReferenciaFormatado}`);
-    doc.moveDown();
+    doc.font("Helvetica-Bold").fontSize(12).fillColor("black")
+      .text("RELATÓRIO DE FECHAMENTO DE FOLHA", x0, y + 6, { width: larguraUtil, align: "center" });
+    y += 26;
+    doc.lineWidth(0.5).moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 
-    doc.fontSize(12).text("Totais", { underline: true });
-    doc.fontSize(10);
-    doc.text(`Total de funcionários: ${totais.totalFuncionarios}`);
-    doc.text(`Total bruto: R$ ${formatarMoeda(totais.totalBruto)}`);
-    doc.text(`Total de encargos (INSS + FGTS + IRRF): R$ ${formatarMoeda(totais.totalEncargos)}`);
-    doc.text(`Total líquido: R$ ${formatarMoeda(totais.totalLiquido)}`);
-    doc.moveDown();
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("black")
+      .text(empresa, x0 + 6, y + 8, { width: larguraUtil * 0.6 });
+    doc.font("Helvetica").fontSize(9)
+      .text(`Referência: ${mesReferenciaFormatado}`, x0 + larguraUtil * 0.6, y + 10, {
+        width: larguraUtil * 0.4 - 6,
+        align: "right",
+      });
+    y += 26;
+    doc.moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 
-    doc.fontSize(12).text("Funcionários incluídos neste fechamento", { underline: true });
-    doc.fontSize(9);
+    const alturaTotais = 26;
+    const larguraCelulaTotal = larguraUtil / 4;
+    desenharLinhaCelulas(doc, x0, y, alturaTotais, [
+      { largura: larguraCelulaTotal, rotulo: "TOTAL FUNCIONÁRIOS", texto: String(totais.totalFuncionarios), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "TOTAL BRUTO", texto: formatarMoeda(totais.totalBruto), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "TOTAL ENCARGOS", texto: formatarMoeda(totais.totalEncargos), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "TOTAL LÍQUIDO", texto: formatarMoeda(totais.totalLiquido), alinhamento: "right", negrito: true },
+    ]);
+    y += alturaTotais;
+    y += 10;
+
+    const colunasFuncionarios = COLUNAS_TABELA_FUNCIONARIOS(larguraUtil);
+    const alturaHeaderTabela = 16;
+    const alturaLinha = 14;
+
+    let yTabelaTopo = y;
+    desenharHeaderTabelaVerbas(doc, x0, y, colunasFuncionarios);
+    y += alturaHeaderTabela;
+
     calculos.forEach((calculo) => {
-      doc.text(`${calculo.funcionario} — ${calculo.cargo} — líquido: R$ ${formatarMoeda(calculo.liquido)}`);
+      if (y + alturaLinha > limiteInferior) {
+        fecharSegmentoTabelaVerbas(doc, x0, yTabelaTopo, y, colunasFuncionarios);
+        doc.addPage();
+        houvePaginacao = true;
+        y = doc.page.margins.top;
+        yTabelaTopo = y;
+        desenharHeaderTabelaVerbas(doc, x0, y, colunasFuncionarios);
+        y += alturaHeaderTabela;
+      }
+      desenharLinhaVerba(doc, x0, y, colunasFuncionarios, {
+        funcionario: calculo.funcionario,
+        cargo: calculo.cargo,
+        liquido: formatarMoeda(calculo.liquido),
+      });
+      y += alturaLinha;
     });
+    fecharSegmentoTabelaVerbas(doc, x0, yTabelaTopo, y, colunasFuncionarios);
+
+    if (!houvePaginacao) {
+      doc.lineWidth(0.8).rect(x0, yInicio, larguraUtil, y - yInicio).stroke();
+    }
   });
 }
