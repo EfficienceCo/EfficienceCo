@@ -6,7 +6,9 @@ from core.configuracao import gerenciar_configuracoes
 from automacoes.renomear_arquivo import renomear_arquivo
 from automacoes.abertura_empresa import criar_estrutura_empresa
 from automacoes.upload_folha import eh_planilha_folha, enviar_planilha_folha
+from core.identificar_tipo import identificar_tipo_no_nome
 from datetime import datetime
+
 import time
 import os
 
@@ -82,10 +84,62 @@ def _arquivo_pertence_origem(caminho, pasta_origem):
     return os.path.abspath(caminho).startswith(os.path.abspath(pasta_origem))
 
 def _bate_condicao(caminho, condicao):
-    if condicao and condicao.startswith("extensao="):
+    # condicao pode ser string (legado) ou dict (novo formato JSONB)
+    if isinstance(condicao, str):
+        return _bate_condicao_legado(caminho, condicao)
+    return _bate_condicao_estruturada(caminho, condicao)
+
+def _bate_condicao_legado(caminho, condicao):
+    if condicao.startswith("extensao="):
         ext = condicao.split("=")[1]
         return caminho.endswith(ext)
     return False
+
+def _bate_condicao_estruturada(caminho, condicao):
+
+    # tipo
+    if condicao.get("tipo"):
+        nome = os.path.basename(caminho)
+        tipo_no_nome = identificar_tipo_no_nome(nome)
+        if tipo_no_nome != condicao["tipo"].lower():
+            return False
+    
+    # extensao
+    if condicao.get("extensao"):
+        if not caminho.endswith(f".{condicao['extensao']}"):
+            return False
+    
+    # in_name
+    if condicao.get("in_name"):
+        nome = os.path.basename(caminho).lower()
+        if condicao["in_name"].lower() not in nome:
+            return False
+    
+    # tamanho
+    if condicao.get("tamanho"):
+        tamanho = os.path.getsize(caminho)
+        if "min" in condicao["tamanho"] and tamanho < condicao["tamanho"]["min"]:
+            return False
+        if "max" in condicao["tamanho"] and tamanho > condicao["tamanho"]["max"]:
+            return False
+    
+    # criado_em
+    if condicao.get("criado_em"):
+        criado = datetime.fromtimestamp(os.path.getctime(caminho))
+        if "antes" in condicao["criado_em"] and criado > datetime.fromisoformat(condicao["criado_em"]["antes"]):
+            return False
+        if "depois" in condicao["criado_em"] and criado < datetime.fromisoformat(condicao["criado_em"]["depois"]):
+            return False
+
+    # recebido_em — usa mtime (data de modificação/recebimento)
+    if condicao.get("recebido_em"):
+        recebido = datetime.fromtimestamp(os.path.getmtime(caminho))
+        if "antes" in condicao["recebido_em"] and recebido > datetime.fromisoformat(condicao["recebido_em"]["antes"]):
+            return False
+        if "depois" in condicao["recebido_em"] and recebido < datetime.fromisoformat(condicao["recebido_em"]["depois"]):
+            return False
+
+    return True
 
 def _varredura_inicial(regras, pasta):
     pastas_origem = set(
