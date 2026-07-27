@@ -5,7 +5,11 @@ from comunicacao.reportar_evento import reportar_evento
 from core.configuracao import gerenciar_configuracoes
 from automacoes.renomear_arquivo import renomear_arquivo
 from automacoes.abertura_empresa import criar_estrutura_empresa
-from automacoes.upload_folha import eh_planilha_folha, enviar_planilha_folha
+from automacoes.upload_folha import (
+    eh_planilha_folha,
+    enviar_planilha_folha,
+    PlanilhaRejeitadaError,
+)
 from core.identificar_tipo import identificar_tipo_no_nome
 from datetime import datetime
 
@@ -57,10 +61,19 @@ def _processar_arquivo(caminho, regras):
                                 f".xlsx diretamente em Folha/YYYY-MM (não em subpastas)"
                             )
                             return
-                        mes, nome_final = enviar_planilha_folha(
-                            caminho,
-                            pasta_destino=regra.get("pasta_destino") or None,
-                        )
+                        try:
+                            mes, nome_final = enviar_planilha_folha(
+                                caminho,
+                                pasta_destino=regra.get("pasta_destino") or None,
+                            )
+                        except PlanilhaRejeitadaError as e:
+                            destino = e.caminho_arquivado or caminho
+                            print(f"[monitor] Planilha de folha rejeitada: {nome} — {e}")
+                            reportar_evento(
+                                f"Planilha {os.path.basename(destino)} rejeitada pelo servidor: {e}",
+                                False,
+                            )
+                            return
                         print(f"[monitor] Planilha de folha enviada: {nome} (mês {mes}) → {nome_final}")
                         reportar_evento(
                             f"Planilha {os.path.basename(nome_final)} enviada para folha ({mes})",

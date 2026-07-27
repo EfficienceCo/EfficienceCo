@@ -9,6 +9,16 @@ LICENSE_TOKEN = os.getenv('LICENSE_TOKEN')
 PASTA_BASE = os.getenv("PASTA_BASE", "")
 CLIENTE_ID = os.getenv('CLIENTE_ID')
 
+
+class ApiError(RuntimeError):
+    """Erro HTTP da API com status e body preservados (ex.: faltando no 400 de folha)."""
+
+    def __init__(self, status_code, mensagem, body=None):
+        super().__init__(mensagem)
+        self.status_code = status_code
+        self.body = body if isinstance(body, dict) else {}
+
+
 def _headers(extra=None):
     headers = {"Content-Type": "application/json"}
 
@@ -19,12 +29,22 @@ def _headers(extra=None):
 
 def _handle_response(response, method, endpoint):
     if not response.ok:
+        body = None
         try:
             body = response.json()
             mensagem = body.get("message") or body.get("erro") or "Erro desconhecido"
+            faltando = body.get("faltando")
+            if faltando:
+                lista = ", ".join(str(c) for c in faltando)
+                mensagem = f"{mensagem}: {lista}"
         except Exception:
             mensagem = response.text or "Erro desconhecido"
-        raise RuntimeError(f"Erro {response.status_code} em {method} {endpoint}: {mensagem}")
+            body = None
+        raise ApiError(
+            response.status_code,
+            f"Erro {response.status_code} em {method} {endpoint}: {mensagem}",
+            body,
+        )
     return response
 
 def get(endpoint, timeout=None, addToHeaders=None):

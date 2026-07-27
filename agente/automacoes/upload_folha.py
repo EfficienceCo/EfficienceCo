@@ -3,7 +3,9 @@ import re
 import shutil
 from datetime import datetime
 import comunicacao.api_client as client
+from comunicacao.api_client import ApiError
 from core.utils import validar_caminho
+from automacoes.aviso_windows import aviso_erro
 
 # Folha/YYYY-MM — mês canônico alinhado ao backend.
 # Âncora no fim (`$`) exige que o arquivo esteja DIRETAMENTE na pasta do mês, não em
@@ -16,6 +18,16 @@ REGEX_FOLHA_MES = re.compile(
 )
 
 PASTA_ENVIADOS = "enviados"
+PASTA_REJEITADOS = "rejeitados"
+_PASTAS_ARQUIVAMENTO = {PASTA_ENVIADOS.lower(), PASTA_REJEITADOS.lower()}
+
+
+class PlanilhaRejeitadaError(RuntimeError):
+    """Planilha recusada pelo servidor (validação); já arquivada em rejeitados."""
+
+    def __init__(self, mensagem, caminho_arquivado=None):
+        super().__init__(mensagem)
+        self.caminho_arquivado = caminho_arquivado
 
 
 def extrair_mes_folha(caminho):
@@ -27,27 +39,22 @@ def extrair_mes_folha(caminho):
     return match.group(1)
 
 
-def _esta_em_enviados(caminho):
+def _esta_em_pasta_arquivamento(caminho):
     partes = os.path.abspath(caminho).replace("/", os.sep).split(os.sep)
-    return any(p.lower() == PASTA_ENVIADOS for p in partes)
+    return any(p.lower() in _PASTAS_ARQUIVAMENTO for p in partes)
 
 
 def eh_planilha_folha(caminho):
-    if _esta_em_enviados(caminho):
+    if _esta_em_pasta_arquivamento(caminho):
         return False
     if not caminho.lower().endswith(".xlsx"):
         return False
     return extrair_mes_folha(caminho) is not None
 
 
-def _arquivar_apos_envio(caminho, pasta_destino=None):
-    """Move o arquivo para fora da pasta monitorada (evita reenvio no restart)."""
+def _arquivar(caminho, destino_dir):
+    """Move o arquivo para destino_dir (cria a pasta se preciso; deduplica nome)."""
     nome = os.path.basename(caminho)
-
-    if pasta_destino:
-        destino_dir = pasta_destino
-    else:
-        destino_dir = os.path.join(os.path.dirname(caminho), PASTA_ENVIADOS)
 
     try:
         validar_caminho(caminho)
@@ -71,14 +78,69 @@ def _arquivar_apos_envio(caminho, pasta_destino=None):
         raise RuntimeError(f"Erro ao arquivar {nome}: {e}")
 
 
+def _destino_sucesso(caminho, pasta_destino=None):
+    if pasta_destino:
+        return pasta_destino
+    return os.path.join(os.path.dirname(caminho), PASTA_ENVIADOS)
+
+
+def _destino_rejeicao(caminho):
+    return os.path.join(os.path.dirname(caminho), PASTA_REJEITADOS)
+
+
+def _motivos_rejeicao(erro):
+    """Lista de motivos legíveis a partir de ApiError (faltando ou mensagem)."""
+    body = getattr(erro, "body", None) or {}
+    faltando = body.get("faltando")
+    if faltando:
+        return [f"coluna '{c}' ausente no cabeçalho" for c in faltando]
+    texto = str(erro)
+    # Remove prefixo "Erro NNN em METHOD /path: " se presente
+    if ": " in texto:
+        texto = texto.split(": ", 1)[-1]
+    return [texto] if texto else ["motivo não informado pelo servidor"]
+
+
+def _mensagem_rejeicao(nome_arquivo, motivos):
+    linhas = "\n".join(f"- {m}" for m in motivos)
+    return (
+        f'A planilha "{nome_arquivo}" não foi aceita pelo servidor.\n\n'
+        f"Motivos:\n{linhas}"
+    )
+
+
+def _tratar_rejeicao(caminho, erro):
+    """Arquiva em rejeitados, mostra MessageBox e levanta PlanilhaRejeitadaError."""
+    nome = os.path.basename(caminho)
+    motivos = _motivos_rejeicao(erro)
+    mensagem_ui = _mensagem_rejeicao(nome, motivos)
+
+    arquivado = None
+    try:
+        arquivado = _arquivar(caminho, _destino_rejeicao(caminho))
+    except RuntimeError as e:
+        print(
+            f"[upload_folha] Rejeição de {nome}, "
+            f"mas falha ao arquivar em rejeitados: {e}"
+        )
+
+    aviso_erro("Efficience — Planilha não aceita", mensagem_ui)
+
+    raise PlanilhaRejeitadaError(
+        f"Planilha {nome} rejeitada: {'; '.join(motivos)}",
+        caminho_arquivado=arquivado,
+    )
+
+
 def enviar_planilha_folha(caminho, pasta_destino=None):
     """
     Envia .xlsx de Folha/YYYY-MM para POST /folha/upload/agente
-    e arquiva o arquivo local após sucesso.
-    Retorna (mes, caminho_arquivado).
+    e arquiva o arquivo local após sucesso (enviados/pasta_destino)
+    ou rejeição 400 (rejeitados + aviso Windows).
+    Retorna (mes, caminho_arquivado) em sucesso.
     """
-    if _esta_em_enviados(caminho):
-        raise RuntimeError("Arquivo já está na pasta de enviados")
+    if _esta_em_pasta_arquivamento(caminho):
+        raise RuntimeError("Arquivo já está em pasta de arquivamento (enviados/rejeitados)")
 
     mes = extrair_mes_folha(caminho)
     if not mes:
@@ -87,13 +149,19 @@ def enviar_planilha_folha(caminho, pasta_destino=None):
     if not caminho.lower().endswith(".xlsx"):
         raise RuntimeError("Apenas arquivos .xlsx são aceitos para upload de folha")
 
-    client.postFile(
-        "/folha/upload/agente",
-        caminho,
-        campos={"mes_referencia": mes},
-        timeout=60,
-        addToHeaders={"x-licenca-token": client.LICENSE_TOKEN},
-    )
+    try:
+        client.postFile(
+            "/folha/upload/agente",
+            caminho,
+            campos={"mes_referencia": mes},
+            timeout=60,
+            addToHeaders={"x-licenca-token": client.LICENSE_TOKEN},
+        )
+    except ApiError as e:
+        # 400 com validação de colunas (ou outro 400 de aceitação) → sinal local
+        if e.status_code == 400:
+            _tratar_rejeicao(caminho, e)
+        raise
 
     # Upload já concluído com sucesso a partir daqui — se o arquivamento local falhar
     # (permissão, disco cheio etc.), isso não pode ser reportado como falha de
@@ -101,7 +169,7 @@ def enviar_planilha_folha(caminho, pasta_destino=None):
     # monitor reporta "falha" para um envio que na verdade deu certo, e o arquivo
     # continua em Folha/YYYY-MM sujeito a reenvio duplicado numa próxima varredura.
     try:
-        arquivado = _arquivar_apos_envio(caminho, pasta_destino)
+        arquivado = _arquivar(caminho, _destino_sucesso(caminho, pasta_destino))
     except RuntimeError as e:
         print(
             f"[upload_folha] Upload de {os.path.basename(caminho)} concluído, "
