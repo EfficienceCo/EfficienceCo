@@ -2,6 +2,18 @@ import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS, resolverClienteId } from "../middlewares/permissao.middleware.js";
 
+function parseCondicao(condicao) {
+  if (condicao === undefined || condicao === null || typeof condicao === "object") {
+    return { valor: condicao };
+  }
+
+  try {
+    return { valor: JSON.parse(condicao) };
+  } catch {
+    return { erro: "condicao inválida: deve ser um objeto JSON ou uma string JSON válida" };
+  }
+}
+
 export async function listarRegras(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -31,11 +43,16 @@ export async function criarRegra(req, res) {
 
   const { pasta_origem, pasta_destino, condicao, acao, ativa } = req.body;
 
+  const { valor: condicaoParseada, erro: erroCondicao } = parseCondicao(condicao);
+  if (erroCondicao) {
+    return res.status(400).json({ erro: erroCondicao });
+  }
+
   console.log("[regras.controller] Criando regra para cliente:", clienteId);
 
   const { data, error } = await supabase
     .from("regras")
-    .insert({ cliente_id: clienteId, pasta_origem, pasta_destino, condicao, acao, ativa })
+    .insert({ cliente_id: clienteId, pasta_origem, pasta_destino, condicao: condicaoParseada, acao, ativa })
     .select()
     .single();
 
@@ -71,7 +88,13 @@ export async function atualizarRegra(req, res) {
   const updates = {};
   if (pasta_origem !== undefined) updates.pasta_origem = pasta_origem;
   if (pasta_destino !== undefined) updates.pasta_destino = pasta_destino;
-  if (condicao !== undefined) updates.condicao = condicao;
+  if (condicao !== undefined) {
+    const { valor: condicaoParseada, erro: erroCondicao } = parseCondicao(condicao);
+    if (erroCondicao) {
+      return res.status(400).json({ erro: erroCondicao });
+    }
+    updates.condicao = condicaoParseada;
+  }
   if (acao !== undefined) updates.acao = acao;
   if (ativa !== undefined) updates.ativa = ativa;
 
