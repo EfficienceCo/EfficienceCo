@@ -11,14 +11,24 @@ import {
 } from '../../../services/regras.service';
 
 const PERFIS_AUTORIZADOS = new Set(['admin_cliente', 'admin_efficience']);
+const TIPO_FOLHA_PAGAMENTO = 'folha_pagamento';
 
 const TIPO_DOCUMENTO_OPCOES = [
   { value: '', label: 'Qualquer tipo' },
   { value: 'cartao_cnpj', label: 'Cartao CNPJ' },
   { value: 'contrato_social', label: 'Contrato social' },
   { value: 'extrato_bancario', label: 'Extrato bancario' },
+  { value: TIPO_FOLHA_PAGAMENTO, label: 'Folha de pagamento' },
   { value: 'holerite', label: 'Holerite' },
   { value: 'nao_identificado', label: 'Nao identificado' },
+];
+
+const EXTENSAO_OPCOES = [
+  { value: 'pdf', label: '.pdf' },
+  { value: 'xml', label: '.xml' },
+  { value: 'csv', label: '.csv' },
+  { value: 'txt', label: '.txt' },
+  { value: 'xlsx', label: '.xlsx' },
 ];
 
 const ACAO_OPCOES = [
@@ -40,6 +50,14 @@ const ACAO_LABELS = ACAO_OPCOES.reduce((acc, opcao) => {
   acc[opcao.value] = opcao.label;
   return acc;
 }, {});
+
+function obterExtensaoOpcoes(tipo) {
+  if (tipo === TIPO_FOLHA_PAGAMENTO) {
+    return EXTENSAO_OPCOES.filter((opcao) => opcao.value === 'xlsx');
+  }
+
+  return [{ value: '', label: 'Qualquer extensao' }, ...EXTENSAO_OPCOES];
+}
 
 const FORM_INICIAL = {
   pasta_origem: '',
@@ -220,15 +238,18 @@ function formatarAcao(acao) {
 
 function regraParaFormulario(regra) {
   const condicao = normalizarCondicao(regra?.condicao);
+  const tipo = valorParaCampo(condicao.tipo);
+  const extensao =
+    tipo === TIPO_FOLHA_PAGAMENTO
+      ? 'xlsx'
+      : valorParaCampo(condicao.extensao ? removerPontoExtensao(condicao.extensao) : '');
 
   return {
     pasta_origem: regra?.pasta_origem || '',
     pasta_destino: regra?.pasta_destino || '',
     condicao_in_name: valorParaCampo(condicao.in_name),
-    condicao_extensao: valorParaCampo(
-      condicao.extensao ? removerPontoExtensao(condicao.extensao) : '',
-    ),
-    condicao_tipo: valorParaCampo(condicao.tipo),
+    condicao_extensao: extensao,
+    condicao_tipo: tipo,
     condicao_tamanho_min: valorParaCampo(condicao.tamanho?.min),
     condicao_tamanho_max: valorParaCampo(condicao.tamanho?.max),
     condicao_criado_em_depois: dataParaCampo(condicao.criado_em?.depois),
@@ -259,8 +280,11 @@ function validarNumeroInteiroNaoNegativo(valor, label) {
 function montarCondicaoFormulario(formData) {
   const condicao = {};
   const inName = formData.condicao_in_name.trim();
-  const extensao = removerPontoExtensao(formData.condicao_extensao);
   const tipo = formData.condicao_tipo.trim();
+  const extensao =
+    tipo === TIPO_FOLHA_PAGAMENTO
+      ? 'xlsx'
+      : removerPontoExtensao(formData.condicao_extensao);
   const tamanhoMin = validarNumeroInteiroNaoNegativo(
     formData.condicao_tamanho_min,
     'Tamanho minimo',
@@ -388,6 +412,7 @@ export default function Regras() {
   const clienteIdAdminGlobal =
     user?.perfil === 'admin_efficience' ? user?.cliente_id || null : null;
   const requerClienteId = user?.perfil === 'admin_efficience' && !clienteIdAdminGlobal;
+  const extensaoOpcoesFormulario = obterExtensaoOpcoes(formData.condicao_tipo);
 
   const carregarRegras = useCallback(async () => {
     if (requerClienteId) {
@@ -451,10 +476,17 @@ export default function Regras() {
 
   function handleFormChange(event) {
     const { name, value, type, checked } = event.target;
+    const nextValue = type === 'checkbox' ? checked : value;
 
     setFormData((currentValue) => ({
       ...currentValue,
-      [name]: type === 'checkbox' ? checked : value,
+      [name]: nextValue,
+      ...(name === 'condicao_tipo' && nextValue === TIPO_FOLHA_PAGAMENTO
+        ? { condicao_extensao: 'xlsx' }
+        : {}),
+      ...(name === 'condicao_extensao' && currentValue.condicao_tipo === TIPO_FOLHA_PAGAMENTO
+        ? { condicao_extensao: 'xlsx' }
+        : {}),
     }));
   }
 
@@ -825,15 +857,20 @@ export default function Regras() {
                   >
                     Extensao
                   </label>
-                  <input
+                  <select
                     id="condicao_extensao"
                     name="condicao_extensao"
                     value={formData.condicao_extensao}
                     onChange={handleFormChange}
-                    placeholder="Ex: pdf"
                     disabled={isSavingFormulario}
                     className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
-                  />
+                  >
+                    {extensaoOpcoesFormulario.map((opcao) => (
+                      <option key={opcao.value} value={opcao.value}>
+                        {opcao.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="space-y-2">
