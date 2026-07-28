@@ -1,14 +1,21 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
-import os
+
+# 1. Âncora de diretório para resolver caminhos relativos ao PRÓPRIO MÓDULO
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Define o caminho do dataset e onde o modelo .pth será salvo
+DATA_DIR = os.path.join(BASE_DIR, 'datasets')
+MODEL_OUTPUT_PATH = os.path.join(BASE_DIR, 'classificador_documentos.pth')
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Executando no dispositivo: {device}")
 
-# 1. Transformações nas imagens
+# 2. Transformações nas imagens
 data_transforms = {
     'train': transforms.Compose([
         transforms.Resize((224, 224)),
@@ -23,20 +30,18 @@ data_transforms = {
     ]),
 }
 
-data_dir = 'datasets/' 
+if not os.path.exists(DATA_DIR):
+    print(f"Erro: Crie a pasta '{DATA_DIR}' com as subpastas de imagens ('train' e 'val') antes de treinar.")
+    exit(1)
 
-if not os.path.exists(data_dir):
-    print(f"Erro: Crie a pasta '{data_dir}' com as subpastas de imagens antes de treinar.")
-    exit()
-
-# 2. Carrega as pastas
-image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'val']}
+# 3. Carrega as pastas
+image_datasets = {x: datasets.ImageFolder(os.path.join(DATA_DIR, x), data_transforms[x]) for x in ['train', 'val']}
 dataloaders = {x: DataLoader(image_datasets[x], batch_size=16, shuffle=True) for x in ['train', 'val']}
 
 class_names = image_datasets['train'].classes
 print(f"Classes identificadas: {class_names}")
 
-# 3. Modelo ResNet-18
+# 4. Modelo ResNet-18
 model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 for param in model.parameters():
     param.requires_grad = False
@@ -48,7 +53,7 @@ model = model.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.fc.parameters(), lr=0.001)
 
-# 4. Treinamento
+# 5. Loop de Treinamento
 epochs = 5
 for epoch in range(epochs):
     print(f"\nÉpoca {epoch+1}/{epochs}")
@@ -81,6 +86,6 @@ for epoch in range(epochs):
         epoch_acc = running_corrects.double() / len(image_datasets[phase])
         print(f"  {phase.capitalize()} -> Loss: {epoch_loss:.4f} | Acurácia: {epoch_acc:.4f}")
 
-# 5. Salva o modelo
-torch.save(model.state_dict(), 'classificador_documentos.pth')
-print("\nModelo treinado com sucesso! Arquivo 'classificador_documentos.pth' criado.")
+# 6. Salva o modelo no caminho absoluto vinculado ao módulo
+torch.save(model.state_dict(), MODEL_OUTPUT_PATH)
+print(f"\nModelo treinado com sucesso! Arquivo salvo em: '{MODEL_OUTPUT_PATH}'")
