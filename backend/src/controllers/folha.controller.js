@@ -118,6 +118,17 @@ async function processarUploadFolha(req, res, clienteId) {
       return res.status(500).json({ erro: "Erro ao registrar processamento da folha" });
     }
 
+    // BK-FOLHA-AUTO-PIPELINE: dispara cálculo + geração de saída em background — não
+    // espera o pipeline terminar pra responder o upload (a tela de status já faz
+    // polling a cada 5s). Erros do pipeline em si ficam registrados no próprio
+    // processamento (status "erro" + motivo_erro), não precisam propagar pra cá.
+    dispararPipelineAutomatico(data.id).catch((err) => {
+      console.error(
+        "[folha.controller] Falha inesperada ao disparar pipeline automático:",
+        err.message,
+      );
+    });
+
     return res.status(201).json({ processamento_id: data.id });
   } catch (err) {
     console.error("[folha.controller] Erro inesperado no upload da folha:", err.message);
@@ -426,6 +437,91 @@ export async function gerarSaidaFolha(req, res) {
   } catch (err) {
     console.error("[folha.controller] Erro inesperado ao gerar saída da folha:", err.message);
     return res.status(500).json({ erro: "Erro ao gerar arquivos de saída da folha" });
+  }
+}
+
+// Res mínimo pra reaproveitar calcularFolha/gerarSaidaFolha fora de uma request HTTP
+// real — captura status/body em vez de escrever numa conexão que não existe.
+function criarRespostaInterna() {
+  return {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+    send(payload) {
+      this.body = payload;
+      return this;
+    },
+  };
+}
+
+// Registra o motivo de uma falha na geração de saída SEM mudar o status pra "erro".
+// gerarSaidaFolha só reprocessa (idempotente: pula holerite/relatório já gerado) quando
+// o processamento ainda está "concluido" — se status virasse "erro" aqui, o retry via
+// POST /:id/gerar-saida ficaria bloqueado pelo próprio guard de status, e a única saída
+// seria recalcular do zero em POST /:id/calcular, que duplicaria as linhas já inseridas
+// em folha_calculos (esse insert não é idempotente). status continua "concluido" de
+// propósito — o cálculo realmente terminou, só a geração de arquivos que falhou.
+async function registrarFalhaGeracaoSaida(processamentoId, motivo) {
+  const { error } = await supabase
+    .from("processamentos_folha")
+    .update({ motivo_erro: motivo })
+    .eq("id", processamentoId);
+
+  if (error) {
+    console.error(
+      "[folha.controller] Falha ao registrar motivo de erro da geração de saída:",
+      error.message,
+    );
+  }
+}
+
+// BK-FOLHA-AUTO-PIPELINE: encadeia BK-FOLHA-CALC → BK-FOLHA-GERAR-SAIDA depois de um
+// upload aceito, sem precisar de alguém chamar os dois endpoints manualmente. Reusa os
+// próprios handlers HTTP com req/res internos — perfil ADMIN_EFFICIENCE porque é uma
+// chamada de dentro do próprio backend, não de um usuário autenticado, e por isso pula a
+// checagem de dono do processamento (resolverClienteId nem chega a ser avaliado: o `&&`
+// de curto-circuito já corta em `perfil !== ADMIN_EFFICIENCE`). Se o cálculo falhar, a
+// geração de saída não roda — calcularFolha já marca o processamento como "erro" com o
+// motivo internamente. gerarSaidaFolha NÃO marca erro sozinho (ver registrarFalhaGeracaoSaida
+// acima pro motivo), então essa falha é tratada aqui.
+export async function dispararPipelineAutomatico(processamentoId) {
+  const reqInterno = {
+    params: { processamento_id: processamentoId },
+    usuario: { perfil: PERFIS.ADMIN_EFFICIENCE },
+  };
+
+  try {
+    const resCalculo = await calcularFolha(reqInterno, criarRespostaInterna());
+
+    if (resCalculo.statusCode !== 200) {
+      console.error(
+        `[folha.pipeline] Cálculo automático não concluído para ${processamentoId} (status ${resCalculo.statusCode}): ${resCalculo.body?.erro}`,
+      );
+      return;
+    }
+
+    const resSaida = await gerarSaidaFolha(reqInterno, criarRespostaInterna());
+
+    if (resSaida.statusCode !== 200) {
+      const motivo = resSaida.body?.erro || "Falha ao gerar holerites/relatórios da folha";
+      console.error(
+        `[folha.pipeline] Geração de saída automática não concluída para ${processamentoId} (status ${resSaida.statusCode}): ${motivo}`,
+      );
+      await registrarFalhaGeracaoSaida(processamentoId, motivo);
+    }
+  } catch (err) {
+    console.error(
+      `[folha.pipeline] Erro inesperado no pipeline automático de ${processamentoId}:`,
+      err.message,
+    );
+    await marcarErro(processamentoId, "Erro inesperado no pipeline automático");
   }
 }
 
