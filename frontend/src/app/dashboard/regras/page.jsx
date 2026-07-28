@@ -11,13 +11,24 @@ import {
 } from '../../../services/regras.service';
 
 const PERFIS_AUTORIZADOS = new Set(['admin_cliente', 'admin_efficience']);
+const TIPO_FOLHA_PAGAMENTO = 'folha_pagamento';
 
-const CONDICAO_OPCOES = [
-  { value: 'extensao=.pdf', label: 'Extensão .pdf' },
-  { value: 'extensao=.xml', label: 'Extensão .xml' },
-  { value: 'extensao=.csv', label: 'Extensão .csv' },
-  { value: 'extensao=.txt', label: 'Extensão .txt' },
-  { value: 'extensao=.xlsx', label: 'Extensão .xlsx' },
+const TIPO_DOCUMENTO_OPCOES = [
+  { value: '', label: 'Qualquer tipo' },
+  { value: 'cartao_cnpj', label: 'Cartão CNPJ' },
+  { value: 'contrato_social', label: 'Contrato social' },
+  { value: 'extrato_bancario', label: 'Extrato bancário' },
+  { value: TIPO_FOLHA_PAGAMENTO, label: 'Folha de pagamento' },
+  { value: 'holerite', label: 'Holerite' },
+  { value: 'nao_identificado', label: 'Não identificado' },
+];
+
+const EXTENSAO_OPCOES = [
+  { value: 'pdf', label: '.pdf' },
+  { value: 'xml', label: '.xml' },
+  { value: 'csv', label: '.csv' },
+  { value: 'txt', label: '.txt' },
+  { value: 'xlsx', label: '.xlsx' },
 ];
 
 const ACAO_OPCOES = [
@@ -27,10 +38,39 @@ const ACAO_OPCOES = [
   { value: 'upload_folha', label: 'Upload folha (.xlsx em Folha/YYYY-MM)' },
 ];
 
+const TIPO_DOCUMENTO_LABELS = TIPO_DOCUMENTO_OPCOES.reduce((acc, opcao) => {
+  if (opcao.value) {
+    acc[opcao.value] = opcao.label;
+  }
+
+  return acc;
+}, {});
+
+const ACAO_LABELS = ACAO_OPCOES.reduce((acc, opcao) => {
+  acc[opcao.value] = opcao.label;
+  return acc;
+}, {});
+
+function obterExtensaoOpcoes(tipo) {
+  if (tipo === TIPO_FOLHA_PAGAMENTO) {
+    return EXTENSAO_OPCOES.filter((opcao) => opcao.value === 'xlsx');
+  }
+
+  return [{ value: '', label: 'Qualquer extensão' }, ...EXTENSAO_OPCOES];
+}
+
 const FORM_INICIAL = {
   pasta_origem: '',
   pasta_destino: '',
-  condicao: CONDICAO_OPCOES[0].value,
+  condicao_in_name: '',
+  condicao_extensao: 'pdf',
+  condicao_tipo: '',
+  condicao_tamanho_min: '',
+  condicao_tamanho_max: '',
+  condicao_criado_em_depois: '',
+  condicao_criado_em_antes: '',
+  condicao_recebido_em_depois: '',
+  condicao_recebido_em_antes: '',
   acao: ACAO_OPCOES[0].value,
   ativa: true,
 };
@@ -44,17 +84,148 @@ function obterMensagemErro(error, fallback = 'Não foi possível processar sua s
   );
 }
 
-function formatarCondicao(condicao) {
+function removerPontoExtensao(valor) {
+  return String(valor || '')
+    .trim()
+    .replace(/^\.+/, '')
+    .toLowerCase();
+}
+
+function normalizarCondicao(condicao) {
   if (!condicao) {
-    return '-';
+    return {};
   }
 
-  if (condicao.startsWith('extensao=')) {
-    const extensao = condicao.split('=')[1] || '';
-    return `Extensão ${extensao}`;
+  if (typeof condicao === 'string') {
+    const condicaoTexto = condicao.trim();
+
+    if (condicaoTexto.startsWith('extensao=')) {
+      return { extensao: removerPontoExtensao(condicaoTexto.split('=')[1]) };
+    }
+
+    try {
+      const condicaoParseada = JSON.parse(condicaoTexto);
+      return condicaoParseada &&
+        typeof condicaoParseada === 'object' &&
+        !Array.isArray(condicaoParseada)
+        ? condicaoParseada
+        : {};
+    } catch {
+      return {};
+    }
   }
 
-  return condicao;
+  if (typeof condicao === 'object' && !Array.isArray(condicao)) {
+    return condicao;
+  }
+
+  return {};
+}
+
+function valorParaCampo(valor) {
+  if (valor === undefined || valor === null) {
+    return '';
+  }
+
+  return String(valor);
+}
+
+function dataParaCampo(valor) {
+  return valorParaCampo(valor).split('T')[0];
+}
+
+function campoPreenchido(valor) {
+  return valor !== undefined && valor !== null && valor !== '';
+}
+
+function formatarDataCondicao(valor) {
+  const [data] = String(valor || '').split('T');
+  const [ano, mes, dia] = data.split('-');
+
+  if (!ano || !mes || !dia) {
+    return String(valor || '');
+  }
+
+  return `${dia}/${mes}/${ano}`;
+}
+
+function formatarBytes(valor) {
+  const numero = Number(valor);
+
+  if (!Number.isFinite(numero)) {
+    return String(valor);
+  }
+
+  if (numero < 1024) {
+    return `${numero} B`;
+  }
+
+  if (numero < 1024 * 1024) {
+    return `${(numero / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} KB`;
+  }
+
+  return `${(numero / (1024 * 1024)).toLocaleString('pt-BR', {
+    maximumFractionDigits: 1,
+  })} MB`;
+}
+
+function formatarCondicao(condicao) {
+  const condicaoNormalizada = normalizarCondicao(condicao);
+  const partes = [];
+
+  if (condicaoNormalizada.in_name) {
+    partes.push(`Nome contém "${condicaoNormalizada.in_name}"`);
+  }
+
+  if (condicaoNormalizada.extensao) {
+    partes.push(`Extensão .${removerPontoExtensao(condicaoNormalizada.extensao)}`);
+  }
+
+  if (condicaoNormalizada.tipo) {
+    partes.push(
+      `Tipo ${TIPO_DOCUMENTO_LABELS[condicaoNormalizada.tipo] || condicaoNormalizada.tipo}`,
+    );
+  }
+
+  if (condicaoNormalizada.tamanho) {
+    if (campoPreenchido(condicaoNormalizada.tamanho.min)) {
+      partes.push(`Tamanho >= ${formatarBytes(condicaoNormalizada.tamanho.min)}`);
+    }
+
+    if (campoPreenchido(condicaoNormalizada.tamanho.max)) {
+      partes.push(`Tamanho <= ${formatarBytes(condicaoNormalizada.tamanho.max)}`);
+    }
+  }
+
+  if (condicaoNormalizada.criado_em) {
+    if (condicaoNormalizada.criado_em.depois) {
+      partes.push(`Criado depois de ${formatarDataCondicao(condicaoNormalizada.criado_em.depois)}`);
+    }
+
+    if (condicaoNormalizada.criado_em.antes) {
+      partes.push(`Criado antes de ${formatarDataCondicao(condicaoNormalizada.criado_em.antes)}`);
+    }
+  }
+
+  if (condicaoNormalizada.recebido_em) {
+    if (condicaoNormalizada.recebido_em.depois) {
+      partes.push(
+        `Recebido depois de ${formatarDataCondicao(condicaoNormalizada.recebido_em.depois)}`,
+      );
+    }
+
+    if (condicaoNormalizada.recebido_em.antes) {
+      partes.push(
+        `Recebido antes de ${formatarDataCondicao(condicaoNormalizada.recebido_em.antes)}`,
+      );
+    }
+  }
+
+  if (partes.length > 0) {
+    return partes.join('; ');
+  }
+
+  return typeof condicao === 'string' && condicao.trim() ? condicao : 'Sem filtros';
 }
 
 function formatarAcao(acao) {
@@ -62,17 +233,148 @@ function formatarAcao(acao) {
     return '-';
   }
 
-  return `${acao.charAt(0).toUpperCase()}${acao.slice(1)}`;
+  return ACAO_LABELS[acao] || `${acao.charAt(0).toUpperCase()}${acao.slice(1)}`;
 }
 
 function regraParaFormulario(regra) {
+  const condicao = normalizarCondicao(regra?.condicao);
+  const tipo = valorParaCampo(condicao.tipo);
+  const extensao =
+    tipo === TIPO_FOLHA_PAGAMENTO
+      ? 'xlsx'
+      : valorParaCampo(condicao.extensao ? removerPontoExtensao(condicao.extensao) : '');
+
   return {
     pasta_origem: regra?.pasta_origem || '',
     pasta_destino: regra?.pasta_destino || '',
-    condicao: regra?.condicao || CONDICAO_OPCOES[0].value,
+    condicao_in_name: valorParaCampo(condicao.in_name),
+    condicao_extensao: extensao,
+    condicao_tipo: tipo,
+    condicao_tamanho_min: valorParaCampo(condicao.tamanho?.min),
+    condicao_tamanho_max: valorParaCampo(condicao.tamanho?.max),
+    condicao_criado_em_depois: dataParaCampo(condicao.criado_em?.depois),
+    condicao_criado_em_antes: dataParaCampo(condicao.criado_em?.antes),
+    condicao_recebido_em_depois: dataParaCampo(condicao.recebido_em?.depois),
+    condicao_recebido_em_antes: dataParaCampo(condicao.recebido_em?.antes),
     acao: regra?.acao || ACAO_OPCOES[0].value,
     ativa: Boolean(regra?.ativa),
   };
+}
+
+function validarNumeroInteiroNaoNegativo(valor, label) {
+  const texto = String(valor || '').trim();
+
+  if (!texto) {
+    return { valor: undefined };
+  }
+
+  const numero = Number(texto);
+
+  if (!Number.isInteger(numero) || numero < 0) {
+    return { erro: `${label} deve ser um número inteiro maior ou igual a zero.` };
+  }
+
+  return { valor: numero };
+}
+
+function montarCondicaoFormulario(formData) {
+  const condicao = {};
+  const inName = formData.condicao_in_name.trim();
+  const tipo = formData.condicao_tipo.trim();
+  const extensao =
+    tipo === TIPO_FOLHA_PAGAMENTO
+      ? 'xlsx'
+      : removerPontoExtensao(formData.condicao_extensao);
+  const tamanhoMin = validarNumeroInteiroNaoNegativo(
+    formData.condicao_tamanho_min,
+    'Tamanho mínimo',
+  );
+  const tamanhoMax = validarNumeroInteiroNaoNegativo(
+    formData.condicao_tamanho_max,
+    'Tamanho máximo',
+  );
+
+  if (tamanhoMin.erro) {
+    return { erro: tamanhoMin.erro };
+  }
+
+  if (tamanhoMax.erro) {
+    return { erro: tamanhoMax.erro };
+  }
+
+  if (
+    tamanhoMin.valor !== undefined &&
+    tamanhoMax.valor !== undefined &&
+    tamanhoMin.valor > tamanhoMax.valor
+  ) {
+    return { erro: 'Tamanho mínimo não pode ser maior que o tamanho máximo.' };
+  }
+
+  if (
+    formData.condicao_criado_em_depois &&
+    formData.condicao_criado_em_antes &&
+    formData.condicao_criado_em_depois > formData.condicao_criado_em_antes
+  ) {
+    return { erro: 'Data inicial de criação não pode ser depois da data final.' };
+  }
+
+  if (
+    formData.condicao_recebido_em_depois &&
+    formData.condicao_recebido_em_antes &&
+    formData.condicao_recebido_em_depois > formData.condicao_recebido_em_antes
+  ) {
+    return { erro: 'Data inicial de recebimento não pode ser depois da data final.' };
+  }
+
+  if (inName) {
+    condicao.in_name = inName;
+  }
+
+  if (extensao) {
+    condicao.extensao = extensao;
+  }
+
+  if (tipo) {
+    condicao.tipo = tipo;
+  }
+
+  if (tamanhoMin.valor !== undefined || tamanhoMax.valor !== undefined) {
+    condicao.tamanho = {};
+
+    if (tamanhoMin.valor !== undefined) {
+      condicao.tamanho.min = tamanhoMin.valor;
+    }
+
+    if (tamanhoMax.valor !== undefined) {
+      condicao.tamanho.max = tamanhoMax.valor;
+    }
+  }
+
+  if (formData.condicao_criado_em_depois || formData.condicao_criado_em_antes) {
+    condicao.criado_em = {};
+
+    if (formData.condicao_criado_em_depois) {
+      condicao.criado_em.depois = formData.condicao_criado_em_depois;
+    }
+
+    if (formData.condicao_criado_em_antes) {
+      condicao.criado_em.antes = formData.condicao_criado_em_antes;
+    }
+  }
+
+  if (formData.condicao_recebido_em_depois || formData.condicao_recebido_em_antes) {
+    condicao.recebido_em = {};
+
+    if (formData.condicao_recebido_em_depois) {
+      condicao.recebido_em.depois = formData.condicao_recebido_em_depois;
+    }
+
+    if (formData.condicao_recebido_em_antes) {
+      condicao.recebido_em.antes = formData.condicao_recebido_em_antes;
+    }
+  }
+
+  return { condicao };
 }
 
 function Spinner() {
@@ -110,6 +412,7 @@ export default function Regras() {
   const clienteIdAdminGlobal =
     user?.perfil === 'admin_efficience' ? user?.cliente_id || null : null;
   const requerClienteId = user?.perfil === 'admin_efficience' && !clienteIdAdminGlobal;
+  const extensaoOpcoesFormulario = obterExtensaoOpcoes(formData.condicao_tipo);
 
   const carregarRegras = useCallback(async () => {
     if (requerClienteId) {
@@ -173,10 +476,17 @@ export default function Regras() {
 
   function handleFormChange(event) {
     const { name, value, type, checked } = event.target;
+    const nextValue = type === 'checkbox' ? checked : value;
 
     setFormData((currentValue) => ({
       ...currentValue,
-      [name]: type === 'checkbox' ? checked : value,
+      [name]: nextValue,
+      ...(name === 'condicao_tipo' && nextValue === TIPO_FOLHA_PAGAMENTO
+        ? { condicao_extensao: 'xlsx' }
+        : {}),
+      ...(name === 'condicao_extensao' && currentValue.condicao_tipo === TIPO_FOLHA_PAGAMENTO
+        ? { condicao_extensao: 'xlsx' }
+        : {}),
     }));
   }
 
@@ -191,8 +501,15 @@ export default function Regras() {
       return;
     }
 
-    if (!formData.condicao || !formData.acao) {
-      setErroFormulario('Selecione condição e ação.');
+    if (!formData.acao) {
+      setErroFormulario('Selecione uma ação.');
+      return;
+    }
+
+    const { condicao, erro } = montarCondicaoFormulario(formData);
+
+    if (erro) {
+      setErroFormulario(erro);
       return;
     }
 
@@ -202,7 +519,7 @@ export default function Regras() {
     const payload = {
       pasta_origem: pastaOrigem,
       pasta_destino: pastaDestino,
-      condicao: formData.condicao,
+      condicao,
       acao: formData.acao,
       ativa: Boolean(formData.ativa),
     };
@@ -381,7 +698,7 @@ export default function Regras() {
 
         {!erroLista && !isLoadingRegras && regras.length > 0 ? (
           <section className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
-            <table className="min-w-full divide-y divide-zinc-200 text-sm">
+            <table className="min-w-[1040px] divide-y divide-zinc-200 text-sm">
               <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
                 <tr>
                   <th className="px-4 py-3">Pasta origem</th>
@@ -399,13 +716,13 @@ export default function Regras() {
 
                   return (
                     <tr key={regra.id || `${regra.pasta_origem}-${regra.pasta_destino}`}>
-                      <td className="max-w-[260px] break-all px-4 py-3 font-medium text-zinc-900">
+                      <td className="max-w-[220px] break-all px-4 py-3 font-medium text-zinc-900">
                         {regra.pasta_origem || '-'}
                       </td>
-                      <td className="max-w-[260px] break-all px-4 py-3 text-zinc-700">
+                      <td className="max-w-[220px] break-all px-4 py-3 text-zinc-700">
                         {regra.pasta_destino || '-'}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                      <td className="max-w-[360px] px-4 py-3 text-zinc-700">
                         {formatarCondicao(regra.condicao)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
@@ -455,7 +772,7 @@ export default function Regras() {
 
       {isFormModalAberto ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
-          <section className="w-full max-w-2xl rounded-xl border border-zinc-200 bg-white shadow-xl">
+          <section className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
             <header className="flex items-start justify-between border-b border-zinc-200 p-5">
               <div>
                 <h2 className="text-lg font-semibold text-zinc-900">
@@ -477,7 +794,7 @@ export default function Regras() {
               </button>
             </header>
 
-            <form className="space-y-4 p-5" onSubmit={handleSubmitFormulario}>
+            <form className="space-y-5 overflow-y-auto p-5" onSubmit={handleSubmitFormulario}>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2 sm:col-span-2">
                   <label htmlFor="pasta_origem" className="block text-sm font-medium text-zinc-700">
@@ -511,21 +828,68 @@ export default function Regras() {
                   />
                 </div>
 
+                <div className="space-y-2 sm:col-span-2">
+                  <h3 className="text-sm font-semibold text-zinc-900">Critérios de condição</h3>
+                </div>
+
                 <div className="space-y-2">
-                  <label htmlFor="condicao" className="block text-sm font-medium text-zinc-700">
-                    Condição
+                  <label
+                    htmlFor="condicao_in_name"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Nome contém
+                  </label>
+                  <input
+                    id="condicao_in_name"
+                    name="condicao_in_name"
+                    value={formData.condicao_in_name}
+                    onChange={handleFormChange}
+                    placeholder="Ex: FOLHA"
+                    disabled={isSavingFormulario}
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="condicao_extensao"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Extensão
                   </label>
                   <select
-                    id="condicao"
-                    name="condicao"
-                    value={formData.condicao}
+                    id="condicao_extensao"
+                    name="condicao_extensao"
+                    value={formData.condicao_extensao}
                     onChange={handleFormChange}
                     disabled={isSavingFormulario}
                     className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
-                    required
                   >
-                    {CONDICAO_OPCOES.map((opcao) => (
+                    {extensaoOpcoesFormulario.map((opcao) => (
                       <option key={opcao.value} value={opcao.value}>
+                        {opcao.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="condicao_tipo"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Tipo
+                  </label>
+                  <select
+                    id="condicao_tipo"
+                    name="condicao_tipo"
+                    value={formData.condicao_tipo}
+                    onChange={handleFormChange}
+                    disabled={isSavingFormulario}
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {TIPO_DOCUMENTO_OPCOES.map((opcao) => (
+                      <option key={opcao.value || 'qualquer'} value={opcao.value}>
                         {opcao.label}
                       </option>
                     ))}
@@ -551,6 +915,120 @@ export default function Regras() {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="condicao_tamanho_min"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Tamanho mínimo (bytes)
+                  </label>
+                  <input
+                    id="condicao_tamanho_min"
+                    name="condicao_tamanho_min"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={formData.condicao_tamanho_min}
+                    onChange={handleFormChange}
+                    placeholder="Ex: 0"
+                    disabled={isSavingFormulario}
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="condicao_tamanho_max"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Tamanho máximo (bytes)
+                  </label>
+                  <input
+                    id="condicao_tamanho_max"
+                    name="condicao_tamanho_max"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={formData.condicao_tamanho_max}
+                    onChange={handleFormChange}
+                    placeholder="Ex: 5000000"
+                    disabled={isSavingFormulario}
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="condicao_criado_em_depois"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Criado depois de
+                  </label>
+                  <input
+                    id="condicao_criado_em_depois"
+                    name="condicao_criado_em_depois"
+                    type="date"
+                    value={formData.condicao_criado_em_depois}
+                    onChange={handleFormChange}
+                    disabled={isSavingFormulario}
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="condicao_criado_em_antes"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Criado antes de
+                  </label>
+                  <input
+                    id="condicao_criado_em_antes"
+                    name="condicao_criado_em_antes"
+                    type="date"
+                    value={formData.condicao_criado_em_antes}
+                    onChange={handleFormChange}
+                    disabled={isSavingFormulario}
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="condicao_recebido_em_depois"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Recebido depois de
+                  </label>
+                  <input
+                    id="condicao_recebido_em_depois"
+                    name="condicao_recebido_em_depois"
+                    type="date"
+                    value={formData.condicao_recebido_em_depois}
+                    onChange={handleFormChange}
+                    disabled={isSavingFormulario}
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="condicao_recebido_em_antes"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Recebido antes de
+                  </label>
+                  <input
+                    id="condicao_recebido_em_antes"
+                    name="condicao_recebido_em_antes"
+                    type="date"
+                    value={formData.condicao_recebido_em_antes}
+                    onChange={handleFormChange}
+                    disabled={isSavingFormulario}
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
                 </div>
 
                 <div className="sm:col-span-2">
