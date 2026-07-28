@@ -12,3 +12,13 @@
  ✓ Compiled / in 4.5s (688 modules)
  GET / 200 in 5106ms
  GET / 200 in 78ms
+ GET / 200 in 91ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1445ms (691 modules)
+ GET /home 404 in 1744ms
+ ○ Compiling /dashboard ...
+ ✓ Compiled /dashboard in 1479ms (723 modules)
+ ○ Compiling /dashboard/folha/upload ...
+ ✓ Compiled /dashboard/folha/upload in 900ms (731 modules)
+ ○ Compiling /dashboard/regras ...
+ ✓ Compiled /dashboard/regras in 880ms (739 modules)
