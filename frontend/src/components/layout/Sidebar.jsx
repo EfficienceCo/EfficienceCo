@@ -81,18 +81,18 @@ function isRouteActive(pathname, item) {
 
 function sidebarLinkClasses(ativo) {
   if (ativo) {
-    return 'bg-sky-100 text-sky-900 ring-1 ring-sky-300';
+    return 'bg-sky-400/10 text-white ring-1 ring-sky-400/30 shadow-[inset_3px_0_0_var(--brand-400)]';
   }
 
-  return 'text-slate-700 hover:bg-slate-100 hover:text-slate-900';
+  return 'text-slate-400 hover:bg-white/5 hover:text-white';
 }
 
 function badgeClasses(total) {
   if (total > 0) {
-    return 'bg-rose-600 text-white';
+    return 'bg-rose-500 text-white';
   }
 
-  return 'bg-slate-200 text-slate-700';
+  return 'bg-white/10 text-slate-300';
 }
 
 export default function Sidebar() {
@@ -101,20 +101,29 @@ export default function Sidebar() {
   const { naoLidas } = useNotificacoes();
 
   return (
-    <aside className="w-full border-b border-slate-200 bg-white md:fixed md:inset-y-0 md:w-64 md:border-b-0 md:border-r">
+    <aside className="nova-sidebar w-full border-b border-white/10 text-slate-300 md:fixed md:inset-y-0 md:w-[264px] md:border-b-0 md:border-r">
       <div className="flex h-full flex-col">
-        <div className="border-b border-slate-200 px-5 py-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-            Efficience Co
+        <div className="border-b border-white/10 px-5 py-5">
+          <div className="flex items-center gap-3">
+            <img
+              src="/logo.svg"
+              alt="Efficience Co"
+              className="h-8 w-8 rounded-lg shadow-brand"
+            />
+            <p className="font-display text-lg font-semibold text-white">
+              Efficience <span className="text-slate-500">Co</span>
+            </p>
+          </div>
+          <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-sky-300">
+            Plataforma
           </p>
-          <p className="mt-1 text-lg font-semibold text-slate-900">Plataforma</p>
           <p className="mt-2 truncate text-sm text-slate-500">
             {user?.nome || user?.email || 'Usuário autenticado'}
           </p>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-4">
-          <ul className="grid gap-1">
+          <ul className="grid gap-1.5">
             {NAV_ITEMS.map((item) => {
               const ativo = isRouteActive(pathname, item);
               const Icon = item.icon;
@@ -123,7 +132,7 @@ export default function Sidebar() {
                 <li key={item.href}>
                   <Link
                     href={item.href}
-                    className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${sidebarLinkClasses(ativo)}`}
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${sidebarLinkClasses(ativo)}`}
                   >
                     <Icon />
                     <span className="flex-1">{item.label}</span>
@@ -143,11 +152,11 @@ export default function Sidebar() {
           </ul>
         </nav>
 
-        <div className="border-t border-slate-200 px-4 py-4">
+        <div className="border-t border-white/10 px-4 py-4">
           <button
             type="button"
             onClick={logout}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            className="w-full rounded-lg border border-white/10 px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white"
           >
             Sair
           </button>
@@ -165,7 +174,9 @@ function IconBase({ children }) {
       fill="none"
       stroke="currentColor"
       strokeWidth="1.8"
-      className="h-4 w-4 shrink-0"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-[17px] w-[17px] shrink-0"
     >
       {children}
     </svg>

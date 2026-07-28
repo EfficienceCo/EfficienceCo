@@ -26,9 +26,9 @@ export default function AppShell({ children }) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 md:flex">
+    <div className="min-h-screen bg-slate-50 md:flex">
       <Sidebar />
-      <div className="min-w-0 flex-1 md:ml-64">{children}</div>
+      <div className="min-w-0 flex-1 md:ml-[264px]">{children}</div>
     </div>
   );
 }
