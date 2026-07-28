@@ -80,6 +80,11 @@ export default function Home() {
     <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 p-4">
       <section className="w-full max-w-md rounded-2xl border border-slate-700/70 bg-slate-900/70 p-8 shadow-2xl backdrop-blur">
         <div className="mb-8 space-y-2 text-center">
+          <img
+            src="/logo.svg"
+            alt="Efficience Co"
+            className="mx-auto mb-4 h-12 w-12 rounded-xl shadow-brand"
+          />
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-sky-300">
             Efficience Co
           </p>
