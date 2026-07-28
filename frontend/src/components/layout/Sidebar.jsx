@@ -26,7 +26,11 @@ const NAV_ITEMS = [
     href: '/dashboard/folha/upload',
     label: 'Folha',
     icon: FolhaIcon,
-    activePrefix: '/dashboard/folha',
+  },
+  {
+    href: '/dashboard/folha/status',
+    label: 'Status folha',
+    icon: FolhaStatusIcon,
   },
   {
     href: '/dashboard/logs',
@@ -220,6 +224,18 @@ function FolhaIcon() {
       <path d="M9.5 11h5" />
       <path d="M9.5 14h5" />
       <path d="M9.5 17h3" />
+    </IconBase>
+  );
+}
+
+function FolhaStatusIcon() {
+  return (
+    <IconBase>
+      <path d="M7 3.5h7l3.5 3.5v13.5H7z" />
+      <path d="M14 3.5V7h3.5" />
+      <path d="M9.5 12h3.2" />
+      <path d="M9.5 15.5h2.4" />
+      <path d="m14.2 15.7 1.4 1.4 2.9-3.2" />
     </IconBase>
   );
 }
