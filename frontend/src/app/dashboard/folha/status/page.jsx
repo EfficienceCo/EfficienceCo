@@ -14,6 +14,10 @@ const POLLING_INTERVAL_MS = 5000;
 const LIMITE_PROCESSAMENTOS = 25;
 
 const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/;
+const BUTTON_PRIMARY_CLASSES =
+  'inline-flex items-center justify-center gap-2 rounded-md border border-sky-400 bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-sm transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-60';
+const BUTTON_SECONDARY_CLASSES =
+  'inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60';
 
 const STATUS_META = {
   pendente: {
@@ -81,7 +85,7 @@ function obterStatusMeta(status) {
   const chave = normalizarStatus(status) || 'pendente';
   return STATUS_META[chave] || {
     label: chave,
-    classes: 'bg-zinc-100 text-zinc-700 ring-zinc-200',
+    classes: 'bg-slate-100 text-slate-700 ring-slate-200',
   };
 }
 
@@ -549,7 +553,7 @@ function Spinner() {
   return (
     <span
       aria-hidden="true"
-      className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700"
+      className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-sky-600"
     />
   );
 }
@@ -617,14 +621,14 @@ function StatusDot({ status }) {
   return (
     <span
       aria-hidden="true"
-      className={`h-2 w-2 rounded-full ${classes[statusNormalizado] || 'bg-zinc-500'}`}
+      className={`h-2 w-2 rounded-full ${classes[statusNormalizado] || 'bg-slate-500'}`}
     />
   );
 }
 
 function ArquivosDownload({ processamentoId, arquivos, baixandoArquivo, onBaixar }) {
   if (!arquivos.length) {
-    return <span className="text-sm text-zinc-400">-</span>;
+    return <span className="text-sm text-slate-400">-</span>;
   }
 
   return (
@@ -637,10 +641,10 @@ function ArquivosDownload({ processamentoId, arquivos, baixandoArquivo, onBaixar
         return (
           <li key={arquivo.chave} className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-zinc-800" title={arquivo.nome}>
+              <p className="truncate text-sm font-semibold text-slate-800" title={arquivo.nome}>
                 {arquivo.nome}
               </p>
-              <p className="text-xs text-zinc-500">
+              <p className="text-xs text-slate-500">
                 {formatarTipoArquivo(arquivo.tipo)}
                 {detalheTamanho ? ` · ${detalheTamanho}` : ''}
                 {' · '}
@@ -651,7 +655,7 @@ function ArquivosDownload({ processamentoId, arquivos, baixandoArquivo, onBaixar
               type="button"
               onClick={() => onBaixar(processamentoId, arquivo)}
               disabled={isBaixando}
-              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-400 bg-sky-500 px-2.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isBaixando ? <Spinner /> : <DownloadIcon />}
               {isBaixando ? 'Baixando...' : 'Baixar'}
@@ -856,7 +860,7 @@ function StatusFolhaContent() {
   }, []);
 
   if (isLoading) {
-    return <p>Carregando...</p>;
+    return <p className="p-6 text-sm text-slate-500">Carregando...</p>;
   }
 
   if (!isAuthenticated) {
@@ -864,11 +868,16 @@ function StatusFolhaContent() {
   }
 
   return (
-    <main className="space-y-6 p-6">
-      <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-6 md:p-8">
+      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-900">Status da folha</h1>
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
+            Folha de pagamento
+          </p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
+            Status da folha
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
             Acompanhe os processamentos por mês e empresa e baixe os arquivos finais quando estiverem prontos.
           </p>
         </div>
@@ -878,7 +887,7 @@ function StatusFolhaContent() {
             type="button"
             onClick={() => carregarProcessamentos()}
             disabled={processamentos.length === 0 || isAtualizando}
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+            className={BUTTON_SECONDARY_CLASSES}
           >
             {isAtualizando ? <Spinner /> : <RefreshIcon />}
             {isAtualizando ? 'Atualizando...' : 'Atualizar lista'}
@@ -886,7 +895,7 @@ function StatusFolhaContent() {
 
           <Link
             href="/dashboard/folha/upload"
-            className="inline-flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700"
+            className={BUTTON_PRIMARY_CLASSES}
           >
             <PlusIcon />
             Novo upload
@@ -894,36 +903,38 @@ function StatusFolhaContent() {
         </div>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <article className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Pendente</p>
-          <p className="mt-2 text-3xl font-bold leading-none text-amber-900">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pendente</p>
+          <p className="mt-2 text-3xl font-semibold leading-none tracking-tight text-amber-700">
             {contadores.pendente}
           </p>
         </article>
-        <article className="rounded-xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Processando
           </p>
-          <p className="mt-2 text-3xl font-bold leading-none text-sky-900">
+          <p className="mt-2 text-3xl font-semibold leading-none tracking-tight text-sky-700">
             {contadores.processando}
           </p>
         </article>
-        <article className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Concluído
           </p>
-          <p className="mt-2 text-3xl font-bold leading-none text-emerald-900">
+          <p className="mt-2 text-3xl font-semibold leading-none tracking-tight text-emerald-700">
             {contadores.concluido}
           </p>
         </article>
-        <article className="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">Erro</p>
-          <p className="mt-2 text-3xl font-bold leading-none text-rose-900">{contadores.erro}</p>
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Erro</p>
+          <p className="mt-2 text-3xl font-semibold leading-none tracking-tight text-rose-700">
+            {contadores.erro}
+          </p>
         </article>
       </section>
 
-      <section className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-sm md:flex-row md:items-center md:justify-between">
+      <section className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm md:flex-row md:items-center md:justify-between">
         <p>
           {temProcessamentosEmAndamento
             ? 'Atualização automática ativa para processamentos em andamento.'
@@ -945,41 +956,44 @@ function StatusFolhaContent() {
       ) : null}
 
       {processamentos.length === 0 ? (
-        <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <p className="text-sm font-medium text-zinc-800">
+        <section className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-md bg-sky-50 text-sky-700 ring-1 ring-sky-100">
+            <PlusIcon />
+          </div>
+          <p className="mt-4 text-sm font-semibold text-slate-900">
             Nenhum processamento de folha encontrado.
           </p>
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1 text-sm text-slate-500">
             Assim que uma planilha for enviada, o status dela aparece aqui.
           </p>
         </section>
       ) : (
-        <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-zinc-200">
-              <thead className="bg-zinc-50">
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Empresa
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Mês
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Status
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Motivo do erro
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Arquivos
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Atualizado
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100 bg-white">
+              <tbody className="divide-y divide-slate-100 bg-white">
                 {processamentos.map((processamento) => {
                   const statusMeta = obterStatusMeta(processamento.status);
                   const statusNormalizado = normalizarStatus(processamento.status) || 'pendente';
@@ -989,16 +1003,16 @@ function StatusFolhaContent() {
                     statusNormalizado === 'concluido' ? processamento.arquivos : [];
 
                   return (
-                    <tr key={processamento.id} className="align-top">
+                    <tr key={processamento.id} className="align-top transition hover:bg-slate-50">
                       <td className="px-4 py-4">
-                        <p className="max-w-xs text-sm font-semibold text-zinc-900">
+                        <p className="max-w-xs text-sm font-semibold text-slate-900">
                           {processamento.cliente_nome || 'Empresa não informada'}
                         </p>
-                        <p className="mt-1 max-w-xs break-all text-xs text-zinc-500">
+                        <p className="mt-1 max-w-xs break-all font-mono text-xs text-slate-500">
                           {processamento.id}
                         </p>
                       </td>
-                      <td className="px-4 py-4 text-sm font-medium text-zinc-700">
+                      <td className="px-4 py-4 text-sm font-semibold text-slate-700">
                         {formatarMesReferencia(processamento.mes_referencia)}
                       </td>
                       <td className="px-4 py-4">
@@ -1010,7 +1024,7 @@ function StatusFolhaContent() {
                           {statusMeta.label}
                         </span>
                         {processamento.arquivos?.length ? (
-                          <p className="mt-2 text-xs text-zinc-500">
+                          <p className="mt-2 text-xs text-slate-500">
                             {processamento.arquivos.length} arquivo
                             {processamento.arquivos.length > 1 ? 's' : ''} gerado
                             {processamento.arquivos.length > 1 ? 's' : ''}
@@ -1027,7 +1041,7 @@ function StatusFolhaContent() {
                             {processamento.erro_consulta}
                           </p>
                         ) : (
-                          <span className="text-sm text-zinc-400">-</span>
+                          <span className="text-sm text-slate-400">-</span>
                         )}
                       </td>
                       <td className="max-w-xs px-4 py-4">
@@ -1039,12 +1053,12 @@ function StatusFolhaContent() {
                             onBaixar={handleBaixarArquivo}
                           />
                         ) : (
-                          <span className="text-sm text-zinc-400">
+                          <span className="text-sm text-slate-400">
                             Disponível após conclusão
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-4 text-sm text-zinc-600">
+                      <td className="px-4 py-4 text-sm text-slate-600">
                         {formatarDataHora(
                           processamento.atualizado_em || processamento.ultima_consulta_em,
                         )}
