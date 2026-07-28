@@ -15,12 +15,12 @@ const TIPO_FOLHA_PAGAMENTO = 'folha_pagamento';
 
 const TIPO_DOCUMENTO_OPCOES = [
   { value: '', label: 'Qualquer tipo' },
-  { value: 'cartao_cnpj', label: 'Cartao CNPJ' },
+  { value: 'cartao_cnpj', label: 'Cartão CNPJ' },
   { value: 'contrato_social', label: 'Contrato social' },
-  { value: 'extrato_bancario', label: 'Extrato bancario' },
+  { value: 'extrato_bancario', label: 'Extrato bancário' },
   { value: TIPO_FOLHA_PAGAMENTO, label: 'Folha de pagamento' },
   { value: 'holerite', label: 'Holerite' },
-  { value: 'nao_identificado', label: 'Nao identificado' },
+  { value: 'nao_identificado', label: 'Não identificado' },
 ];
 
 const EXTENSAO_OPCOES = [
@@ -56,7 +56,7 @@ function obterExtensaoOpcoes(tipo) {
     return EXTENSAO_OPCOES.filter((opcao) => opcao.value === 'xlsx');
   }
 
-  return [{ value: '', label: 'Qualquer extensao' }, ...EXTENSAO_OPCOES];
+  return [{ value: '', label: 'Qualquer extensão' }, ...EXTENSAO_OPCOES];
 }
 
 const FORM_INICIAL = {
@@ -75,7 +75,7 @@ const FORM_INICIAL = {
   ativa: true,
 };
 
-function obterMensagemErro(error, fallback = 'Nao foi possivel processar sua solicitacao.') {
+function obterMensagemErro(error, fallback = 'Não foi possível processar sua solicitação.') {
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
@@ -174,11 +174,11 @@ function formatarCondicao(condicao) {
   const partes = [];
 
   if (condicaoNormalizada.in_name) {
-    partes.push(`Nome contem "${condicaoNormalizada.in_name}"`);
+    partes.push(`Nome contém "${condicaoNormalizada.in_name}"`);
   }
 
   if (condicaoNormalizada.extensao) {
-    partes.push(`Extensao .${removerPontoExtensao(condicaoNormalizada.extensao)}`);
+    partes.push(`Extensão .${removerPontoExtensao(condicaoNormalizada.extensao)}`);
   }
 
   if (condicaoNormalizada.tipo) {
@@ -271,7 +271,7 @@ function validarNumeroInteiroNaoNegativo(valor, label) {
   const numero = Number(texto);
 
   if (!Number.isInteger(numero) || numero < 0) {
-    return { erro: `${label} deve ser um numero inteiro maior ou igual a zero.` };
+    return { erro: `${label} deve ser um número inteiro maior ou igual a zero.` };
   }
 
   return { valor: numero };
@@ -287,11 +287,11 @@ function montarCondicaoFormulario(formData) {
       : removerPontoExtensao(formData.condicao_extensao);
   const tamanhoMin = validarNumeroInteiroNaoNegativo(
     formData.condicao_tamanho_min,
-    'Tamanho minimo',
+    'Tamanho mínimo',
   );
   const tamanhoMax = validarNumeroInteiroNaoNegativo(
     formData.condicao_tamanho_max,
-    'Tamanho maximo',
+    'Tamanho máximo',
   );
 
   if (tamanhoMin.erro) {
@@ -307,7 +307,7 @@ function montarCondicaoFormulario(formData) {
     tamanhoMax.valor !== undefined &&
     tamanhoMin.valor > tamanhoMax.valor
   ) {
-    return { erro: 'Tamanho minimo nao pode ser maior que o tamanho maximo.' };
+    return { erro: 'Tamanho mínimo não pode ser maior que o tamanho máximo.' };
   }
 
   if (
@@ -315,7 +315,7 @@ function montarCondicaoFormulario(formData) {
     formData.condicao_criado_em_antes &&
     formData.condicao_criado_em_depois > formData.condicao_criado_em_antes
   ) {
-    return { erro: 'Data inicial de criacao nao pode ser depois da data final.' };
+    return { erro: 'Data inicial de criação não pode ser depois da data final.' };
   }
 
   if (
@@ -323,7 +323,7 @@ function montarCondicaoFormulario(formData) {
     formData.condicao_recebido_em_antes &&
     formData.condicao_recebido_em_depois > formData.condicao_recebido_em_antes
   ) {
-    return { erro: 'Data inicial de recebimento nao pode ser depois da data final.' };
+    return { erro: 'Data inicial de recebimento não pode ser depois da data final.' };
   }
 
   if (inName) {
@@ -419,7 +419,7 @@ export default function Regras() {
       setIsLoadingRegras(false);
       setRegras([]);
       setErroLista(
-        'Seu usuario admin_efficience nao possui cliente_id no token. Use um admin_cliente para configurar regras.',
+        'Seu usuário admin_efficience não possui cliente_id no token. Use um admin_cliente para configurar regras.',
       );
       return;
     }
@@ -431,7 +431,7 @@ export default function Regras() {
       const data = await listarRegras({ clienteId: clienteIdAdminGlobal || undefined });
       setRegras(Array.isArray(data) ? data : []);
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Nao foi possivel carregar as regras.'));
+      setErroLista(obterMensagemErro(error, 'Não foi possível carregar as regras.'));
     } finally {
       setIsLoadingRegras(false);
     }
@@ -502,7 +502,7 @@ export default function Regras() {
     }
 
     if (!formData.acao) {
-      setErroFormulario('Selecione uma acao.');
+      setErroFormulario('Selecione uma ação.');
       return;
     }
 
@@ -572,7 +572,7 @@ export default function Regras() {
         currentValue.map((item) => (item.id === atualizada.id ? atualizada : item)),
       );
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Nao foi possivel atualizar o status da regra.'));
+      setErroLista(obterMensagemErro(error, 'Não foi possível atualizar o status da regra.'));
     } finally {
       setStatusEmAtualizacao((currentValue) => {
         const nextValue = { ...currentValue };
@@ -617,7 +617,7 @@ export default function Regras() {
       setIsDeleteModalAberto(false);
       setRegraParaDeletar(null);
     } catch (error) {
-      setErroDelete(obterMensagemErro(error, 'Nao foi possivel deletar a regra.'));
+      setErroDelete(obterMensagemErro(error, 'Não foi possível deletar a regra.'));
     } finally {
       setIsDeletingRegra(false);
     }
@@ -635,9 +635,9 @@ export default function Regras() {
     return (
       <main className="space-y-6 p-6">
         <header>
-          <h1 className="text-2xl font-semibold text-zinc-900">Regras de automacao</h1>
+          <h1 className="text-2xl font-semibold text-zinc-900">Regras de automação</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Apenas administradores podem visualizar esta area.
+            Apenas administradores podem visualizar esta área.
           </p>
         </header>
       </main>
@@ -649,7 +649,7 @@ export default function Regras() {
       <main className="space-y-6 p-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-900">Regras de automacao</h1>
+            <h1 className="text-2xl font-semibold text-zinc-900">Regras de automação</h1>
             <p className="mt-1 text-sm text-zinc-500">
               Configure as regras que o agente deve aplicar nos arquivos monitorados.
             </p>
@@ -703,10 +703,10 @@ export default function Regras() {
                 <tr>
                   <th className="px-4 py-3">Pasta origem</th>
                   <th className="px-4 py-3">Pasta destino</th>
-                  <th className="px-4 py-3">Condicao</th>
-                  <th className="px-4 py-3">Acao</th>
+                  <th className="px-4 py-3">Condição</th>
+                  <th className="px-4 py-3">Ação</th>
                   <th className="px-4 py-3">Status ativa</th>
-                  <th className="px-4 py-3">Acoes</th>
+                  <th className="px-4 py-3">Ações</th>
                 </tr>
               </thead>
 
@@ -779,7 +779,7 @@ export default function Regras() {
                   {modoFormulario === 'criar' ? 'Nova regra' : 'Editar regra'}
                 </h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Defina origem, destino, condicao, acao e status da regra.
+                  Defina origem, destino, condição, ação e status da regra.
                 </p>
               </div>
 
@@ -829,7 +829,7 @@ export default function Regras() {
                 </div>
 
                 <div className="space-y-2 sm:col-span-2">
-                  <h3 className="text-sm font-semibold text-zinc-900">Criterios de condicao</h3>
+                  <h3 className="text-sm font-semibold text-zinc-900">Critérios de condição</h3>
                 </div>
 
                 <div className="space-y-2">
@@ -837,7 +837,7 @@ export default function Regras() {
                     htmlFor="condicao_in_name"
                     className="block text-sm font-medium text-zinc-700"
                   >
-                    Nome contem
+                    Nome contém
                   </label>
                   <input
                     id="condicao_in_name"
@@ -855,7 +855,7 @@ export default function Regras() {
                     htmlFor="condicao_extensao"
                     className="block text-sm font-medium text-zinc-700"
                   >
-                    Extensao
+                    Extensão
                   </label>
                   <select
                     id="condicao_extensao"
@@ -898,7 +898,7 @@ export default function Regras() {
 
                 <div className="space-y-2">
                   <label htmlFor="acao" className="block text-sm font-medium text-zinc-700">
-                    Acao
+                    Ação
                   </label>
                   <select
                     id="acao"
@@ -922,7 +922,7 @@ export default function Regras() {
                     htmlFor="condicao_tamanho_min"
                     className="block text-sm font-medium text-zinc-700"
                   >
-                    Tamanho minimo (bytes)
+                    Tamanho mínimo (bytes)
                   </label>
                   <input
                     id="condicao_tamanho_min"
@@ -943,7 +943,7 @@ export default function Regras() {
                     htmlFor="condicao_tamanho_max"
                     className="block text-sm font-medium text-zinc-700"
                   >
-                    Tamanho maximo (bytes)
+                    Tamanho máximo (bytes)
                   </label>
                   <input
                     id="condicao_tamanho_max"
@@ -1072,7 +1072,7 @@ export default function Regras() {
                     ? 'Salvando...'
                     : modoFormulario === 'criar'
                       ? 'Criar regra'
-                      : 'Salvar alteracoes'}
+                      : 'Salvar alterações'}
                 </button>
               </footer>
             </form>
@@ -1083,7 +1083,7 @@ export default function Regras() {
       {isDeleteModalAberto && regraParaDeletar ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
           <section className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl">
-            <h2 className="text-lg font-semibold text-zinc-900">Confirmar exclusao</h2>
+            <h2 className="text-lg font-semibold text-zinc-900">Confirmar exclusão</h2>
             <p className="mt-2 text-sm text-zinc-600">
               Deseja realmente deletar esta regra?
             </p>
