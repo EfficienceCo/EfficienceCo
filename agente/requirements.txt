@@ -6,4 +6,4 @@ pyinstaller>=5.13.0
 torch
 torchvision
 Pillow
-pdf2image
+pypdfium2
