@@ -12,6 +12,7 @@ import {
 
 const PERFIS_AUTORIZADOS = new Set(['admin_cliente', 'admin_efficience']);
 const TIPO_FOLHA_PAGAMENTO = 'folha_pagamento';
+const EXTENSAO_FOLHA_PAGAMENTO = 'xlsx';
 
 const TIPO_DOCUMENTO_OPCOES = [
   { value: '', label: 'Qualquer tipo' },
@@ -53,7 +54,7 @@ const ACAO_LABELS = ACAO_OPCOES.reduce((acc, opcao) => {
 
 function obterExtensaoOpcoes(tipo) {
   if (tipo === TIPO_FOLHA_PAGAMENTO) {
-    return EXTENSAO_OPCOES.filter((opcao) => opcao.value === 'xlsx');
+    return EXTENSAO_OPCOES.filter((opcao) => opcao.value === EXTENSAO_FOLHA_PAGAMENTO);
   }
 
   return [{ value: '', label: 'Qualquer extensão' }, ...EXTENSAO_OPCOES];
@@ -241,7 +242,7 @@ function regraParaFormulario(regra) {
   const tipo = valorParaCampo(condicao.tipo);
   const extensao =
     tipo === TIPO_FOLHA_PAGAMENTO
-      ? 'xlsx'
+      ? EXTENSAO_FOLHA_PAGAMENTO
       : valorParaCampo(condicao.extensao ? removerPontoExtensao(condicao.extensao) : '');
 
   return {
@@ -283,7 +284,7 @@ function montarCondicaoFormulario(formData) {
   const tipo = formData.condicao_tipo.trim();
   const extensao =
     tipo === TIPO_FOLHA_PAGAMENTO
-      ? 'xlsx'
+      ? EXTENSAO_FOLHA_PAGAMENTO
       : removerPontoExtensao(formData.condicao_extensao);
   const tamanhoMin = validarNumeroInteiroNaoNegativo(
     formData.condicao_tamanho_min,
@@ -413,6 +414,7 @@ export default function Regras() {
     user?.perfil === 'admin_efficience' ? user?.cliente_id || null : null;
   const requerClienteId = user?.perfil === 'admin_efficience' && !clienteIdAdminGlobal;
   const extensaoOpcoesFormulario = obterExtensaoOpcoes(formData.condicao_tipo);
+  const extensaoRestritaFolha = formData.condicao_tipo === TIPO_FOLHA_PAGAMENTO;
 
   const carregarRegras = useCallback(async () => {
     if (requerClienteId) {
@@ -449,6 +451,27 @@ export default function Regras() {
     }
   }, [carregarRegras, isAuthenticated, isLoading, podeGerenciarRegras]);
 
+  useEffect(() => {
+    if (
+      formData.condicao_tipo === TIPO_FOLHA_PAGAMENTO &&
+      formData.condicao_extensao !== EXTENSAO_FOLHA_PAGAMENTO
+    ) {
+      setFormData((currentValue) => {
+        if (
+          currentValue.condicao_tipo !== TIPO_FOLHA_PAGAMENTO ||
+          currentValue.condicao_extensao === EXTENSAO_FOLHA_PAGAMENTO
+        ) {
+          return currentValue;
+        }
+
+        return {
+          ...currentValue,
+          condicao_extensao: EXTENSAO_FOLHA_PAGAMENTO,
+        };
+      });
+    }
+  }, [formData.condicao_extensao, formData.condicao_tipo]);
+
   function abrirModalCriacao() {
     setModoFormulario('criar');
     setRegraEditandoId(null);
@@ -482,10 +505,10 @@ export default function Regras() {
       ...currentValue,
       [name]: nextValue,
       ...(name === 'condicao_tipo' && nextValue === TIPO_FOLHA_PAGAMENTO
-        ? { condicao_extensao: 'xlsx' }
+        ? { condicao_extensao: EXTENSAO_FOLHA_PAGAMENTO }
         : {}),
       ...(name === 'condicao_extensao' && currentValue.condicao_tipo === TIPO_FOLHA_PAGAMENTO
-        ? { condicao_extensao: 'xlsx' }
+        ? { condicao_extensao: EXTENSAO_FOLHA_PAGAMENTO }
         : {}),
     }));
   }
@@ -860,7 +883,11 @@ export default function Regras() {
                   <select
                     id="condicao_extensao"
                     name="condicao_extensao"
-                    value={formData.condicao_extensao}
+                    value={
+                      extensaoRestritaFolha
+                        ? EXTENSAO_FOLHA_PAGAMENTO
+                        : formData.condicao_extensao
+                    }
                     onChange={handleFormChange}
                     disabled={isSavingFormulario}
                     className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"

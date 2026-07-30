@@ -1,0 +1,68 @@
+
+> efficience-backend@1.0.0 start
+> node src/server.js
+
+[auth.routes] Rotas de autenticacao registradas
+[clientes.routes] Rotas de clientes registradas
+[usuarios.routes] Rotas de usuarios registradas
+[regras.routes] Rotas de regras registradas
+[eventos.routes] Rotas de eventos registradas
+[obrigacoes.routes] Rotas de obrigações registradas
+[processos.routes] Rotas de processos registradas
+[notificacoes.routes] Rotas de notificações registradas
+[folha.routes] Rotas de folha registradas
+[app.js] Arquivo app.js foi carregado
+[app.js] Importando express...
+[app.js] Express importado com sucesso
+[app.js] Criando instancia do app...
+[app.js] Instancia do app criada
+[app.js] Registrando middleware express.json()...
+[app.js] Middleware express.json() registrado
+[app.js] Registrando rota GET /health...
+[app.js] Rota GET /health registrada
+[app.js] Registrando rotas de autenticacao...
+[app.js] Rota /auth registrada
+[app.js] Rota /clientes registrada
+[app.js] Registrando rotas de usuarios...
+[app.js] Rota /usuarios registrada
+[app.js] Rota /licenca registrada
+[app.js] Rota /regras registrada
+[app.js] Rota /eventos registrada
+[app.js] Rota /obrigacoes registrada
+[app.js] Rota /processos registrada
+[app.js] Rota /notificacoes registrada
+[app.js] Rota /folha registrada
+[app.js] Exportando app...
+[server.js] Arquivo server.js foi carregado
+[server.js] Carregando dotenv...
+[server.js] dotenv carregado com sucesso
+[server.js] Importando app.js...
+[server.js] app.js importado com sucesso
+[server.js] PORT lida do .env: 3001
+[folha-mensal.job] Job de folha mensal registrado (todo dia 1 às 06:00 UTC)
+[server.js] Iniciando app.listen()...
+[server.js] Servidor rodando na porta 3001
+[server.js] Teste em: http://localhost:3001/health
+[app.js] Requisicao recebida: GET /health
+[app.js] Enviando resposta { status: "ok" }
+[app.js] Resposta enviada com sucesso
+[auth.middleware] Verificando autenticacao para: GET /notificacoes
+[auth.middleware] Token nao fornecido ou formato invalido
+[auth.middleware] Verificando autenticacao para: GET /notificacoes
+[auth.middleware] Token nao fornecido ou formato invalido
+[auth.middleware] Verificando autenticacao para: GET /obrigacoes/proximas?dias=7
+[auth.middleware] Token nao fornecido ou formato invalido
+[auth.middleware] Verificando autenticacao para: GET /processos?status=em_andamento
+[auth.middleware] Token nao fornecido ou formato invalido
+[auth.middleware] Verificando autenticacao para: GET /eventos?limit=5&offset=0
+[auth.middleware] Token nao fornecido ou formato invalido
+[auth.middleware] Verificando autenticacao para: GET /obrigacoes/proximas?dias=7
+[auth.middleware] Token nao fornecido ou formato invalido
+[auth.middleware] Verificando autenticacao para: GET /processos?status=em_andamento
+[auth.middleware] Token nao fornecido ou formato invalido
+[auth.middleware] Verificando autenticacao para: GET /eventos?limit=5&offset=0
+[auth.middleware] Token nao fornecido ou formato invalido
+[auth.middleware] Verificando autenticacao para: GET /clientes
+[auth.middleware] Token nao fornecido ou formato invalido
+[auth.middleware] Verificando autenticacao para: GET /clientes
+[auth.middleware] Token nao fornecido ou formato invalido

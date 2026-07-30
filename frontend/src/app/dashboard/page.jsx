@@ -10,7 +10,7 @@ import NotificacoesWidget from '../../components/dashboard/NotificacoesWidget';
 import AgenteEventosWidget from '../../components/dashboard/AgenteEventosWidget';
 import FolhaManualWidget from '../../components/dashboard/FolhaManualWidget';
 
-export default function Dashboard() {
+export default function Home() {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
 
@@ -31,7 +31,7 @@ export default function Dashboard() {
   return (
     <main className="space-y-6 p-6">
       <header>
-        <h1 className="text-2xl font-semibold text-zinc-900">Dashboard</h1>
+        <h1 className="text-2xl font-semibold text-zinc-900">Home</h1>
         <p className="mt-1 text-sm text-zinc-500">
           Acompanhe os principais dados dos módulos em tempo real.
         </p>
