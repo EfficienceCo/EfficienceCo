@@ -34,10 +34,95 @@ const EXTENSAO_OPCOES = [
 
 const ACAO_OPCOES = [
   { value: 'mover', label: 'Mover arquivo' },
-  { value: 'copiar', label: 'Copiar arquivo' },
   { value: 'renomear', label: 'Renomear arquivo' },
+  { value: 'organizar_arquivo', label: 'Organizar arquivo' },
   { value: 'upload_folha', label: 'Upload folha (.xlsx em Folha/YYYY-MM)' },
+  { value: 'abertura_empresa', label: 'Criar estrutura de empresa' },
 ];
+
+/** Campos e labels que mudam conforme a ação selecionada. */
+const SCHEMA_ACAO = {
+  mover: {
+    pastaOrigem: { visivel: true, obrigatorio: true, label: 'Pasta origem', placeholder: 'Ex: C:\\Docs\\Entrada' },
+    pastaDestino: {
+      visivel: true,
+      obrigatorio: true,
+      label: 'Pasta destino',
+      placeholder: 'Ex: C:\\Docs\\Processados',
+    },
+    empresaPropria: { visivel: false },
+    nomeEmpresa: { visivel: false },
+    criteriosCondicao: true,
+  },
+  renomear: {
+    pastaOrigem: { visivel: true, obrigatorio: true, label: 'Pasta origem', placeholder: 'Ex: C:\\Docs\\Entrada' },
+    pastaDestino: { visivel: false, obrigatorio: false },
+    empresaPropria: { visivel: false },
+    nomeEmpresa: { visivel: false },
+    criteriosCondicao: true,
+  },
+  organizar_arquivo: {
+    pastaOrigem: {
+      visivel: true,
+      obrigatorio: true,
+      label: 'Pasta de entrada',
+      placeholder: 'Ex: C:\\Souza_Contabilidade\\ENTRADA',
+    },
+    pastaDestino: {
+      visivel: true,
+      obrigatorio: true,
+      label: 'Base de clientes (CLIENTES\\ATIVO)',
+      placeholder: 'Ex: C:\\Souza_Contabilidade\\CLIENTES\\ATIVO',
+      ajuda: 'A empresa e a subpasta do tipo são resolvidas pelo nome/classificação do arquivo.',
+    },
+    empresaPropria: {
+      visivel: true,
+      label: 'Empresa do escritório (opcional)',
+      placeholder: 'Ex: Souza Contabilidade',
+      ajuda: 'Se o nome do arquivo contiver este texto, o arquivo vai para a pasta dessa empresa.',
+    },
+    nomeEmpresa: { visivel: false },
+    criteriosCondicao: true,
+  },
+  upload_folha: {
+    pastaOrigem: {
+      visivel: true,
+      obrigatorio: true,
+      label: 'Pasta origem (Folha/YYYY-MM)',
+      placeholder: 'Ex: C:\\Docs\\Folha\\2026-07',
+    },
+    pastaDestino: {
+      visivel: true,
+      obrigatorio: false,
+      label: 'Arquivar após sucesso (opcional)',
+      placeholder: 'Vazio = subpasta enviados/',
+    },
+    empresaPropria: { visivel: false },
+    nomeEmpresa: { visivel: false },
+    criteriosCondicao: true,
+  },
+  abertura_empresa: {
+    pastaOrigem: { visivel: false, obrigatorio: false },
+    pastaDestino: {
+      visivel: true,
+      obrigatorio: true,
+      label: 'Pasta base (CLIENTES\\ATIVO)',
+      placeholder: 'Ex: C:\\Souza_Contabilidade\\CLIENTES\\ATIVO',
+    },
+    empresaPropria: { visivel: false },
+    nomeEmpresa: {
+      visivel: true,
+      obrigatorio: true,
+      label: 'Nome da empresa',
+      placeholder: 'Ex: Padaria do João',
+    },
+    criteriosCondicao: false,
+  },
+};
+
+function obterSchemaAcao(acao) {
+  return SCHEMA_ACAO[acao] || SCHEMA_ACAO.mover;
+}
 
 const TIPO_DOCUMENTO_LABELS = TIPO_DOCUMENTO_OPCOES.reduce((acc, opcao) => {
   if (opcao.value) {
@@ -72,6 +157,8 @@ const FORM_INICIAL = {
   condicao_criado_em_antes: '',
   condicao_recebido_em_depois: '',
   condicao_recebido_em_antes: '',
+  condicao_empresa_propria: '',
+  condicao_nome_empresa: '',
   acao: ACAO_OPCOES[0].value,
   ativa: true,
 };
@@ -222,6 +309,14 @@ function formatarCondicao(condicao) {
     }
   }
 
+  if (condicaoNormalizada.empresa_propria) {
+    partes.push(`Empresa própria "${condicaoNormalizada.empresa_propria}"`);
+  }
+
+  if (condicaoNormalizada.nome_empresa) {
+    partes.push(`Empresa "${condicaoNormalizada.nome_empresa}"`);
+  }
+
   if (partes.length > 0) {
     return partes.join('; ');
   }
@@ -257,6 +352,8 @@ function regraParaFormulario(regra) {
     condicao_criado_em_antes: dataParaCampo(condicao.criado_em?.antes),
     condicao_recebido_em_depois: dataParaCampo(condicao.recebido_em?.depois),
     condicao_recebido_em_antes: dataParaCampo(condicao.recebido_em?.antes),
+    condicao_empresa_propria: valorParaCampo(condicao.empresa_propria),
+    condicao_nome_empresa: valorParaCampo(condicao.nome_empresa),
     acao: regra?.acao || ACAO_OPCOES[0].value,
     ativa: Boolean(regra?.ativa),
   };
@@ -375,6 +472,16 @@ function montarCondicaoFormulario(formData) {
     }
   }
 
+  const empresaPropria = formData.condicao_empresa_propria?.trim();
+  if (empresaPropria) {
+    condicao.empresa_propria = empresaPropria;
+  }
+
+  const nomeEmpresa = formData.condicao_nome_empresa?.trim();
+  if (nomeEmpresa) {
+    condicao.nome_empresa = nomeEmpresa;
+  }
+
   return { condicao };
 }
 
@@ -415,6 +522,7 @@ export default function Regras() {
   const requerClienteId = user?.perfil === 'admin_efficience' && !clienteIdAdminGlobal;
   const extensaoOpcoesFormulario = obterExtensaoOpcoes(formData.condicao_tipo);
   const extensaoRestritaFolha = formData.condicao_tipo === TIPO_FOLHA_PAGAMENTO;
+  const schemaAcao = obterSchemaAcao(formData.acao);
 
   const carregarRegras = useCallback(async () => {
     if (requerClienteId) {
@@ -516,16 +624,27 @@ export default function Regras() {
   async function handleSubmitFormulario(event) {
     event.preventDefault();
 
+    const schema = obterSchemaAcao(formData.acao);
     const pastaOrigem = formData.pasta_origem.trim();
     const pastaDestino = formData.pasta_destino.trim();
 
-    if (!pastaOrigem || !pastaDestino) {
-      setErroFormulario('Preencha pasta de origem e pasta de destino.');
+    if (!formData.acao) {
+      setErroFormulario('Selecione uma ação.');
       return;
     }
 
-    if (!formData.acao) {
-      setErroFormulario('Selecione uma ação.');
+    if (schema.pastaOrigem.obrigatorio && !pastaOrigem) {
+      setErroFormulario(`Preencha ${schema.pastaOrigem.label.toLowerCase()}.`);
+      return;
+    }
+
+    if (schema.pastaDestino.obrigatorio && !pastaDestino) {
+      setErroFormulario(`Preencha ${schema.pastaDestino.label.toLowerCase()}.`);
+      return;
+    }
+
+    if (schema.nomeEmpresa?.obrigatorio && !formData.condicao_nome_empresa.trim()) {
+      setErroFormulario('Informe o nome da empresa.');
       return;
     }
 
@@ -536,16 +655,37 @@ export default function Regras() {
       return;
     }
 
+    // Campos específicos de ação: limpa o que não se aplica
+    if (!schema.empresaPropria?.visivel) {
+      delete condicao.empresa_propria;
+    }
+    if (!schema.nomeEmpresa?.visivel) {
+      delete condicao.nome_empresa;
+    }
+    if (!schema.criteriosCondicao) {
+      delete condicao.in_name;
+      delete condicao.extensao;
+      delete condicao.tipo;
+      delete condicao.tamanho;
+      delete condicao.criado_em;
+      delete condicao.recebido_em;
+    }
+
     setIsSavingFormulario(true);
     setErroFormulario('');
 
     const payload = {
-      pasta_origem: pastaOrigem,
-      pasta_destino: pastaDestino,
+      pasta_origem: schema.pastaOrigem.visivel ? pastaOrigem : pastaOrigem || '',
+      pasta_destino: schema.pastaDestino.visivel ? pastaDestino : '',
       condicao,
       acao: formData.acao,
       ativa: Boolean(formData.ativa),
     };
+
+    // abertura_empresa não usa pasta_origem no formulário — espelha a base para a regra existir no agente
+    if (formData.acao === 'abertura_empresa' && !payload.pasta_origem) {
+      payload.pasta_origem = payload.pasta_destino;
+    }
 
     try {
       if (modoFormulario === 'criar') {
@@ -820,37 +960,111 @@ export default function Regras() {
             <form className="space-y-5 overflow-y-auto p-5" onSubmit={handleSubmitFormulario}>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2 sm:col-span-2">
-                  <label htmlFor="pasta_origem" className="block text-sm font-medium text-zinc-700">
-                    Pasta origem
+                  <label htmlFor="acao" className="block text-sm font-medium text-zinc-700">
+                    Ação
                   </label>
-                  <input
-                    id="pasta_origem"
-                    name="pasta_origem"
-                    value={formData.pasta_origem}
+                  <select
+                    id="acao"
+                    name="acao"
+                    value={formData.acao}
                     onChange={handleFormChange}
-                    placeholder="Ex: C:\\Docs\\Entrada"
                     disabled={isSavingFormulario}
                     className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
                     required
-                  />
+                  >
+                    {ACAO_OPCOES.map((opcao) => (
+                      <option key={opcao.value} value={opcao.value}>
+                        {opcao.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                <div className="space-y-2 sm:col-span-2">
-                  <label htmlFor="pasta_destino" className="block text-sm font-medium text-zinc-700">
-                    Pasta destino
-                  </label>
-                  <input
-                    id="pasta_destino"
-                    name="pasta_destino"
-                    value={formData.pasta_destino}
-                    onChange={handleFormChange}
-                    placeholder="Ex: C:\\Docs\\Processados"
-                    disabled={isSavingFormulario}
-                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
-                    required
-                  />
-                </div>
+                {schemaAcao.pastaOrigem.visivel ? (
+                  <div className="space-y-2 sm:col-span-2">
+                    <label htmlFor="pasta_origem" className="block text-sm font-medium text-zinc-700">
+                      {schemaAcao.pastaOrigem.label}
+                    </label>
+                    <input
+                      id="pasta_origem"
+                      name="pasta_origem"
+                      value={formData.pasta_origem}
+                      onChange={handleFormChange}
+                      placeholder={schemaAcao.pastaOrigem.placeholder}
+                      disabled={isSavingFormulario}
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      required={Boolean(schemaAcao.pastaOrigem.obrigatorio)}
+                    />
+                  </div>
+                ) : null}
 
+                {schemaAcao.pastaDestino.visivel ? (
+                  <div className="space-y-2 sm:col-span-2">
+                    <label htmlFor="pasta_destino" className="block text-sm font-medium text-zinc-700">
+                      {schemaAcao.pastaDestino.label}
+                    </label>
+                    <input
+                      id="pasta_destino"
+                      name="pasta_destino"
+                      value={formData.pasta_destino}
+                      onChange={handleFormChange}
+                      placeholder={schemaAcao.pastaDestino.placeholder}
+                      disabled={isSavingFormulario}
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      required={Boolean(schemaAcao.pastaDestino.obrigatorio)}
+                    />
+                    {schemaAcao.pastaDestino.ajuda ? (
+                      <p className="text-xs text-zinc-500">{schemaAcao.pastaDestino.ajuda}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {schemaAcao.nomeEmpresa?.visivel ? (
+                  <div className="space-y-2 sm:col-span-2">
+                    <label
+                      htmlFor="condicao_nome_empresa"
+                      className="block text-sm font-medium text-zinc-700"
+                    >
+                      {schemaAcao.nomeEmpresa.label}
+                    </label>
+                    <input
+                      id="condicao_nome_empresa"
+                      name="condicao_nome_empresa"
+                      value={formData.condicao_nome_empresa}
+                      onChange={handleFormChange}
+                      placeholder={schemaAcao.nomeEmpresa.placeholder}
+                      disabled={isSavingFormulario}
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      required={Boolean(schemaAcao.nomeEmpresa.obrigatorio)}
+                    />
+                  </div>
+                ) : null}
+
+                {schemaAcao.empresaPropria?.visivel ? (
+                  <div className="space-y-2 sm:col-span-2">
+                    <label
+                      htmlFor="condicao_empresa_propria"
+                      className="block text-sm font-medium text-zinc-700"
+                    >
+                      {schemaAcao.empresaPropria.label}
+                    </label>
+                    <input
+                      id="condicao_empresa_propria"
+                      name="condicao_empresa_propria"
+                      value={formData.condicao_empresa_propria}
+                      onChange={handleFormChange}
+                      placeholder={schemaAcao.empresaPropria.placeholder}
+                      disabled={isSavingFormulario}
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    {schemaAcao.empresaPropria.ajuda ? (
+                      <p className="text-xs text-zinc-500">{schemaAcao.empresaPropria.ajuda}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {schemaAcao.criteriosCondicao ? (
+                  <>
                 <div className="space-y-2 sm:col-span-2">
                   <h3 className="text-sm font-semibold text-zinc-900">Critérios de condição</h3>
                 </div>
@@ -917,27 +1131,6 @@ export default function Regras() {
                   >
                     {TIPO_DOCUMENTO_OPCOES.map((opcao) => (
                       <option key={opcao.value || 'qualquer'} value={opcao.value}>
-                        {opcao.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label htmlFor="acao" className="block text-sm font-medium text-zinc-700">
-                    Ação
-                  </label>
-                  <select
-                    id="acao"
-                    name="acao"
-                    value={formData.acao}
-                    onChange={handleFormChange}
-                    disabled={isSavingFormulario}
-                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
-                    required
-                  >
-                    {ACAO_OPCOES.map((opcao) => (
-                      <option key={opcao.value} value={opcao.value}>
                         {opcao.label}
                       </option>
                     ))}
@@ -1057,6 +1250,8 @@ export default function Regras() {
                     className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </div>
+                  </>
+                ) : null}
 
                 <div className="sm:col-span-2">
                   <label className="inline-flex items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">

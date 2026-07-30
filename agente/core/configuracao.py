@@ -83,8 +83,13 @@ def _normalizar_caminho(caminho):
 
 def _normalizar_regras(regras):
     for regra in regras:
-        regra["pasta_origem"] = _normalizar_caminho(regra["pasta_origem"])
-        regra["pasta_destino"] = _normalizar_caminho(regra["pasta_destino"])
+        if regra.get("pasta_origem"):
+            regra["pasta_origem"] = _normalizar_caminho(regra["pasta_origem"])
+        # pasta_destino pode ser vazia/null (ex.: renomear)
+        if regra.get("pasta_destino"):
+            regra["pasta_destino"] = _normalizar_caminho(regra["pasta_destino"])
+        else:
+            regra["pasta_destino"] = regra.get("pasta_destino") or None
     return regras
 
 def verificar_atualizacao():
