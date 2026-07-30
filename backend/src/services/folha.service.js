@@ -135,22 +135,39 @@ const CAMPOS_NUMERICOS = [
 ];
 const CAMPOS_TEXTO = ["empresa", "funcionario", "cpf", "cargo"];
 
-function paraNumero(valor) {
-  if (typeof valor === "number") return valor;
-  if (typeof valor === "string" && valor.trim() !== "") return Number(valor.trim().replace(",", "."));
-  return NaN;
-}
-
 // ExcelJS entrega célula de fórmula como { formula, result } e célula de texto formatado
 // como { richText: [...] } — nenhum dos dois é boolean/number/string direto. Sem isso,
-// vale_transporte preenchido via fórmula (comum em checkbox do Excel ou cópia de outra
-// planilha) caía direto no `return false` abaixo, sem nenhum erro reportado.
+// um campo preenchido via fórmula (comum em checkbox do Excel ou cópia de outra planilha)
+// caía direto no valor "não reconhecido" de cada parser, sem nenhum erro reportado.
 function desembrulharValorCelula(valor) {
   if (valor && typeof valor === "object") {
     if ("result" in valor) return desembrulharValorCelula(valor.result);
     if (Array.isArray(valor.richText)) return valor.richText.map((parte) => parte.text).join("");
   }
   return valor;
+}
+
+function paraNumero(valorBruto) {
+  const valor = desembrulharValorCelula(valorBruto);
+  if (typeof valor === "number") return valor;
+  if (typeof valor === "string" && valor.trim() !== "") {
+    const texto = valor.trim();
+    // Decide o separador decimal pelo que aparece por último ("1.500,00" BR vs
+    // "1,500.00" US) e remove o outro como separador de milhar. Com um único
+    // separador, assume vírgula como decimal (planilha é preenchida em português).
+    const ultimaVirgula = texto.lastIndexOf(",");
+    const ultimoPonto = texto.lastIndexOf(".");
+    let normalizado = texto;
+    if (ultimaVirgula > -1 && ultimoPonto > -1) {
+      normalizado = ultimaVirgula > ultimoPonto
+        ? texto.replace(/\./g, "").replace(",", ".")
+        : texto.replace(/,/g, "");
+    } else if (ultimaVirgula > -1) {
+      normalizado = texto.replace(",", ".");
+    }
+    return Number(normalizado);
+  }
+  return NaN;
 }
 
 function paraBooleano(valorBruto) {
