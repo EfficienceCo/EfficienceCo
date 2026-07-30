@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../../context/AuthContext';
 import { listarClientes } from '../../../../services/clientes.service';
@@ -162,6 +163,17 @@ function AlertIcon() {
       <path d="M12 8v5" />
       <path d="M12 17h.01" />
       <path d="M10.3 4.5 2.8 17.4A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.6L13.7 4.5a2 2 0 0 0-3.4 0Z" />
+    </IconBase>
+  );
+}
+
+function StatusIcon() {
+  return (
+    <IconBase>
+      <path d="M5 6.5h9" />
+      <path d="M5 11.5h6" />
+      <path d="M5 16.5h5" />
+      <path d="m14 16.4 1.8 1.8 3.7-4.2" />
     </IconBase>
   );
 }
@@ -384,15 +396,25 @@ export default function UploadFolhaPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleBaixarTemplate}
-          disabled={isBaixandoTemplate}
-          className={BUTTON_SECONDARY_CLASSES}
-        >
-          {isBaixandoTemplate ? <Spinner /> : <DownloadIcon />}
-          {isBaixandoTemplate ? 'Baixando...' : 'Baixar planilha modelo'}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/dashboard/folha/status"
+            className={BUTTON_SECONDARY_CLASSES}
+          >
+            <StatusIcon />
+            Status da folha
+          </Link>
+
+          <button
+            type="button"
+            onClick={handleBaixarTemplate}
+            disabled={isBaixandoTemplate}
+            className={BUTTON_SECONDARY_CLASSES}
+          >
+            {isBaixandoTemplate ? <Spinner /> : <DownloadIcon />}
+            {isBaixandoTemplate ? 'Baixando...' : 'Baixar planilha modelo'}
+          </button>
+        </div>
       </header>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.85fr)]">
