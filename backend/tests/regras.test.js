@@ -110,7 +110,15 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     });
 
     const res = criarRes();
-    await criarRegra(reqAdmin({ condicao, acao: "mover" }), res);
+    await criarRegra(
+      reqAdmin({
+        condicao,
+        acao: "mover",
+        pasta_origem: "C:/in",
+        pasta_destino: "C:/out",
+      }),
+      res,
+    );
 
     assert.equal(res.statusCode, 201);
     assert.deepEqual(res.body.condicao, condicao);
@@ -125,7 +133,12 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
 
     const res = criarRes();
     await criarRegra(
-      reqAdmin({ condicao: JSON.stringify(condicao), acao: "mover" }),
+      reqAdmin({
+        condicao: JSON.stringify(condicao),
+        acao: "mover",
+        pasta_origem: "C:/in",
+        pasta_destino: "C:/out",
+      }),
       res,
     );
 
@@ -133,10 +146,61 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.deepEqual(res.body.condicao, condicao);
   });
 
+  it("criarRegra: rejeita mover sem pasta_destino", async () => {
+    const res = criarRes();
+    await criarRegra(
+      reqAdmin({ condicao: {}, acao: "mover", pasta_origem: "C:/in" }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /pasta_destino/);
+  });
+
+  it("criarRegra: aceita renomear sem pasta_destino", async () => {
+    queue("regras", "single", {
+      data: {
+        id: REGRA_ID,
+        cliente_id: CLIENTE_A,
+        acao: "renomear",
+        pasta_destino: "",
+      },
+      error: null,
+    });
+
+    const res = criarRes();
+    await criarRegra(
+      reqAdmin({ condicao: {}, acao: "renomear", pasta_origem: "C:/in" }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+  });
+
+  it("criarRegra: organizar_arquivo exige pasta_destino", async () => {
+    const res = criarRes();
+    await criarRegra(
+      reqAdmin({
+        condicao: { empresa_propria: "Souza" },
+        acao: "organizar_arquivo",
+        pasta_origem: "C:/ENTRADA",
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /pasta_destino/);
+  });
+
   it("criarRegra: rejeita condicao como string JSON inválida sem chamar o banco", async () => {
     const res = criarRes();
     await criarRegra(
-      reqAdmin({ condicao: "extensao=.pdf", acao: "mover" }),
+      reqAdmin({
+        condicao: "extensao=.pdf",
+        acao: "mover",
+        pasta_origem: "C:/in",
+        pasta_destino: "C:/out",
+      }),
       res,
     );
 
@@ -160,7 +224,14 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
   it("atualizarRegra: persiste condicao como objeto sem stringify", async () => {
     const condicao = { in_name: "CONTRATO" };
     queue("regras", "single", {
-      data: { id: REGRA_ID, cliente_id: CLIENTE_A },
+      data: {
+        id: REGRA_ID,
+        cliente_id: CLIENTE_A,
+        acao: "mover",
+        pasta_origem: "C:/in",
+        pasta_destino: "C:/out",
+        condicao: {},
+      },
       error: null,
     });
     queue("regras", "single", {
@@ -180,7 +251,13 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
 
   it("atualizarRegra: rejeita condicao como string JSON inválida sem chamar update", async () => {
     queue("regras", "single", {
-      data: { id: REGRA_ID, cliente_id: CLIENTE_A },
+      data: {
+        id: REGRA_ID,
+        cliente_id: CLIENTE_A,
+        acao: "mover",
+        pasta_origem: "C:/in",
+        pasta_destino: "C:/out",
+      },
       error: null,
     });
 
@@ -196,7 +273,7 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
 
   it("atualizarRegra: 403 quando admin_cliente tenta alterar regra de outro cliente", async () => {
     queue("regras", "single", {
-      data: { id: REGRA_ID, cliente_id: CLIENTE_B },
+      data: { id: REGRA_ID, cliente_id: CLIENTE_B, acao: "mover" },
       error: null,
     });
 

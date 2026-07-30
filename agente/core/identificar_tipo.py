@@ -23,8 +23,11 @@ def identificar_tipo_no_nome(nome_arquivo):
 
 def classificar_arquivo(caminho):
     try:
-        from automacoes.rede_neural.rede import classificar_documento_pdf
+        from automacoes.rede.classificador import classificar_documento_pdf
         resultado = classificar_documento_pdf(caminho, threshold=0.75)
+        if isinstance(resultado, dict) and resultado.get("erro"):
+            print(f"[identificar_tipo] Classificador: {resultado['erro']}")
+            return "nao_identificado"
         return resultado["classe"]
     except ImportError as e:
         print(f"[identificar_tipo] Dependências da rede neural não instaladas: {e}")

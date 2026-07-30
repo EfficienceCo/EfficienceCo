@@ -5,12 +5,14 @@ from comunicacao.reportar_evento import reportar_evento
 from core.configuracao import gerenciar_configuracoes
 from automacoes.renomear_arquivo import renomear_arquivo
 from automacoes.abertura_empresa import criar_estrutura_empresa
+from automacoes.organizar_arquivo import organizar_arquivo
 from automacoes.upload_folha import (
     eh_planilha_folha,
     enviar_planilha_folha,
     PlanilhaRejeitadaError,
 )
 from core.identificar_tipo import identificar_tipo_no_nome
+from core.estrutura_pastas import PASTA_NAO_CLASSIFICADO
 from datetime import datetime
 
 import time
@@ -26,6 +28,11 @@ class MonitorPasta(FileSystemEventHandler):
         
         nome = os.path.basename(event.src_path)
         if nome == "desktop.ini":
+            return
+
+        # evita loop ao mover para NAO_CLASSIFICADO sob a pasta monitorada
+        partes = os.path.normpath(event.src_path).split(os.sep)
+        if PASTA_NAO_CLASSIFICADO in partes:
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -52,6 +59,8 @@ def _processar_arquivo(caminho, regras):
                         nome_final = mover_arquivo(caminho, regra)
                     elif acao == "renomear":
                         nome_final = renomear_arquivo(caminho)
+                    elif acao == "organizar_arquivo":
+                        nome_final = organizar_arquivo(caminho, regra)
                     elif acao == "abertura_empresa":
                         nome_final = criar_estrutura_empresa(regra)
                     elif acao == "upload_folha":
@@ -98,6 +107,8 @@ def _arquivo_pertence_origem(caminho, pasta_origem):
 
 def _bate_condicao(caminho, condicao):
     # condicao pode ser string (legado) ou dict (novo formato JSONB)
+    if not condicao:
+        return True
     if isinstance(condicao, str):
         return _bate_condicao_legado(caminho, condicao)
     return _bate_condicao_estruturada(caminho, condicao)
