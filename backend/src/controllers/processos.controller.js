@@ -27,6 +27,8 @@ const ETAPAS_PADRAO = {
   },
 };
 
+const ACOES_AUTOMATIZADAS = ["gerar_contrato_social", "criar_pastas"];
+
 function resolverClienteId(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
     return req.body.cliente_id || req.query.cliente_id;
@@ -266,4 +268,198 @@ export async function concluirEtapaLicenca(req, res) {
   const { id: processoId, etapaId } = req.params;
   const resultado = await _concluirEtapa(processoId, etapaId, licenca.cliente_id);
   return res.status(resultado.status).json(resultado.body);
+}
+
+async function _executarAcaoEtapa(processoId, etapaId, clienteId, payload) {
+  const { data: processo, error: erroProcesso } = await supabase
+    .from("processos")
+    .select("id, cliente_id, status")
+    .eq("id", processoId)
+    .single();
+
+  if (erroProcesso || !processo) {
+    return { status: 404, body: { erro: "Processo não encontrado" } };
+  }
+
+  if (processo.cliente_id !== clienteId) {
+    return { status: 403, body: { erro: "Sem permissão para este processo" } };
+  }
+
+  const { data: etapa, error: erroEtapa } = await supabase
+    .from("etapas")
+    .select("id, processo_id, tipo, acao, concluida")
+    .eq("id", etapaId)
+    .eq("processo_id", processoId)
+    .single();
+
+  if (erroEtapa || !etapa) {
+    return { status: 404, body: { erro: "Etapa não encontrada" } };
+  }
+
+  if (etapa.tipo !== "automatizada") {
+    return {
+      status: 400,
+      body: { erro: "Etapa não é automatizada — use PATCH /processos/:id/etapas/:etapaId" },
+    };
+  }
+
+  if (!ACOES_AUTOMATIZADAS.includes(etapa.acao)) {
+    return { status: 400, body: { erro: `acao desconhecida: ${etapa.acao}` } };
+  }
+
+  if (etapa.concluida) {
+    return { status: 400, body: { erro: "Etapa já está concluída" } };
+  }
+
+  const { data: etapaAtualizada, error: erroUpdate } = await supabase
+    .from("etapas")
+    .update({
+      status: "pronta_para_execucao",
+      payload_execucao: payload ?? {},
+      erro_execucao: null,
+    })
+    .eq("id", etapaId)
+    .select()
+    .single();
+
+  if (erroUpdate) {
+    console.error("[processos.controller] Erro ao preparar execução da etapa:", erroUpdate.message);
+    return { status: 500, body: { erro: "Erro ao registrar execução da etapa" } };
+  }
+
+  return { status: 200, body: etapaAtualizada };
+}
+
+export async function executarAcaoEtapaJwt(req, res) {
+  const { id: processoId, etapaId } = req.params;
+
+  const clienteId =
+    req.usuario.perfil === PERFIS.ADMIN_EFFICIENCE
+      ? req.body.cliente_id || req.query.cliente_id
+      : req.usuario.cliente_id;
+
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const { cliente_id, ...payload } = req.body || {};
+  const resultado = await _executarAcaoEtapa(processoId, etapaId, clienteId, payload);
+  return res.status(resultado.status).json(resultado.body);
+}
+
+// Rota de polling do agente — mesmo canal já usado por criar_estrutura_empresa.
+// O agente busca, a cada ciclo, as etapas do cliente marcadas como "pronta_para_execucao".
+export async function listarEtapasProntasAgente(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  const { data, error } = await supabase
+    .from("etapas")
+    .select("id, processo_id, acao, payload_execucao, processos!inner(cliente_id, nome_empresa, pasta_base)")
+    .eq("status", "pronta_para_execucao")
+    .eq("processos.cliente_id", licenca.cliente_id);
+
+  if (error) {
+    console.error("[processos.controller] Erro ao listar etapas prontas (agente):", error.message);
+    return res.status(500).json({ erro: "Erro ao listar etapas" });
+  }
+
+  const etapas = (data || []).map((e) => ({
+    id: e.id,
+    processo_id: e.processo_id,
+    acao: e.acao,
+    payload: e.payload_execucao,
+    nome_empresa: e.processos?.nome_empresa,
+    pasta_base: e.processos?.pasta_base,
+  }));
+
+  return res.status(200).json({ data: etapas });
+}
+
+// Rota de conclusão do agente — reporta sucesso (com o path do arquivo gerado) ou erro
+// ao terminar de executar a ação da etapa.
+export async function concluirExecucaoEtapaAgente(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  const { etapaId } = req.params;
+  const { sucesso, arquivo_gerado, erro } = req.body;
+
+  if (sucesso === undefined) {
+    return res.status(400).json({ erro: "Campo obrigatório: sucesso" });
+  }
+
+  const { data: etapa, error: erroEtapa } = await supabase
+    .from("etapas")
+    .select("id, processo_id, status, processos!inner(cliente_id)")
+    .eq("id", etapaId)
+    .single();
+
+  if (erroEtapa || !etapa) {
+    return res.status(404).json({ erro: "Etapa não encontrada" });
+  }
+
+  if (etapa.processos?.cliente_id !== licenca.cliente_id) {
+    return res.status(403).json({ erro: "Sem permissão para esta etapa" });
+  }
+
+  if (etapa.status !== "pronta_para_execucao") {
+    return res.status(400).json({ erro: "Etapa não está aguardando execução" });
+  }
+
+  if (sucesso) {
+    const { data: etapaAtualizada, error: erroUpdate } = await supabase
+      .from("etapas")
+      .update({
+        status: "concluida",
+        concluida: true,
+        concluida_em: new Date().toISOString(),
+        arquivo_gerado: arquivo_gerado || null,
+        erro_execucao: null,
+      })
+      .eq("id", etapaId)
+      .select()
+      .single();
+
+    if (erroUpdate) {
+      console.error("[processos.controller] Erro ao concluir execução da etapa:", erroUpdate.message);
+      return res.status(500).json({ erro: "Erro ao concluir etapa" });
+    }
+
+    const { data: todasEtapas, error: erroTodasEtapas } = await supabase
+      .from("etapas")
+      .select("concluida")
+      .eq("processo_id", etapa.processo_id);
+
+    if (!erroTodasEtapas && todasEtapas.every((e) => e.concluida)) {
+      await supabase.from("processos").update({ status: "concluido" }).eq("id", etapa.processo_id);
+    }
+
+    return res.status(200).json(etapaAtualizada);
+  }
+
+  const { data: etapaComErro, error: erroUpdateFalha } = await supabase
+    .from("etapas")
+    .update({
+      status: "pronta_para_execucao",
+      erro_execucao: erro || "Erro desconhecido na execução",
+    })
+    .eq("id", etapaId)
+    .select()
+    .single();
+
+  if (erroUpdateFalha) {
+    console.error("[processos.controller] Erro ao registrar falha da etapa:", erroUpdateFalha.message);
+    return res.status(500).json({ erro: "Erro ao registrar falha da etapa" });
+  }
+
+  return res.status(200).json(etapaComErro);
 }
