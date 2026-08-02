@@ -1,31 +1,10 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
-import { criarProcessoComEtapas } from "../services/processos.service.js";
-
-const ETAPAS_PADRAO = {
-  folha_pagamento: true,
-  abertura_empresa: {
-    nova: [
-      "Verificar viabilidade do nome empresarial",
-      "Registrar na Junta Comercial (contrato social)",
-      "Obter CNPJ na Receita Federal",
-      "Cadastro interno da empresa",
-      "Registrar no município (Alvará)",
-      "Registrar no estado (Inscrição Estadual, se aplicável)",
-      "Abrir conta bancária pessoa jurídica",
-      "Configurar emissão de NFS-e",
-    ],
-    cliente_existente: [
-      "Verificar viabilidade do nome empresarial",
-      "Cadastro interno da empresa",
-      "Registrar no município (Alvará)",
-      "Registrar no estado (Inscrição Estadual, se aplicável)",
-      "Abrir conta bancária pessoa jurídica",
-      "Configurar emissão de NFS-e",
-    ],
-  },
-};
+import {
+  criarProcessoComEtapas,
+  ETAPAS_PADRAO,
+} from "../services/processos.service.js";
 
 function resolverClienteId(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
@@ -121,44 +100,22 @@ async function _criarAberturaEmpresa(req, res, clienteId) {
   }
 
   const pasta_base = sanitizarPastaBase(nome_empresa);
+  const resultado = await criarProcessoComEtapas(clienteId, "abertura_empresa", {
+    nome_empresa,
+    pasta_base,
+    cenario,
+    socios,
+    capital_social,
+    endereco,
+    objeto_social,
+  });
 
-  const { data: processo, error: erroProcesso } = await supabase
-    .from("processos")
-    .insert({
-      cliente_id: clienteId,
-      tipo: "abertura_empresa",
-      nome_empresa,
-      pasta_base,
-      cenario,
-      socios: socios || null,
-      capital_social: capital_social || null,
-      endereco: endereco || null,
-      objeto_social: objeto_social || null,
-    })
-    .select()
-    .single();
-
-  if (erroProcesso) {
-    console.error("[processos.controller] Erro ao criar abertura_empresa:", erroProcesso.message);
+  if (resultado.erro) {
+    console.error("[processos.controller] Erro ao criar abertura_empresa:", resultado.erro);
     return res.status(500).json({ erro: "Erro ao criar processo de abertura de empresa" });
   }
 
-  const descricoes = ETAPAS_PADRAO.abertura_empresa[cenario];
-  const etapasParaInserir = descricoes.map((descricao, i) => ({
-    processo_id: processo.id,
-    descricao,
-    ordem: i + 1,
-  }));
-
-  const { data: etapas, error: erroEtapas } = await supabase
-    .from("etapas")
-    .insert(etapasParaInserir)
-    .select();
-
-  if (erroEtapas) {
-    console.error("[processos.controller] Erro ao criar etapas de abertura_empresa:", erroEtapas.message);
-    return res.status(500).json({ erro: "Erro ao criar etapas do processo" });
-  }
+  const { processo, etapas } = resultado;
 
   return res.status(201).json({
     processo_id: processo.id,
