@@ -1,6 +1,8 @@
 -- Migration 019: suportar etapas automatizadas (issue #264 / #266)
 -- Etapa automatizada: contador preenche dados no webapp -> agente executa via polling -> reporta conclusão.
 
+BEGIN;
+
 ALTER TABLE etapas
   ADD COLUMN tipo VARCHAR NOT NULL DEFAULT 'manual' CHECK (tipo IN ('manual', 'automatizada')),
   ADD COLUMN acao VARCHAR CHECK (acao IN ('gerar_contrato_social', 'criar_pastas')),
@@ -13,6 +15,30 @@ ALTER TABLE etapas
 
 -- Backfill: etapas já concluídas (campo legado `concluida`) entram como status 'concluida'.
 UPDATE etapas SET status = 'concluida' WHERE concluida = TRUE;
+
+-- Compatibilidade de rollout: o backend anterior à #266 atualiza apenas `concluida`.
+-- O trigger mantém `status` sincronizado durante a janela entre migration e deploy.
+CREATE OR REPLACE FUNCTION public.sincronizar_status_conclusao_etapa()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.concluida = TRUE THEN
+    NEW.status := 'concluida';
+    NEW.execucao_token := NULL;
+    NEW.execucao_iniciada_em := NULL;
+  ELSIF TG_OP = 'UPDATE' AND OLD.concluida = TRUE AND NEW.status = 'concluida' THEN
+    NEW.status := 'pendente';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER etapas_sincronizar_status_conclusao
+  BEFORE INSERT OR UPDATE OF concluida, status ON etapas
+  FOR EACH ROW
+  EXECUTE FUNCTION public.sincronizar_status_conclusao_etapa();
 
 ALTER TABLE etapas
   ADD CONSTRAINT etapas_tipo_acao_consistente_check CHECK (
@@ -55,3 +81,5 @@ COMMENT ON COLUMN etapas.arquivo_gerado IS 'Path do arquivo gerado pelo agente a
 COMMENT ON COLUMN etapas.erro_execucao IS 'Última mensagem de erro reportada pelo agente, exibida ao contador para nova tentativa.';
 COMMENT ON COLUMN etapas.execucao_token IS 'Token do claim atual. Impede conclusão duplicada ou atrasada por outro agente.';
 COMMENT ON COLUMN etapas.execucao_iniciada_em IS 'Início do claim atual. Claims abandonados podem ser retomados após o lease.';
+
+COMMIT;
