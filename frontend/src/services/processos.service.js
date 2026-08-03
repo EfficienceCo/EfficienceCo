@@ -41,7 +41,10 @@ export async function concluirEtapa(processoId, etapaId, dados = {}) {
 }
 
 export async function executarAcaoEtapa(processoId, etapaId, dados = {}) {
-  const response = await api.post(`/processos/${processoId}/etapas/${etapaId}/executar-acao`, dados);
+  const response = await api.post(
+    `/processos/${processoId}/etapas/${etapaId}/executar-acao`,
+    dados,
+  );
   return response.data;
 }
 

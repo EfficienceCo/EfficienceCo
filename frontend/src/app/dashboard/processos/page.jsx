@@ -1,16 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
-import { concluirEtapa, criar, listar } from '../../../services/processos.service';
+import {
+  concluirEtapa,
+  criar,
+  executarAcaoEtapa,
+  listar,
+} from '../../../services/processos.service';
 
-function obterMensagemErro(error) {
+function obterMensagemErro(error, fallback = 'Não foi possível processar sua solicitação.') {
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
     error?.message ||
-    'Não foi possível carregar os processos.'
+    fallback
   );
 }
 
@@ -125,6 +130,206 @@ function etapaConcluida(etapa) {
   return status.includes('conclu') || status.includes('finaliz');
 }
 
+function obterTipoEtapa(etapa) {
+  if (!etapa || typeof etapa !== 'object') {
+    return 'manual';
+  }
+
+  return String(etapa.tipo || etapa.tipo_etapa || etapa.tipoEtapa || 'manual')
+    .trim()
+    .toLowerCase();
+}
+
+function etapaAutomatizada(etapa) {
+  const tipo = obterTipoEtapa(etapa);
+  return tipo === 'automatizada' || tipo === 'automatica' || tipo === 'automatizado';
+}
+
+function obterAcaoEtapa(etapa) {
+  if (!etapa || typeof etapa !== 'object') {
+    return '';
+  }
+
+  return String(etapa.acao || etapa.ação || etapa.action || '')
+    .trim()
+    .toLowerCase();
+}
+
+function obterStatusEtapa(etapa) {
+  if (!etapa || typeof etapa !== 'object') {
+    return 'pendente';
+  }
+
+  return String(etapa.status || etapa.situacao || 'pendente')
+    .trim()
+    .toLowerCase();
+}
+
+function obterErroExecucaoEtapa(etapa) {
+  if (!etapa || typeof etapa !== 'object') {
+    return '';
+  }
+
+  const candidatos = [
+    etapa.erro_execucao,
+    etapa.erroExecucao,
+    etapa.mensagem_erro,
+    etapa.mensagemErro,
+  ];
+  const mensagem = candidatos.find(
+    (candidato) => typeof candidato === 'string' && candidato.trim(),
+  );
+
+  if (mensagem) {
+    return mensagem.trim();
+  }
+
+  return obterStatusEtapa(etapa).includes('erro')
+    ? 'A execução não foi concluída. Revise os dados e tente novamente.'
+    : '';
+}
+
+function etapaEmProcessamento(etapa) {
+  if (!etapaAutomatizada(etapa) || etapaConcluida(etapa) || obterErroExecucaoEtapa(etapa)) {
+    return false;
+  }
+
+  const status = obterStatusEtapa(etapa);
+  return (
+    status === 'pronta_para_execucao' ||
+    status === 'processando' ||
+    status === 'em_processamento' ||
+    status === 'aguardando_execucao'
+  );
+}
+
+function obterPayloadExecucao(etapa) {
+  if (!etapa || typeof etapa !== 'object') {
+    return {};
+  }
+
+  const payload = etapa.payload_execucao || etapa.payloadExecucao || etapa.payload;
+  return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+}
+
+function normalizarSocio(socio = {}) {
+  return {
+    nome: String(socio?.nome || ''),
+    cpf: String(socio?.cpf || ''),
+    participacao: String(
+      socio?.participacao ?? socio?.participacao_percentual ?? socio?.quota_percentual ?? '',
+    ),
+  };
+}
+
+function criarFormularioContratoSocial(etapa, processo = {}) {
+  const payloadEtapa = obterPayloadExecucao(etapa);
+  const sociosRecebidos = Array.isArray(payloadEtapa.socios)
+    ? payloadEtapa.socios
+    : Array.isArray(processo?.socios)
+      ? processo.socios
+      : [];
+
+  return {
+    socios:
+      sociosRecebidos.length > 0
+        ? sociosRecebidos.map((socio) => normalizarSocio(socio))
+        : [normalizarSocio()],
+    capital_social: String(payloadEtapa.capital_social ?? processo?.capital_social ?? ''),
+    objeto_social: String(payloadEtapa.objeto_social ?? processo?.objeto_social ?? ''),
+    endereco: String(payloadEtapa.endereco ?? processo?.endereco ?? ''),
+  };
+}
+
+function montarPayloadContratoSocial(formulario) {
+  return {
+    socios: formulario.socios.map((socio) => ({
+      nome: socio.nome.trim(),
+      cpf: socio.cpf.trim(),
+      participacao: Number(socio.participacao),
+    })),
+    capital_social: Number(formulario.capital_social),
+    objeto_social: formulario.objeto_social.trim(),
+    endereco: formulario.endereco.trim(),
+  };
+}
+
+function validarFormularioContratoSocial(formulario) {
+  if (!Array.isArray(formulario?.socios) || formulario.socios.length === 0) {
+    return 'Adicione pelo menos um sócio.';
+  }
+
+  const socioInvalido = formulario.socios.some(
+    (socio) =>
+      !socio.nome.trim() ||
+      !socio.cpf.trim() ||
+      !Number.isFinite(Number(socio.participacao)) ||
+      Number(socio.participacao) <= 0 ||
+      Number(socio.participacao) > 100,
+  );
+
+  if (socioInvalido) {
+    return 'Preencha nome, CPF e participação válida para todos os sócios.';
+  }
+
+  const participacaoTotal = formulario.socios.reduce(
+    (total, socio) => total + Number(socio.participacao),
+    0,
+  );
+
+  if (Math.abs(participacaoTotal - 100) > 0.01) {
+    return 'A soma das participações dos sócios deve ser 100%.';
+  }
+
+  if (
+    !formulario.capital_social ||
+    !Number.isFinite(Number(formulario.capital_social)) ||
+    Number(formulario.capital_social) <= 0
+  ) {
+    return 'Informe um capital social maior que zero.';
+  }
+
+  if (!formulario.objeto_social.trim() || !formulario.endereco.trim()) {
+    return 'Preencha o objeto social e o endereço.';
+  }
+
+  return '';
+}
+
+function obterArquivoGerado(etapa) {
+  if (!etapa || typeof etapa !== 'object') {
+    return null;
+  }
+
+  const arquivo =
+    etapa.arquivo_gerado ||
+    etapa.arquivoGerado ||
+    etapa.resultado?.arquivo ||
+    etapa.resultado?.arquivo_gerado;
+
+  if (!arquivo) {
+    return null;
+  }
+
+  const caminho =
+    typeof arquivo === 'string'
+      ? arquivo
+      : arquivo.url || arquivo.href || arquivo.caminho || arquivo.path || '';
+  const nomeInformado = typeof arquivo === 'object' ? arquivo.nome || arquivo.name : '';
+  const caminhoSemQuery = String(caminho).split(/[?#]/)[0];
+  const nomeDoCaminho = caminhoSemQuery.split(/[\\/]/).filter(Boolean).pop();
+  const nome = String(nomeInformado || nomeDoCaminho || 'Arquivo gerado');
+  const urlDeclarada =
+    etapa.arquivo_url ||
+    etapa.download_url ||
+    (typeof arquivo === 'object' && (arquivo.url || arquivo.href)) ||
+    (typeof arquivo === 'string' && /^https?:\/\//i.test(arquivo) ? arquivo : '');
+  const url = String(urlDeclarada || '');
+  const possuiLinkSeguro = /^(https?:\/\/|\/(?!\/))/i.test(url);
+
+  return { nome, url: possuiLinkSeguro ? url : '' };
+}
+
 function obterResumoEtapas(processo) {
   const etapas = obterEtapas(processo);
   const totalPorCampo =
@@ -155,8 +360,10 @@ function obterResumoEtapas(processo) {
 }
 
 const ROTULOS_PT_BR = {
+  abertura_empresa: 'Abertura de empresa',
   admissao: 'Admissão',
   atrasado: 'Atrasado',
+  automatizada: 'Automatizada',
   contabil: 'Contábil',
   concluida: 'Concluída',
   concluido: 'Concluído',
@@ -164,6 +371,8 @@ const ROTULOS_PT_BR = {
   fiscal: 'Fiscal',
   folha_pagamento: 'Folha de pagamento',
   pendente: 'Pendente',
+  pronta_para_execucao: 'Processando',
+  processando: 'Processando',
   rescisao: 'Rescisão',
   trabalhista: 'Trabalhista',
 };
@@ -231,7 +440,7 @@ function calcularTotalProcessos(payload, processos) {
   return processos.length;
 }
 
-function aplicarAtualizacaoEtapaNaLista(lista, processoId, etapaId, concluida) {
+function atualizarEtapaNaLista(lista, processoId, etapaId, atualizador) {
   return lista.map((processo) => {
     if (String(obterIdProcesso(processo)) !== String(processoId)) {
       return processo;
@@ -239,7 +448,7 @@ function aplicarAtualizacaoEtapaNaLista(lista, processoId, etapaId, concluida) {
 
     const campoEtapas = obterCampoEtapas(processo);
     const etapas = obterEtapas(processo);
-    const etapasAtualizadas = etapas.map((etapa, indice) => {
+    const etapasAtualizadas = etapas.map((etapa) => {
       if (String(obterIdEtapa(etapa)) !== String(etapaId)) {
         return etapa;
       }
@@ -248,32 +457,7 @@ function aplicarAtualizacaoEtapaNaLista(lista, processoId, etapaId, concluida) {
         return etapa;
       }
 
-      const etapaAtualizada = {
-        ...etapa,
-        concluida,
-      };
-
-      if (Object.prototype.hasOwnProperty.call(etapaAtualizada, 'concluido')) {
-        etapaAtualizada.concluido = concluida;
-      }
-
-      if (Object.prototype.hasOwnProperty.call(etapaAtualizada, 'finalizada')) {
-        etapaAtualizada.finalizada = concluida;
-      }
-
-      if (Object.prototype.hasOwnProperty.call(etapaAtualizada, 'done')) {
-        etapaAtualizada.done = concluida;
-      }
-
-      if (Object.prototype.hasOwnProperty.call(etapaAtualizada, 'completa')) {
-        etapaAtualizada.completa = concluida;
-      }
-
-      if (typeof etapaAtualizada.status === 'string') {
-        etapaAtualizada.status = concluida ? 'concluida' : 'pendente';
-      }
-
-      return etapaAtualizada;
+      return atualizador(etapa);
     });
 
     const processoAtualizado = {
@@ -297,6 +481,64 @@ function aplicarAtualizacaoEtapaNaLista(lista, processoId, etapaId, concluida) {
 
     return processoAtualizado;
   });
+}
+
+function encontrarEtapaNaLista(lista, processoId, etapaId) {
+  const processo = lista.find(
+    (item) => String(obterIdProcesso(item)) === String(processoId),
+  );
+
+  return obterEtapas(processo).find(
+    (etapa) => String(obterIdEtapa(etapa)) === String(etapaId),
+  );
+}
+
+function aplicarAtualizacaoEtapaNaLista(lista, processoId, etapaId, concluida) {
+  return atualizarEtapaNaLista(lista, processoId, etapaId, (etapa) => {
+    const etapaAtualizada = {
+      ...etapa,
+      concluida,
+    };
+
+    if (Object.prototype.hasOwnProperty.call(etapaAtualizada, 'concluido')) {
+      etapaAtualizada.concluido = concluida;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(etapaAtualizada, 'finalizada')) {
+      etapaAtualizada.finalizada = concluida;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(etapaAtualizada, 'done')) {
+      etapaAtualizada.done = concluida;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(etapaAtualizada, 'completa')) {
+      etapaAtualizada.completa = concluida;
+    }
+
+    if (typeof etapaAtualizada.status === 'string') {
+      etapaAtualizada.status = concluida ? 'concluida' : 'pendente';
+    }
+
+    return etapaAtualizada;
+  });
+}
+
+function extrairEtapaAtualizada(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const candidatos = [payload.etapa, payload.data?.etapa, payload.data, payload];
+  return (
+    candidatos.find(
+      (candidato) =>
+        candidato &&
+        typeof candidato === 'object' &&
+        !Array.isArray(candidato) &&
+        (obterIdEtapa(candidato) || candidato.status || candidato.payload_execucao),
+    ) || null
+  );
 }
 
 function extrairProcessoAtualizado(payload) {
@@ -346,6 +588,7 @@ function atualizarProcessoNaLista(lista, processoId, processoAtualizado) {
 
 const PERFIS_PODEM_MARCAR_ETAPA = new Set(['funcionario', 'admin_cliente', 'admin_efficience']);
 const PERFIL_PODE_CRIAR_PROCESSO = 'admin_cliente';
+const INTERVALO_POLLING_ETAPAS_MS = 3000;
 const STATUS_OPCOES = [
   { value: '', label: 'Todos' },
   { value: 'em_andamento', label: 'Em andamento' },
@@ -371,6 +614,297 @@ function Spinner() {
   );
 }
 
+function FormularioContratoSocial({
+  idBase,
+  formulario,
+  disabled,
+  onAdicionarSocio,
+  onAlterarCampo,
+  onAlterarSocio,
+  onRemoverSocio,
+}) {
+  return (
+    <fieldset disabled={disabled} className="space-y-5 disabled:opacity-70">
+      <legend className="sr-only">Dados do contrato social</legend>
+
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h4 className="text-sm font-semibold text-zinc-800">Sócios</h4>
+            <p className="text-xs text-zinc-500">Informe os dados e a participação de cada sócio.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onAdicionarSocio}
+            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed"
+          >
+            Adicionar sócio
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          {formulario.socios.map((socio, socioIndex) => {
+            const numeroSocio = socioIndex + 1;
+            const idSocio = `${idBase}-socio-${numeroSocio}`;
+
+            return (
+              <article
+                key={idSocio}
+                className="rounded-lg border border-zinc-200 bg-white p-3"
+              >
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h5 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Sócio {numeroSocio}
+                  </h5>
+                  <button
+                    type="button"
+                    onClick={() => onRemoverSocio(socioIndex)}
+                    disabled={formulario.socios.length === 1}
+                    aria-label={`Remover sócio ${numeroSocio}`}
+                    className="text-xs font-medium text-rose-600 transition hover:text-rose-800 disabled:cursor-not-allowed disabled:text-zinc-300"
+                  >
+                    Remover
+                  </button>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label htmlFor={`${idSocio}-nome`} className="space-y-1.5">
+                    <span className="block text-xs font-medium text-zinc-700">Nome</span>
+                    <input
+                      id={`${idSocio}-nome`}
+                      type="text"
+                      aria-label={`Nome do sócio ${numeroSocio}`}
+                      value={socio.nome}
+                      onChange={(event) =>
+                        onAlterarSocio(socioIndex, 'nome', event.target.value)
+                      }
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                      required
+                    />
+                  </label>
+
+                  <label htmlFor={`${idSocio}-cpf`} className="space-y-1.5">
+                    <span className="block text-xs font-medium text-zinc-700">CPF</span>
+                    <input
+                      id={`${idSocio}-cpf`}
+                      type="text"
+                      inputMode="numeric"
+                      aria-label={`CPF do sócio ${numeroSocio}`}
+                      value={socio.cpf}
+                      onChange={(event) => onAlterarSocio(socioIndex, 'cpf', event.target.value)}
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                      required
+                    />
+                  </label>
+
+                  <label htmlFor={`${idSocio}-participacao`} className="space-y-1.5">
+                    <span className="block text-xs font-medium text-zinc-700">Participação (%)</span>
+                    <input
+                      id={`${idSocio}-participacao`}
+                      type="number"
+                      aria-label={`Participação (%) do sócio ${numeroSocio}`}
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={socio.participacao}
+                      onChange={(event) =>
+                        onAlterarSocio(socioIndex, 'participacao', event.target.value)
+                      }
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                      required
+                    />
+                  </label>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <label htmlFor={`${idBase}-capital-social`} className="space-y-1.5">
+          <span className="block text-xs font-medium text-zinc-700">Capital social (R$)</span>
+          <input
+            id={`${idBase}-capital-social`}
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={formulario.capital_social}
+            onChange={(event) => onAlterarCampo('capital_social', event.target.value)}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+            required
+          />
+        </label>
+
+        <label htmlFor={`${idBase}-endereco`} className="space-y-1.5">
+          <span className="block text-xs font-medium text-zinc-700">Endereço</span>
+          <textarea
+            id={`${idBase}-endereco`}
+            value={formulario.endereco}
+            onChange={(event) => onAlterarCampo('endereco', event.target.value)}
+            rows={3}
+            className="w-full resize-y rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+            required
+          />
+        </label>
+      </div>
+
+      <label htmlFor={`${idBase}-objeto-social`} className="space-y-1.5">
+        <span className="block text-xs font-medium text-zinc-700">Objeto social</span>
+        <textarea
+          id={`${idBase}-objeto-social`}
+          value={formulario.objeto_social}
+          onChange={(event) => onAlterarCampo('objeto_social', event.target.value)}
+          rows={4}
+          className="w-full resize-y rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+          required
+        />
+      </label>
+    </fieldset>
+  );
+}
+
+function EtapaAutomatizada({
+  acao,
+  bloqueada,
+  concluida,
+  enviando,
+  erro,
+  formulario,
+  idBase,
+  processando,
+  titulo,
+  arquivo,
+  onAdicionarSocio,
+  onAlterarCampo,
+  onAlterarSocio,
+  onRemoverSocio,
+  onSubmit,
+}) {
+  if (concluida) {
+    return (
+      <div className="space-y-3" role="status" aria-live="polite">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <span
+              aria-hidden="true"
+              className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700"
+            >
+              ✓
+            </span>
+            <div>
+              <p className="text-sm font-medium text-zinc-700">{titulo}</p>
+              <p className="mt-1 text-xs text-emerald-700">Execução concluída com sucesso.</p>
+            </div>
+          </div>
+          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
+            Concluída
+          </span>
+        </div>
+
+        {arquivo ? (
+          <div className="ml-8 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+            <span className="font-medium">Arquivo gerado: </span>
+            {arquivo.url ? (
+              <a
+                href={arquivo.url}
+                target="_blank"
+                rel="noreferrer"
+                className="underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700"
+              >
+                {arquivo.nome}
+              </a>
+            ) : (
+              <span>{arquivo.nome}</span>
+            )}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (processando || enviando) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3" role="status" aria-live="polite">
+        <div>
+          <p className="text-sm font-medium text-zinc-800">{titulo}</p>
+          <p className="mt-1 text-xs text-zinc-500">
+            A solicitação foi enviada. O resultado aparecerá automaticamente.
+          </p>
+        </div>
+        <span className="inline-flex items-center gap-2 rounded-full bg-sky-100 px-3 py-1.5 text-xs font-medium text-sky-700">
+          <Spinner />
+          Processando...
+        </span>
+      </div>
+    );
+  }
+
+  if (acao !== 'gerar_contrato_social' && acao !== 'criar_pastas') {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-zinc-800">{titulo}</p>
+        <p role="alert" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Ação automatizada não suportada: {acao || 'não informada'}.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <form className="space-y-4" onSubmit={onSubmit} aria-label={`Executar ${titulo}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-zinc-900">{titulo}</p>
+            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+              Automatizada
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">
+            {acao === 'gerar_contrato_social'
+              ? 'Preencha os dados que serão usados para gerar o documento.'
+              : 'Confirme para o agente criar a estrutura padrão de pastas.'}
+          </p>
+        </div>
+        <span className="text-xs font-medium text-amber-700">Pendente</span>
+      </div>
+
+      {erro ? (
+        <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {erro}
+        </p>
+      ) : null}
+
+      {acao === 'gerar_contrato_social' ? (
+        <FormularioContratoSocial
+          idBase={idBase}
+          formulario={formulario}
+          disabled={bloqueada}
+          onAdicionarSocio={onAdicionarSocio}
+          onAlterarCampo={onAlterarCampo}
+          onAlterarSocio={onAlterarSocio}
+          onRemoverSocio={onRemoverSocio}
+        />
+      ) : (
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-900">
+          O agente criará as pastas padrão deste cliente. Nenhum dado adicional é necessário.
+        </div>
+      )}
+
+      <div className="flex justify-end border-t border-zinc-200 pt-3">
+        <button
+          type="submit"
+          disabled={bloqueada}
+          className="inline-flex items-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Concluir
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function ProcessosPage() {
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -385,23 +919,32 @@ export default function ProcessosPage() {
 
   const [processosExpandidos, setProcessosExpandidos] = useState({});
   const [etapasEmAtualizacao, setEtapasEmAtualizacao] = useState({});
+  const [etapasEmExecucao, setEtapasEmExecucao] = useState({});
+  const [errosExecucaoEtapa, setErrosExecucaoEtapa] = useState({});
+  const [formulariosEtapa, setFormulariosEtapa] = useState({});
 
   const [isNovoModalAberto, setIsNovoModalAberto] = useState(false);
   const [novoTipoProcesso, setNovoTipoProcesso] = useState(TIPOS_PADRAO[0]);
   const [erroNovoProcesso, setErroNovoProcesso] = useState('');
   const [isCriandoProcesso, setIsCriandoProcesso] = useState(false);
+  const ultimaRequisicaoProcessosRef = useRef(0);
 
   const perfilUsuario = String(user?.perfil || '').trim();
   const podeCriarProcesso = perfilUsuario === PERFIL_PODE_CRIAR_PROCESSO;
-  const podeMarcarEtapa = !perfilUsuario || PERFIS_PODEM_MARCAR_ETAPA.has(perfilUsuario);
+  const podeMarcarEtapa = PERFIS_PODEM_MARCAR_ETAPA.has(perfilUsuario);
 
   const carregarProcessos = useCallback(
-    async ({ silencioso = false } = {}) => {
+    async ({ silencioso = false, reportarErro = true } = {}) => {
+      const idRequisicao = ultimaRequisicaoProcessosRef.current + 1;
+      ultimaRequisicaoProcessosRef.current = idRequisicao;
+
       if (!silencioso) {
         setIsLoadingProcessos(true);
       }
 
-      setErro('');
+      if (reportarErro) {
+        setErro('');
+      }
 
       try {
         const data = await listar({
@@ -409,17 +952,35 @@ export default function ProcessosPage() {
           ...(filtroTipo ? { tipo: filtroTipo } : {}),
         });
 
+        const processosNormalizados = normalizarProcessos(data);
+
+        if (idRequisicao !== ultimaRequisicaoProcessosRef.current) {
+          return null;
+        }
+
         setPayload(data);
-        setProcessos(normalizarProcessos(data));
+        setProcessos(processosNormalizados);
+        return processosNormalizados;
       } catch (error) {
-        setErro(obterMensagemErro(error));
+        if (reportarErro && idRequisicao === ultimaRequisicaoProcessosRef.current) {
+          setErro(obterMensagemErro(error, 'Não foi possível carregar os processos.'));
+        }
+        return null;
       } finally {
-        if (!silencioso) {
+        if (!silencioso && idRequisicao === ultimaRequisicaoProcessosRef.current) {
           setIsLoadingProcessos(false);
         }
       }
     },
     [filtroStatus, filtroTipo],
+  );
+
+  const possuiEtapaProcessando = useMemo(
+    () =>
+      processos.some((processo) =>
+        obterEtapas(processo).some((etapa) => etapaEmProcessamento(etapa)),
+      ),
+    [processos],
   );
 
   useEffect(() => {
@@ -433,6 +994,30 @@ export default function ProcessosPage() {
       carregarProcessos();
     }
   }, [carregarProcessos, isAuthenticated, isLoading]);
+
+  useEffect(() => {
+    if (isLoading || !isAuthenticated || !possuiEtapaProcessando) {
+      return undefined;
+    }
+
+    let ativo = true;
+    let timeoutId;
+
+    async function consultarResultado() {
+      await carregarProcessos({ silencioso: true, reportarErro: false });
+
+      if (ativo) {
+        timeoutId = window.setTimeout(consultarResultado, INTERVALO_POLLING_ETAPAS_MS);
+      }
+    }
+
+    timeoutId = window.setTimeout(consultarResultado, INTERVALO_POLLING_ETAPAS_MS);
+
+    return () => {
+      ativo = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [carregarProcessos, isAuthenticated, isLoading, possuiEtapaProcessando]);
 
   const tiposDisponiveis = useMemo(() => {
     const tipos = new Set(TIPOS_PADRAO);
@@ -550,6 +1135,193 @@ export default function ProcessosPage() {
       setEtapasEmAtualizacao((valorAtual) => {
         const proximo = { ...valorAtual };
         delete proximo[chaveAtualizacao];
+        return proximo;
+      });
+    }
+  }
+
+  function obterFormularioEtapa(chaveEtapa, etapa, processo) {
+    return formulariosEtapa[chaveEtapa] || criarFormularioContratoSocial(etapa, processo);
+  }
+
+  function alterarCampoFormulario(chaveEtapa, etapa, processo, campo, valor) {
+    setFormulariosEtapa((valorAtual) => {
+      const formularioAtual =
+        valorAtual[chaveEtapa] || criarFormularioContratoSocial(etapa, processo);
+
+      return {
+        ...valorAtual,
+        [chaveEtapa]: {
+          ...formularioAtual,
+          [campo]: valor,
+        },
+      };
+    });
+  }
+
+  function alterarSocioFormulario(chaveEtapa, etapa, processo, socioIndex, campo, valor) {
+    setFormulariosEtapa((valorAtual) => {
+      const formularioAtual =
+        valorAtual[chaveEtapa] || criarFormularioContratoSocial(etapa, processo);
+
+      return {
+        ...valorAtual,
+        [chaveEtapa]: {
+          ...formularioAtual,
+          socios: formularioAtual.socios.map((socio, index) =>
+            index === socioIndex ? { ...socio, [campo]: valor } : socio,
+          ),
+        },
+      };
+    });
+  }
+
+  function adicionarSocioFormulario(chaveEtapa, etapa, processo) {
+    setFormulariosEtapa((valorAtual) => {
+      const formularioAtual =
+        valorAtual[chaveEtapa] || criarFormularioContratoSocial(etapa, processo);
+
+      return {
+        ...valorAtual,
+        [chaveEtapa]: {
+          ...formularioAtual,
+          socios: [...formularioAtual.socios, normalizarSocio()],
+        },
+      };
+    });
+  }
+
+  function removerSocioFormulario(chaveEtapa, etapa, processo, socioIndex) {
+    setFormulariosEtapa((valorAtual) => {
+      const formularioAtual =
+        valorAtual[chaveEtapa] || criarFormularioContratoSocial(etapa, processo);
+
+      if (formularioAtual.socios.length === 1) {
+        return valorAtual;
+      }
+
+      return {
+        ...valorAtual,
+        [chaveEtapa]: {
+          ...formularioAtual,
+          socios: formularioAtual.socios.filter((_, index) => index !== socioIndex),
+        },
+      };
+    });
+  }
+
+  async function handleExecutarAcaoEtapa(
+    event,
+    processo,
+    etapa,
+    chaveEtapa,
+    formulario,
+  ) {
+    event.preventDefault();
+
+    if (!podeMarcarEtapa) {
+      return;
+    }
+
+    const processoId = obterIdProcesso(processo);
+    const etapaId = obterIdEtapa(etapa);
+    const acao = obterAcaoEtapa(etapa);
+
+    if (!processoId || !etapaId) {
+      return;
+    }
+
+    let dadosExecucao = {};
+
+    if (acao === 'gerar_contrato_social') {
+      const mensagemValidacao = validarFormularioContratoSocial(formulario);
+
+      if (mensagemValidacao) {
+        setErrosExecucaoEtapa((valorAtual) => ({
+          ...valorAtual,
+          [chaveEtapa]: mensagemValidacao,
+        }));
+        return;
+      }
+
+      dadosExecucao = montarPayloadContratoSocial(formulario);
+    }
+
+    const dadosRequisicao = { ...dadosExecucao };
+    const clienteId = processo?.cliente_id || processo?.clienteId;
+
+    if (perfilUsuario === 'admin_efficience' && clienteId) {
+      dadosRequisicao.cliente_id = clienteId;
+    }
+
+    setErrosExecucaoEtapa((valorAtual) => {
+      const proximo = { ...valorAtual };
+      delete proximo[chaveEtapa];
+      return proximo;
+    });
+    setEtapasEmExecucao((valorAtual) => ({ ...valorAtual, [chaveEtapa]: true }));
+    setProcessos((valorAtual) =>
+      atualizarEtapaNaLista(valorAtual, processoId, etapaId, (etapaAtual) => ({
+        ...etapaAtual,
+        status: 'pronta_para_execucao',
+        concluida: false,
+        payload_execucao: dadosExecucao,
+        erro_execucao: null,
+      })),
+    );
+
+    try {
+      const retorno = await executarAcaoEtapa(processoId, etapaId, dadosRequisicao);
+      const etapaAtualizada = extrairEtapaAtualizada(retorno);
+
+      setProcessos((valorAtual) =>
+        atualizarEtapaNaLista(valorAtual, processoId, etapaId, (etapaAtual) => {
+          if (etapaConcluida(etapaAtual) || obterErroExecucaoEtapa(etapaAtual)) {
+            return etapaAtual;
+          }
+
+          return {
+            ...etapaAtual,
+            ...(etapaAtualizada || {}),
+            status: etapaAtualizada?.status || 'pronta_para_execucao',
+            payload_execucao: etapaAtualizada?.payload_execucao ?? dadosExecucao,
+            erro_execucao: etapaAtualizada?.erro_execucao ?? null,
+          };
+        }),
+      );
+    } catch (error) {
+      const processosReconciliados = await carregarProcessos({
+        silencioso: true,
+        reportarErro: false,
+      });
+      const etapaReconciliada = processosReconciliados
+        ? encontrarEtapaNaLista(processosReconciliados, processoId, etapaId)
+        : null;
+      const servidorRecebeuExecucao =
+        etapaReconciliada &&
+        (etapaEmProcessamento(etapaReconciliada) ||
+          etapaConcluida(etapaReconciliada) ||
+          Boolean(obterErroExecucaoEtapa(etapaReconciliada)));
+
+      if (!servidorRecebeuExecucao) {
+        setProcessos((valorAtual) =>
+          atualizarEtapaNaLista(valorAtual, processoId, etapaId, (etapaAtual) => ({
+            ...etapaAtual,
+            ...etapa,
+          })),
+        );
+        setErrosExecucaoEtapa((valorAtual) => ({
+          ...valorAtual,
+          [chaveEtapa]: obterMensagemErro(
+            error,
+            'Não foi possível iniciar a execução. Tente novamente.',
+          ),
+        }));
+      }
+    } finally {
+      setEtapasEmExecucao((valorAtual) => {
+        const proximo = { ...valorAtual };
+        delete proximo[chaveEtapa];
         return proximo;
       });
     }
@@ -691,6 +1463,10 @@ export default function ProcessosPage() {
               const etapas = obterEtapas(processo);
               const { totalEtapas, etapasConcluidas, percentual } = obterResumoEtapas(processo);
               const expandido = Boolean(processosExpandidos[chaveProcesso]);
+              const idEtapasProcesso = `etapas-processo-${chaveProcesso.replace(
+                /[^a-zA-Z0-9_-]/g,
+                '-',
+              )}`;
 
               return (
                 <article
@@ -721,7 +1497,14 @@ export default function ProcessosPage() {
                           {etapasConcluidas} de {totalEtapas} etapas
                         </p>
                         <div className="flex items-center gap-3">
-                          <div className="h-2 w-full max-w-xl overflow-hidden rounded-full bg-zinc-200">
+                          <div
+                            className="h-2 w-full max-w-xl overflow-hidden rounded-full bg-zinc-200"
+                            role="progressbar"
+                            aria-label={`Progresso de ${tituloProcesso(processo, index)}`}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={percentual}
+                          >
                             <div
                               className="h-full rounded-full bg-zinc-800 transition-all"
                               style={{ width: `${percentual}%` }}
@@ -736,6 +1519,8 @@ export default function ProcessosPage() {
                       <button
                         type="button"
                         onClick={() => alternarExpansao(chaveProcesso)}
+                        aria-expanded={expandido}
+                        aria-controls={idEtapasProcesso}
                         className="self-start rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
                       >
                         {expandido ? 'Ocultar etapas' : 'Ver etapas'}
@@ -746,56 +1531,144 @@ export default function ProcessosPage() {
                   </header>
 
                   {expandido ? (
-                    <div className="mt-4 border-t border-zinc-100 pt-4">
+                    <div id={idEtapasProcesso} className="mt-4 border-t border-zinc-100 pt-4">
                       <ul className="space-y-2">
                         {etapas.map((etapa, etapaIndex) => {
                           const etapaId = obterIdEtapa(etapa);
+                          const tituloEtapa = obterTituloEtapa(etapa, etapaIndex);
+                          const chaveEtapa = `${chaveProcesso}::${
+                            etapaId || `etapa-${etapaIndex}`
+                          }`;
                           const chaveAtualizacao = processoId ? `${processoId}::${etapaId}` : null;
                           const atualizandoEtapa = chaveAtualizacao
                             ? Boolean(etapasEmAtualizacao[chaveAtualizacao])
                             : false;
+                          const enviandoEtapa = Boolean(etapasEmExecucao[chaveEtapa]);
                           const concluida = etapaConcluida(etapa);
+                          const automatizada = etapaAutomatizada(etapa);
+                          const tipoEtapa = obterTipoEtapa(etapa);
+                          const tipoDesconhecido = tipoEtapa !== 'manual' && !automatizada;
+                          const acao = obterAcaoEtapa(etapa);
+                          const formulario = automatizada
+                            ? obterFormularioEtapa(chaveEtapa, etapa, processo)
+                            : null;
+                          const erroEtapa =
+                            errosExecucaoEtapa[chaveEtapa] || obterErroExecucaoEtapa(etapa);
                           const bloqueado =
-                            !podeMarcarEtapa || !processoId || !etapaId || atualizandoEtapa;
+                            !podeMarcarEtapa ||
+                            !processoId ||
+                            !etapaId ||
+                            atualizandoEtapa ||
+                            enviandoEtapa;
+                          const idBase = `etapa-${String(etapaId || etapaIndex).replace(
+                            /[^a-zA-Z0-9_-]/g,
+                            '-',
+                          )}`;
 
                           return (
                             <li
                               key={etapaId || `${chaveProcesso}-etapa-${etapaIndex}`}
-                              className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2"
+                              data-testid={`etapa-${etapaId || etapaIndex}`}
+                              className={`rounded-lg border px-3 py-3 ${
+                                concluida && automatizada
+                                  ? 'border-emerald-200 bg-emerald-50/40'
+                                  : 'border-zinc-200 bg-zinc-50'
+                              }`}
                             >
-                              <label className="flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-3">
-                                  <input
-                                    type="checkbox"
-                                    checked={concluida}
-                                    disabled={bloqueado}
-                                    onChange={(event) =>
-                                      handleToggleEtapa(processo, etapa, event.target.checked)
-                                    }
-                                    className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                  />
-                                  <span
-                                    className={`text-sm ${
-                                      concluida
-                                        ? 'text-zinc-500 line-through'
-                                        : 'text-zinc-800'
-                                    }`}
-                                  >
-                                    {obterTituloEtapa(etapa, etapaIndex)}
-                                  </span>
+                              {automatizada ? (
+                                <EtapaAutomatizada
+                                  acao={acao}
+                                  arquivo={obterArquivoGerado(etapa)}
+                                  bloqueada={bloqueado}
+                                  concluida={concluida}
+                                  enviando={enviandoEtapa}
+                                  erro={erroEtapa}
+                                  formulario={formulario}
+                                  idBase={idBase}
+                                  processando={etapaEmProcessamento(etapa)}
+                                  titulo={tituloEtapa}
+                                  onAdicionarSocio={() =>
+                                    adicionarSocioFormulario(chaveEtapa, etapa, processo)
+                                  }
+                                  onAlterarCampo={(campo, valor) =>
+                                    alterarCampoFormulario(
+                                      chaveEtapa,
+                                      etapa,
+                                      processo,
+                                      campo,
+                                      valor,
+                                    )
+                                  }
+                                  onAlterarSocio={(socioIndex, campo, valor) =>
+                                    alterarSocioFormulario(
+                                      chaveEtapa,
+                                      etapa,
+                                      processo,
+                                      socioIndex,
+                                      campo,
+                                      valor,
+                                    )
+                                  }
+                                  onRemoverSocio={(socioIndex) =>
+                                    removerSocioFormulario(
+                                      chaveEtapa,
+                                      etapa,
+                                      processo,
+                                      socioIndex,
+                                    )
+                                  }
+                                  onSubmit={(event) =>
+                                    handleExecutarAcaoEtapa(
+                                      event,
+                                      processo,
+                                      etapa,
+                                      chaveEtapa,
+                                      formulario,
+                                    )
+                                  }
+                                />
+                              ) : tipoDesconhecido ? (
+                                <div className="space-y-2">
+                                  <p className="text-sm font-medium text-zinc-800">{tituloEtapa}</p>
+                                  <p role="alert" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                                    Tipo de etapa não suportado: {tipoEtapa}.
+                                  </p>
                                 </div>
+                              ) : (
+                                <label className="flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={concluida}
+                                      disabled={bloqueado}
+                                      onChange={(event) =>
+                                        handleToggleEtapa(processo, etapa, event.target.checked)
+                                      }
+                                      className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                    />
+                                    <span
+                                      className={`text-sm ${
+                                        concluida
+                                          ? 'text-zinc-500 line-through'
+                                          : 'text-zinc-800'
+                                      }`}
+                                    >
+                                      {tituloEtapa}
+                                    </span>
+                                  </div>
 
-                                {atualizandoEtapa ? (
-                                  <span className="inline-flex items-center gap-2 text-xs text-zinc-500">
-                                    <Spinner />
-                                    <span>Salvando...</span>
-                                  </span>
-                                ) : (
-                                  <span className="text-xs text-zinc-500">
-                                    {concluida ? 'Concluída' : 'Pendente'}
-                                  </span>
-                                )}
-                              </label>
+                                  {atualizandoEtapa ? (
+                                    <span className="inline-flex items-center gap-2 text-xs text-zinc-500">
+                                      <Spinner />
+                                      <span>Salvando...</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-zinc-500">
+                                      {concluida ? 'Concluída' : 'Pendente'}
+                                    </span>
+                                  )}
+                                </label>
+                              )}
                             </li>
                           );
                         })}
