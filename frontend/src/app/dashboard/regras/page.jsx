@@ -180,30 +180,7 @@ function removerPontoExtensao(valor) {
 }
 
 function normalizarCondicao(condicao) {
-  if (!condicao) {
-    return {};
-  }
-
-  if (typeof condicao === 'string') {
-    const condicaoTexto = condicao.trim();
-
-    if (condicaoTexto.startsWith('extensao=')) {
-      return { extensao: removerPontoExtensao(condicaoTexto.split('=')[1]) };
-    }
-
-    try {
-      const condicaoParseada = JSON.parse(condicaoTexto);
-      return condicaoParseada &&
-        typeof condicaoParseada === 'object' &&
-        !Array.isArray(condicaoParseada)
-        ? condicaoParseada
-        : {};
-    } catch {
-      return {};
-    }
-  }
-
-  if (typeof condicao === 'object' && !Array.isArray(condicao)) {
+  if (condicao && typeof condicao === 'object' && !Array.isArray(condicao)) {
     return condicao;
   }
 
@@ -317,11 +294,7 @@ function formatarCondicao(condicao) {
     partes.push(`Empresa "${condicaoNormalizada.nome_empresa}"`);
   }
 
-  if (partes.length > 0) {
-    return partes.join('; ');
-  }
-
-  return typeof condicao === 'string' && condicao.trim() ? condicao : 'Sem filtros';
+  return partes.length > 0 ? partes.join('; ') : 'Sem filtros';
 }
 
 function formatarAcao(acao) {
