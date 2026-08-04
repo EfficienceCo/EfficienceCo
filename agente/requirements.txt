@@ -3,7 +3,9 @@ watchdog>=6.0.0
 schedule>=1.2.0
 python-dotenv>=1.0.0
 pyinstaller>=5.13.0
+docxtpl>=0.16.0
 torch
 torchvision
 Pillow
 pdf2image
+pytest>=7.0.0
