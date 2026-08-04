@@ -7,5 +7,8 @@ docxtpl>=0.16.0
 torch
 torchvision
 Pillow
-pdf2image
+pypdfium2
+pandas
+openpyxl
+matplotlib
 pytest>=7.0.0
