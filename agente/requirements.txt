@@ -8,4 +8,7 @@ torch
 torchvision
 Pillow
 pdf2image
+pypdfium2
+pdfplumber
+pytesseract
 pytest>=7.0.0

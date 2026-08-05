@@ -18,7 +18,7 @@ Centro do sistema. Toda comunicação entre frontend, banco de dados e agente lo
 - Controlar permissões por perfil: `admin` e `funcionario`
 
 #### Gestão de clientes
-- CRUD de clientes (escritórios contratantes da EfficienceCo)
+- CRUD de clientes (empresas atendidas pelo escritório contábil — ex.: Padaria do João)
 - Listar, editar, ativar, desativar
 
 #### Gestão de usuários
@@ -57,9 +57,10 @@ Centro do sistema. Toda comunicação entre frontend, banco de dados e agente lo
 | Método | Rota | O que faz |
 |---|---|---|
 | POST | /auth/login | Autentica usuário |
-| GET | /clientes | Lista clientes contábeis |
-| POST | /clientes | Cadastra cliente contábil |
-| PATCH | /clientes/:id | Edita cliente contábil |
+| GET | /clientes | Lista empresas do escritório |
+| POST | /clientes | Cadastra empresa do escritório |
+| PATCH | /clientes/:id | Edita empresa do escritório |
+| GET | /clientes/por-cnpj | Agente resolve empresa por CNPJ (auth por `x-licenca-token`) |
 | GET | /regras | Lista regras do escritório |
 | POST | /regras | Cria regra |
 | PATCH | /regras/:id | Edita regra |
@@ -128,10 +129,10 @@ Programa instalado no PC do escritório, roda em segundo plano, sem interface. B
 | Tabela | Finalidade |
 |---|---|
 | `usuarios` | Funcionários do escritório com perfil e senha hash |
-| `clientes` | **Escritórios contábeis** que contratam a EfficienceCo (ex: Souza & Associados) — NÃO as empresas do escritório |
+| `clientes` | **Empresas atendidas pelo escritório** (ex.: Padaria do João) — com `nome` (pasta em disco) e `cnpj`. O escritório em si (ex.: Souza Contabilidade) é cliente da Efficience e tem **banco próprio**, separado dos demais escritórios |
 | `regras` | Configurações de automação do agente (pasta_origem, pasta_destino, condição, ação) |
 | `eventos` | Log de tudo que o agente executou |
-| `obrigacoes` | Obrigações fiscais por cliente contábil (DAS, DCTF, SPED...) com vencimento e status |
+| `obrigacoes` | Obrigações fiscais por empresa do escritório (DAS, DCTF, SPED...) com vencimento e status |
 | `processos` | Checklists de folha de pagamento, abertura de empresa — referenciados por `nome_empresa` |
 | `etapas` | Etapas individuais de cada processo com status |
 | `notificacoes` | Alertas internos para os funcionários do escritório |
@@ -140,7 +141,7 @@ Programa instalado no PC do escritório, roda em segundo plano, sem interface. B
 - Migrations versionadas — banco recriável do zero
 - Seeds de desenvolvimento completos (usuários BCrypt, clientes de exemplo, regras realistas)
 - Índices nas colunas mais consultadas
-- RLS configurado: cada usuário vê apenas os dados do próprio escritório
+- Cada cliente da Efficience (escritório) possui base de dados própria
 - `service_role` key usada no backend (bypass de RLS server-side)
 
 ---
@@ -187,7 +188,7 @@ Programa instalado no PC do escritório, roda em segundo plano, sem interface. B
 
 #### Admin (`/admin`)
 - Visão geral do escritório
-- Gerenciar clientes contábeis
+- Gerenciar empresas do escritório (`clientes`)
 - Logs globais
 
 ### UX

@@ -1,4 +1,9 @@
 import supabase from "../config/database.js";
+import { validarTokenLicenca } from "../services/licenca.service.js";
+
+function normalizarCnpj(valor) {
+  return String(valor || "").replace(/\D/g, "");
+}
 
 // Lista todos os clientes ordenados do mais recente para o mais antigo.
 // Exclusivo para admin_efficience — painel interno da Efficience.
@@ -40,6 +45,44 @@ export async function buscarCliente(req, res) {
 
   console.log(`[clientes.controller] Cliente encontrado: ${data.nome}`);
   return res.status(200).json(data);
+}
+
+/** Agente: resolve nome da pasta da empresa a partir do CNPJ. */
+export async function buscarClientePorCnpj(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  const digitos = normalizarCnpj(req.query.cnpj);
+  if (digitos.length !== 14) {
+    return res.status(400).json({ erro: "CNPJ inválido" });
+  }
+
+  console.log(
+    `[clientes.controller] buscarClientePorCnpj — cnpj: ${digitos}`,
+  );
+
+  const { data, error } = await supabase.from("clientes").select("nome, cnpj");
+
+  if (error) {
+    console.error(
+      "[clientes.controller] Erro ao buscar por CNPJ:",
+      error.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar cliente" });
+  }
+
+  const encontrado = (data || []).find(
+    (row) => normalizarCnpj(row.cnpj) === digitos,
+  );
+
+  if (!encontrado) {
+    return res.status(404).json({ erro: "não encontrado" });
+  }
+
+  return res.status(200).json({ nome: encontrado.nome });
 }
 
 export async function criarCliente(req, res) {
