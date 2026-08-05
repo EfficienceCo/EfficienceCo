@@ -1,4 +1,5 @@
 -- Empresas do escritório (clientes da Souza) para desenvolvimento
+-- CNPJ armazenado sem máscara (somente dígitos)
 INSERT INTO clientes (nome, cnpj) VALUES
-  ('Padaria do João', '12.345.678/0001-90'),
-  ('Mercado Central Ltda', '98.765.432/0001-10');
+  ('Padaria do João', '12345678000190'),
+  ('Mercado Central Ltda', '98765432000110');

@@ -1,6 +1,6 @@
 /**
  * Casos de borda adicionais para buscarClientePorCnpj:
- * licença inativa/expirada, erro de DB, CNPJ sem máscara no banco,
+ * licença inativa/expirada, erro de DB, CNPJ normalizado no banco,
  * inputs extremos (undefined, string vazia, comprimento errado).
  */
 import { describe, it, beforeEach } from "node:test";
@@ -62,12 +62,12 @@ function tokenValido(override = {}) {
 describe("buscarClientePorCnpj — casos de borda", () => {
   beforeEach(() => filas.clear());
 
-  // ---- normalização de CNPJ no banco -------------------------------------
+  // ---- lookup indexado (CNPJ só dígitos no banco) -------------------------
 
-  it("CNPJ armazenado sem máscara no banco é encontrado com input mascarado", async () => {
+  it("CNPJ no banco (só dígitos) é encontrado com input mascarado", async () => {
     tokenValido();
-    queue("clientes", "await", {
-      data: [{ nome: "Mercado Central", cnpj: "98765432000110" }],
+    queue("clientes", "maybeSingle", {
+      data: { nome: "Mercado Central" },
       error: null,
     });
 
@@ -81,31 +81,10 @@ describe("buscarClientePorCnpj — casos de borda", () => {
     assert.equal(res.body.nome, "Mercado Central");
   });
 
-  it("CNPJ armazenado com máscara parcial (pontos, sem barra/hífen) é encontrado", async () => {
+  it(".eq + maybeSingle retorna o cliente correspondente", async () => {
     tokenValido();
-    queue("clientes", "await", {
-      data: [{ nome: "Loja ABC", cnpj: "12.345.678/000190" }],
-      error: null,
-    });
-
-    const res = criarRes();
-    await buscarClientePorCnpj(
-      { query: { cnpj: "12345678000190" }, headers: { "x-licenca-token": "t" } },
-      res,
-    );
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.nome, "Loja ABC");
-  });
-
-  it("banco com múltiplos clientes — retorna o correto", async () => {
-    tokenValido();
-    queue("clientes", "await", {
-      data: [
-        { nome: "Empresa A", cnpj: "11.111.111/0001-11" },
-        { nome: "Empresa B", cnpj: "22.222.222/0002-22" },
-        { nome: "Empresa C", cnpj: "33333333000333" },
-      ],
+    queue("clientes", "maybeSingle", {
+      data: { nome: "Empresa B" },
       error: null,
     });
 
@@ -146,7 +125,6 @@ describe("buscarClientePorCnpj — casos de borda", () => {
   });
 
   it("header x-licenca-token ausente → 401", async () => {
-    // validarTokenLicenca retorna null imediatamente se token for falsy
     const res = criarRes();
     await buscarClientePorCnpj(
       { query: { cnpj: "12345678000190" }, headers: {} },
@@ -223,7 +201,7 @@ describe("buscarClientePorCnpj — casos de borda", () => {
 
   it("erro do Supabase na consulta de clientes → 500", async () => {
     tokenValido();
-    queue("clientes", "await", {
+    queue("clientes", "maybeSingle", {
       data: null,
       error: { message: "connection timeout" },
     });
@@ -240,20 +218,7 @@ describe("buscarClientePorCnpj — casos de borda", () => {
 
   it("banco retorna data: null sem erro → 404", async () => {
     tokenValido();
-    queue("clientes", "await", { data: null, error: null });
-
-    const res = criarRes();
-    await buscarClientePorCnpj(
-      { query: { cnpj: "12345678000190" }, headers: { "x-licenca-token": "t" } },
-      res,
-    );
-
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("banco retorna lista vazia → 404", async () => {
-    tokenValido();
-    queue("clientes", "await", { data: [], error: null });
+    queue("clientes", "maybeSingle", { data: null, error: null });
 
     const res = criarRes();
     await buscarClientePorCnpj(

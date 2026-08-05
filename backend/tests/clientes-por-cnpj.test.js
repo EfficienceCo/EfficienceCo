@@ -48,6 +48,9 @@ supabase.from = function (tabela) {
     single() {
       return Promise.resolve(consumir("single"));
     },
+    maybeSingle() {
+      return Promise.resolve(consumir("maybeSingle"));
+    },
     then(resolve, reject) {
       return Promise.resolve(consumir("await")).then(resolve, reject);
     },
@@ -71,20 +74,17 @@ describe("buscarClientePorCnpj", () => {
     filas.clear();
   });
 
-  it("retorna nome quando CNPJ existe (aceita máscara)", async () => {
+  it("retorna nome quando CNPJ existe (aceita máscara na query)", async () => {
     tokenLicencaValido();
-    queue("clientes", "await", {
-      data: [
-        { nome: "Padaria do João", cnpj: "12.345.678/0001-90" },
-        { nome: "Outra", cnpj: "00.000.000/0001-00" },
-      ],
+    queue("clientes", "maybeSingle", {
+      data: { nome: "Padaria do João" },
       error: null,
     });
 
     const res = criarRes();
     await buscarClientePorCnpj(
       {
-        query: { cnpj: "12345678000190" },
+        query: { cnpj: "12.345.678/0001-90" },
         headers: { "x-licenca-token": "token-valido" },
       },
       res,
@@ -96,8 +96,8 @@ describe("buscarClientePorCnpj", () => {
 
   it("404 quando CNPJ não está cadastrado", async () => {
     tokenLicencaValido();
-    queue("clientes", "await", {
-      data: [{ nome: "Padaria do João", cnpj: "12.345.678/0001-90" }],
+    queue("clientes", "maybeSingle", {
+      data: null,
       error: null,
     });
 

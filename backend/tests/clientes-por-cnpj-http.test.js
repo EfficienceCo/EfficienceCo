@@ -95,8 +95,8 @@ async function get(path, headers = {}) {
 describe("GET /clientes/por-cnpj — camada HTTP", () => {
   it("200 com nome quando CNPJ existe e token é válido", async () => {
     tokenValido();
-    queue("clientes", "await", {
-      data: [{ nome: "Padaria do João", cnpj: "12345678000190" }],
+    queue("clientes", "maybeSingle", {
+      data: { nome: "Padaria do João" },
       error: null,
     });
 
@@ -111,7 +111,7 @@ describe("GET /clientes/por-cnpj — camada HTTP", () => {
 
   it("404 quando CNPJ não encontrado no banco", async () => {
     tokenValido();
-    queue("clientes", "await", { data: [], error: null });
+    queue("clientes", "maybeSingle", { data: null, error: null });
 
     const { status, body } = await get(
       "/clientes/por-cnpj?cnpj=99999999000199",
@@ -152,8 +152,8 @@ describe("GET /clientes/por-cnpj — camada HTTP", () => {
 
   it("resposta tem Content-Type application/json", async () => {
     tokenValido();
-    queue("clientes", "await", {
-      data: [{ nome: "Empresa X", cnpj: "12345678000190" }],
+    queue("clientes", "maybeSingle", {
+      data: { nome: "Empresa X" },
       error: null,
     });
 
