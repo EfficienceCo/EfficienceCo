@@ -40,6 +40,14 @@ export async function concluirEtapa(processoId, etapaId, dados = {}) {
   return response.data;
 }
 
+export async function executarAcaoEtapa(processoId, etapaId, dados = {}) {
+  const response = await api.post(
+    `/processos/${processoId}/etapas/${etapaId}/executar-acao`,
+    dados,
+  );
+  return response.data;
+}
+
 export async function listarProcessos({ status, tipo, limit, offset } = {}) {
   return listar({ status, tipo, limit, offset });
 }

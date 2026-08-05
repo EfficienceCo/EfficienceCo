@@ -7,7 +7,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed:dev": "node scripts/seed-dev.js",
-    "test": "node --import ./tests/setup-env.js --experimental-test-module-mocks --test tests/folha-status.test.js tests/regras.test.js tests/folha-pipeline.test.js tests/folha-numero-parsing.test.js"
+    "test": "node --import ./tests/setup-env.js --experimental-test-module-mocks --test tests/folha-status.test.js tests/regras.test.js tests/folha-pipeline.test.js tests/processos-criacao.test.js tests/processos-execucao.test.js tests/folha-numero-parsing.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

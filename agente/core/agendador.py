@@ -7,9 +7,11 @@ from core.configuracao import gerenciar_configuracoes, extrair_pastas, verificar
 from core.licenca import validar_licenca
 from automacoes.monitorar_pasta import iniciar_monitoramento
 from automacoes.gerar_relatorio import gerar_relatorio
+from automacoes.executar_etapas import processar_etapas_pendentes
 
 INTERVALO_LICENCA_HORAS = 24
 HORARIO_RELATORIO = "18:00"
+INTERVALO_POLLING_ETAPAS_SEGUNDOS = INTERVALO_POLLING_SEGUNDOS
 
 def _retry_fila():
     while True:
@@ -29,6 +31,14 @@ def _polling_regras():
     while True:
         time.sleep(INTERVALO_POLLING_SEGUNDOS)
         verificar_atualizacao()
+
+def _polling_etapas():
+    while True:
+        try:
+            processar_etapas_pendentes()
+        except Exception as e:
+            print(f"[agendador] Erro no polling de etapas: {e}")
+        time.sleep(INTERVALO_POLLING_ETAPAS_SEGUNDOS)
 
 def _agendar_tarefas_diarias():
     def _gerar_relatorio_seguro():
@@ -73,6 +83,7 @@ def iniciar_agendador():
 
     threading.Thread(target=_revalidar_licenca, daemon=True).start()
     threading.Thread(target=_polling_regras, daemon=True).start()
+    threading.Thread(target=_polling_etapas, daemon=True).start()
     threading.Thread(target=_loop_schedule, daemon=True).start()
     threading.Thread(target=_retry_fila, daemon=True).start()
 
