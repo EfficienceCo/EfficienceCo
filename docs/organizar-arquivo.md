@@ -34,7 +34,8 @@ Arquivo em pasta_origem
    renomear_arquivo
         │
         ▼
-   identificar_empresa (nome do arquivo × pastas em pasta_destino)
+   identificar_empresa
+   (nome → texto/OCR → CNPJ/API → razão social × pastas)
         │
         ├─ tipo nao_identificado OU empresa não encontrada
         │         │
@@ -97,11 +98,15 @@ Criadas por `abertura_empresa` e garantidas pelo organizador:
 
 Módulo: `agente/core/identificar_empresa.py`
 
-1. Lista pastas filhas imediatas de `pasta_destino`  
-2. Normaliza nomes (minúsculas, sem acento, sem pontuação/`_`/`-`/espaços)  
-3. Procura substring no basename do arquivo; preferência pelo match mais longo  
-4. Se `empresa_propria` estiver na condição e casar no nome → usa essa empresa (cria a pasta se ainda não existir)  
-5. Sem match → `None` → fluxo `NAO_CLASSIFICADO`  
+1. Lista pastas filhas imediatas de `pasta_destino`
+2. Normaliza nomes (minúsculas, sem acento, sem pontuação/`_`/`-`/espaços)
+3. Procura substring no basename do arquivo; preferência pelo match mais longo
+4. Se `empresa_propria` estiver na condição e casar no nome → usa essa empresa (cria a pasta se ainda não existir)
+5. Sem match pelo nome → extrai texto do documento (`extrair_texto`: PDF nativo via pdfplumber; se escasso, OCR nas primeiras páginas com pypdfium2+Tesseract; JPG/PNG → OCR direto)
+6. Extrai CNPJs do texto → `GET /clientes/por-cnpj` (auth `x-licenca-token`); se a API retornar `nome`, usa esse nome (igual à pasta em `ATIVO`)
+7. Se CNPJ não resolver → match de razão social: substring normalizada do texto × pastas (mesma regra do passo 3)
+8. Sem match → `None` → fluxo `NAO_CLASSIFICADO`
+ 
 
 ---
 
@@ -112,7 +117,9 @@ Módulo: `agente/core/identificar_empresa.py`
 | Arquivo | Função |
 |---|---|
 | `agente/core/estrutura_pastas.py` | `SUBPASTAS`, `TIPO_PARA_SUBPASTA`, `resolver_destino`, `criar_estrutura_empresa_em` |
-| `agente/core/identificar_empresa.py` | Match de empresa pelo nome do arquivo |
+| `agente/core/identificar_empresa.py` | Match de empresa pelo nome, CNPJ/API e razão social (OCR) |
+| `agente/core/extrair_texto.py` | Texto nativo PDF + OCR (pypdfium2/Tesseract) |
+| `agente/comunicacao/buscar_empresa.py` | Cliente HTTP `GET /clientes/por-cnpj` |
 | `agente/automacoes/organizar_arquivo.py` | Orquestração da ação composta |
 
 ### Agente (alterados)

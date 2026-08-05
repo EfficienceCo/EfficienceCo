@@ -1,3 +1,5 @@
--- Dados iniciais de clientes para desenvolvimento
+-- Empresas do escritório (clientes da Souza) para desenvolvimento
+-- CNPJ armazenado sem máscara (somente dígitos)
 INSERT INTO clientes (nome, cnpj) VALUES
-  ('Escritório Exemplo Ltda', '00.000.000/0001-00');
+  ('Padaria do João', '12345678000190'),
+  ('Mercado Central Ltda', '98765432000110');

@@ -53,14 +53,14 @@ def _versao_cache():
     return cache.get("versao")
 
 def extrair_pastas(regras):
-    pasta_base = client.PASTA_BASE
+    pasta_base = (client.PASTA_BASE or "").strip()
     if pasta_base:
         return {pasta_base}  # watchdog monitora a raiz, regras fazem o filtro
-    
+
     # comportamento antigo — sem PASTA_BASE
-    pastas = set(r["pasta_origem"] for r in regras if r.get("ativa"))
+    pastas = set(r["pasta_origem"] for r in regras if r.get("ativa") and r.get("pasta_origem"))
     if not pastas:
-        pasta_padrao = os.getenv("PASTA_PADRAO")
+        pasta_padrao = (os.getenv("PASTA_PADRAO") or "").strip()
         if pasta_padrao:
             return {pasta_padrao}
         return None
@@ -69,14 +69,20 @@ def extrair_pastas(regras):
 def _normalizar_caminho(caminho):
     if not caminho:
         return caminho
-    
+
+    # remove espaços/\n/\r/\t residual de BD, formulário ou cache
+    caminho = str(caminho).strip()
+    if not caminho:
+        return None
+
     pasta_base = client.PASTA_BASE
-    if not pasta_base:        
+    if not pasta_base:
         return caminho
-    
+
+    pasta_base = str(pasta_base).strip()
     caminho_abs = os.path.abspath(caminho)
     base_abs = os.path.abspath(pasta_base)
-    
+
     if caminho_abs.startswith(base_abs):
         return caminho
     return os.path.join(pasta_base, caminho.lstrip("/").lstrip(r"\\"))

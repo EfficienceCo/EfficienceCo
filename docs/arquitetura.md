@@ -148,7 +148,7 @@ efficience-co/
     │   └── 009_criar_notificacoes.sql  # ✅ 2026-05-16
     └── seeds/
         ├── usuarios.sql               # ⚠️ vazio — seed documentado pendente
-        ├── clientes.sql               # escritórios de exemplo
+        ├── clientes.sql               # empresas do escritório (ex.: Padaria)
         ├── licencas.sql               # licença ativa para dev
         └── 001_regras_exemplo.sql     # 5 regras realistas
 ```

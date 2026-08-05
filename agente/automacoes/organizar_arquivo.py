@@ -86,7 +86,7 @@ def organizar_arquivo(caminho, regra):
     condicao = regra.get("condicao") or {}
     empresa_propria = _extrair_empresa_propria(condicao)
     nome_empresa = identificar_empresa(
-        os.path.basename(caminho_atual),
+        caminho_atual,
         pasta_base,
         empresa_propria=empresa_propria,
     )

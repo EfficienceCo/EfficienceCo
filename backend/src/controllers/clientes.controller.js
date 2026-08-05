@@ -1,4 +1,9 @@
 import supabase from "../config/database.js";
+import { validarTokenLicenca } from "../services/licenca.service.js";
+
+function normalizarCnpj(valor) {
+  return String(valor || "").replace(/\D/g, "");
+}
 
 // Lista todos os clientes ordenados do mais recente para o mais antigo.
 // Exclusivo para admin_efficience — painel interno da Efficience.
@@ -42,6 +47,44 @@ export async function buscarCliente(req, res) {
   return res.status(200).json(data);
 }
 
+/** Agente: resolve nome da pasta da empresa a partir do CNPJ. */
+export async function buscarClientePorCnpj(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  const digitos = normalizarCnpj(req.query.cnpj);
+  if (digitos.length !== 14) {
+    return res.status(400).json({ erro: "CNPJ inválido" });
+  }
+
+  console.log(
+    `[clientes.controller] buscarClientePorCnpj — cnpj: ${digitos}`,
+  );
+
+  const { data, error } = await supabase
+    .from("clientes")
+    .select("nome")
+    .eq("cnpj", digitos)
+    .maybeSingle();
+
+  if (error) {
+    console.error(
+      "[clientes.controller] Erro ao buscar por CNPJ:",
+      error.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar cliente" });
+  }
+
+  if (!data) {
+    return res.status(404).json({ erro: "não encontrado" });
+  }
+
+  return res.status(200).json({ nome: data.nome });
+}
+
 export async function criarCliente(req, res) {
   const { nome, cnpj } = req.body;
 
@@ -54,16 +97,24 @@ export async function criarCliente(req, res) {
     return res.status(400).json({ erro: "Campo obrigatório: nome" });
   }
 
+  let cnpjNormalizado = null;
+  if (cnpj !== undefined && cnpj !== null && String(cnpj).trim() !== "") {
+    cnpjNormalizado = normalizarCnpj(cnpj);
+    if (cnpjNormalizado.length !== 14) {
+      return res.status(400).json({ erro: "CNPJ inválido" });
+    }
+  }
+
   const { data, error } = await supabase
     .from("clientes")
-    .insert({ nome, cnpj })
+    .insert({ nome, cnpj: cnpjNormalizado })
     .select()
     .single();
 
   if (error) {
     // Código 23505 = violação de unique constraint — CNPJ duplicado
     if (error.code === "23505") {
-      console.log(`[clientes.controller] CNPJ já cadastrado: ${cnpj}`);
+      console.log(`[clientes.controller] CNPJ já cadastrado: ${cnpjNormalizado}`);
       return res.status(409).json({ erro: "CNPJ já cadastrado" });
     }
     console.error(
@@ -96,7 +147,17 @@ export async function atualizarCliente(req, res) {
   const { nome, cnpj, status } = req.body;
   const updates = {};
   if (nome !== undefined) updates.nome = nome;
-  if (cnpj !== undefined) updates.cnpj = cnpj;
+  if (cnpj !== undefined) {
+    if (cnpj === null || String(cnpj).trim() === "") {
+      updates.cnpj = null;
+    } else {
+      const digitos = normalizarCnpj(cnpj);
+      if (digitos.length !== 14) {
+        return res.status(400).json({ erro: "CNPJ inválido" });
+      }
+      updates.cnpj = digitos;
+    }
+  }
   if (status !== undefined) {
     if (!STATUSES_VALIDOS.includes(status)) {
       return res.status(400).json({ erro: "Status inválido. Use: ativo, inativo ou suspenso" });
