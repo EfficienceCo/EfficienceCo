@@ -1,0 +1,1 @@
+DROP POLICY "Leitura do Agente por token de licença" ON licencas;

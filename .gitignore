@@ -19,3 +19,6 @@ frontend/.env.test
 frontend/test-results/
 frontend/playwright-report/
 efficience-vault/
+*.pth
+datasets/
+dataset/
