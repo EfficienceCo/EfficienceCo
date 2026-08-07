@@ -1,0 +1,12 @@
+# Template de produção / distribuição.
+# Copie para config.yaml (ao lado do EfficienceLauncher.exe ou em %APPDATA%\Efficience\).
+# NÃO commite config.yaml — ele contém o token e fica no .gitignore.
+
+backend_url:
+licenca_token:
+
+# Path do worker PyInstaller (relativo ao launcher ou absoluto)
+agente_exe: ./efficience-agente.exe
+
+# Ao subir o launcher (ex.: login Windows), inicia o agente se a licença estiver ativa
+auto_start_agente: true
