@@ -13,7 +13,10 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from core.utils import validar_caminho
+
 NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
+_ASCII_DIGITS = "0123456789"
 
 
 def _find(pai: ET.Element, path: str) -> ET.Element | None:
@@ -32,10 +35,15 @@ def _inf_nfe(root: ET.Element) -> ET.Element:
     return inf
 
 
+def _somente_digitos(v: str) -> str:
+    """Extrai apenas dígitos ASCII 0-9 (não usa str.isdigit — evita Unicode)."""
+    return "".join(c for c in v if c in _ASCII_DIGITS)
+
+
 def _digitos(valor: str | None, campo: str) -> str:
     if not valor:
         raise ValueError(f"campo obrigatório ausente: {campo}")
-    so = "".join(c for c in valor if c.isdigit())
+    so = _somente_digitos(valor)
     if len(so) != 14:
         raise ValueError(f"{campo} inválido (esperado 14 dígitos): {valor!r}")
     return so
@@ -64,6 +72,8 @@ def _data_emissao(inf: ET.Element) -> date:
 
 def parsear_nfe(caminho_xml: str) -> dict:
     """Lê XML de NF-e SEFAZ e retorna campos relevantes tipados."""
+    validar_caminho(caminho_xml)
+
     path = Path(caminho_xml)
     if not path.is_file():
         raise ValueError(f"arquivo XML não encontrado: {caminho_xml}")
@@ -82,7 +92,7 @@ def parsear_nfe(caminho_xml: str) -> dict:
 
     id_attr = inf.get("Id") or ""
     chave = id_attr[3:] if id_attr.startswith("NFe") else id_attr
-    if len(chave) != 44 or not chave.isdigit():
+    if len(chave) != 44 or _somente_digitos(chave) != chave:
         raise ValueError(f"chave_nfe inválida no atributo Id: {id_attr!r}")
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
@@ -110,9 +120,9 @@ def identificar_tipo_operacao(
 
     Não usa ide/tpNF — entrada/saída é do ponto de vista do cliente Efficience.
     """
-    emit = "".join(c for c in cnpj_emitente if c.isdigit())
-    dest = "".join(c for c in cnpj_destinatario if c.isdigit())
-    cli = "".join(c for c in cnpj_cliente if c.isdigit())
+    emit = _somente_digitos(cnpj_emitente)
+    dest = _somente_digitos(cnpj_destinatario)
+    cli = _somente_digitos(cnpj_cliente)
 
     if not cli:
         raise ValueError("cnpj_cliente vazio")
