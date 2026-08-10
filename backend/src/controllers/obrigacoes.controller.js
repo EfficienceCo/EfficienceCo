@@ -1,6 +1,7 @@
 ﻿﻿import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { criar as criarNotificacao } from "../services/notificacoes.service.js";
+import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 
 function sanitizarNome(nome) {
   return nome
@@ -54,18 +55,7 @@ export async function listarObrigacoes(req, res) {
 
   if (status) query = query.eq("status", status);
 
-  if (mes && ano) {
-    const mesFormatado = String(mes).padStart(2, "0");
-    const inicioMes = `${ano}-${mesFormatado}-01`;
-    const fimMes = new Date(parseInt(ano), parseInt(mes), 0)
-      .toISOString()
-      .slice(0, 10);
-    query = query.gte("data_vencimento", inicioMes).lte("data_vencimento", fimMes);
-  } else if (ano) {
-    query = query
-      .gte("data_vencimento", `${ano}-01-01`)
-      .lte("data_vencimento", `${ano}-12-31`);
-  }
+  query = aplicarFiltroPeriodo(query, "data_vencimento", mes, ano);
 
   const { data, error } = await query;
 
