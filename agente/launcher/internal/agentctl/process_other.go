@@ -3,6 +3,7 @@
 package agentctl
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
@@ -17,9 +18,16 @@ func processAlive(pid int) bool {
 	if err != nil {
 		return false
 	}
-	// Signal 0 checks existence on Unix.
 	err = p.Signal(syscall.Signal(0))
 	return err == nil
+}
+
+func processImagePath(pid int) (string, error) {
+	path, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func terminateGraceful(pid int) error {

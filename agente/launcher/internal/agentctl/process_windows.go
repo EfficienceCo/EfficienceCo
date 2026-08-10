@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 func hideWindow(cmd *exec.Cmd) {
@@ -18,7 +20,7 @@ func hideWindow(cmd *exec.Cmd) {
 
 func processAlive(pid int) bool {
 	const (
-		stillActive                   = 259
+		stillActive                    = 259
 		processQueryLimitedInformation = 0x1000
 	)
 	h, err := syscall.OpenProcess(processQueryLimitedInformation, false, uint32(pid))
@@ -35,8 +37,25 @@ func processAlive(pid int) bool {
 	return code == stillActive
 }
 
+func processImagePath(pid int) (string, error) {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(h)
+
+	buf := make([]uint16, 32768)
+	size := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &size); err != nil {
+		return "", err
+	}
+	return windows.UTF16ToString(buf[:size]), nil
+}
+
 func terminateGraceful(pid int) error {
-	// Soft kill including process tree (covers cmd → python wrappers in dev).
+	// Soft taskkill often fails for CREATE_NO_WINDOW / console-less workers
+	// ("This process can only be terminated forcefully"). Callers must wait
+	// and then forceKill — do not treat this error as "skip wait".
 	cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd.Run()

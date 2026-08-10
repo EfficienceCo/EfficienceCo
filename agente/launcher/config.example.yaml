@@ -4,6 +4,8 @@
 
 backend_url:
 licenca_token:
+cliente_id:
+pasta_base:
 
 # Path do worker PyInstaller (relativo ao launcher ou absoluto)
 agente_exe: ./efficience-agente.exe

@@ -27,21 +27,30 @@ Token e URL do backend **nunca** vão no binário — só em `config.yaml`.
 
 `config.yaml` **não vai pro git** (contém token). O template versionado é `config.example.yaml`.
 
-| Ambiente | Arquivo | `backend_url` |
-|----------|---------|---------------|
+| Ambiente | Arquivo | Notas |
+|----------|---------|-------|
 | Dev | `config.yaml` (local, gitignored) | `http://localhost:3001` + `agente_exe: ./run-worker-dev.cmd` |
-| Prod | copiar de `config.example.yaml` | preencher URL + `./efficience-agente.exe` |
+| Prod | copiar de `config.example.yaml` | preencher URL, token, `cliente_id`, `pasta_base` + `./efficience-agente.exe` |
 
 ```powershell
 copy config.example.yaml config.yaml
-# edite backend_url e licenca_token
+# edite backend_url, licenca_token, cliente_id, pasta_base
 ```
 
 Coloque `config.yaml` **ao lado** do `EfficienceLauncher.exe`, ou em `%APPDATA%\Efficience\config.yaml`.
 
 Ordem de load: (1) ao lado do exe, (2) AppData.
 
-Ao iniciar o worker, o launcher injeta `API_URL` e `LICENSE_TOKEN` no processo filho a partir deste YAML (o worker Python lê essas env vars).
+Ao iniciar o worker, o launcher injeta no processo filho (a partir do YAML):
+
+| Env | Campo YAML | Uso no worker |
+|-----|------------|---------------|
+| `API_URL` | `backend_url` | HTTP client |
+| `LICENSE_TOKEN` | `licenca_token` | auth agente |
+| `CLIENTE_ID` | `cliente_id` | `GET /regras/{id}` — **obrigatório** |
+| `PASTA_BASE` | `pasta_base` | base de pastas (opcional) |
+
+Não dependa de um `.env` separado no pacote de produção: esses valores vêm do `config.yaml` do launcher.
 
 Logs legíveis: `%APPDATA%\Efficience\launcher.log`
 
@@ -68,7 +77,7 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-H windowsgui" -o EfficienceLaunche
 Efficience/
   EfficienceLauncher.exe
   efficience-agente.exe      # saída do PyInstaller do worker
-  config.yaml
+  config.yaml                # backend_url, licenca_token, cliente_id, pasta_base, agente_exe
 ```
 
 1. Build do worker: `cd agente/worker && bash build/build.sh` (ou PyInstaller equivalente no Windows).

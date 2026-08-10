@@ -14,6 +14,8 @@ const AppDirName = "Efficience"
 type Config struct {
 	BackendURL      string `yaml:"backend_url"`
 	LicencaToken    string `yaml:"licenca_token"`
+	ClienteID       string `yaml:"cliente_id"`
+	PastaBase       string `yaml:"pasta_base"`
 	AgenteExe       string `yaml:"agente_exe"`
 	AutoStartAgente *bool  `yaml:"auto_start_agente"`
 
@@ -107,6 +109,9 @@ func (c *Config) resolve() error {
 	}
 	if c.LicencaToken == "" {
 		return fmt.Errorf("licenca_token é obrigatório em %s", c.SourcePath)
+	}
+	if c.ClienteID == "" {
+		return fmt.Errorf("cliente_id é obrigatório em %s (worker usa GET /regras/{cliente_id})", c.SourcePath)
 	}
 	if c.AgenteExe == "" {
 		c.AgenteExe = "./efficience-agente.exe"
