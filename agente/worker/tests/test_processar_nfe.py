@@ -17,7 +17,7 @@ def test_parsear_nfe_entrada():
 
     assert dados["chave_nfe"] == "35260712345678000190550010000000011000000011"
     assert len(dados["chave_nfe"]) == 44
-    assert dados["chave_nfe"].isdigit()
+    assert dados["chave_nfe"].isascii() and dados["chave_nfe"].isdigit()
     assert dados["cnpj_emitente"] == "98765432000110"
     assert dados["cnpj_destinatario"] == CNPJ_CLIENTE
     assert dados["valor_total"] == Decimal("1500.00")
@@ -153,3 +153,34 @@ def test_cnpj_cliente_ausente_na_nota():
 def test_cnpj_cliente_vazio():
     with pytest.raises(ValueError, match="cnpj_cliente vazio"):
         identificar_tipo_operacao("98765432000110", "12345678000199", "abc")
+
+
+def test_caminho_fora_pasta_base(monkeypatch, tmp_path):
+    base = tmp_path / "cliente"
+    base.mkdir()
+    fora = tmp_path / "fora.xml"
+    fora.write_text("<a/>", encoding="utf-8")
+    monkeypatch.setenv("PASTA_BASE", str(base))
+    with pytest.raises(ValueError, match="PASTA_BASE"):
+        parsear_nfe(str(fora))
+
+
+def test_chave_com_digito_unicode_rejeitada(tmp_path):
+    # 43 ASCII + ² (isdigit True, mas não ASCII 0-9)
+    chave_ruim = "3" * 43 + "²"
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+      <infNFe Id="NFe{chave_ruim}" versao="4.00">
+        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <emit><CNPJ>98765432000110</CNPJ></emit>
+        <dest><CNPJ>12345678000199</CNPJ></dest>
+        <total><ICMSTot>
+          <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+        </ICMSTot></total>
+      </infNFe>
+    </NFe>
+    """
+    caminho = tmp_path / "unicode_id.xml"
+    caminho.write_text(xml, encoding="utf-8")
+    with pytest.raises(ValueError, match="chave_nfe inválida"):
+        parsear_nfe(str(caminho))
