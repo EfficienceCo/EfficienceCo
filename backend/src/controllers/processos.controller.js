@@ -124,10 +124,6 @@ export async function listarProcessos(req, res) {
   return res.status(200).json(resultado);
 }
 
-function sanitizarPastaBase(nome) {
-  return nome.trim().replace(/\s+/g, "_");
-}
-
 export async function criarProcesso(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -159,7 +155,8 @@ export async function criarProcesso(req, res) {
 }
 
 async function _criarAberturaEmpresa(req, res, clienteId) {
-  const { nome_empresa, socios, capital_social, endereco, objeto_social, cenario } = req.body;
+  const { nome_empresa, pasta_base, socios, capital_social, endereco, objeto_social, cenario } =
+    req.body;
 
   if (!nome_empresa) {
     return res.status(400).json({ erro: "nome_empresa é obrigatório para abertura_empresa" });
@@ -168,7 +165,10 @@ async function _criarAberturaEmpresa(req, res, clienteId) {
     return res.status(400).json({ erro: "cenario deve ser 'nova' ou 'cliente_existente'" });
   }
 
-  const pasta_base = sanitizarPastaBase(nome_empresa);
+  // pasta_base é a raiz absoluta onde a pasta da empresa será criada. Não dá pra
+  // derivar do nome da empresa (isso só gera o nome da subpasta, não uma raiz) —
+  // se o cliente não informar, o agente local resolve pela raiz configurada em
+  // PASTA_BASE (ver agente/worker/automacoes/abertura_empresa.py).
   const resultado = await criarProcessoComEtapas(clienteId, "abertura_empresa", {
     nome_empresa,
     pasta_base,

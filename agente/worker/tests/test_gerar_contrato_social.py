@@ -192,6 +192,17 @@ def test_pasta_base_slug_rejeitada():
     assert resultado["codigo"] == "pasta_base_invalida"
 
 
+def test_pasta_base_ausente_usa_raiz_local(tmp_path, monkeypatch):
+    """Regressão #311: sem pasta_base do backend, cai pra raiz local (PASTA_BASE)."""
+    monkeypatch.setenv("PASTA_BASE", str(tmp_path))
+    dados = _payload_base(pasta_base=None)
+    resultado = gerar_contrato_social(dados)
+
+    assert resultado["sucesso"] is True
+    esperado = tmp_path / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
+    assert Path(resultado["arquivo_gerado"]) == esperado
+
+
 def test_falha_io_gravacao(tmp_path):
     dados = _payload_base(pasta_base=str(tmp_path))
     with patch("docxtpl.DocxTemplate") as mock_cls:

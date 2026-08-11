@@ -10,13 +10,19 @@ from core.estrutura_pastas import criar_estrutura_empresa_em
 from core.utils import validar_nome
 
 
+def _resolver_pasta_base(pasta_base):
+    """pasta_base ausente -> cai pra raiz local (PASTA_BASE, injetada pelo launcher)."""
+    if not isinstance(pasta_base, str) or not pasta_base.strip():
+        pasta_base = os.getenv("PASTA_BASE", "")
+    return pasta_base.strip()
+
+
 def _criar_pastas(etapa):
-    pasta_base = etapa.get("pasta_base")
+    pasta_base = _resolver_pasta_base(etapa.get("pasta_base"))
     nome_empresa = etapa.get("nome_empresa")
 
-    if not isinstance(pasta_base, str) or not pasta_base.strip():
+    if not pasta_base:
         return {"sucesso": False, "erro": "pasta_base é obrigatória", "arquivo_gerado": None}
-    pasta_base = pasta_base.strip()
     if not os.path.isabs(pasta_base):
         return {
             "sucesso": False,

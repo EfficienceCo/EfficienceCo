@@ -194,6 +194,30 @@ describe("criarProcesso — abertura_empresa", () => {
       obterInsercao("etapas"),
       etapasEsperadas(PROCESSO_ID, ETAPAS_PADRAO.abertura_empresa),
     );
+    // Regressão #311: pasta_base não pode ser fabricada a partir de nome_empresa
+    // (isso gerava um nome de pasta, não uma raiz absoluta, e quebrava as automações).
+    assert.equal(obterInsercao("processos").pasta_base, null);
+    assert.equal(res.body.pasta_base, null);
+  });
+
+  it("repassa pasta_base absoluta quando informada explicitamente", async () => {
+    const req = {
+      usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
+      query: {},
+      body: {
+        tipo: "abertura_empresa",
+        nome_empresa: "Empresa Com Raiz",
+        cenario: "nova",
+        pasta_base: "C:\\Clientes\\Empresa Com Raiz",
+      },
+    };
+    const res = criarResposta();
+
+    await criarProcesso(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(obterInsercao("processos").pasta_base, "C:\\Clientes\\Empresa Com Raiz");
+    assert.equal(res.body.pasta_base, "C:\\Clientes\\Empresa Com Raiz");
   });
 
   it("preserva o checklist reduzido do cliente existente e automatiza a criação das pastas", async () => {

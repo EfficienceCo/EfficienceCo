@@ -57,8 +57,11 @@ def _validar_dados(dados):
 
     pasta_base = dados.get("pasta_base")
     if not isinstance(pasta_base, str) or not pasta_base.strip():
-        return "pasta_base é obrigatória", "pasta_base_ausente"
+        # pasta_base ausente -> cai pra raiz local (PASTA_BASE, injetada pelo launcher)
+        pasta_base = os.getenv("PASTA_BASE", "")
     pasta_base = pasta_base.strip()
+    if not pasta_base:
+        return "pasta_base é obrigatória", "pasta_base_ausente"
     if not os.path.isabs(pasta_base):
         return "pasta_base deve ser um caminho absoluto", "pasta_base_invalida"
 
