@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
 import { listarClientes } from '../../../services/clientes.service';
-import { listarLancamentos } from '../../../services/fiscal.service';
+import { buscarResumoFiscal, listarLancamentos } from '../../../services/fiscal.service';
 
 const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
 
@@ -179,6 +179,21 @@ function Spinner() {
   );
 }
 
+function CardResumo({ titulo, valor, isLoading }) {
+  return (
+    <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{titulo}</p>
+      {isLoading ? (
+        <div className="mt-3 h-8 w-24 animate-pulse rounded bg-zinc-100" />
+      ) : (
+        <p className="mt-2 text-3xl font-semibold leading-none tracking-tight text-zinc-900">
+          {valor}
+        </p>
+      )}
+    </article>
+  );
+}
+
 export default function FiscalPage() {
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -196,6 +211,10 @@ export default function FiscalPage() {
   const [lancamentos, setLancamentos] = useState([]);
   const [isLoadingLancamentos, setIsLoadingLancamentos] = useState(true);
   const [erroLista, setErroLista] = useState('');
+
+  const [resumo, setResumo] = useState(null);
+  const [isLoadingResumo, setIsLoadingResumo] = useState(true);
+  const [erroResumo, setErroResumo] = useState('');
 
   const anosDisponiveis = useMemo(obterAnosDisponiveis, []);
 
@@ -223,22 +242,57 @@ export default function FiscalPage() {
     }
   }, []);
 
-  const carregarLancamentos = useCallback(async () => {
+  const requisicaoIdRef = useRef(0);
+
+  const carregarDados = useCallback(async () => {
+    const idRequisicao = (requisicaoIdRef.current += 1);
+
     setIsLoadingLancamentos(true);
     setErroLista('');
+    setIsLoadingResumo(true);
+    setErroResumo('');
 
     try {
-      const data = await listarLancamentos({
+      const parametros = {
         clienteId: isAdminEfficience ? clienteId : undefined,
         mes: filtroMes,
         ano: filtroAno,
-      });
-      setLancamentos(normalizarLancamentos(data));
-    } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Não foi possível carregar os lançamentos fiscais.'));
-      setLancamentos([]);
+      };
+
+      const [resultadoLancamentos, resultadoResumo] = await Promise.allSettled([
+        listarLancamentos(parametros),
+        buscarResumoFiscal(parametros),
+      ]);
+
+      if (idRequisicao !== requisicaoIdRef.current) {
+        return;
+      }
+
+      if (resultadoLancamentos.status === 'fulfilled') {
+        setLancamentos(normalizarLancamentos(resultadoLancamentos.value));
+      } else {
+        setErroLista(
+          obterMensagemErro(
+            resultadoLancamentos.reason,
+            'Não foi possível carregar os lançamentos fiscais.',
+          ),
+        );
+        setLancamentos([]);
+      }
+
+      if (resultadoResumo.status === 'fulfilled') {
+        setResumo(resultadoResumo.value);
+      } else {
+        setErroResumo(
+          obterMensagemErro(resultadoResumo.reason, 'Não foi possível carregar o resumo fiscal.'),
+        );
+        setResumo(null);
+      }
     } finally {
-      setIsLoadingLancamentos(false);
+      if (idRequisicao === requisicaoIdRef.current) {
+        setIsLoadingLancamentos(false);
+        setIsLoadingResumo(false);
+      }
     }
   }, [clienteId, filtroAno, filtroMes, isAdminEfficience]);
 
@@ -260,14 +314,18 @@ export default function FiscalPage() {
     }
 
     if (isAdminEfficience && !clienteId) {
+      requisicaoIdRef.current += 1;
       setLancamentos([]);
       setIsLoadingLancamentos(false);
       setErroLista('');
+      setResumo(null);
+      setIsLoadingResumo(false);
+      setErroResumo('');
       return;
     }
 
-    carregarLancamentos();
-  }, [carregarLancamentos, clienteId, isAdminEfficience, isAuthenticated, isLoading]);
+    carregarDados();
+  }, [carregarDados, clienteId, isAdminEfficience, isAuthenticated, isLoading]);
 
   if (isLoading) {
     return <p>Carregando...</p>;
@@ -291,13 +349,47 @@ export default function FiscalPage() {
 
         <button
           type="button"
-          onClick={carregarLancamentos}
+          onClick={carregarDados}
           disabled={isLoadingLancamentos || aguardandoSelecaoCliente}
           className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isLoadingLancamentos ? 'Atualizando...' : 'Atualizar lista'}
         </button>
       </header>
+
+      {!aguardandoSelecaoCliente && erroResumo ? (
+        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+          <p className="text-sm font-medium text-rose-800">{erroResumo}</p>
+        </section>
+      ) : null}
+
+      {!aguardandoSelecaoCliente && !erroResumo ? (
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <CardResumo
+            titulo="Total de NFes processadas"
+            valor={resumo?.total_nfe ?? 0}
+            isLoading={isLoadingResumo}
+          />
+          <CardResumo
+            titulo="Valor total"
+            valor={formatarValor(resumo?.valor_total ?? 0)}
+            isLoading={isLoadingResumo}
+          />
+          <CardResumo
+            titulo="ICMS total"
+            valor={formatarValor(resumo?.icms ?? 0)}
+            isLoading={isLoadingResumo}
+          />
+          <CardResumo
+            titulo="PIS + COFINS total"
+            valor={formatarValor((resumo?.pis ?? 0) + (resumo?.cofins ?? 0))}
+            isLoading={isLoadingResumo}
+          />
+          {!isLoadingResumo && Number(resumo?.ipi) > 0 ? (
+            <CardResumo titulo="IPI total" valor={formatarValor(resumo.ipi)} isLoading={false} />
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Filtros</p>
