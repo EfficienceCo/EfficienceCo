@@ -1,0 +1,1 @@
+ALTER TABLE licencas ADD CONSTRAINT licencas_cliente_id_unique UNIQUE (cliente_id);
