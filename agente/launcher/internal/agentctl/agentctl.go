@@ -109,6 +109,11 @@ func (c *Controller) Start() error {
 	}
 
 	startedPID := cmd.Process.Pid
+	// TECH-DEBT: race teórica — se o processo morrer em <1ms e um novo Start()
+	// gravar outro PID no lockfile antes deste Wait retornar, a checagem
+	// pid == startedPID evita apagar o lock do novo processo, mas a janela
+	// entre Wait e o Lock ainda existe. Evoluir para geração/token no lockfile
+	// se virarmos protocolo B ou vermos flapping em produção.
 	go func() {
 		_ = cmd.Wait()
 		c.mu.Lock()

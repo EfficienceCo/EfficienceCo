@@ -18,7 +18,7 @@ Token e URL do backend **nunca** vão no binário — só em `config.yaml`.
 
 ## Pré-requisitos
 
-- Go 1.22+ (testado com Go 1.26)
+- Go 1.25+ (módulo pede 1.25 por `golang.org/x/sys`; testado com Go 1.26)
 - Windows (alvo de produção). Build cross a partir de Linux/macOS é possível.
 - Tray: [`fyne.io/systray`](https://fyne.io/systray) (sem CGO no Windows)
 - Worker PyInstaller: veja [`../worker/build/build.sh`](../worker/build/build.sh)
@@ -103,7 +103,7 @@ Após reboot: o launcher sobe, valida a licença e, se ativa, inicia o agente.
 - Agente: Ativado / Desativado (processo vivo local — não usa heartbeat HTTP)
 - Inicializar agente (bloqueado se licença ≠ Ativa ou já online)
 - Encerrar agente
-- Buscar atualizações (stub)
+- Buscar atualizações (em breve) — item desabilitado até o auto-update real
 - Sair
 
 ## Testes

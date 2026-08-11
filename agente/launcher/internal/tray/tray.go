@@ -53,7 +53,8 @@ func (a *App) onReady() {
 	a.mIniciar = systray.AddMenuItem("Inicializar agente", "Inicia o worker local")
 	a.mEncerrar = systray.AddMenuItem("Encerrar agente", "Encerra o worker local")
 	systray.AddSeparator()
-	a.mAtualizar = systray.AddMenuItem("Buscar atualizações (em breve)", "Auto-update ainda não disponível")
+	a.mAtualizar = systray.AddMenuItem("Buscar atualizações (em breve)", "Em breve — auto-update ainda não disponível")
+	a.mAtualizar.Disable()
 	systray.AddSeparator()
 	a.mSair = systray.AddMenuItem("Sair", "Fecha o launcher (o agente continua rodando se estiver online)")
 
@@ -93,7 +94,7 @@ func (a *App) handleClicks() {
 		case <-a.mEncerrar.ClickedCh:
 			a.tryStop()
 		case <-a.mAtualizar.ClickedCh:
-			logx.Info("buscar atualizações: stub — download real em follow-up")
+			// Item is Disabled(); drain channel if a click still arrives.
 		case <-a.mSair.ClickedCh:
 			systray.Quit()
 			return
