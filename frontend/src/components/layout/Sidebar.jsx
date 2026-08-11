@@ -29,6 +29,11 @@ const NAV_ITEMS = [
     activePrefix: '/dashboard/folha',
   },
   {
+    href: '/dashboard/fiscal',
+    label: 'Fiscal',
+    icon: FiscalIcon,
+  },
+  {
     href: '/dashboard/logs',
     label: 'Logs',
     icon: LogsIcon,
@@ -220,6 +225,17 @@ function FolhaIcon() {
       <path d="M9.5 11h5" />
       <path d="M9.5 14h5" />
       <path d="M9.5 17h3" />
+    </IconBase>
+  );
+}
+
+function FiscalIcon() {
+  return (
+    <IconBase>
+      <path d="M6 3.5h9l3 3v13.5H6z" />
+      <path d="M15 3.5V7h3" />
+      <path d="M9 12.5h6" />
+      <path d="M9 16h6" />
     </IconBase>
   );
 }
