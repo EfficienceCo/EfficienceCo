@@ -8,6 +8,10 @@ CACHE_PATH = Path.home() / ".config" / "efficience" / "regras.json"
 CACHE_TTL_HORAS = 24
 INTERVALO_POLLING_SEGUNDOS = 30
 
+# Inbox de XMLs sob a base do escritório (já injetada pelo launcher).
+# TODO(João): se precisarmos de path configurável, expor pasta_nfe no backend.
+PASTA_NFE_RELATIVA = "NFe"
+
 def _cache_existe():
     return os.path.exists(CACHE_PATH)
 
@@ -127,3 +131,21 @@ def gerenciar_configuracoes():
             print("[configuracao] API indisponível — usando cache antigo")
             return _normalizar_regras(_ler_cache()["regras"])
         raise
+
+
+def obter_pasta_nfe():
+    """Pasta de entrada de XMLs de NF-e: {PASTA_BASE}/NFe.
+
+    PASTA_BASE vem do launcher/config do escritório. O CNPJ da empresa atendida
+    NÃO fica aqui — resolve-se via GET /clientes/por-cnpj a partir do XML.
+    """
+    pasta_base = (client.PASTA_BASE or "").strip()
+    if not pasta_base:
+        return None
+    return str(Path(pasta_base) / PASTA_NFE_RELATIVA)
+
+
+def obter_pasta_base():
+    """Raiz de pastas do escritório (empresas em subpastas por nome)."""
+    pasta_base = (client.PASTA_BASE or "").strip()
+    return pasta_base or None
