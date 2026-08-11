@@ -40,6 +40,19 @@ def _polling_etapas():
             print(f"[agendador] Erro no polling de etapas: {e}")
         time.sleep(INTERVALO_POLLING_ETAPAS_SEGUNDOS)
 
+def _monitorar_nfe():
+    from automacoes.processar_nfe import processar_pasta_nfe
+    from core.configuracao import obter_pasta_nfe
+
+    while True:
+        try:
+            pasta = obter_pasta_nfe()
+            if pasta:
+                processar_pasta_nfe(pasta)
+        except Exception as e:
+            print(f"[agendador] Erro no monitor NFe: {e}")
+        time.sleep(INTERVALO_POLLING_SEGUNDOS)
+
 def _agendar_tarefas_diarias():
     def _gerar_relatorio_seguro():
         try:
@@ -84,6 +97,7 @@ def iniciar_agendador():
     threading.Thread(target=_revalidar_licenca, daemon=True).start()
     threading.Thread(target=_polling_regras, daemon=True).start()
     threading.Thread(target=_polling_etapas, daemon=True).start()
+    threading.Thread(target=_monitorar_nfe, daemon=True).start()
     threading.Thread(target=_loop_schedule, daemon=True).start()
     threading.Thread(target=_retry_fila, daemon=True).start()
 
