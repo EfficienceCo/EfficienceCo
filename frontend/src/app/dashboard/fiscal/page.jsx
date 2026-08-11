@@ -288,6 +288,13 @@ export default function FiscalPage() {
         );
         setResumo(null);
       }
+    } catch (error) {
+      if (idRequisicao === requisicaoIdRef.current) {
+        setErroLista(obterMensagemErro(error, 'Não foi possível carregar os lançamentos fiscais.'));
+        setErroResumo(obterMensagemErro(error, 'Não foi possível carregar o resumo fiscal.'));
+        setLancamentos([]);
+        setResumo(null);
+      }
     } finally {
       if (idRequisicao === requisicaoIdRef.current) {
         setIsLoadingLancamentos(false);
