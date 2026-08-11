@@ -603,6 +603,7 @@ const TIPOS_PADRAO = [
   'fiscal',
   'contabil',
   'trabalhista',
+  'abertura_empresa'
 ];
 
 function Spinner() {
