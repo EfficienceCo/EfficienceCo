@@ -1,0 +1,1 @@
+ALTER TABLE obrigacoes ADD COLUMN IF NOT EXISTS comprovante_path TEXT;

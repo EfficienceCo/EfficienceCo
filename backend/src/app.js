@@ -15,6 +15,7 @@ import obrigacoesRoutes from "./routes/obrigacoes.routes.js";
 import processosRoutes from "./routes/processos.routes.js";
 import notificacoesRoutes from "./routes/notificacoes.routes.js";
 import folhaRoutes from "./routes/folha.routes.js";
+import lancamentosFiscaisRoutes from "./routes/lancamentos-fiscais.routes.js";
 
 console.log("[app.js] Criando instancia do app...");
 const app = express();
@@ -71,6 +72,9 @@ console.log("[app.js] Rota /notificacoes registrada");
 
 app.use("/folha", folhaRoutes);
 console.log("[app.js] Rota /folha registrada");
+
+app.use("/lancamentos-fiscais", lancamentosFiscaisRoutes);
+console.log("[app.js] Rota /lancamentos-fiscais registrada");
 
 console.log("[app.js] Exportando app...");
 export default app;

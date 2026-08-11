@@ -12,6 +12,7 @@ build/
 .next/
 .claude/
 CLAUDE.md
+_CLAUDE.md
 .postman/
 postman/
 frontend/.env.local
@@ -23,3 +24,7 @@ efficience-vault/
 # Launcher: config local com token (template versionado: config.example.yaml)
 agente/launcher/config.yaml
 agente/launcher/*.exe
+
+*.pth
+datasets/
+dataset/
