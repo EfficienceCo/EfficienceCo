@@ -25,12 +25,13 @@ function arredondar(valor) {
   return Math.round(valor * 100) / 100;
 }
 
-// GET /lancamentos-fiscais e /lancamentos-fiscais/resumo usam clienteId (camelCase) —
-// payload do POST (enviado pelo agente) espelha as colunas da tabela em snake_case,
-// já a query string dos endpoints consumidos pelo dashboard segue o padrão do frontend.
+// GET /lancamentos-fiscais e /lancamentos-fiscais/resumo aceitam tanto clienteId
+// (camelCase, usado pelo fiscal.service.js do frontend) quanto cliente_id
+// (snake_case, convenção do resto da API — obrigacoes/folha/permissao.middleware)
+// pra não quebrar silenciosamente um caller que seguir o padrão predominante.
 function resolverClienteIdQuery(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
-    return req.query.clienteId;
+    return req.query.clienteId || req.query.cliente_id;
   }
   return req.usuario?.cliente_id;
 }
