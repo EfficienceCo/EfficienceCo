@@ -12,6 +12,7 @@ build/
 .next/
 .claude/
 CLAUDE.md
+_CLAUDE.md
 .postman/
 postman/
 frontend/.env.local
