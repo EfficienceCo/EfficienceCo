@@ -1,0 +1,9 @@
+# Build artifacts
+*.exe
+
+# Local config with secrets (template: config.example.yaml)
+config.yaml
+
+# IDE / OS
+.DS_Store
+Thumbs.db

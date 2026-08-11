@@ -20,6 +20,11 @@ frontend/.env.test
 frontend/test-results/
 frontend/playwright-report/
 efficience-vault/
+
+# Launcher: config local com token (template versionado: config.example.yaml)
+agente/launcher/config.yaml
+agente/launcher/*.exe
+
 *.pth
 datasets/
 dataset/
