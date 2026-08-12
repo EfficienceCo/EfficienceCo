@@ -15,14 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Garante que o módulo está no path (conftest.py adiciona a raiz do agente,
-# mas o classificador fica em subpacote que importa torch no nível de módulo)
 REDE_DIR = Path(__file__).resolve().parent.parent / "automacoes" / "rede"
-
-# ---------------------------------------------------------------------------
-# Importação lazy — torch e torchvision são pesados e podem não estar
-# instalados em CI. Os testes que dependem deles são pulados automaticamente.
-# ---------------------------------------------------------------------------
 
 try:
     import torch  # noqa: F401
@@ -34,8 +27,7 @@ except ImportError:
 try:
     import pandas as pd
     import matplotlib
-    matplotlib.use("Agg")  # sem display em CI
-    import matplotlib.pyplot as plt
+    matplotlib.use("Agg")
     from PIL import Image
     PANDAS_OK = True
 except ImportError:
@@ -47,10 +39,6 @@ try:
 except ImportError:
     OPENPYXL_OK = False
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def criar_excel_em_memoria(linhas=5, colunas=3):
     """Cria um arquivo .xlsx em memória com dados fictícios e retorna o path."""
@@ -69,14 +57,10 @@ def criar_excel_em_memoria(linhas=5, colunas=3):
     return tmp.name
 
 
-# ---------------------------------------------------------------------------
-# excel_para_imagem_pil
-# ---------------------------------------------------------------------------
-
 @pytest.mark.skipif(not (PANDAS_OK and OPENPYXL_OK), reason="pandas/openpyxl/matplotlib não instalados")
 class TestExcelParaImagemPil:
     def setup_method(self):
-        sys.path.insert(0, str(REDE_DIR.parent.parent))  # raiz do agente
+        sys.path.insert(0, str(REDE_DIR.parent.parent))
         from automacoes.rede.classificador import excel_para_imagem_pil
         self.excel_para_imagem_pil = excel_para_imagem_pil
 
@@ -121,21 +105,16 @@ class TestExcelParaImagemPil:
             os.unlink(excel_path)
 
     def test_buffer_fechado_antes_de_retornar_imagem(self, tmp_path):
-        """A imagem PIL deve ser legível após plt.close — BytesIO ainda válido."""
+        """A imagem PIL deve ser legível após fig.savefig — BytesIO ainda válido."""
         from PIL import Image as PILImage
         excel_path = criar_excel_em_memoria()
         try:
             img = self.excel_para_imagem_pil(excel_path)
-            # Acessar um pixel prova que o buffer interno não foi liberado prematuramente
             pixel = img.getpixel((0, 0))
             assert isinstance(pixel, tuple)
         finally:
             os.unlink(excel_path)
 
-
-# ---------------------------------------------------------------------------
-# classificar_documento — ramos de extensão (sem modelo de ML real)
-# ---------------------------------------------------------------------------
 
 @pytest.mark.skipif(not TORCH_OK, reason="torch/torchvision não instalados")
 class TestClassificarDocumentoExtensao:
@@ -157,18 +136,19 @@ class TestClassificarDocumentoExtensao:
         assert "não existe" in resultado["erro"].lower() or "model" in resultado["erro"].lower()
 
     def test_extensao_nao_suportada_retorna_erro(self, tmp_path):
-        """Arquivos .txt ou .docx devem retornar erro de extensão não suportada."""
+        """Extensões não suportadas (.txt) devem retornar erro de extensão."""
         f = tmp_path / "notas.txt"
         f.write_text("conteúdo qualquer", encoding="utf-8")
+        # Cria .pth fake para ultrapassar a guarda de modelo-ausente
+        modelo_path = tmp_path / "modelo.pth"
+        modelo_path.write_bytes(b"fake")
 
         resultado = self.classificar_documento(
-            str(f), model_path=str(tmp_path / "modelo.pth")
+            str(f), model_path=str(modelo_path)
         )
 
         assert "erro" in resultado
-        # O erro de modelo-ausente vem antes do erro de extensão;
-        # o importante é que a função não crasha
-        assert isinstance(resultado["erro"], str)
+        assert "extensão" in resultado["erro"].lower() or "suportad" in resultado["erro"].lower()
 
     @pytest.mark.skipif(not (PANDAS_OK and OPENPYXL_OK), reason="pandas/openpyxl necessários para o ramo Excel")
     def test_excel_sem_modelo_retorna_erro_de_modelo(self, tmp_path):
@@ -182,13 +162,11 @@ class TestClassificarDocumentoExtensao:
             os.unlink(excel_path)
 
         assert "erro" in resultado
-        # O erro deve ser sobre modelo, não sobre extensão
         assert "extensão" not in resultado["erro"].lower()
 
     def test_imagem_png_sem_modelo_retorna_erro_de_modelo(self, tmp_path):
         """O ramo PNG é alcançado mas falha por modelo ausente."""
         f = tmp_path / "scan.png"
-        # PNG mínimo válido (1x1 pixel branco)
         import struct
         import zlib
         def mini_png():
@@ -211,26 +189,24 @@ class TestClassificarDocumentoExtensao:
         assert "erro" in resultado
         assert "extensão" not in resultado["erro"].lower()
 
-    def test_pdf_vazio_retorna_erro(self, tmp_path):
-        """PDF de 0 páginas deve retornar erro sem crashar."""
+    def test_pdf_vazio_retorna_erro_especifico(self, tmp_path):
+        """PDF de 0 páginas deve retornar erro de PDF vazio (não erro de modelo)."""
         f = tmp_path / "vazio.pdf"
         f.write_bytes(b"%PDF-1.4")
+        modelo_path = tmp_path / "modelo.pth"
+        modelo_path.write_bytes(b"fake")
 
         mock_doc = MagicMock()
         mock_doc.__len__ = lambda s: 0
 
-        # Neste caso o erro de modelo vem antes do PDF ser lido,
-        # mas se o modelo existisse, o PDF vazio seria capturado.
-        # Testamos aqui que model_path ausente → erro limpo.
-        resultado = self.classificar_documento(
-            str(f), model_path=str(tmp_path / "inexistente.pth")
-        )
+        with patch("pypdfium2.PdfDocument", return_value=mock_doc):
+            resultado = self.classificar_documento(
+                str(f), model_path=str(modelo_path)
+            )
+
         assert "erro" in resultado
+        assert "vazio" in resultado["erro"].lower()
 
-
-# ---------------------------------------------------------------------------
-# classificar_documento — inferência com modelo mockado
-# ---------------------------------------------------------------------------
 
 @pytest.mark.skipif(not TORCH_OK, reason="torch/torchvision não instalados")
 class TestClassificarDocumentoInferencia:
@@ -240,7 +216,6 @@ class TestClassificarDocumentoInferencia:
         sys.path.insert(0, str(REDE_DIR.parent.parent))
 
     def _mock_model(self, logits):
-        """Cria um mock de modelo que retorna logits fixos."""
         import torch
         model = MagicMock()
         model.eval = MagicMock(return_value=None)
@@ -258,7 +233,6 @@ class TestClassificarDocumentoInferencia:
         modelo_path = tmp_path / "modelo.pth"
         modelo_path.write_bytes(b"fake")
 
-        # Logits que resultam em ~99% para 'holerite' (índice 3)
         logits = [0.0, 0.0, 0.0, 10.0]
 
         mock_imagem = MagicMock()
@@ -286,7 +260,7 @@ class TestClassificarDocumentoInferencia:
         assert resultado["confianca"] > 90
 
     def test_baixa_confianca_retorna_nao_classificado(self, tmp_path):
-        """Quando a confiança fica abaixo do threshold, classe é 'nao_classificado'."""
+        """Quando a confiança fica abaixo do threshold, classe é 'nao_identificado'."""
         from automacoes.rede.classificador import classificar_documento
         import torch
 
@@ -295,7 +269,6 @@ class TestClassificarDocumentoInferencia:
         modelo_path = tmp_path / "modelo.pth"
         modelo_path.write_bytes(b"fake")
 
-        # Logits uniformes → softmax ~25% para cada classe → abaixo do threshold 75%
         logits = [1.0, 1.0, 1.0, 1.0]
 
         mock_imagem = MagicMock()
