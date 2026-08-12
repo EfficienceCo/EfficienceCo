@@ -324,3 +324,247 @@ export async function criarConciliacao(req, res) {
     sem_par: totalSemPar,
   });
 }
+
+// Busca a conciliação por id e garante que pertence ao cliente autenticado.
+// Retorna { conciliacao } em caso de sucesso, ou { erro: { status, body } }
+// pronto para ser respondido diretamente pelo controller chamador.
+async function buscarConciliacaoDoCliente(id, clienteId) {
+  const { data: conciliacao, error } = await supabase
+    .from("conciliacoes")
+    .select("id, cliente_id, status, total_conciliadas, total_pendentes")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[conciliacoes.controller] Erro ao buscar conciliação:", error.message);
+    return { erro: { status: 500, body: { erro: "Erro ao buscar conciliação" } } };
+  }
+
+  // Não vaza a existência de conciliações de outros clientes: 404 tanto para
+  // "não existe" quanto para "existe mas é de outro cliente".
+  if (!conciliacao || conciliacao.cliente_id !== clienteId) {
+    return { erro: { status: 404, body: { erro: "Conciliação não encontrada" } } };
+  }
+
+  return { conciliacao };
+}
+
+async function buscarParDaConciliacao(pareId, conciliacaoId) {
+  const { data: par, error } = await supabase
+    .from("pares_conciliacao")
+    .select("id, conciliacao_id, transacao_id, lancamento_id, confianca, confirmado_em")
+    .eq("id", pareId)
+    .eq("conciliacao_id", conciliacaoId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[conciliacoes.controller] Erro ao buscar par de conciliação:", error.message);
+    return { erro: { status: 500, body: { erro: "Erro ao buscar par de conciliação" } } };
+  }
+
+  if (!par) {
+    return { erro: { status: 404, body: { erro: "Par de conciliação não encontrado" } } };
+  }
+
+  return { par };
+}
+
+export async function confirmarPar(req, res) {
+  const clienteId = resolverClienteId(req);
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const { id, pareId } = req.params;
+
+  const { conciliacao, erro: erroConciliacao } = await buscarConciliacaoDoCliente(id, clienteId);
+  if (erroConciliacao) {
+    return res.status(erroConciliacao.status).json(erroConciliacao.body);
+  }
+
+  const { par, erro: erroPar } = await buscarParDaConciliacao(pareId, id);
+  if (erroPar) {
+    return res.status(erroPar.status).json(erroPar.body);
+  }
+
+  if (par.confianca !== "provavel" || par.confirmado_em) {
+    return res.status(409).json({ erro: "Par não está disponível para confirmação" });
+  }
+
+  const { error: erroUpdatePar } = await supabase
+    .from("pares_conciliacao")
+    .update({ confirmado_por: req.usuario.id, confirmado_em: new Date().toISOString() })
+    .eq("id", pareId);
+
+  if (erroUpdatePar) {
+    console.error("[conciliacoes.controller] Erro ao confirmar par:", erroUpdatePar.message);
+    return res.status(500).json({ erro: "Erro ao confirmar par de conciliação" });
+  }
+
+  // Re-busca os totais o mais perto possível do update para reduzir a janela
+  // de corrida do incremento (não há suporte a update atômico/transação neste client).
+  const { data: conciliacaoAtual, error: erroConciliacaoAtual } = await supabase
+    .from("conciliacoes")
+    .select("total_conciliadas, total_pendentes")
+    .eq("id", id)
+    .maybeSingle();
+
+  const erroUpdateConciliacao =
+    erroConciliacaoAtual ??
+    (
+      await supabase
+        .from("conciliacoes")
+        .update({
+          total_conciliadas: conciliacaoAtual.total_conciliadas + 1,
+          total_pendentes: conciliacaoAtual.total_pendentes - 1,
+        })
+        .eq("id", id)
+    ).error;
+
+  if (erroUpdateConciliacao) {
+    console.error(
+      "[conciliacoes.controller] Erro ao atualizar totais da conciliação:",
+      erroUpdateConciliacao.message,
+    );
+    // Desfaz a confirmação do par para permitir uma nova tentativa consistente
+    // (senão o par ficaria marcado como confirmado sem os totais refletirem isso).
+    await supabase
+      .from("pares_conciliacao")
+      .update({ confirmado_por: null, confirmado_em: null })
+      .eq("id", pareId);
+    return res.status(500).json({ erro: "Erro ao atualizar totais da conciliação" });
+  }
+
+  return res.status(200).json({
+    id: pareId,
+    confianca: par.confianca,
+    confirmado_por: req.usuario.id,
+  });
+}
+
+export async function rejeitarPar(req, res) {
+  const clienteId = resolverClienteId(req);
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const { id, pareId } = req.params;
+
+  const { erro: erroConciliacao } = await buscarConciliacaoDoCliente(id, clienteId);
+  if (erroConciliacao) {
+    return res.status(erroConciliacao.status).json(erroConciliacao.body);
+  }
+
+  const { par, erro: erroPar } = await buscarParDaConciliacao(pareId, id);
+  if (erroPar) {
+    return res.status(erroPar.status).json(erroPar.body);
+  }
+
+  if (par.confianca !== "provavel" || par.confirmado_em) {
+    return res.status(409).json({ erro: "Par não está disponível para rejeição" });
+  }
+
+  const { error: erroUpdatePar } = await supabase
+    .from("pares_conciliacao")
+    .update({ lancamento_id: null, confianca: "sem_par" })
+    .eq("id", pareId);
+
+  if (erroUpdatePar) {
+    console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroUpdatePar.message);
+    return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
+  }
+
+  return res.status(200).json({ id: pareId, confianca: "sem_par" });
+}
+
+export async function concluirConciliacao(req, res) {
+  const clienteId = resolverClienteId(req);
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const { id } = req.params;
+
+  const { conciliacao, erro: erroConciliacao } = await buscarConciliacaoDoCliente(id, clienteId);
+  if (erroConciliacao) {
+    return res.status(erroConciliacao.status).json(erroConciliacao.body);
+  }
+
+  if (conciliacao.status !== "em_andamento") {
+    return res.status(409).json({ erro: "Conciliação já foi concluída" });
+  }
+
+  const { data: pares, error: erroPares } = await supabase
+    .from("pares_conciliacao")
+    .select("transacao_id, lancamento_id, confianca, confirmado_em")
+    .eq("conciliacao_id", id);
+
+  if (erroPares) {
+    console.error("[conciliacoes.controller] Erro ao buscar pares da conciliação:", erroPares.message);
+    return res.status(500).json({ erro: "Erro ao buscar pares da conciliação" });
+  }
+
+  const paresTodos = pares ?? [];
+
+  const paresPendentes = paresTodos.filter((par) => par.confianca === "provavel" && !par.confirmado_em);
+  if (paresPendentes.length > 0) {
+    return res.status(409).json({ erro: "Há pares prováveis pendentes de decisão" });
+  }
+
+  // "Conciliados" = automáticos ou prováveis já confirmados. Pares 'sem_par'
+  // (rejeitados ou nunca casados) ficam de fora e não têm flag atualizada.
+  const paresConciliados = paresTodos.filter(
+    (par) => par.confianca === "automatico" || (par.confianca === "provavel" && par.confirmado_em),
+  );
+  const transacaoIds = paresConciliados.map((par) => par.transacao_id).filter(Boolean);
+  const lancamentoIds = paresConciliados.map((par) => par.lancamento_id).filter(Boolean);
+
+  // As flags de conciliado são marcadas antes do status da conciliação: se
+  // alguma falhar, a conciliação permanece 'em_andamento' e o POST /concluir
+  // pode ser chamado de novo com segurança (marcar conciliado=true de novo é idempotente).
+  if (transacaoIds.length > 0) {
+    const { error: erroTransacoes } = await supabase
+      .from("transacoes_extrato")
+      .update({ conciliado: true })
+      .in("id", transacaoIds);
+
+    if (erroTransacoes) {
+      console.error(
+        "[conciliacoes.controller] Erro ao marcar transações como conciliadas:",
+        erroTransacoes.message,
+      );
+      return res.status(500).json({ erro: "Erro ao marcar transações como conciliadas" });
+    }
+  }
+
+  if (lancamentoIds.length > 0) {
+    const { error: erroLancamentos } = await supabase
+      .from("lancamentos_contabeis")
+      .update({ conciliado: true })
+      .in("id", lancamentoIds);
+
+    if (erroLancamentos) {
+      console.error(
+        "[conciliacoes.controller] Erro ao marcar lançamentos como conciliados:",
+        erroLancamentos.message,
+      );
+      return res.status(500).json({ erro: "Erro ao marcar lançamentos como conciliados" });
+    }
+  }
+
+  const { error: erroUpdateConciliacao } = await supabase
+    .from("conciliacoes")
+    .update({ status: "concluida", concluida_em: new Date().toISOString() })
+    .eq("id", id);
+
+  if (erroUpdateConciliacao) {
+    console.error("[conciliacoes.controller] Erro ao concluir conciliação:", erroUpdateConciliacao.message);
+    return res.status(500).json({ erro: "Erro ao concluir conciliação" });
+  }
+
+  return res.status(200).json({
+    conciliacao_id: id,
+    status: "concluida",
+    total_conciliadas: paresConciliados.length,
+  });
+}
