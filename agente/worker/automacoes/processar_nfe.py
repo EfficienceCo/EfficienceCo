@@ -197,6 +197,8 @@ def _destino_nfe(pasta_base: str, nome_empresa: str, data_emissao: date, nome_ar
     """Pasta canônica Notas Fiscais/{YYYY-MM} via estrutura_pastas."""
     validar_nome(nome_empresa)
     pasta_empresa = str(Path(pasta_base) / nome_empresa)
+    # Cria estrutura antes do POST; criação de pastas é idempotente, então um
+    # POST que falhe depois não deixa rastros problemáticos.
     criar_estrutura_empresa_em(pasta_empresa)
     mes = f"{data_emissao.year:04d}-{data_emissao.month:02d}"
     destino_dir = resolver_destino("nota_fiscal", nome_empresa, pasta_base, mes=mes)
@@ -324,7 +326,6 @@ def processar_pasta_nfe(pasta: str) -> None:
             _mover_nao_identificado(xml_path, pasta_path, str(e))
             continue
 
-        destinos: list[Path] = []
         alvos: list[tuple[dict, Path]] = []
         nomes_invalidos = []
         for empresa in empresas:
@@ -335,7 +336,6 @@ def processar_pasta_nfe(pasta: str) -> None:
             except ValueError as e:
                 nomes_invalidos.append(f"{empresa['nome']!r}: {e}")
                 continue
-            destinos.append(destino)
             alvos.append((empresa, destino))
 
         if not alvos:
@@ -346,10 +346,14 @@ def processar_pasta_nfe(pasta: str) -> None:
             )
             continue
 
+        # Resolve os caminhos finais antes do POST para garantir que arquivo_xml
+        # no banco aponta para onde o arquivo vai parar de fato.
+        caminhos_reais = [_caminho_livre(d) for _, d in alvos]
+
         falhou_post = False
-        for empresa, destino in alvos:
+        for (empresa, _destino), caminho_real in zip(alvos, caminhos_reais):
             try:
-                payload = _payload_lancamento(dados, empresa["tipo"], str(destino))
+                payload = _payload_lancamento(dados, empresa["tipo"], str(caminho_real))
                 resultado = _postar_lancamento(payload)
                 print(
                     f"[processar_nfe] {resultado} {empresa['tipo']} "
@@ -363,7 +367,7 @@ def processar_pasta_nfe(pasta: str) -> None:
             continue
 
         try:
-            arquivados = _arquivar_nas_empresas(xml_path, destinos)
+            arquivados = _arquivar_nas_empresas(xml_path, caminhos_reais)
             for caminho in arquivados:
                 print(f"[processar_nfe] arquivado → {caminho}")
         except Exception as e:

@@ -40,6 +40,7 @@ def _polling_etapas():
             print(f"[agendador] Erro no polling de etapas: {e}")
         time.sleep(INTERVALO_POLLING_ETAPAS_SEGUNDOS)
 
+
 def _monitorar_nfe():
     from automacoes.processar_nfe import processar_pasta_nfe
     from core.configuracao import obter_pasta_nfe
@@ -52,6 +53,7 @@ def _monitorar_nfe():
         except Exception as e:
             print(f"[agendador] Erro no monitor NFe: {e}")
         time.sleep(INTERVALO_POLLING_SEGUNDOS)
+
 
 def _agendar_tarefas_diarias():
     def _gerar_relatorio_seguro():
