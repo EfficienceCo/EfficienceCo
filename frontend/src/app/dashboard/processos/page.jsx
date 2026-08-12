@@ -245,8 +245,6 @@ function criarFormularioContratoSocial(etapa, processo = {}) {
 
 function montarPayloadContratoSocial(formulario) {
   return {
-    nome_empresa: formulario.nome_empresa.trim(),
-    cenario: formulario.cenario ? formulario.cenario.trim() : 'nova',
     socios: formulario.socios.map((socio) => ({
       nome: socio.nome.trim(),
       cpf: socio.cpf.trim(),
@@ -259,10 +257,6 @@ function montarPayloadContratoSocial(formulario) {
 }
 
 function validarFormularioContratoSocial(formulario) {
-  if (!formulario?.nome_empresa?.trim()) {
-    return 'Informe o nome da empresa.';
-  }
-
   if (!Array.isArray(formulario?.socios) || formulario.socios.length === 0) {
     return 'Adicione pelo menos um sócio.';
   }
@@ -634,35 +628,7 @@ function FormularioContratoSocial({
 }) {
   return (
     <fieldset disabled={disabled} className="space-y-5 disabled:opacity-70">
-      <legend className="sr-only">Dados da empresa e contrato social</legend>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <label htmlFor={`${idBase}-nome-empresa`} className="space-y-1.5 block">
-          <span className="block text-xs font-medium text-zinc-700">Nome da empresa</span>
-          <input
-            id={`${idBase}-nome-empresa`}
-            type="text"
-            value={formulario.nome_empresa || ''}
-            onChange={(event) => onAlterarCampo('nome_empresa', event.target.value)}
-            placeholder="Ex: Minha Empresa LTDA"
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
-            required
-          />
-        </label>
-
-        <label htmlFor={`${idBase}-cenario`} className="space-y-1.5 block">
-          <span className="block text-xs font-medium text-zinc-700">Cenário</span>
-          <select
-            id={`${idBase}-cenario`}
-            value={formulario.cenario || 'nova'}
-            onChange={(event) => onAlterarCampo('cenario', event.target.value)}
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
-          >
-            <option value="nova">Nova</option>
-            <option value="cliente_existente">Cliente existente</option>
-          </select>
-        </label>
-      </div>
+      <legend className="sr-only">Dados do contrato social</legend>
 
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1119,6 +1085,10 @@ export default function ProcessosPage() {
     let payloadCriacao = { tipo: novoTipoProcesso };
 
     if (novoTipoProcesso === 'abertura_empresa') {
+      if (!novoFormularioAbertura.nome_empresa?.trim()) {
+        setErroNovoProcesso('Informe o nome da empresa.');
+        return;
+      }
       const mensagemValidacao = validarFormularioContratoSocial(novoFormularioAbertura);
       if (mensagemValidacao) {
         setErroNovoProcesso(mensagemValidacao);
@@ -1126,6 +1096,8 @@ export default function ProcessosPage() {
       }
       payloadCriacao = {
         ...payloadCriacao,
+        nome_empresa: novoFormularioAbertura.nome_empresa.trim(),
+        cenario: novoFormularioAbertura.cenario?.trim() || 'nova',
         ...montarPayloadContratoSocial(novoFormularioAbertura),
       };
     }
@@ -1778,7 +1750,47 @@ export default function ProcessosPage() {
               </label>
 
               {novoTipoProcesso === 'abertura_empresa' ? (
-                <div className="border-t border-zinc-100 pt-4">
+                <div className="space-y-4 border-t border-zinc-100 pt-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label htmlFor="modal-novo-processo-nome-empresa" className="space-y-1.5 block">
+                      <span className="block text-xs font-medium text-zinc-700">Nome da empresa</span>
+                      <input
+                        id="modal-novo-processo-nome-empresa"
+                        type="text"
+                        value={novoFormularioAbertura.nome_empresa || ''}
+                        onChange={(event) =>
+                          setNovoFormularioAbertura((prev) => ({
+                            ...prev,
+                            nome_empresa: event.target.value,
+                          }))
+                        }
+                        placeholder="Ex: Minha Empresa LTDA"
+                        disabled={isCriandoProcesso}
+                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                        required
+                      />
+                    </label>
+
+                    <label htmlFor="modal-novo-processo-cenario" className="space-y-1.5 block">
+                      <span className="block text-xs font-medium text-zinc-700">Cenário</span>
+                      <select
+                        id="modal-novo-processo-cenario"
+                        value={novoFormularioAbertura.cenario || 'nova'}
+                        onChange={(event) =>
+                          setNovoFormularioAbertura((prev) => ({
+                            ...prev,
+                            cenario: event.target.value,
+                          }))
+                        }
+                        disabled={isCriandoProcesso}
+                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <option value="nova">Nova</option>
+                        <option value="cliente_existente">Cliente existente</option>
+                      </select>
+                    </label>
+                  </div>
+
                   <FormularioContratoSocial
                     idBase="modal-novo-processo"
                     formulario={novoFormularioAbertura}
