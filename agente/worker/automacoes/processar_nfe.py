@@ -17,7 +17,8 @@ import comunicacao.api_client as client
 from comunicacao.api_client import ApiError
 from comunicacao.buscar_empresa import buscar_empresa_por_cnpj
 from core.configuracao import obter_pasta_base, obter_pasta_nfe
-from core.utils import validar_caminho
+from core.estrutura_pastas import criar_estrutura_empresa_em, resolver_destino
+from core.utils import validar_caminho, validar_nome
 
 NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
 _ASCII_DIGITS = "0123456789"
@@ -143,26 +144,42 @@ def identificar_tipo_operacao(
     )
 
 
-def resolver_empresa_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> dict:
-    """Descobre a empresa atendida consultando o backend (GET /clientes/por-cnpj).
+def resolver_empresas_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> list[dict]:
+    """Empresas do escritório presentes na nota (GET /clientes/por-cnpj).
 
-    Prioriza destinatário (entrada). Retorna {cnpj, nome, tipo} ou levanta ValueError.
+    Destinatário cadastrado → entrada; emitente cadastrado → saida.
+    Se os dois forem clientes (e CNPJs distintos), retorna os dois lançamentos.
+    Se emitente == destinatário, só entrada (mesma regra de identificar_tipo_operacao).
     """
     emit = _somente_digitos(cnpj_emitente)
     dest = _somente_digitos(cnpj_destinatario)
 
+    empresas: list[dict] = []
+
     nome_dest = buscar_empresa_por_cnpj(dest)
     if nome_dest:
-        return {"cnpj": dest, "nome": nome_dest, "tipo": "entrada"}
+        empresas.append({"cnpj": dest, "nome": nome_dest.strip(), "tipo": "entrada"})
 
-    nome_emit = buscar_empresa_por_cnpj(emit)
-    if nome_emit:
-        return {"cnpj": emit, "nome": nome_emit, "tipo": "saida"}
+    if emit != dest:
+        nome_emit = buscar_empresa_por_cnpj(emit)
+        if nome_emit:
+            empresas.append({"cnpj": emit, "nome": nome_emit.strip(), "tipo": "saida"})
+    elif not empresas:
+        nome_emit = buscar_empresa_por_cnpj(emit)
+        if nome_emit:
+            empresas.append({"cnpj": emit, "nome": nome_emit.strip(), "tipo": "entrada"})
 
-    raise ValueError(
-        f"nenhuma empresa cadastrada é emitente nem destinatário "
-        f"(emit={emit}, dest={dest})"
-    )
+    if not empresas:
+        raise ValueError(
+            f"nenhuma empresa cadastrada é emitente nem destinatário "
+            f"(emit={emit}, dest={dest})"
+        )
+    return empresas
+
+
+def resolver_empresa_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> dict:
+    """Compat: primeira empresa resolvida (destinatário tem prioridade)."""
+    return resolver_empresas_nfe(cnpj_emitente, cnpj_destinatario)[0]
 
 
 def _listar_xmls(pasta: Path) -> list[Path]:
@@ -176,29 +193,55 @@ def _listar_xmls(pasta: Path) -> list[Path]:
     )
 
 
-def _destino_fiscal(pasta_empresa: str, data_emissao: date, nome_arquivo: str) -> Path:
-    destino_dir = (
-        Path(pasta_empresa) / "Fiscal" / f"{data_emissao.year:04d}" / f"{data_emissao.month:02d}"
-    )
-    return destino_dir / nome_arquivo
+def _destino_nfe(pasta_base: str, nome_empresa: str, data_emissao: date, nome_arquivo: str) -> Path:
+    """Pasta canônica Notas Fiscais/{YYYY-MM} via estrutura_pastas."""
+    validar_nome(nome_empresa)
+    pasta_empresa = str(Path(pasta_base) / nome_empresa)
+    criar_estrutura_empresa_em(pasta_empresa)
+    mes = f"{data_emissao.year:04d}-{data_emissao.month:02d}"
+    destino_dir = resolver_destino("nota_fiscal", nome_empresa, pasta_base, mes=mes)
+    if not destino_dir:
+        raise ValueError(f"destino Notas Fiscais não resolvido para {nome_empresa!r}")
+    return Path(destino_dir) / nome_arquivo
+
+
+def _caminho_livre(destino: Path) -> Path:
+    if not destino.exists():
+        return destino
+    stem, suffix = destino.stem, destino.suffix
+    n = 1
+    while True:
+        candidato = destino.parent / f"{stem}_{n}{suffix}"
+        if not candidato.exists():
+            return candidato
+        n += 1
+
+
+def _copiar_xml(origem: Path, destino: Path) -> Path:
+    validar_caminho(str(origem))
+    validar_caminho(str(destino))
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    final = _caminho_livre(destino)
+    shutil.copy2(str(origem), str(final))
+    return final
 
 
 def _mover_xml(origem: Path, destino: Path) -> Path:
     validar_caminho(str(origem))
     validar_caminho(str(destino))
     destino.parent.mkdir(parents=True, exist_ok=True)
-    final = destino
-    if final.exists():
-        stem, suffix = final.stem, final.suffix
-        n = 1
-        while True:
-            candidato = final.parent / f"{stem}_{n}{suffix}"
-            if not candidato.exists():
-                final = candidato
-                break
-            n += 1
+    final = _caminho_livre(destino)
     shutil.move(str(origem), str(final))
     return final
+
+
+def _arquivar_nas_empresas(origem: Path, destinos: list[Path]) -> list[Path]:
+    """Copia para todos os destinos e remove o original (move no último)."""
+    arquivados: list[Path] = []
+    for destino in destinos[:-1]:
+        arquivados.append(_copiar_xml(origem, destino))
+    arquivados.append(_mover_xml(origem, destinos[-1]))
+    return arquivados
 
 
 def _payload_lancamento(dados: dict, tipo: str, caminho_destino: str) -> dict:
@@ -238,8 +281,18 @@ def _postar_lancamento(payload: dict) -> str:
         raise
 
 
+def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> None:
+    nome = xml_path.name
+    destino_nao = pasta_path / PASTA_NAO_IDENTIFICADO / nome
+    try:
+        movido = _mover_xml(xml_path, destino_nao)
+        print(f"[processar_nfe] não identificado ({nome}): {motivo} → {movido}")
+    except Exception as move_err:
+        print(f"[processar_nfe] falha ao mover {nome} para nao_identificado/: {move_err}")
+
+
 def processar_pasta_nfe(pasta: str) -> None:
-    """Processa cada .xml na pasta (não recursivo): parse → empresa → POST → mover."""
+    """Processa cada .xml na pasta (não recursivo): parse → empresas → POST → mover."""
     pasta_base = obter_pasta_base()
     if not pasta_base:
         print("[processar_nfe] PASTA_BASE ausente — pulando varredura")
@@ -263,40 +316,58 @@ def processar_pasta_nfe(pasta: str) -> None:
             continue
 
         try:
-            empresa = resolver_empresa_nfe(
+            empresas = resolver_empresas_nfe(
                 dados["cnpj_emitente"],
                 dados["cnpj_destinatario"],
             )
         except ValueError as e:
-            destino_nao = pasta_path / PASTA_NAO_IDENTIFICADO / nome
+            _mover_nao_identificado(xml_path, pasta_path, str(e))
+            continue
+
+        destinos: list[Path] = []
+        alvos: list[tuple[dict, Path]] = []
+        nomes_invalidos = []
+        for empresa in empresas:
             try:
-                movido = _mover_xml(xml_path, destino_nao)
-                print(f"[processar_nfe] não identificado ({nome}): {e} → {movido}")
-            except Exception as move_err:
-                print(f"[processar_nfe] falha ao mover {nome} para nao_identificado/: {move_err}")
+                destino = _destino_nfe(
+                    pasta_base, empresa["nome"], dados["data_emissao"], nome
+                )
+            except ValueError as e:
+                nomes_invalidos.append(f"{empresa['nome']!r}: {e}")
+                continue
+            destinos.append(destino)
+            alvos.append((empresa, destino))
+
+        if not alvos:
+            _mover_nao_identificado(
+                xml_path,
+                pasta_path,
+                "nome de empresa inválido (" + "; ".join(nomes_invalidos) + ")",
+            )
             continue
 
-        tipo = empresa["tipo"]
-        pasta_empresa = str(Path(pasta_base) / empresa["nome"])
-        destino = _destino_fiscal(pasta_empresa, dados["data_emissao"], nome)
-        payload = _payload_lancamento(dados, tipo, str(destino))
+        falhou_post = False
+        for empresa, destino in alvos:
+            try:
+                payload = _payload_lancamento(dados, empresa["tipo"], str(destino))
+                resultado = _postar_lancamento(payload)
+                print(
+                    f"[processar_nfe] {resultado} {empresa['tipo']} "
+                    f"{empresa['nome']} {dados['chave_nfe']}"
+                )
+            except Exception as e:
+                print(f"[processar_nfe] falha no POST ({nome}, {empresa['nome']}): {e}")
+                falhou_post = True
 
-        try:
-            resultado = _postar_lancamento(payload)
-        except Exception as e:
-            print(f"[processar_nfe] falha no POST ({nome}): {e}")
+        if falhou_post:
             continue
 
         try:
-            movido = _mover_xml(xml_path, destino)
-            print(
-                f"[processar_nfe] {resultado} {tipo} {empresa['nome']} "
-                f"{dados['chave_nfe']} → {movido}"
-            )
+            arquivados = _arquivar_nas_empresas(xml_path, destinos)
+            for caminho in arquivados:
+                print(f"[processar_nfe] arquivado → {caminho}")
         except Exception as e:
-            print(
-                f"[processar_nfe] POST {resultado} ok, mas falha ao arquivar {nome}: {e}"
-            )
+            print(f"[processar_nfe] POST ok, mas falha ao arquivar {nome}: {e}")
 
 
 if __name__ == "__main__":

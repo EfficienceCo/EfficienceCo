@@ -8,13 +8,14 @@ import pytest
 
 from comunicacao.api_client import ApiError
 from automacoes.processar_nfe import processar_pasta_nfe
+from core.estrutura_pastas import SUBPASTAS
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
 CNPJ_CLIENTE = "12345678000199"
 CNPJ_FORNECEDOR = "98765432000110"
-CNPJ_OUTRO = "11222333000181"
 CLIENTE_ID = "11111111-1111-1111-1111-111111111111"
 NOME_EMPRESA = "Padaria do João"
+NOME_FORNECEDOR = "Mercado Central"
 
 
 @pytest.fixture
@@ -45,6 +46,19 @@ def _lookup_padaria(cnpj):
     return None
 
 
+def _lookup_ambas(cnpj):
+    digitos = "".join(c for c in str(cnpj) if c.isdigit())
+    if digitos == CNPJ_CLIENTE:
+        return NOME_EMPRESA
+    if digitos == CNPJ_FORNECEDOR:
+        return NOME_FORNECEDOR
+    return None
+
+
+def _arquivo_nfe(base: Path, empresa: str, nome: str) -> Path:
+    return base / empresa / "Notas Fiscais" / "2026-07" / nome
+
+
 def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
     inbox, base = pasta_nfe
     _copiar_fixture("entrada.xml", inbox)
@@ -64,11 +78,13 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
     assert payload["valor_total"] == "1500.00"
     assert payload["data_emissao"] == "2026-07-15"
     assert NOME_EMPRESA in payload["arquivo_xml"]
-    assert "Fiscal" in payload["arquivo_xml"]
+    assert "Notas Fiscais" in payload["arquivo_xml"]
 
     assert not (inbox / "entrada.xml").exists()
-    arquivado = base / NOME_EMPRESA / "Fiscal" / "2026" / "07" / "entrada.xml"
+    arquivado = _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml")
     assert arquivado.is_file()
+    for sub in SUBPASTAS:
+        assert (base / NOME_EMPRESA / sub).is_dir()
 
 
 def test_processar_pasta_saida(pasta_nfe):
@@ -83,7 +99,26 @@ def test_processar_pasta_saida(pasta_nfe):
         processar_pasta_nfe(str(inbox))
 
     assert mock_post.call_args.args[1]["tipo"] == "saida"
-    assert (base / NOME_EMPRESA / "Fiscal" / "2026" / "07" / "saida.xml").is_file()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "saida.xml").is_file()
+
+
+def test_intra_escritorio_posta_entrada_e_saida(pasta_nfe):
+    inbox, base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_ambas),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        mock_post.return_value = MagicMock()
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 2
+    tipos = [c.args[1]["tipo"] for c in mock_post.call_args_list]
+    assert tipos == ["entrada", "saida"]
+    assert not (inbox / "entrada.xml").exists()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").is_file()
+    assert _arquivo_nfe(base, NOME_FORNECEDOR, "entrada.xml").is_file()
 
 
 def test_nao_identificado_move_sem_post(pasta_nfe):
@@ -101,6 +136,23 @@ def test_nao_identificado_move_sem_post(pasta_nfe):
     assert (inbox / "nao_identificado" / "entrada.xml").is_file()
 
 
+def test_nome_empresa_invalido_nao_posta(pasta_nfe):
+    inbox, _base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch(
+            "automacoes.processar_nfe.buscar_empresa_por_cnpj",
+            return_value="Padaria/../outro",
+        ),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+
+    mock_post.assert_not_called()
+    assert (inbox / "nao_identificado" / "entrada.xml").is_file()
+
+
 def test_duplicata_409_ainda_move(pasta_nfe):
     inbox, base = pasta_nfe
     _copiar_fixture("entrada.xml", inbox)
@@ -115,7 +167,7 @@ def test_duplicata_409_ainda_move(pasta_nfe):
         processar_pasta_nfe(str(inbox))
 
     assert not (inbox / "entrada.xml").exists()
-    assert (base / NOME_EMPRESA / "Fiscal" / "2026" / "07" / "entrada.xml").is_file()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").is_file()
 
 
 def test_xml_invalido_permanece_na_inbox(pasta_nfe):
@@ -144,7 +196,25 @@ def test_erro_api_nao_move(pasta_nfe):
         processar_pasta_nfe(str(inbox))
 
     assert (inbox / "entrada.xml").is_file()
-    assert not (base / NOME_EMPRESA).exists()
+    assert not _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").exists()
+
+
+def test_cliente_id_ausente_nao_trava_scan(pasta_nfe, monkeypatch):
+    inbox, _base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+    _copiar_fixture("saida.xml", inbox)
+    monkeypatch.setattr("comunicacao.api_client.CLIENTE_ID", "")
+    monkeypatch.delenv("CLIENTE_ID", raising=False)
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+
+    mock_post.assert_not_called()
+    assert (inbox / "entrada.xml").is_file()
+    assert (inbox / "saida.xml").is_file()
 
 
 def test_sem_pasta_base_nao_processa(pasta_nfe, monkeypatch):
