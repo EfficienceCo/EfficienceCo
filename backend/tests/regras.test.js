@@ -5,7 +5,6 @@ import supabase from "../src/config/database.js";
 import {
   criarRegra,
   atualizarRegra,
-  deletarRegra,
   listarRegras,
   buscarRegras,
   buscarVersaoRegras,
@@ -48,11 +47,8 @@ function queue(tabela, metodo, resultado) {
   filas.get(k).push(resultado);
 }
 
-const chamadasRpc = [];
-supabase.rpc = async function (nome, params) {
-  chamadasRpc.push({ nome, params });
-  return { data: null, error: null };
-};
+const chamadasInsert = [];
+const chamadasUpdate = [];
 
 supabase.from = function (tabela) {
   const consumir = (metodo, fallback = { data: null, error: null }) => {
@@ -63,16 +59,24 @@ supabase.from = function (tabela) {
   };
 
   const builder = {
-    insert() {
+    insert(payload) {
+      chamadasInsert.push({ tabela, payload });
       return builder;
     },
-    update() {
+    update(payload) {
+      chamadasUpdate.push({ tabela, payload });
       return builder;
     },
     select() {
       return builder;
     },
     eq() {
+      return builder;
+    },
+    order() {
+      return builder;
+    },
+    limit() {
       return builder;
     },
     delete() {
@@ -98,8 +102,17 @@ function tokenLicencaValido(clienteId = CLIENTE_A) {
 describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
   beforeEach(() => {
     filas.clear();
-    chamadasRpc.length = 0;
+    chamadasInsert.length = 0;
+    chamadasUpdate.length = 0;
   });
+
+  function queueProximaVersao(versaoAtual) {
+    if (versaoAtual === null) {
+      queue("regras", "single", { data: null, error: { code: "PGRST116" } });
+    } else {
+      queue("regras", "single", { data: { versao: versaoAtual }, error: null });
+    }
+  }
 
   function reqAdmin(body, overrides = {}) {
     return {
@@ -113,6 +126,7 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
 
   it("criarRegra: aceita condicao como objeto e persiste sem stringify", async () => {
     const condicao = { extensao: "pdf", in_name: "FOLHA", tipo: "holerite" };
+    queueProximaVersao(null);
     queue("regras", "single", {
       data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao },
       error: null,
@@ -135,6 +149,7 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
 
   it("criarRegra: faz parse de condicao enviada como string JSON válida", async () => {
     const condicao = { extensao: "pdf" };
+    queueProximaVersao(null);
     queue("regras", "single", {
       data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao },
       error: null,
@@ -167,6 +182,7 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
   });
 
   it("criarRegra: aceita renomear sem pasta_destino", async () => {
+    queueProximaVersao(null);
     queue("regras", "single", {
       data: {
         id: REGRA_ID,
@@ -217,10 +233,11 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.match(res.body.erro, /condicao/);
   });
 
-  it("criarRegra: incrementa a versão de regras do cliente após criar (#286)", async () => {
+  it("criarRegra: grava versao = MAX(versao) atual do cliente + 1 (#286)", async () => {
     const condicao = {};
+    queueProximaVersao(4);
     queue("regras", "single", {
-      data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao },
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao, versao: 5 },
       error: null,
     });
 
@@ -236,9 +253,9 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     );
 
     assert.equal(res.statusCode, 201);
-    assert.deepEqual(chamadasRpc, [
-      { nome: "incrementar_versao_regras", params: { p_cliente_id: CLIENTE_A } },
-    ]);
+    assert.equal(chamadasInsert.length, 1);
+    assert.equal(chamadasInsert[0].tabela, "regras");
+    assert.equal(chamadasInsert[0].payload.versao, 5);
   });
 
   it("criarRegra: 400 quando cliente_id não é resolvido", async () => {
@@ -267,6 +284,7 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
       },
       error: null,
     });
+    queueProximaVersao(1);
     queue("regras", "single", {
       data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao },
       error: null,
@@ -282,7 +300,7 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.deepEqual(res.body.condicao, condicao);
   });
 
-  it("atualizarRegra: incrementa a versão de regras do cliente após atualizar (#286)", async () => {
+  it("atualizarRegra: grava versao = MAX(versao) atual do cliente + 1 (#286)", async () => {
     const condicao = { in_name: "CONTRATO" };
     queue("regras", "single", {
       data: {
@@ -295,8 +313,9 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
       },
       error: null,
     });
+    queueProximaVersao(2);
     queue("regras", "single", {
-      data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao },
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao, versao: 3 },
       error: null,
     });
 
@@ -307,9 +326,9 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     );
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(chamadasRpc, [
-      { nome: "incrementar_versao_regras", params: { p_cliente_id: CLIENTE_A } },
-    ]);
+    assert.equal(chamadasUpdate.length, 1);
+    assert.equal(chamadasUpdate[0].tabela, "regras");
+    assert.equal(chamadasUpdate[0].payload.versao, 3);
   });
 
   it("atualizarRegra: rejeita condicao como string JSON inválida sem chamar update", async () => {
@@ -359,25 +378,9 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.equal(res.statusCode, 404);
   });
 
-  it("deletarRegra: incrementa a versão de regras do cliente dono da regra removida (#286)", async () => {
-    queue("regras", "single", {
-      data: { id: REGRA_ID, cliente_id: CLIENTE_A },
-      error: null,
-    });
-    queue("regras", "await", { error: null });
-
-    const res = criarRes();
-    await deletarRegra(reqAdmin(undefined, { params: { id: REGRA_ID } }), res);
-
-    assert.equal(res.statusCode, 204);
-    assert.deepEqual(chamadasRpc, [
-      { nome: "incrementar_versao_regras", params: { p_cliente_id: CLIENTE_A } },
-    ]);
-  });
-
-  it("buscarVersaoRegras (rota do agente): lê versao_regras de clientes pelo cliente do token", async () => {
+  it("buscarVersaoRegras (rota do agente): lê MAX(versao) das regras do cliente do token", async () => {
     tokenLicencaValido(CLIENTE_A);
-    queue("clientes", "single", { data: { versao_regras: 3 }, error: null });
+    queue("regras", "single", { data: { versao: 3 }, error: null });
 
     const res = criarRes();
     await buscarVersaoRegras(
