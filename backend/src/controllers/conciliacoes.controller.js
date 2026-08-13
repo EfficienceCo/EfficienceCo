@@ -403,17 +403,27 @@ export async function buscarConciliacao(req, res) {
     return res.status(erroConciliacao.status).json(erroConciliacao.body);
   }
 
-  const { data: pares, error: erroPares } = await supabase
-    .from("pares_conciliacao")
-    .select("id, transacao_id, lancamento_id, confianca, confirmado_por, confirmado_em")
-    .eq("conciliacao_id", id);
+  const [paresResultado, extratoResultado] = await Promise.all([
+    supabase
+      .from("pares_conciliacao")
+      .select("id, transacao_id, lancamento_id, confianca, confirmado_por, confirmado_em")
+      .eq("conciliacao_id", id),
+    conciliacao.extrato_id
+      ? supabase.from("extratos_bancarios").select("banco, conta").eq("id", conciliacao.extrato_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
 
-  if (erroPares) {
-    console.error("[conciliacoes.controller] Erro ao buscar pares da conciliação:", erroPares.message);
+  if (paresResultado.error) {
+    console.error("[conciliacoes.controller] Erro ao buscar pares da conciliação:", paresResultado.error.message);
     return res.status(500).json({ erro: "Erro ao buscar pares da conciliação" });
   }
 
-  const paresTodos = pares ?? [];
+  if (extratoResultado.error) {
+    console.error("[conciliacoes.controller] Erro ao buscar extrato da conciliação:", extratoResultado.error.message);
+    return res.status(500).json({ erro: "Erro ao buscar extrato da conciliação" });
+  }
+
+  const paresTodos = paresResultado.data ?? [];
   const transacaoIds = [...new Set(paresTodos.map((par) => par.transacao_id).filter(Boolean))];
   const lancamentoIds = [...new Set(paresTodos.map((par) => par.lancamento_id).filter(Boolean))];
 
@@ -460,6 +470,11 @@ export async function buscarConciliacao(req, res) {
   return res.status(200).json({
     id: conciliacao.id,
     status: conciliacao.status,
+    mes: conciliacao.mes,
+    ano: conciliacao.ano,
+    extrato: extratoResultado.data
+      ? { banco: extratoResultado.data.banco, conta: extratoResultado.data.conta }
+      : null,
     total_transacoes: conciliacao.total_transacoes,
     total_conciliadas: conciliacao.total_conciliadas,
     total_pendentes: conciliacao.total_pendentes,

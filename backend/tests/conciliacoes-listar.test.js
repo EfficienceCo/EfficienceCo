@@ -224,6 +224,45 @@ describe("GET /conciliacoes/:id", () => {
     assert.equal(semParLancamentoSemTransacao.lancamento.id, "l4");
   });
 
+  it("200: inclui mes, ano e extrato (banco/conta) quando a conciliação tem extrato_id", async () => {
+    queueConciliacaoValida({ mes: 8, ano: 2026, extrato_id: "extrato-1" });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("extratos_bancarios", "maybeSingle", {
+      data: { banco: "Itaú", conta: "1234" },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.mes, 8);
+    assert.equal(res.body.ano, 2026);
+    assert.deepEqual(res.body.extrato, { banco: "Itaú", conta: "1234" });
+  });
+
+  it("200: extrato null quando a conciliação não tem extrato_id", async () => {
+    queueConciliacaoValida();
+    queue("pares_conciliacao", "await", { data: [], error: null });
+
+    const res = criarResposta();
+    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.extrato, null);
+  });
+
+  it("500 quando falha a busca do extrato", async () => {
+    queueConciliacaoValida({ extrato_id: "extrato-1" });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("extratos_bancarios", "maybeSingle", { data: null, error: { message: "falha" } });
+
+    const res = criarResposta();
+    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 500);
+  });
+
   it("200: sem pares não consulta transações nem lançamentos", async () => {
     queueConciliacaoValida();
     queue("pares_conciliacao", "await", { data: [], error: null });

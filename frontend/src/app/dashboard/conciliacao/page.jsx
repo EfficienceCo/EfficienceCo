@@ -538,7 +538,9 @@ export default function ConciliacaoPage() {
         ano: filtroAno,
       });
 
-      router.push(`/dashboard/conciliacao/${resultado.conciliacao_id}`);
+      router.push(
+        `/dashboard/conciliacao/${resultado.conciliacao_id}?clienteId=${encodeURIComponent(clienteIdEfetivo)}`,
+      );
     } catch (error) {
       setErroIniciar(obterMensagemErro(error, 'Não foi possível iniciar a conciliação.'));
       setIsIniciandoConciliacao(false);
@@ -886,7 +888,7 @@ export default function ConciliacaoPage() {
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right">
                               <Link
-                                href={`/dashboard/conciliacao/${sessao?.id}`}
+                                href={`/dashboard/conciliacao/${sessao?.id}?clienteId=${encodeURIComponent(clienteIdEfetivo)}`}
                                 className="text-sm font-medium text-sky-700 hover:underline"
                               >
                                 Ver detalhes

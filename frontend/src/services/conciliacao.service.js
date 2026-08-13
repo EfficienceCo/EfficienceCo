@@ -87,30 +87,46 @@ export async function listarConciliacoes({ clienteId, mes, ano } = {}) {
   return response.data;
 }
 
-export async function buscarConciliacao(id) {
-  const response = await api.get(`/conciliacoes/${id}`);
+// clienteId é opcional e só precisa ser informado por admin_efficience — para os
+// demais perfis, resolverClienteId (backend) já resolve via o token, e o parâmetro
+// extra é ignorado. Ver limparParams: omitido do payload quando undefined.
+export async function buscarConciliacao(id, { clienteId } = {}) {
+  const response = await api.get(`/conciliacoes/${id}`, {
+    params: limparParams({ cliente_id: clienteId }),
+  });
   return response.data;
 }
 
-export async function confirmarPar(conciliacaoId, pareId) {
-  const response = await api.patch(`/conciliacoes/${conciliacaoId}/pares/${pareId}/confirmar`);
+export async function confirmarPar(conciliacaoId, pareId, { clienteId } = {}) {
+  const response = await api.patch(
+    `/conciliacoes/${conciliacaoId}/pares/${pareId}/confirmar`,
+    undefined,
+    { params: limparParams({ cliente_id: clienteId }) },
+  );
   return response.data;
 }
 
-export async function rejeitarPar(conciliacaoId, pareId) {
-  const response = await api.patch(`/conciliacoes/${conciliacaoId}/pares/${pareId}/rejeitar`);
+export async function rejeitarPar(conciliacaoId, pareId, { clienteId } = {}) {
+  const response = await api.patch(
+    `/conciliacoes/${conciliacaoId}/pares/${pareId}/rejeitar`,
+    undefined,
+    { params: limparParams({ cliente_id: clienteId }) },
+  );
   return response.data;
 }
 
-export async function concluirConciliacao(id) {
-  const response = await api.post(`/conciliacoes/${id}/concluir`);
+export async function concluirConciliacao(id, { clienteId } = {}) {
+  const response = await api.post(`/conciliacoes/${id}/concluir`, undefined, {
+    params: limparParams({ cliente_id: clienteId }),
+  });
   return response.data;
 }
 
-export async function downloadRelatorio(id) {
+export async function downloadRelatorio(id, { clienteId } = {}) {
   try {
     const response = await api.get(`/conciliacoes/${id}/relatorio`, {
       responseType: 'blob',
+      params: limparParams({ cliente_id: clienteId }),
     });
 
     return response.data;
