@@ -10,6 +10,7 @@ import {
   confirmarPar,
   rejeitarPar,
   concluirConciliacao,
+  gerarRelatorioConciliacao,
 } from "../controllers/conciliacoes.controller.js";
 
 const router = express.Router();
@@ -42,6 +43,7 @@ router.get("/", todos, listarConciliacoes);
 router.patch("/:id/pares/:pareId/confirmar", todos, confirmarPar);
 router.patch("/:id/pares/:pareId/rejeitar", todos, rejeitarPar);
 router.post("/:id/concluir", todos, concluirConciliacao);
+router.get("/:id/relatorio", todos, gerarRelatorioConciliacao);
 router.get("/:id", todos, buscarConciliacao);
 
 console.log("[conciliacoes.routes] Rotas de conciliação bancária registradas");

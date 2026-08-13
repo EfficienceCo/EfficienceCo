@@ -3,6 +3,16 @@ import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
+import { gerarRelatorioConciliacaoPDF } from "../services/conciliacao-relatorio.service.js";
+
+function sanitizarNomeArquivo(nome) {
+  return nome
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_.-]/g, "");
+}
 
 const STATUS_EXTRATO = {
   AGUARDANDO: "aguardando",
@@ -463,7 +473,7 @@ export async function buscarConciliacao(req, res) {
 async function buscarConciliacaoDoCliente(id, clienteId) {
   const { data: conciliacao, error } = await supabase
     .from("conciliacoes")
-    .select("id, cliente_id, status, total_transacoes, total_conciliadas, total_pendentes")
+    .select("id, cliente_id, extrato_id, mes, ano, status, total_transacoes, total_conciliadas, total_pendentes")
     .eq("id", id)
     .maybeSingle();
 
@@ -699,4 +709,144 @@ export async function concluirConciliacao(req, res) {
     status: "concluida",
     total_conciliadas: paresConciliados.length,
   });
+}
+
+// Par "conciliado" = automático ou provável já confirmado — mesmo critério usado em
+// concluirConciliacao para marcar conciliado=true. Como o relatório só existe para
+// sessões com status='concluida', todo par 'provavel' aqui já tem confirmado_em setado
+// (concluirConciliacao bloqueia com 409 se restar algum pendente).
+function parConciliado(par) {
+  return par.confianca === "automatico" || (par.confianca === "provavel" && par.confirmado_em);
+}
+
+export async function gerarRelatorioConciliacao(req, res) {
+  const clienteId = resolverClienteId(req);
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const { id } = req.params;
+
+  const { conciliacao, erro: erroConciliacao } = await buscarConciliacaoDoCliente(id, clienteId);
+  if (erroConciliacao) {
+    return res.status(erroConciliacao.status).json(erroConciliacao.body);
+  }
+
+  if (conciliacao.status !== "concluida") {
+    return res.status(409).json({ erro: "Conciliação ainda não foi concluída" });
+  }
+
+  const [clienteResultado, extratoResultado, paresResultado] = await Promise.all([
+    supabase.from("clientes").select("nome").eq("id", clienteId).maybeSingle(),
+    supabase.from("extratos_bancarios").select("banco, conta").eq("id", conciliacao.extrato_id).maybeSingle(),
+    supabase
+      .from("pares_conciliacao")
+      .select("id, transacao_id, lancamento_id, confianca, confirmado_em")
+      .eq("conciliacao_id", id),
+  ]);
+
+  if (clienteResultado.error) {
+    console.error("[conciliacoes.controller] Erro ao buscar cliente:", clienteResultado.error.message);
+    return res.status(500).json({ erro: "Erro ao gerar relatório da conciliação" });
+  }
+
+  if (extratoResultado.error) {
+    console.error("[conciliacoes.controller] Erro ao buscar extrato:", extratoResultado.error.message);
+    return res.status(500).json({ erro: "Erro ao gerar relatório da conciliação" });
+  }
+
+  if (paresResultado.error) {
+    console.error("[conciliacoes.controller] Erro ao buscar pares da conciliação:", paresResultado.error.message);
+    return res.status(500).json({ erro: "Erro ao gerar relatório da conciliação" });
+  }
+
+  const paresTodos = paresResultado.data ?? [];
+  const transacaoIds = [...new Set(paresTodos.map((par) => par.transacao_id).filter(Boolean))];
+  const lancamentoIds = [...new Set(paresTodos.map((par) => par.lancamento_id).filter(Boolean))];
+
+  const [transacoesResultado, lancamentosResultado] = await Promise.all([
+    transacaoIds.length > 0
+      ? supabase.from("transacoes_extrato").select("id, data_lancamento, descricao, valor").in("id", transacaoIds)
+      : Promise.resolve({ data: [], error: null }),
+    lancamentoIds.length > 0
+      ? supabase.from("lancamentos_contabeis").select("id, data_lancamento, descricao, valor").in("id", lancamentoIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (transacoesResultado.error) {
+    console.error(
+      "[conciliacoes.controller] Erro ao buscar transações do relatório:",
+      transacoesResultado.error.message,
+    );
+    return res.status(500).json({ erro: "Erro ao gerar relatório da conciliação" });
+  }
+
+  if (lancamentosResultado.error) {
+    console.error(
+      "[conciliacoes.controller] Erro ao buscar lançamentos do relatório:",
+      lancamentosResultado.error.message,
+    );
+    return res.status(500).json({ erro: "Erro ao gerar relatório da conciliação" });
+  }
+
+  const transacoesPorId = Object.fromEntries((transacoesResultado.data ?? []).map((t) => [t.id, t]));
+  const lancamentosPorId = Object.fromEntries((lancamentosResultado.data ?? []).map((l) => [l.id, l]));
+
+  const matches = [];
+  const semPar = [];
+  let valorTotalConciliado = 0;
+  for (const par of paresTodos) {
+    const transacao = par.transacao_id ? transacoesPorId[par.transacao_id] ?? null : null;
+    const lancamento = par.lancamento_id ? lancamentosPorId[par.lancamento_id] ?? null : null;
+    const valor = transacao?.valor ?? lancamento?.valor ?? 0;
+
+    if (parConciliado(par)) {
+      matches.push({
+        data: transacao?.data_lancamento ?? lancamento?.data_lancamento ?? null,
+        descricaoBanco: transacao?.descricao ?? null,
+        descricaoLancamento: lancamento?.descricao ?? null,
+        valor,
+      });
+      valorTotalConciliado += Number(valor);
+    } else {
+      semPar.push({
+        data: (transacao ?? lancamento)?.data_lancamento ?? null,
+        descricao: (transacao ?? lancamento)?.descricao ?? null,
+        valor,
+        origem: transacao ? "banco" : "lancamento_interno",
+      });
+    }
+  }
+
+  const nomeCliente = clienteResultado.data?.nome ?? "";
+
+  let buffer;
+  try {
+    buffer = await gerarRelatorioConciliacaoPDF({
+      cliente: nomeCliente,
+      banco: extratoResultado.data?.banco ?? "",
+      conta: extratoResultado.data?.conta ?? "",
+      mes: conciliacao.mes,
+      ano: conciliacao.ano,
+      geradoEm: new Date(),
+      totais: {
+        totalTransacoes: conciliacao.total_transacoes,
+        totalConciliadas: conciliacao.total_conciliadas,
+        totalPendentes: conciliacao.total_pendentes,
+        valorTotalConciliado,
+      },
+      matches,
+      semPar,
+    });
+  } catch (err) {
+    console.error("[conciliacoes.controller] Erro ao gerar PDF do relatório:", err.message);
+    return res.status(500).json({ erro: "Erro ao gerar relatório da conciliação" });
+  }
+
+  const mesFormatado = String(conciliacao.mes).padStart(2, "0");
+  const nomeArquivo = `conciliacao-${conciliacao.ano}-${mesFormatado}-${sanitizarNomeArquivo(nomeCliente || "cliente")}.pdf`;
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${nomeArquivo}"`);
+  return res.status(200).send(buffer);
 }
