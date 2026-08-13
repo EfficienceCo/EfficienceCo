@@ -325,13 +325,145 @@ export async function criarConciliacao(req, res) {
   });
 }
 
+export async function listarConciliacoes(req, res) {
+  const clienteId = resolverClienteId(req);
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  let query = supabase
+    .from("conciliacoes")
+    .select("id, mes, ano, status, total_transacoes, total_conciliadas, total_pendentes, criado_em, extrato_id")
+    .eq("cliente_id", clienteId)
+    .order("criado_em", { ascending: false });
+
+  const mes = Number(req.query.mes);
+  const ano = Number(req.query.ano);
+  if (Number.isInteger(mes) && mes >= 1 && mes <= 12) query = query.eq("mes", mes);
+  if (Number.isInteger(ano) && ano > 0) query = query.eq("ano", ano);
+
+  const { data: conciliacoes, error } = await query;
+
+  if (error) {
+    console.error("[conciliacoes.controller] Erro ao listar conciliações:", error.message);
+    return res.status(500).json({ erro: "Erro ao listar conciliações" });
+  }
+
+  const sessoes = conciliacoes ?? [];
+  const extratoIds = [...new Set(sessoes.map((sessao) => sessao.extrato_id).filter(Boolean))];
+
+  let extratosPorId = {};
+  if (extratoIds.length > 0) {
+    const { data: extratos, error: erroExtratos } = await supabase
+      .from("extratos_bancarios")
+      .select("id, banco, conta")
+      .in("id", extratoIds);
+
+    if (erroExtratos) {
+      console.error(
+        "[conciliacoes.controller] Erro ao buscar extratos das conciliações:",
+        erroExtratos.message,
+      );
+      return res.status(500).json({ erro: "Erro ao listar conciliações" });
+    }
+
+    extratosPorId = Object.fromEntries((extratos ?? []).map((extrato) => [extrato.id, extrato]));
+  }
+
+  return res.status(200).json(
+    sessoes.map(({ extrato_id: extratoId, ...sessao }) => ({
+      ...sessao,
+      extrato: extratosPorId[extratoId]
+        ? { banco: extratosPorId[extratoId].banco, conta: extratosPorId[extratoId].conta }
+        : null,
+    })),
+  );
+}
+
+export async function buscarConciliacao(req, res) {
+  const clienteId = resolverClienteId(req);
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const { id } = req.params;
+
+  const { conciliacao, erro: erroConciliacao } = await buscarConciliacaoDoCliente(id, clienteId);
+  if (erroConciliacao) {
+    return res.status(erroConciliacao.status).json(erroConciliacao.body);
+  }
+
+  const { data: pares, error: erroPares } = await supabase
+    .from("pares_conciliacao")
+    .select("id, transacao_id, lancamento_id, confianca, confirmado_por, confirmado_em")
+    .eq("conciliacao_id", id);
+
+  if (erroPares) {
+    console.error("[conciliacoes.controller] Erro ao buscar pares da conciliação:", erroPares.message);
+    return res.status(500).json({ erro: "Erro ao buscar pares da conciliação" });
+  }
+
+  const paresTodos = pares ?? [];
+  const transacaoIds = [...new Set(paresTodos.map((par) => par.transacao_id).filter(Boolean))];
+  const lancamentoIds = [...new Set(paresTodos.map((par) => par.lancamento_id).filter(Boolean))];
+
+  const [transacoesResultado, lancamentosResultado] = await Promise.all([
+    transacaoIds.length > 0
+      ? supabase.from("transacoes_extrato").select("*").in("id", transacaoIds)
+      : Promise.resolve({ data: [], error: null }),
+    lancamentoIds.length > 0
+      ? supabase.from("lancamentos_contabeis").select("*").in("id", lancamentoIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (transacoesResultado.error) {
+    console.error(
+      "[conciliacoes.controller] Erro ao buscar transações dos pares:",
+      transacoesResultado.error.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar transações da conciliação" });
+  }
+
+  if (lancamentosResultado.error) {
+    console.error(
+      "[conciliacoes.controller] Erro ao buscar lançamentos dos pares:",
+      lancamentosResultado.error.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar lançamentos da conciliação" });
+  }
+
+  const transacoesPorId = Object.fromEntries((transacoesResultado.data ?? []).map((t) => [t.id, t]));
+  const lancamentosPorId = Object.fromEntries((lancamentosResultado.data ?? []).map((l) => [l.id, l]));
+
+  const paresAgrupados = { automatico: [], provavel: [], sem_par: [] };
+  for (const par of paresTodos) {
+    const base = {
+      id: par.id,
+      transacao: par.transacao_id ? transacoesPorId[par.transacao_id] ?? null : null,
+      lancamento: par.lancamento_id ? lancamentosPorId[par.lancamento_id] ?? null : null,
+    };
+    paresAgrupados[par.confianca].push(
+      par.confianca === "provavel" ? { ...base, confirmado_por: par.confirmado_por } : base,
+    );
+  }
+
+  return res.status(200).json({
+    id: conciliacao.id,
+    status: conciliacao.status,
+    total_transacoes: conciliacao.total_transacoes,
+    total_conciliadas: conciliacao.total_conciliadas,
+    total_pendentes: conciliacao.total_pendentes,
+    pares: paresAgrupados,
+  });
+}
+
 // Busca a conciliação por id e garante que pertence ao cliente autenticado.
 // Retorna { conciliacao } em caso de sucesso, ou { erro: { status, body } }
 // pronto para ser respondido diretamente pelo controller chamador.
 async function buscarConciliacaoDoCliente(id, clienteId) {
   const { data: conciliacao, error } = await supabase
     .from("conciliacoes")
-    .select("id, cliente_id, status, total_conciliadas, total_pendentes")
+    .select("id, cliente_id, status, total_transacoes, total_conciliadas, total_pendentes")
     .eq("id", id)
     .maybeSingle();
 
