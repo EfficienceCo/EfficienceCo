@@ -5,8 +5,10 @@ import supabase from "../src/config/database.js";
 import {
   criarRegra,
   atualizarRegra,
+  deletarRegra,
   listarRegras,
   buscarRegras,
+  buscarVersaoRegras,
 } from "../src/controllers/regras.controller.js";
 
 // Substitui o método `from` do client Supabase real (importado como singleton) por um
@@ -45,6 +47,12 @@ function queue(tabela, metodo, resultado) {
   if (!filas.has(k)) filas.set(k, []);
   filas.get(k).push(resultado);
 }
+
+const chamadasRpc = [];
+supabase.rpc = async function (nome, params) {
+  chamadasRpc.push({ nome, params });
+  return { data: null, error: null };
+};
 
 supabase.from = function (tabela) {
   const consumir = (metodo, fallback = { data: null, error: null }) => {
@@ -90,6 +98,7 @@ function tokenLicencaValido(clienteId = CLIENTE_A) {
 describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
   beforeEach(() => {
     filas.clear();
+    chamadasRpc.length = 0;
   });
 
   function reqAdmin(body, overrides = {}) {
@@ -208,6 +217,30 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.match(res.body.erro, /condicao/);
   });
 
+  it("criarRegra: incrementa a versão de regras do cliente após criar (#286)", async () => {
+    const condicao = {};
+    queue("regras", "single", {
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao },
+      error: null,
+    });
+
+    const res = criarRes();
+    await criarRegra(
+      reqAdmin({
+        condicao,
+        acao: "mover",
+        pasta_origem: "C:/in",
+        pasta_destino: "C:/out",
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(chamadasRpc, [
+      { nome: "incrementar_versao_regras", params: { p_cliente_id: CLIENTE_A } },
+    ]);
+  });
+
   it("criarRegra: 400 quando cliente_id não é resolvido", async () => {
     const res = criarRes();
     await criarRegra(
@@ -294,6 +327,39 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     );
 
     assert.equal(res.statusCode, 404);
+  });
+
+  it("deletarRegra: incrementa a versão de regras do cliente dono da regra removida (#286)", async () => {
+    queue("regras", "single", {
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A },
+      error: null,
+    });
+    queue("regras", "await", { error: null });
+
+    const res = criarRes();
+    await deletarRegra(reqAdmin(undefined, { params: { id: REGRA_ID } }), res);
+
+    assert.equal(res.statusCode, 204);
+    assert.deepEqual(chamadasRpc, [
+      { nome: "incrementar_versao_regras", params: { p_cliente_id: CLIENTE_A } },
+    ]);
+  });
+
+  it("buscarVersaoRegras (rota do agente): lê de regras_versao pelo cliente do token", async () => {
+    tokenLicencaValido(CLIENTE_A);
+    queue("regras_versao", "single", { data: { versao: 3 }, error: null });
+
+    const res = criarRes();
+    await buscarVersaoRegras(
+      {
+        params: { clienteId: CLIENTE_A },
+        headers: { "x-licenca-token": "token-valido" },
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, { versao: 3 });
   });
 
   it("listarRegras: retorna condicao sem filtrar nenhum campo (select *)", async () => {

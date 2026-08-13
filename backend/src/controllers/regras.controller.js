@@ -24,6 +24,25 @@ const ACOES_EXIGEM_ORIGEM = new Set([
   "upload_folha",
 ]);
 
+/**
+ * Incrementa a versão de regras do cliente (usado pelo agente pra detectar mudança sem
+ * baixar tudo). Best-effort: falha aqui não deve derrubar a resposta da rota nem, pior,
+ * o processo — Express 4 sem handler global de unhandledRejection mata o server inteiro
+ * numa exceção não capturada dentro de rota async (ver mesmo padrão em folha.controller.js).
+ */
+async function incrementarVersaoRegras(clienteId) {
+  try {
+    const { error } = await supabase.rpc("incrementar_versao_regras", {
+      p_cliente_id: clienteId,
+    });
+    if (error) {
+      console.error("[regras.controller] Erro ao incrementar versão de regras:", error.message);
+    }
+  } catch (err) {
+    console.error("[regras.controller] Erro ao incrementar versão de regras:", err.message);
+  }
+}
+
 function parseCondicao(condicao) {
   if (condicao === undefined || condicao === null || typeof condicao === "object") {
     return { valor: condicao };
@@ -154,6 +173,8 @@ export async function criarRegra(req, res) {
     return res.status(500).json({ erro: "Erro ao criar regra" });
   }
 
+  incrementarVersaoRegras(clienteId);
+
   return res.status(201).json(data);
 }
 
@@ -223,6 +244,8 @@ export async function atualizarRegra(req, res) {
     return res.status(500).json({ erro: "Erro ao atualizar regra" });
   }
 
+  incrementarVersaoRegras(regra.cliente_id);
+
   return res.status(200).json(data);
 }
 
@@ -255,6 +278,8 @@ export async function deletarRegra(req, res) {
     return res.status(500).json({ erro: "Erro ao deletar regra" });
   }
 
+  incrementarVersaoRegras(regra.cliente_id);
+
   return res.status(204).send();
 }
 
@@ -272,11 +297,9 @@ export async function buscarVersaoRegras(req, res) {
   }
 
   const { data, error } = await supabase
-    .from("regras")
+    .from("regras_versao")
     .select("versao")
     .eq("cliente_id", clienteId)
-    .order("versao", { ascending: false })
-    .limit(1)
     .single();
 
   if (error && error.code !== "PGRST116") {
