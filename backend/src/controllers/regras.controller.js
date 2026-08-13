@@ -297,9 +297,9 @@ export async function buscarVersaoRegras(req, res) {
   }
 
   const { data, error } = await supabase
-    .from("regras_versao")
-    .select("versao")
-    .eq("cliente_id", clienteId)
+    .from("clientes")
+    .select("versao_regras")
+    .eq("id", clienteId)
     .single();
 
   if (error && error.code !== "PGRST116") {
@@ -307,7 +307,7 @@ export async function buscarVersaoRegras(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar versão das regras" });
   }
 
-  return res.status(200).json({ versao: data?.versao ?? null });
+  return res.status(200).json({ versao: data?.versao_regras ?? null });
 }
 
 export async function buscarRegras(req, res) {

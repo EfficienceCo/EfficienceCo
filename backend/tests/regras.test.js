@@ -282,6 +282,36 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.deepEqual(res.body.condicao, condicao);
   });
 
+  it("atualizarRegra: incrementa a versão de regras do cliente após atualizar (#286)", async () => {
+    const condicao = { in_name: "CONTRATO" };
+    queue("regras", "single", {
+      data: {
+        id: REGRA_ID,
+        cliente_id: CLIENTE_A,
+        acao: "mover",
+        pasta_origem: "C:/in",
+        pasta_destino: "C:/out",
+        condicao: {},
+      },
+      error: null,
+    });
+    queue("regras", "single", {
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao },
+      error: null,
+    });
+
+    const res = criarRes();
+    await atualizarRegra(
+      reqAdmin({ condicao }, { params: { id: REGRA_ID } }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(chamadasRpc, [
+      { nome: "incrementar_versao_regras", params: { p_cliente_id: CLIENTE_A } },
+    ]);
+  });
+
   it("atualizarRegra: rejeita condicao como string JSON inválida sem chamar update", async () => {
     queue("regras", "single", {
       data: {
@@ -345,9 +375,9 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     ]);
   });
 
-  it("buscarVersaoRegras (rota do agente): lê de regras_versao pelo cliente do token", async () => {
+  it("buscarVersaoRegras (rota do agente): lê versao_regras de clientes pelo cliente do token", async () => {
     tokenLicencaValido(CLIENTE_A);
-    queue("regras_versao", "single", { data: { versao: 3 }, error: null });
+    queue("clientes", "single", { data: { versao_regras: 3 }, error: null });
 
     const res = criarRes();
     await buscarVersaoRegras(
