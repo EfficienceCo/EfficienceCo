@@ -12,6 +12,13 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
 CNPJ_CLIENTE = "12345678000199"
 
 
+@pytest.fixture(autouse=True)
+def _sem_pasta_base(monkeypatch):
+    """Evita que PASTA_BASE do .env local falhe nos parses de fixture/tmp."""
+    monkeypatch.delenv("PASTA_BASE", raising=False)
+    monkeypatch.setattr("comunicacao.api_client.PASTA_BASE", "")
+
+
 def test_parsear_nfe_entrada():
     dados = parsear_nfe(str(FIXTURES / "entrada.xml"))
 
@@ -161,6 +168,7 @@ def test_caminho_fora_pasta_base(monkeypatch, tmp_path):
     fora = tmp_path / "fora.xml"
     fora.write_text("<a/>", encoding="utf-8")
     monkeypatch.setenv("PASTA_BASE", str(base))
+    monkeypatch.setattr("comunicacao.api_client.PASTA_BASE", str(base))
     with pytest.raises(ValueError, match="PASTA_BASE"):
         parsear_nfe(str(fora))
 
