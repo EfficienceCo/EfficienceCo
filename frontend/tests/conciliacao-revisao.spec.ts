@@ -5,6 +5,48 @@ import { login } from './helpers/auth';
 const MES = 2;
 const ANO = 2022;
 const OFX_FIXTURE = path.join(__dirname, 'fixtures', 'conciliacao-332.ofx');
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const TEST_EMAIL = process.env.TEST_EMAIL ?? '';
+const TEST_PASSWORD = process.env.TEST_PASSWORD ?? '';
+
+// Descrições fixas (sufixo "332") usadas pelo fixture OFX pra casar por
+// data/valor/tipo. Precisam ser apagadas ao fim do teste: sem isso, uma
+// execução anterior que falhe deixa lançamento órfão pro mesmo período/
+// cliente, e a próxima execução encontra 2 linhas em vez de 1 (strict mode
+// violation nos locators de `adicionarLancamento`).
+const DESCRICOES_CRIADAS_PELO_TESTE = [
+  'AUTOMATICO LANC 332',
+  'PROVAVEL LANC A 332',
+  'PROVAVEL LANC B 332',
+  'SEM PAR LANC 332',
+];
+
+async function limparLancamentosDoTeste() {
+  const loginRes = await fetch(`${API_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: TEST_EMAIL, senha: TEST_PASSWORD }),
+  });
+  if (!loginRes.ok) return;
+  const { token } = await loginRes.json();
+
+  const listRes = await fetch(`${API_URL}/lancamentos-contabeis?mes=${MES}&ano=${ANO}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!listRes.ok) return;
+  const lancamentos: Array<{ id: string; descricao: string }> = await listRes.json();
+
+  await Promise.all(
+    lancamentos
+      .filter((l) => DESCRICOES_CRIADAS_PELO_TESTE.includes(l.descricao))
+      .map((l) =>
+        fetch(`${API_URL}/lancamentos-contabeis/${l.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ),
+  );
+}
 
 type NovoLancamento = {
   data: string;
@@ -32,6 +74,11 @@ function secaoPorTitulo(page: Page, titulo: string): Locator {
 }
 
 test.describe('Conciliação bancária — tela de revisão (/dashboard/conciliacao/[id]) (issue #332)', () => {
+  // Limpa antes (cobre resíduo de uma execução anterior que tenha morrido
+  // sem rodar o afterEach) e depois (deixa o ambiente limpo pra próxima).
+  test.beforeEach(limparLancamentosDoTeste);
+  test.afterEach(limparLancamentosDoTeste);
+
   test('automático, confirmar/rejeitar prováveis, sem par, concluir e baixar relatório', async ({ page }) => {
     test.setTimeout(90000);
 
