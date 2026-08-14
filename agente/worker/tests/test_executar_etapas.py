@@ -34,6 +34,7 @@ def test_polling_dispatch_sucesso(tmp_path):
     with (
         patch("automacoes.executar_etapas.listar_etapas_prontas", return_value=[etapa]),
         patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir,
+        patch("automacoes.executar_etapas.reportar_evento") as mock_evento,
     ):
         resultados = processar_etapas_pendentes()
 
@@ -46,13 +47,21 @@ def test_polling_dispatch_sucesso(tmp_path):
     assert kwargs["arquivo_gerado"]
     assert "Contratos" in kwargs["arquivo_gerado"]
     assert mock_concluir.call_args.args[0] == ETAPA_ID
+    mock_evento.assert_called_once()
+    descricao, sucesso = mock_evento.call_args.args
+    assert sucesso is True
+    assert "Contrato social gerado" in descricao
+    assert "Padaria do Joao" in descricao
 
 
 def test_falha_template_reportada(tmp_path, monkeypatch):
     monkeypatch.setenv("TEMPLATE_CONTRATO_SOCIAL", str(tmp_path / "missing.docx"))
     etapa = _etapa_contrato(tmp_path)
 
-    with patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir:
+    with (
+        patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir,
+        patch("automacoes.executar_etapas.reportar_evento") as mock_evento,
+    ):
         resultado = processar_etapa(etapa)
 
     assert resultado["sucesso"] is False
@@ -61,6 +70,11 @@ def test_falha_template_reportada(tmp_path, monkeypatch):
     assert kwargs["sucesso"] is False
     assert isinstance(kwargs["erro"], str) and kwargs["erro"]
     assert kwargs["execucao_token"] == TOKEN
+    mock_evento.assert_called_once()
+    descricao, sucesso = mock_evento.call_args.args
+    assert sucesso is False
+    assert "Falha ao processar etapa" in descricao
+    assert "gerar_contrato_social" in descricao
 
 
 def test_criar_pastas_no_loop(tmp_path):
@@ -74,7 +88,10 @@ def test_criar_pastas_no_loop(tmp_path):
         "pasta_base": str(tmp_path),
     }
 
-    with patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir:
+    with (
+        patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir,
+        patch("automacoes.executar_etapas.reportar_evento") as mock_evento,
+    ):
         resultado = processar_etapa(etapa)
 
     assert resultado["sucesso"] is True
@@ -84,28 +101,62 @@ def test_criar_pastas_no_loop(tmp_path):
     kwargs = mock_concluir.call_args.kwargs
     assert kwargs["sucesso"] is True
     assert kwargs["execucao_token"] == TOKEN
+    mock_evento.assert_called_once()
+    descricao, sucesso = mock_evento.call_args.args
+    assert sucesso is True
+    assert "Estrutura de pastas criada" in descricao
+    assert "Empresa Pastas" in descricao
 
 
 def test_acao_desconhecida_reporta_erro(tmp_path):
     etapa = _etapa_contrato(tmp_path, acao="acao_inventada")
-    with patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir:
+    with (
+        patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir,
+        patch("automacoes.executar_etapas.reportar_evento") as mock_evento,
+    ):
         resultado = processar_etapa(etapa)
 
     assert resultado["sucesso"] is False
     assert "desconhecida" in resultado["erro"]
     assert mock_concluir.call_args.kwargs["sucesso"] is False
+    mock_evento.assert_called_once()
+    descricao, sucesso = mock_evento.call_args.args
+    assert sucesso is False
+    assert "Falha ao processar etapa" in descricao
+    assert "acao_inventada" in descricao
 
 
 def test_falha_rede_no_report_nao_derruba(tmp_path):
     etapa = _etapa_contrato(tmp_path)
-    with patch(
-        "automacoes.executar_etapas.concluir_execucao",
-        side_effect=RuntimeError("Falha de conexao"),
+    with (
+        patch(
+            "automacoes.executar_etapas.concluir_execucao",
+            side_effect=RuntimeError("Falha de conexao"),
+        ),
+        patch("automacoes.executar_etapas.reportar_evento") as mock_evento,
     ):
         # nao deve propagar
         resultado = processar_etapa(etapa)
 
     assert resultado["sucesso"] is True
+    mock_evento.assert_called_once()
+    assert mock_evento.call_args.args[1] is True
+
+
+def test_falha_reportar_evento_nao_derruba(tmp_path):
+    etapa = _etapa_contrato(tmp_path)
+    with (
+        patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir,
+        patch(
+            "automacoes.executar_etapas.reportar_evento",
+            side_effect=RuntimeError("fila indisponivel"),
+        ),
+    ):
+        resultado = processar_etapa(etapa)
+
+    assert resultado["sucesso"] is True
+    mock_concluir.assert_called_once()
+    assert mock_concluir.call_args.kwargs["sucesso"] is True
 
 
 def test_falha_polling_nao_derruba():
