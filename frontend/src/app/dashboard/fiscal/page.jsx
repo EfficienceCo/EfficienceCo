@@ -459,8 +459,16 @@ export default function FiscalPage() {
       </section>
 
       {erroClientes ? (
-        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+        <section className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-rose-800">{erroClientes}</p>
+          <button
+            type="button"
+            onClick={carregarClientes}
+            disabled={isLoadingClientes}
+            className="shrink-0 rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoadingClientes ? 'Tentando...' : 'Tentar novamente'}
+          </button>
         </section>
       ) : null}
 

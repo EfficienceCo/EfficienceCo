@@ -23,23 +23,25 @@ def gerar_relatorio():
 
     try:
         response = client.get(
-            f"/eventos/agente", 
+            f"/eventos/agente",
             timeout=5,
             addToHeaders={"x-licenca-token": client.LICENSE_TOKEN}
         )
-        eventos = response.json()
+        eventos = response.json().get("data", [])
     except RuntimeError as e:
         print(f"[relatorio] Falha ao buscar eventos: {e}")
         return
 
     eventos_hoje = [
         e for e in eventos
-        if e.get("data_vinculo", "").startswith(hoje)
+        if e.get("criado_em", "").startswith(hoje)
     ]
 
     try:
         with open(caminho, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["data_vinculo", "descricao", "sucesso"])
+            writer = csv.DictWriter(
+                f, fieldnames=["criado_em", "descricao", "sucesso"], extrasaction="ignore"
+            )
             writer.writeheader()
             writer.writerows(eventos_hoje)
         print(f"[relatorio] Relatório gerado: {nome_arquivo} ({len(eventos_hoje)} evento(s))")

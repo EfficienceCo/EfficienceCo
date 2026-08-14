@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import supabase from "../config/database.js";
 import { PERFIS } from "../middlewares/permissao.middleware.js";
 
-const CAMPOS_PUBLICOS = "id, cliente_id, nome, email, perfil, data_vinculo";
+const CAMPOS_PUBLICOS = "id, cliente_id, nome, email, perfil, criado_em";
 
 export async function listarUsuarios(req, res) {
   const { perfil, cliente_id: clienteIdToken } = req.usuario;
