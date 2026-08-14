@@ -317,4 +317,36 @@ describe("DELETE /lancamentos-contabeis/:id", () => {
 
     assert.equal(res.statusCode, 404);
   });
+
+  it("409 quando lançamento está vinculado a pares_conciliacao (FK 23503)", async () => {
+    queue("lancamentos_contabeis", "single", {
+      data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A, conciliado: false },
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: null,
+      error: { code: "23503", message: "violates foreign key constraint" },
+    });
+
+    const res = criarResposta();
+    await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
+
+    assert.equal(res.statusCode, 409);
+  });
+
+  it("500 quando delete falha por outro motivo (não FK)", async () => {
+    queue("lancamentos_contabeis", "single", {
+      data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A, conciliado: false },
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: null,
+      error: { code: "08000", message: "connection error" },
+    });
+
+    const res = criarResposta();
+    await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
+
+    assert.equal(res.statusCode, 500);
+  });
 });

@@ -173,6 +173,16 @@ export async function deletarLancamentoContabil(req, res) {
   const { error } = await supabase.from("lancamentos_contabeis").delete().eq("id", id);
 
   if (error) {
+    // 23503 = foreign_key_violation: lançamento é referenciado por
+    // pares_conciliacao (participou de alguma conciliação, mesmo sem ter
+    // ficado conciliado=true — ex.: um item que caiu em "sem par"). Não dá
+    // pra remover sem quebrar o histórico da(s) conciliação(ões).
+    if (error.code === "23503") {
+      return res.status(409).json({
+        erro: "Lançamento vinculado a uma conciliação não pode ser removido",
+      });
+    }
+
     console.error("[lancamentos-contabeis.controller] Erro ao deletar lançamento:", error.message);
     return res.status(500).json({ erro: "Erro ao deletar lançamento contábil" });
   }
