@@ -443,6 +443,11 @@ export default function ConciliacaoPage() {
         ...(categoria ? { categoria } : {}),
       });
 
+      // Invalida qualquer carregarDados() ainda em voo disparado antes desta
+      // criação: sem isso, uma resposta antiga que só resolve depois (ex.:
+      // troca de mês/ano ainda carregando) sobrescreve a lista e apaga o
+      // lançamento recém-criado da tela, mesmo com ele já salvo no backend.
+      requisicaoIdRef.current += 1;
       setLancamentos((atual) => [criado, ...atual]);
       setIsModalLancamentoAberto(false);
       setFormData(FORM_INICIAL);
@@ -480,6 +485,9 @@ export default function ConciliacaoPage() {
     try {
       await deletarLancamentoContabil(lancamentoParaDeletar.id);
 
+      // Mesma razão do criar: invalida um carregarDados() ainda em voo pra
+      // ele não trazer de volta o lançamento que acabou de ser excluído.
+      requisicaoIdRef.current += 1;
       setLancamentos((atual) => atual.filter((item) => item.id !== lancamentoParaDeletar.id));
       setIsDeleteModalAberto(false);
       setLancamentoParaDeletar(null);

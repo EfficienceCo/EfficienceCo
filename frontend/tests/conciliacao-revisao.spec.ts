@@ -9,16 +9,25 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const TEST_EMAIL = process.env.TEST_EMAIL ?? '';
 const TEST_PASSWORD = process.env.TEST_PASSWORD ?? '';
 
-// Descrições fixas (sufixo "332") usadas pelo fixture OFX pra casar por
-// data/valor/tipo. Precisam ser apagadas ao fim do teste: sem isso, uma
-// execução anterior que falhe deixa lançamento órfão pro mesmo período/
-// cliente, e a próxima execução encontra 2 linhas em vez de 1 (strict mode
-// violation nos locators de `adicionarLancamento`).
+// Sufixo único por execução: o motor de matching casa por data/valor/tipo
+// (ver backend/src/utils/conciliacao-matching.util.js), não por descrição,
+// então a descrição do lançamento pode variar livremente sem afetar o
+// resultado. Isso evita colidir com lançamentos "AUTOMATICO LANC 332" etc.
+// de execuções anteriores — o que importa pro matching é reproduzir a
+// mesma data/valor/tipo do fixture OFX, já fixos nas chamadas abaixo.
+//
+// Necessário porque um lançamento que chega a ser conciliado não pode mais
+// ser excluído (o backend responde 409 "Lançamento já conciliado não pode
+// ser removido" — regra de negócio correta, não é algo a contornar). Sem
+// descrição única, um lançamento conciliado deixado por uma execução
+// anterior fica preso pra sempre nesse período/cliente e quebra qualquer
+// execução futura (2 linhas batendo no mesmo locator de texto).
+const RUN_TAG = Date.now().toString(36);
 const DESCRICOES_CRIADAS_PELO_TESTE = [
-  'AUTOMATICO LANC 332',
-  'PROVAVEL LANC A 332',
-  'PROVAVEL LANC B 332',
-  'SEM PAR LANC 332',
+  `AUTOMATICO LANC ${RUN_TAG}`,
+  `PROVAVEL LANC A ${RUN_TAG}`,
+  `PROVAVEL LANC B ${RUN_TAG}`,
+  `SEM PAR LANC ${RUN_TAG}`,
 ];
 
 async function limparLancamentosDoTeste() {
@@ -89,30 +98,37 @@ test.describe('Conciliação bancária — tela de revisão (/dashboard/concilia
     await page.getByLabel('Ano').selectOption(String(ANO));
     await expect(page.getByRole('heading', { name: 'Lançamentos Internos' })).toBeVisible();
 
+    // Espera o carregarDados() do período assentar antes de criar qualquer
+    // lançamento. Criar durante o carregamento é uma corrida real: a resposta
+    // desse fetch (disparado pela troca de mês/ano) pode resolver depois do
+    // POST de criação e sobrescrever a lista, fazendo o lançamento recém-criado
+    // sumir da tela mesmo já salvo no backend.
+    await expect(page.getByText('Carregando lançamentos...')).not.toBeVisible();
+
     // 4 lançamentos: 1 casa automaticamente (mesma data/valor/tipo), 2 ficam
     // prováveis (diferença de data <=3 dias) — um para confirmar, outro para
     // rejeitar — e 1 fica sem transação correspondente.
     await adicionarLancamento(page, {
       data: '2022-02-05',
-      descricao: 'AUTOMATICO LANC 332',
+      descricao: `AUTOMATICO LANC ${RUN_TAG}`,
       tipo: 'credito',
       valor: '1111.11',
     });
     await adicionarLancamento(page, {
       data: '2022-02-10',
-      descricao: 'PROVAVEL LANC A 332',
+      descricao: `PROVAVEL LANC A ${RUN_TAG}`,
       tipo: 'debito',
       valor: '2222.22',
     });
     await adicionarLancamento(page, {
       data: '2022-02-15',
-      descricao: 'PROVAVEL LANC B 332',
+      descricao: `PROVAVEL LANC B ${RUN_TAG}`,
       tipo: 'debito',
       valor: '3333.33',
     });
     await adicionarLancamento(page, {
       data: '2022-02-20',
-      descricao: 'SEM PAR LANC 332',
+      descricao: `SEM PAR LANC ${RUN_TAG}`,
       tipo: 'credito',
       valor: '4444.44',
     });
@@ -166,7 +182,7 @@ test.describe('Conciliação bancária — tela de revisão (/dashboard/concilia
 
     // Sem par: transação e lançamento que nunca tiveram correspondência.
     await expect(secaoSemPar.getByRole('row', { name: /SEM PAR TRANSACAO 332/ })).toBeVisible();
-    await expect(secaoSemPar.getByRole('row', { name: /SEM PAR LANC 332/ })).toBeVisible();
+    await expect(secaoSemPar.getByRole('row', { name: new RegExp(`SEM PAR LANC ${RUN_TAG}`) })).toBeVisible();
 
     // Todos os prováveis decididos — "Concluir" libera.
     const botaoConcluir = page.getByRole('button', { name: 'Concluir conciliação' });
