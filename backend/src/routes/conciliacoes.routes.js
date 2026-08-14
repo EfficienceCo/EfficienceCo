@@ -5,6 +5,8 @@ import {
   criarConciliacaoExtrato,
   listarTransacoesExtrato,
   criarConciliacao,
+  listarConciliacoes,
+  buscarConciliacao,
   confirmarPar,
   rejeitarPar,
   concluirConciliacao,
@@ -36,9 +38,11 @@ function uploadExtrato(req, res, next) {
 router.post("/extrato", todos, uploadExtrato, criarConciliacaoExtrato);
 router.get("/extrato/:id/transacoes", todos, listarTransacoesExtrato);
 router.post("/", todos, criarConciliacao);
+router.get("/", todos, listarConciliacoes);
 router.patch("/:id/pares/:pareId/confirmar", todos, confirmarPar);
 router.patch("/:id/pares/:pareId/rejeitar", todos, rejeitarPar);
 router.post("/:id/concluir", todos, concluirConciliacao);
+router.get("/:id", todos, buscarConciliacao);
 
 console.log("[conciliacoes.routes] Rotas de conciliação bancária registradas");
 
