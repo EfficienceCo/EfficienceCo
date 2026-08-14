@@ -10,4 +10,7 @@ Pillow
 pypdfium2
 pdfplumber
 pytesseract
+pandas
+openpyxl
+matplotlib
 pytest>=7.0.0
