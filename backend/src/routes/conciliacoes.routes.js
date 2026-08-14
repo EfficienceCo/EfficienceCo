@@ -4,6 +4,7 @@ import { exigirPerfil } from "../middlewares/permissao.middleware.js";
 import {
   criarConciliacaoExtrato,
   listarTransacoesExtrato,
+  criarConciliacao,
 } from "../controllers/conciliacoes.controller.js";
 
 const router = express.Router();
@@ -31,6 +32,7 @@ function uploadExtrato(req, res, next) {
 
 router.post("/extrato", todos, uploadExtrato, criarConciliacaoExtrato);
 router.get("/extrato/:id/transacoes", todos, listarTransacoesExtrato);
+router.post("/", todos, criarConciliacao);
 
 console.log("[conciliacoes.routes] Rotas de conciliação bancária registradas");
 
