@@ -39,6 +39,11 @@ const NAV_ITEMS = [
     icon: ConciliacaoIcon,
   },
   {
+    href: '/dashboard/apuracoes',
+    label: 'Apuração Fiscal',
+    icon: ApuracaoFiscalIcon,
+  },
+  {
     href: '/dashboard/logs',
     label: 'Logs',
     icon: LogsIcon,
@@ -251,6 +256,18 @@ function ConciliacaoIcon() {
       <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
       <path d="M3.5 9.5h17" />
       <path d="M8 14.5l2.5 2.5L16 12" />
+    </IconBase>
+  );
+}
+
+function ApuracaoFiscalIcon() {
+  return (
+    <IconBase>
+      <path d="M6 3.5h9l3 3v13.5H6z" />
+      <path d="M15 3.5V7h3" />
+      <path d="M9 12h6" />
+      <circle cx="9.5" cy="16" r="2" />
+      <path d="M12.5 17l1.5 1.5 2.5-2.5" />
     </IconBase>
   );
 }
