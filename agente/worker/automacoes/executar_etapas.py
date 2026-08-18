@@ -8,7 +8,7 @@ from comunicacao.etapas_agente import concluir_execucao, listar_etapas_prontas
 from comunicacao.reportar_evento import reportar_evento
 from automacoes.gerar_contrato_social import gerar_contrato_social
 from core.estrutura_pastas import criar_estrutura_empresa_em
-from core.utils import validar_nome
+from core.utils import resolver_pasta_base, validar_nome
 
 
 def _nome_empresa_evento(etapa):
@@ -35,12 +35,11 @@ def _mensagem_evento(etapa, resultado):
 
 
 def _criar_pastas(etapa):
-    pasta_base = etapa.get("pasta_base")
+    pasta_base = resolver_pasta_base(etapa.get("pasta_base"))
     nome_empresa = etapa.get("nome_empresa")
 
-    if not isinstance(pasta_base, str) or not pasta_base.strip():
+    if not pasta_base:
         return {"sucesso": False, "erro": "pasta_base é obrigatória", "arquivo_gerado": None}
-    pasta_base = pasta_base.strip()
     if not os.path.isabs(pasta_base):
         return {
             "sucesso": False,

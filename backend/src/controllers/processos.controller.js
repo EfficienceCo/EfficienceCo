@@ -124,10 +124,6 @@ export async function listarProcessos(req, res) {
   return res.status(200).json(resultado);
 }
 
-function sanitizarPastaBase(nome) {
-  return nome.trim().replace(/\s+/g, "_");
-}
-
 export async function criarProcesso(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -168,10 +164,12 @@ async function _criarAberturaEmpresa(req, res, clienteId) {
     return res.status(400).json({ erro: "cenario deve ser 'nova' ou 'cliente_existente'" });
   }
 
-  const pasta_base = sanitizarPastaBase(nome_empresa);
+  // A raiz pertence à configuração da máquina do agente. O backend não deve
+  // fabricá-la a partir do nome da empresa nem aceitar um caminho remoto que
+  // possa redirecionar a gravação. O agente resolve a PASTA_BASE local.
   const resultado = await criarProcessoComEtapas(clienteId, "abertura_empresa", {
     nome_empresa,
-    pasta_base,
+    pasta_base: null,
     cenario,
     socios,
     capital_social,
