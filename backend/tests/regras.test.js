@@ -7,6 +7,7 @@ import {
   atualizarRegra,
   listarRegras,
   buscarRegras,
+  buscarVersaoRegras,
 } from "../src/controllers/regras.controller.js";
 
 // Substitui o método `from` do client Supabase real (importado como singleton) por um
@@ -46,6 +47,9 @@ function queue(tabela, metodo, resultado) {
   filas.get(k).push(resultado);
 }
 
+const chamadasInsert = [];
+const chamadasUpdate = [];
+
 supabase.from = function (tabela) {
   const consumir = (metodo, fallback = { data: null, error: null }) => {
     const k = chave(tabela, metodo);
@@ -55,16 +59,24 @@ supabase.from = function (tabela) {
   };
 
   const builder = {
-    insert() {
+    insert(payload) {
+      chamadasInsert.push({ tabela, payload });
       return builder;
     },
-    update() {
+    update(payload) {
+      chamadasUpdate.push({ tabela, payload });
       return builder;
     },
     select() {
       return builder;
     },
     eq() {
+      return builder;
+    },
+    order() {
+      return builder;
+    },
+    limit() {
       return builder;
     },
     delete() {
@@ -90,6 +102,8 @@ function tokenLicencaValido(clienteId = CLIENTE_A) {
 describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
   beforeEach(() => {
     filas.clear();
+    chamadasInsert.length = 0;
+    chamadasUpdate.length = 0;
   });
 
   function reqAdmin(body, overrides = {}) {
@@ -208,6 +222,31 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.match(res.body.erro, /condicao/);
   });
 
+  it("criarRegra: deixa o trigger atômico definir a versão (#286)", async () => {
+    const condicao = {};
+    queue("regras", "single", {
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao, versao: 5 },
+      error: null,
+    });
+
+    const res = criarRes();
+    await criarRegra(
+      reqAdmin({
+        condicao,
+        acao: "mover",
+        pasta_origem: "C:/in",
+        pasta_destino: "C:/out",
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(chamadasInsert.length, 1);
+    assert.equal(chamadasInsert[0].tabela, "regras");
+    assert.equal(Object.hasOwn(chamadasInsert[0].payload, "versao"), false);
+    assert.equal(res.body.versao, 5);
+  });
+
   it("criarRegra: 400 quando cliente_id não é resolvido", async () => {
     const res = criarRes();
     await criarRegra(
@@ -247,6 +286,37 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
 
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body.condicao, condicao);
+  });
+
+  it("atualizarRegra: deixa o trigger atômico incrementar a versão (#286)", async () => {
+    const condicao = { in_name: "CONTRATO" };
+    queue("regras", "single", {
+      data: {
+        id: REGRA_ID,
+        cliente_id: CLIENTE_A,
+        acao: "mover",
+        pasta_origem: "C:/in",
+        pasta_destino: "C:/out",
+        condicao: {},
+      },
+      error: null,
+    });
+    queue("regras", "single", {
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A, condicao, versao: 3 },
+      error: null,
+    });
+
+    const res = criarRes();
+    await atualizarRegra(
+      reqAdmin({ condicao }, { params: { id: REGRA_ID } }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(chamadasUpdate.length, 1);
+    assert.equal(chamadasUpdate[0].tabela, "regras");
+    assert.equal(Object.hasOwn(chamadasUpdate[0].payload, "versao"), false);
+    assert.equal(res.body.versao, 3);
   });
 
   it("atualizarRegra: rejeita condicao como string JSON inválida sem chamar update", async () => {
@@ -294,6 +364,23 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     );
 
     assert.equal(res.statusCode, 404);
+  });
+
+  it("buscarVersaoRegras (rota do agente): lê o contador atômico do cliente", async () => {
+    tokenLicencaValido(CLIENTE_A);
+    queue("clientes", "single", { data: { regras_versao: 3 }, error: null });
+
+    const res = criarRes();
+    await buscarVersaoRegras(
+      {
+        params: { clienteId: CLIENTE_A },
+        headers: { "x-licenca-token": "token-valido" },
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, { versao: 3 });
   });
 
   it("listarRegras: retorna condicao sem filtrar nenhum campo (select *)", async () => {
