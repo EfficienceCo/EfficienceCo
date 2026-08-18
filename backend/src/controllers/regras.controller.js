@@ -24,23 +24,6 @@ const ACOES_EXIGEM_ORIGEM = new Set([
   "upload_folha",
 ]);
 
-/** Próxima versão de regras do cliente (MAX(versao) atual + 1), usada pelo agente pra detectar mudança sem baixar tudo. */
-async function proximaVersaoRegras(clienteId) {
-  const { data, error } = await supabase
-    .from("regras")
-    .select("versao")
-    .eq("cliente_id", clienteId)
-    .order("versao", { ascending: false })
-    .limit(1)
-    .single();
-
-  if (error && error.code !== "PGRST116") {
-    console.error("[regras.controller] Erro ao buscar versão atual de regras:", error.message);
-  }
-
-  return (data?.versao ?? 0) + 1;
-}
-
 function parseCondicao(condicao) {
   if (condicao === undefined || condicao === null || typeof condicao === "object") {
     return { valor: condicao };
@@ -153,8 +136,6 @@ export async function criarRegra(req, res) {
 
   console.log("[regras.controller] Criando regra para cliente:", clienteId);
 
-  const versao = await proximaVersaoRegras(clienteId);
-
   const { data, error } = await supabase
     .from("regras")
     .insert({
@@ -164,7 +145,6 @@ export async function criarRegra(req, res) {
       condicao: condicaoParseada,
       acao,
       ativa,
-      versao,
     })
     .select()
     .single();
@@ -229,8 +209,6 @@ export async function atualizarRegra(req, res) {
     return res.status(400).json({ erro: erroCampos });
   }
 
-  updates.versao = await proximaVersaoRegras(regra.cliente_id);
-
   console.log("[regras.controller] Atualizando regra:", id);
 
   const { data, error } = await supabase
@@ -294,19 +272,17 @@ export async function buscarVersaoRegras(req, res) {
   }
 
   const { data, error } = await supabase
-    .from("regras")
-    .select("versao")
-    .eq("cliente_id", clienteId)
-    .order("versao", { ascending: false })
-    .limit(1)
+    .from("clientes")
+    .select("regras_versao")
+    .eq("id", clienteId)
     .single();
 
-  if (error && error.code !== "PGRST116") {
+  if (error) {
     console.error("[regras.controller] Erro ao buscar versão:", error.message);
     return res.status(500).json({ erro: "Erro ao buscar versão das regras" });
   }
 
-  return res.status(200).json({ versao: data?.versao ?? null });
+  return res.status(200).json({ versao: data?.regras_versao ?? 0 });
 }
 
 export async function buscarRegras(req, res) {
