@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from core.estrutura_pastas import criar_estrutura_empresa_em
-from core.utils import validar_nome
+from core.utils import resolver_pasta_base, validar_nome
 
 NOME_ARQUIVO_SAIDA = "contrato_social_v1.docx"
 TEMPLATE_RELATIVO = Path("templates") / "contrato_social_modelo.docx"
@@ -55,11 +55,7 @@ def _validar_dados(dados):
     if not isinstance(dados, dict):
         return "dados deve ser um objeto", "dados_invalidos"
 
-    pasta_base = dados.get("pasta_base")
-    if not isinstance(pasta_base, str) or not pasta_base.strip():
-        # pasta_base ausente -> cai pra raiz local (PASTA_BASE, injetada pelo launcher)
-        pasta_base = os.getenv("PASTA_BASE", "")
-    pasta_base = pasta_base.strip()
+    pasta_base = resolver_pasta_base(dados.get("pasta_base"))
     if not pasta_base:
         return "pasta_base é obrigatória", "pasta_base_ausente"
     if not os.path.isabs(pasta_base):

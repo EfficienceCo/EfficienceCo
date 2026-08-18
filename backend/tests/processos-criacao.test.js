@@ -200,7 +200,7 @@ describe("criarProcesso — abertura_empresa", () => {
     assert.equal(res.body.pasta_base, null);
   });
 
-  it("repassa pasta_base absoluta quando informada explicitamente", async () => {
+  it("ignora pasta_base informada e deixa a raiz para o agente local", async () => {
     const req = {
       usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
       query: {},
@@ -216,8 +216,8 @@ describe("criarProcesso — abertura_empresa", () => {
     await criarProcesso(req, res);
 
     assert.equal(res.statusCode, 201);
-    assert.equal(obterInsercao("processos").pasta_base, "C:\\Clientes\\Empresa Com Raiz");
-    assert.equal(res.body.pasta_base, "C:\\Clientes\\Empresa Com Raiz");
+    assert.equal(obterInsercao("processos").pasta_base, null);
+    assert.equal(res.body.pasta_base, null);
   });
 
   it("preserva o checklist reduzido do cliente existente e automatiza a criação das pastas", async () => {

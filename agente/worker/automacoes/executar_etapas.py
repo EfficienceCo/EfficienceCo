@@ -5,20 +5,37 @@ from __future__ import annotations
 import os
 
 from comunicacao.etapas_agente import concluir_execucao, listar_etapas_prontas
+from comunicacao.reportar_evento import reportar_evento
 from automacoes.gerar_contrato_social import gerar_contrato_social
 from core.estrutura_pastas import criar_estrutura_empresa_em
-from core.utils import validar_nome
+from core.utils import resolver_pasta_base, validar_nome
 
 
-def _resolver_pasta_base(pasta_base):
-    """pasta_base ausente -> cai pra raiz local (PASTA_BASE, injetada pelo launcher)."""
-    if not isinstance(pasta_base, str) or not pasta_base.strip():
-        pasta_base = os.getenv("PASTA_BASE", "")
-    return pasta_base.strip()
+def _nome_empresa_evento(etapa):
+    nome = etapa.get("nome_empresa")
+    if isinstance(nome, str) and nome.strip():
+        return nome.strip()
+    return "empresa"
+
+
+def _mensagem_evento(etapa, resultado):
+    acao = etapa.get("acao") or "desconhecida"
+    nome_empresa = _nome_empresa_evento(etapa)
+    sucesso = bool(resultado.get("sucesso"))
+
+    if not sucesso:
+        erro = resultado.get("erro") or "erro desconhecido"
+        return f"Falha ao processar etapa {acao} ({nome_empresa}): {erro}"
+
+    if acao == "criar_pastas":
+        return f"Estrutura de pastas criada para {nome_empresa}"
+    if acao == "gerar_contrato_social":
+        return f"Contrato social gerado para {nome_empresa}"
+    return f"Etapa {acao} concluída para {nome_empresa}"
 
 
 def _criar_pastas(etapa):
-    pasta_base = _resolver_pasta_base(etapa.get("pasta_base"))
+    pasta_base = resolver_pasta_base(etapa.get("pasta_base"))
     nome_empresa = etapa.get("nome_empresa")
 
     if not pasta_base:
@@ -108,6 +125,15 @@ def processar_etapa(etapa):
             "arquivo_gerado": None,
         }
     _reportar(etapa, resultado)
+
+    try:
+        reportar_evento(
+            _mensagem_evento(etapa, resultado),
+            bool(resultado.get("sucesso")),
+        )
+    except Exception as e:
+        print(f"[executar_etapas] Falha ao reportar evento: {e}")
+
     return resultado
 
 

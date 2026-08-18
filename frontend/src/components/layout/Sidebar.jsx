@@ -34,6 +34,11 @@ const NAV_ITEMS = [
     icon: FiscalIcon,
   },
   {
+    href: '/dashboard/conciliacao',
+    label: 'Conciliação',
+    icon: ConciliacaoIcon,
+  },
+  {
     href: '/dashboard/logs',
     label: 'Logs',
     icon: LogsIcon,
@@ -236,6 +241,16 @@ function FiscalIcon() {
       <path d="M15 3.5V7h3" />
       <path d="M9 12.5h6" />
       <path d="M9 16h6" />
+    </IconBase>
+  );
+}
+
+function ConciliacaoIcon() {
+  return (
+    <IconBase>
+      <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
+      <path d="M3.5 9.5h17" />
+      <path d="M8 14.5l2.5 2.5L16 12" />
     </IconBase>
   );
 }

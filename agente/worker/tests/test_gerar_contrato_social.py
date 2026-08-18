@@ -174,6 +174,7 @@ def test_template_ausente(tmp_path, monkeypatch):
             "endereco_ausente",
         ),
         ({"nome_empresa": ""}, "nome_empresa_ausente"),
+        ({"nome_empresa": ".."}, "nome_empresa_invalido"),
     ],
 )
 def test_dados_invalidos(tmp_path, mutacao, codigo):
@@ -201,6 +202,30 @@ def test_pasta_base_ausente_usa_raiz_local(tmp_path, monkeypatch):
     assert resultado["sucesso"] is True
     esperado = tmp_path / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
     assert Path(resultado["arquivo_gerado"]) == esperado
+
+
+def test_pasta_base_relativa_legada_usa_raiz_local(tmp_path, monkeypatch):
+    """Processos criados antes do fix podem conservar o slug relativo do bug #311."""
+    monkeypatch.setenv("PASTA_BASE", str(tmp_path))
+    dados = _payload_base(pasta_base="Padaria_do_Joao")
+    resultado = gerar_contrato_social(dados)
+
+    assert resultado["sucesso"] is True
+    esperado = tmp_path / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
+    assert Path(resultado["arquivo_gerado"]) == esperado
+
+
+def test_pasta_base_remota_nao_sobrescreve_raiz_local(tmp_path, monkeypatch):
+    raiz_local = tmp_path / "local"
+    raiz_remota = tmp_path / "remota"
+    monkeypatch.setenv("PASTA_BASE", str(raiz_local))
+    dados = _payload_base(pasta_base=str(raiz_remota))
+    resultado = gerar_contrato_social(dados)
+
+    assert resultado["sucesso"] is True
+    esperado = raiz_local / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
+    assert Path(resultado["arquivo_gerado"]) == esperado
+    assert not raiz_remota.exists()
 
 
 def test_falha_io_gravacao(tmp_path):

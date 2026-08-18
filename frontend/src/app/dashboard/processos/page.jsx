@@ -231,6 +231,8 @@ function criarFormularioContratoSocial(etapa, processo = {}) {
       : [];
 
   return {
+    nome_empresa: String(payloadEtapa.nome_empresa ?? processo?.nome_empresa ?? ''),
+    cenario: String(payloadEtapa.cenario ?? processo?.cenario ?? 'nova'),
     socios:
       sociosRecebidos.length > 0
         ? sociosRecebidos.map((socio) => normalizarSocio(socio))
@@ -603,6 +605,7 @@ const TIPOS_PADRAO = [
   'fiscal',
   'contabil',
   'trabalhista',
+  'abertura_empresa',
 ];
 
 function Spinner() {
@@ -925,6 +928,9 @@ export default function ProcessosPage() {
 
   const [isNovoModalAberto, setIsNovoModalAberto] = useState(false);
   const [novoTipoProcesso, setNovoTipoProcesso] = useState(TIPOS_PADRAO[0]);
+  const [novoFormularioAbertura, setNovoFormularioAbertura] = useState(() =>
+    criarFormularioContratoSocial(null, null),
+  );
   const [erroNovoProcesso, setErroNovoProcesso] = useState('');
   const [isCriandoProcesso, setIsCriandoProcesso] = useState(false);
   const ultimaRequisicaoProcessosRef = useRef(0);
@@ -1054,6 +1060,7 @@ export default function ProcessosPage() {
 
   function abrirModalNovoProcesso() {
     setNovoTipoProcesso(tiposDisponiveis[0] || TIPOS_PADRAO[0]);
+    setNovoFormularioAbertura(criarFormularioContratoSocial(null, null));
     setErroNovoProcesso('');
     setIsNovoModalAberto(true);
   }
@@ -1075,11 +1082,31 @@ export default function ProcessosPage() {
       return;
     }
 
+    let payloadCriacao = { tipo: novoTipoProcesso };
+
+    if (novoTipoProcesso === 'abertura_empresa') {
+      if (!novoFormularioAbertura.nome_empresa?.trim()) {
+        setErroNovoProcesso('Informe o nome da empresa.');
+        return;
+      }
+      const mensagemValidacao = validarFormularioContratoSocial(novoFormularioAbertura);
+      if (mensagemValidacao) {
+        setErroNovoProcesso(mensagemValidacao);
+        return;
+      }
+      payloadCriacao = {
+        ...payloadCriacao,
+        nome_empresa: novoFormularioAbertura.nome_empresa.trim(),
+        cenario: novoFormularioAbertura.cenario?.trim() || 'nova',
+        ...montarPayloadContratoSocial(novoFormularioAbertura),
+      };
+    }
+
     setIsCriandoProcesso(true);
     setErroNovoProcesso('');
 
     try {
-      await criar({ tipo: novoTipoProcesso });
+      await criar(payloadCriacao);
       setIsNovoModalAberto(false);
       await carregarProcessos();
     } catch (error) {
@@ -1684,7 +1711,7 @@ export default function ProcessosPage() {
 
       {isNovoModalAberto ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
-          <section className="w-full max-w-lg rounded-xl border border-zinc-200 bg-white shadow-xl">
+          <section className="w-full max-w-lg rounded-xl border border-zinc-200 bg-white shadow-xl max-h-[90vh] flex flex-col">
             <header className="flex items-start justify-between border-b border-zinc-200 p-5">
               <div>
                 <h2 className="text-lg font-semibold text-zinc-900">Novo processo</h2>
@@ -1704,8 +1731,8 @@ export default function ProcessosPage() {
               </button>
             </header>
 
-            <form className="space-y-4 p-5" onSubmit={handleCriarProcesso}>
-              <label className="space-y-2">
+            <form className="space-y-4 p-5 overflow-y-auto" onSubmit={handleCriarProcesso}>
+              <label className="space-y-2 block">
                 <span className="block text-sm font-medium text-zinc-700">Tipo de processo</span>
                 <select
                   value={novoTipoProcesso}
@@ -1721,6 +1748,82 @@ export default function ProcessosPage() {
                   ))}
                 </select>
               </label>
+
+              {novoTipoProcesso === 'abertura_empresa' ? (
+                <div className="space-y-4 border-t border-zinc-100 pt-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label htmlFor="modal-novo-processo-nome-empresa" className="space-y-1.5 block">
+                      <span className="block text-xs font-medium text-zinc-700">Nome da empresa</span>
+                      <input
+                        id="modal-novo-processo-nome-empresa"
+                        type="text"
+                        value={novoFormularioAbertura.nome_empresa || ''}
+                        onChange={(event) =>
+                          setNovoFormularioAbertura((prev) => ({
+                            ...prev,
+                            nome_empresa: event.target.value,
+                          }))
+                        }
+                        placeholder="Ex: Minha Empresa LTDA"
+                        disabled={isCriandoProcesso}
+                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                        required
+                      />
+                    </label>
+
+                    <label htmlFor="modal-novo-processo-cenario" className="space-y-1.5 block">
+                      <span className="block text-xs font-medium text-zinc-700">Cenário</span>
+                      <select
+                        id="modal-novo-processo-cenario"
+                        value={novoFormularioAbertura.cenario || 'nova'}
+                        onChange={(event) =>
+                          setNovoFormularioAbertura((prev) => ({
+                            ...prev,
+                            cenario: event.target.value,
+                          }))
+                        }
+                        disabled={isCriandoProcesso}
+                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <option value="nova">Nova</option>
+                        <option value="cliente_existente">Cliente existente</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <FormularioContratoSocial
+                    idBase="modal-novo-processo"
+                    formulario={novoFormularioAbertura}
+                    disabled={isCriandoProcesso}
+                    onAdicionarSocio={() =>
+                      setNovoFormularioAbertura((prev) => ({
+                        ...prev,
+                        socios: [...prev.socios, normalizarSocio()],
+                      }))
+                    }
+                    onAlterarCampo={(campo, valor) =>
+                      setNovoFormularioAbertura((prev) => ({
+                        ...prev,
+                        [campo]: valor,
+                      }))
+                    }
+                    onAlterarSocio={(index, campo, valor) =>
+                      setNovoFormularioAbertura((prev) => ({
+                        ...prev,
+                        socios: prev.socios.map((s, i) =>
+                          i === index ? { ...s, [campo]: valor } : s,
+                        ),
+                      }))
+                    }
+                    onRemoverSocio={(index) =>
+                      setNovoFormularioAbertura((prev) => ({
+                        ...prev,
+                        socios: prev.socios.filter((_, i) => i !== index),
+                      }))
+                    }
+                  />
+                </div>
+              ) : null}
 
               {erroNovoProcesso ? (
                 <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
