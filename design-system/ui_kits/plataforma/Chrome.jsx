@@ -7,10 +7,21 @@ function Logo({ size = 30 }) {
 
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', Icon: IcoDashboard },
+  { key: 'logs', label: 'Logs do agente', Icon: IcoLogs },
+  { key: 'roi', label: 'Efficience', Icon: IcoBolt },
+];
+const NAV_AREAS = [
+  { key: 'fiscal', label: 'Fiscal', Icon: IcoFiscal },
+  { key: 'contabil', label: 'Contábil', Icon: IcoContabil },
+  { key: 'dp', label: 'DP', Icon: IcoDp },
+  { key: 'societario', label: 'Societário', Icon: IcoSocietario },
+  { key: 'financeiro', label: 'Financeiro', Icon: IcoFinanceiro },
+  { key: 'atendimento', label: 'Atendimento', Icon: IcoAtendimento },
+];
+const NAV_OPERACIONAL = [
   { key: 'obrigacoes', label: 'Obrigações', Icon: IcoObrigacoes },
   { key: 'processos', label: 'Processos', Icon: IcoProcessos },
   { key: 'regras', label: 'Regras', Icon: IcoRegras },
-  { key: 'logs', label: 'Logs do agente', Icon: IcoLogs },
 ];
 const NAV_GESTAO = [
   { key: 'clientes', label: 'Clientes', Icon: IcoClientes },
@@ -58,6 +69,10 @@ function Sidebar({ route, onNavigate, onLogout, user }) {
       </div>
       <nav className="sb-nav">
         {NAV.map((it) => <NavItem key={it.key} item={it} active={route === it.key} onClick={() => onNavigate(it.key)} />)}
+        <div className="sb-section">Áreas de automação</div>
+        {NAV_AREAS.map((it) => <NavItem key={it.key} item={it} active={route === it.key} onClick={() => onNavigate(it.key)} />)}
+        <div className="sb-section">Operacional</div>
+        {NAV_OPERACIONAL.map((it) => <NavItem key={it.key} item={it} active={route === it.key} onClick={() => onNavigate(it.key)} />)}
         <div className="sb-section">Gestão · admin do escritório</div>
         {NAV_GESTAO.map((it) => <NavItem key={it.key} item={it} active={route === it.key} onClick={() => onNavigate(it.key)} />)}
         <div className="sb-section">Efficience · suporte</div>
@@ -79,7 +94,12 @@ function Sidebar({ route, onNavigate, onLogout, user }) {
 const TITLES = {
   dashboard: 'Dashboard', obrigacoes: 'Obrigações', processos: 'Processos',
   regras: 'Regras', logs: 'Logs do agente', usuarios: 'Usuários', clientes: 'Clientes',
-  escritorios: 'Escritórios', notificacoes: 'Notificações',
+  escritorios: 'Escritórios', notificacoes: 'Notificações', roi: 'Efficience',
+  fiscal: 'Fiscal', contabil: 'Contábil', dp: 'DP', societario: 'Societário',
+  financeiro: 'Financeiro', atendimento: 'Atendimento',
+  'fiscal-escrituracao': 'Fiscal / Escrituração NF-e',
+  'contabil-conciliacao': 'Contábil / Conciliação bancária',
+  'dp-folha': 'DP / Folha de pagamento mensal',
 };
 
 function Topbar({ route, unread, onBellClick }) {
@@ -99,4 +119,4 @@ function Topbar({ route, unread, onBellClick }) {
   );
 }
 
-Object.assign(window, { Logo, Sidebar, Topbar, NAV, NAV_GESTAO, NAV_EFFICIENCE });
+Object.assign(window, { Logo, Sidebar, Topbar, NAV, NAV_AREAS, NAV_OPERACIONAL, NAV_GESTAO, NAV_EFFICIENCE });

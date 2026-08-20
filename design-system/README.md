@@ -117,13 +117,16 @@ Root files:
 - **`ui_kits/plataforma/`** — high-fidelity recreation of the dashboard product (sidebar, widgets, tables, login). `index.html` is an interactive click-through.
 - **`ui_kits/site/`** — proposed marketing website (hero, features, pricing, footer). `index.html` is the landing page.
 
-> ⚠️ **Repo check (2026-08-19): `ui_kits/` was never committed.** `git log --all -- design-system`
-> shows a single commit (`56f44ff`, initial marketing site) that only added `README.md`,
-> `SKILL.md`, `colors_and_type.css`, `assets/`, and `preview/` — no `ui_kits/plataforma/`
-> or `ui_kits/site/`, no `_ds_manifest.json`, `_ds_bundle.js`, or `_adherence.oxlintrc.json`
-> ever existed in this repo. Everything above that references those files describes the
-> original Claude Design export, not what's actually here. Don't assume `ui_kits/` exists
-> before opening it — check `ls design-system/` first.
+> ⚠️ **Correction (2026-08-20): the note below was wrong.** `git log --all -- "design-system/ui_kits/plataforma/Dashboard.jsx"`
+> shows `ui_kits/plataforma/` and `ui_kits/site/` were in fact added in commit `56f44ff`
+> (same commit as the marketing site, despite the message) — `git ls-files design-system/ui_kits/`
+> confirms every file there is tracked. Both kits exist and are real; the "never committed"
+> claim below came from an incomplete check. `_ds_manifest.json`, `_ds_bundle.js`, and
+> `_adherence.oxlintrc.json` genuinely don't exist though — those describe the original
+> Claude Design export format, not this repo. `ui_kits/plataforma/` was extended
+> 2026-08-20 with the six área screens (Fiscal, Contábil, DP, Societário, Financeiro,
+> Atendimento) and the Efficience/ROI screen, pulled from the real
+> `frontend/src/app/dashboard/<area>/page.jsx` routes — see its own `README.md`.
 
 ---
 

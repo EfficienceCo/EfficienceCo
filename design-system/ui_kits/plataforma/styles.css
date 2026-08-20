@@ -86,8 +86,23 @@ input { font-family: inherit; }
 .page-head h1 { font-family: var(--font-display); font-weight: 600; font-size: 30px; letter-spacing: -0.02em; color: var(--slate-900); margin: 0; }
 .page-head p { font-size: 14px; color: var(--fg-muted); margin: 7px 0 0; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-@media (max-width: 1120px){ .grid2{grid-template-columns:1fr;} .grid4{grid-template-columns:1fr 1fr;} }
+@media (max-width: 1120px){ .grid2{grid-template-columns:1fr;} .grid3{grid-template-columns:1fr 1fr;} .grid4{grid-template-columns:1fr 1fr;} }
+@media (max-width: 760px){ .grid3{grid-template-columns:1fr;} }
+
+/* ============ Automation cards (área screens) ============ */
+.acard { background: #fff; border: 1px solid var(--border); border-radius: var(--r-xl); box-shadow: var(--shadow-sm); padding: 18px; transition: border-color var(--dur) var(--ease-out), transform var(--dur) var(--ease-out); text-align: left; display: block; width: 100%; }
+.acard.clickable { cursor: pointer; }
+.acard.clickable:hover { border-color: var(--slate-300); transform: translateY(-1px); }
+.acard.locked { opacity: .8; cursor: not-allowed; }
+.acard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.acard-ico { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--r-md); background: var(--brand-50); color: var(--brand-700); flex: none; }
+.acard-ico svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; fill: none; }
+.acard-title { margin-top: 12px; font-family: var(--font-sans); font-weight: 600; font-size: 14px; color: var(--slate-900); }
+.acard-desc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--fg-muted); }
+.acard-obs { margin-top: 8px; font-size: 12px; color: var(--slate-400); }
+.acard-soon { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--slate-400); }
 
 /* ============ Cockpit hero ============ */
 .cockpit { display: grid; grid-template-columns: 1.55fr 1fr; gap: 16px; }
