@@ -1,5 +1,6 @@
 """Testes do consumer do canal de etapas (#262 / #266)."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 from automacoes.executar_etapas import processar_etapa, processar_etapas_pendentes
@@ -106,6 +107,104 @@ def test_criar_pastas_no_loop(tmp_path):
     assert sucesso is True
     assert "Estrutura de pastas criada" in descricao
     assert "Empresa Pastas" in descricao
+
+
+def test_criar_pastas_pasta_base_relativa_usa_raiz_local(tmp_path, monkeypatch):
+    """Processos antigos com o slug relativo do bug #311 usam a raiz local."""
+    monkeypatch.setenv("PASTA_BASE", str(tmp_path))
+    etapa = {
+        "id": ETAPA_ID,
+        "processo_id": "proc-1",
+        "acao": "criar_pastas",
+        "payload": {},
+        "execucao_token": TOKEN,
+        "nome_empresa": "Empresa Pastas",
+        "pasta_base": "Empresa Pastas",  # valor não-absoluto vindo do backend (bug #311)
+    }
+
+    with (
+        patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir,
+        patch("automacoes.executar_etapas.reportar_evento") as mock_evento,
+    ):
+        resultado = processar_etapa(etapa)
+
+    assert resultado["sucesso"] is True
+    assert Path(resultado["arquivo_gerado"]) == tmp_path / "Empresa Pastas"
+    assert mock_concluir.call_args.kwargs["sucesso"] is True
+    mock_evento.assert_called_once()
+
+
+def test_criar_pastas_pasta_base_ausente_usa_raiz_local(tmp_path, monkeypatch):
+    monkeypatch.setenv("PASTA_BASE", str(tmp_path))
+    etapa = {
+        "id": ETAPA_ID,
+        "processo_id": "proc-1",
+        "acao": "criar_pastas",
+        "payload": {},
+        "execucao_token": TOKEN,
+        "nome_empresa": "Empresa Pastas",
+        "pasta_base": None,
+    }
+
+    with (
+        patch("automacoes.executar_etapas.concluir_execucao") as mock_concluir,
+        patch("automacoes.executar_etapas.reportar_evento") as mock_evento,
+    ):
+        resultado = processar_etapa(etapa)
+
+    assert resultado["sucesso"] is True
+    pasta_empresa = tmp_path / "Empresa Pastas"
+    for sub in SUBPASTAS:
+        assert (pasta_empresa / sub).is_dir()
+    assert mock_concluir.call_args.kwargs["sucesso"] is True
+    mock_evento.assert_called_once()
+
+
+def test_criar_pastas_caminho_remoto_nao_sobrescreve_raiz_local(tmp_path, monkeypatch):
+    raiz_local = tmp_path / "local"
+    raiz_remota = tmp_path / "remota"
+    monkeypatch.setenv("PASTA_BASE", str(raiz_local))
+    etapa = {
+        "id": ETAPA_ID,
+        "processo_id": "proc-1",
+        "acao": "criar_pastas",
+        "payload": {},
+        "execucao_token": TOKEN,
+        "nome_empresa": "Empresa Pastas",
+        "pasta_base": str(raiz_remota),
+    }
+
+    with (
+        patch("automacoes.executar_etapas.concluir_execucao"),
+        patch("automacoes.executar_etapas.reportar_evento"),
+    ):
+        resultado = processar_etapa(etapa)
+
+    assert resultado["sucesso"] is True
+    assert Path(resultado["arquivo_gerado"]) == raiz_local / "Empresa Pastas"
+    assert not raiz_remota.exists()
+
+
+def test_criar_pastas_rejeita_nome_com_traversal(tmp_path, monkeypatch):
+    monkeypatch.setenv("PASTA_BASE", str(tmp_path))
+    etapa = {
+        "id": ETAPA_ID,
+        "processo_id": "proc-1",
+        "acao": "criar_pastas",
+        "payload": {},
+        "execucao_token": TOKEN,
+        "nome_empresa": "..",
+        "pasta_base": None,
+    }
+
+    with (
+        patch("automacoes.executar_etapas.concluir_execucao"),
+        patch("automacoes.executar_etapas.reportar_evento"),
+    ):
+        resultado = processar_etapa(etapa)
+
+    assert resultado["sucesso"] is False
+    assert "Nome inválido" in resultado["erro"]
 
 
 def test_acao_desconhecida_reporta_erro(tmp_path):
