@@ -8,13 +8,20 @@ test.describe('Folha de Pagamento', () => {
     await login(page);
   });
 
-  test('sidebar tem links de Folha e Status folha', async ({ page }) => {
-    await expect(page.getByRole('link', { name: 'Folha', exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Status folha', exact: true })).toBeVisible();
+  test('sidebar tem link de DP, que leva à automação de Folha', async ({ page }) => {
+    await expect(page.getByRole('link', { name: 'DP', exact: true })).toBeVisible();
+
+    await page.getByRole('link', { name: 'DP', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'DP' })).toBeVisible();
+    await expect(page.getByText('Folha de pagamento mensal')).toBeVisible();
   });
 
-  test('acessa tela de upload via sidebar', async ({ page }) => {
-    await page.getByRole('link', { name: 'Folha', exact: true }).click();
+  test('acessa tela de upload via DP > Folha de pagamento mensal', async ({ page }) => {
+    await page.goto('/dashboard/dp');
+    await page.getByText('Folha de pagamento mensal').click();
+    await expect(page).toHaveURL(/\/dashboard\/dp\/folha$/);
+
+    await page.getByRole('link', { name: 'Upload da folha' }).click();
     await expect(page).toHaveURL(/folha\/upload/);
     await expect(page.getByRole('heading', { name: 'Upload da folha' })).toBeVisible();
   });

@@ -65,7 +65,7 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
   });
 
   test('mostra entrada verde, saída vermelha e destaca Fiscal na sidebar', async ({ page }) => {
-    await page.goto('/dashboard/fiscal');
+    await page.goto('/dashboard/fiscal/escrituracao');
 
     const entrada = page.getByText('Entrada', { exact: true });
     const saida = page.getByText('Saída', { exact: true });

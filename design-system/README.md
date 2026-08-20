@@ -117,6 +117,14 @@ Root files:
 - **`ui_kits/plataforma/`** — high-fidelity recreation of the dashboard product (sidebar, widgets, tables, login). `index.html` is an interactive click-through.
 - **`ui_kits/site/`** — proposed marketing website (hero, features, pricing, footer). `index.html` is the landing page.
 
+> ⚠️ **Repo check (2026-08-19): `ui_kits/` was never committed.** `git log --all -- design-system`
+> shows a single commit (`56f44ff`, initial marketing site) that only added `README.md`,
+> `SKILL.md`, `colors_and_type.css`, `assets/`, and `preview/` — no `ui_kits/plataforma/`
+> or `ui_kits/site/`, no `_ds_manifest.json`, `_ds_bundle.js`, or `_adherence.oxlintrc.json`
+> ever existed in this repo. Everything above that references those files describes the
+> original Claude Design export, not what's actually here. Don't assume `ui_kits/` exists
+> before opening it — check `ls design-system/` first.
+
 ---
 
 ## ✍️ Content fundamentals
@@ -255,15 +263,35 @@ animation in-product. Marketing may add gentle fade/translate-up on scroll
   joins, `currentColor` — the exact style the product ships. They're geometric and
   even-weight (dashboard grid, calendar, list, gear-rules, people, bell, building).
 - **Source in the codebase:** hand-authored inline SVGs (no icon library was
-  imported). For this design system, use **[Lucide](https://lucide.dev)** — it's a
+  imported) — and this held up under a second real feature (issue #358, 2026-08-19):
+  ~23 new automation-card icons were added to
+  `frontend/src/components/icons/AutomacaoIcons.jsx` by hand, not via a library, to
+  replace a first-pass emoji set that read as "AI-generated." See
+  `preview/components-automacao-icons.html` for the full set with usage notes.
+- For this design system's own kits, use **[Lucide](https://lucide.dev)** — it's a
   near-perfect match for the existing hand-drawn set (same 24px grid, ~1.8 stroke,
   round joins) and is CDN-available. This is a **documented substitution**: the
   product's bespoke icons and Lucide are visually interchangeable; standardizing on
   Lucide makes new screens consistent and fast.
   - CDN: `<script src="https://unpkg.com/lucide@latest"></script>` then `lucide.createIcons()`, or use individual SVGs.
-  - Mapping used in the kits: Dashboard→`layout-dashboard`, Obrigações→`calendar-clock`,
+  - ⚠️ **The product itself has not adopted Lucide** — two rounds of real feature work
+    (Sidebar.jsx, then AutomacaoIcons.jsx) both chose hand-authored inline SVG instead,
+    to avoid a new dependency. Treat Lucide as this design system's own shortcut, not
+    a confirmed product decision — don't assume it's safe to import `lucide-react` in
+    the app without checking first.
+  - Sidebar mapping used in the kits: Dashboard→`layout-dashboard`, Obrigações→`calendar-clock`,
     Processos→`folder-kanban`/`clipboard-list`, Logs→`scroll-text`, Regras→`git-fork`/`sliders-horizontal`,
     Usuários→`users`, Comunicação→`bell`, Admin/Clientes→`building-2`, Licença→`badge-check`/`key-round`.
+  - Area-nav mapping added by #358 (real Sidebar.jsx, not yet in the kits):
+    Efficience→`zap`, Fiscal→`file-text`, Contábil→`book-check`, DP→`user-round`,
+    Societário→`landmark`, Financeiro→`circle-dollar-sign`, Atendimento→`headset`.
+  - Automation-card icon set added by the #358 follow-up (real
+    `AutomacaoIcons.jsx`, reused across similar automations rather than one bespoke
+    icon per item — same principle Lucide would apply): documento, calculadora, guia,
+    pasta, transmissão, etiqueta, cifrão, lupa, sino, prédio, selo, escudo, assinatura,
+    ciclo, comprovante, calendário, pessoa, cruz médica, relógio, ônibus, telefone,
+    gráfico, envelope, entrada. Full grid with per-icon usage:
+    `preview/components-automacao-icons.html`.
 - **Sizing:** 16px inside dense UI (nav, buttons, table cells), 20–24px for
   feature/section icons, 1.5–2px stroke. Keep stroke optical-weight consistent
   with text around it.

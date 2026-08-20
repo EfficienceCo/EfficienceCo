@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
-import { useNotificacoes } from '../../context/NotificacoesContext';
 
 const NAV_ITEMS = [
   {
@@ -13,20 +12,18 @@ const NAV_ITEMS = [
     exact: true,
   },
   {
-    href: '/dashboard/obrigacoes',
-    label: 'Obrigações',
-    icon: ObrigacoesIcon,
+    href: '/dashboard/logs',
+    label: 'Logs',
+    icon: LogsIcon,
   },
   {
-    href: '/dashboard/processos',
-    label: 'Processos',
-    icon: ProcessosIcon,
+    href: '/dashboard/efficience',
+    label: 'Efficience',
+    icon: EfficienceIcon,
   },
   {
-    href: '/dashboard/folha/upload',
-    label: 'Folha',
-    icon: FolhaIcon,
-    activePrefix: '/dashboard/folha',
+    type: 'separator',
+    key: 'separador-areas',
   },
   {
     href: '/dashboard/fiscal',
@@ -34,30 +31,41 @@ const NAV_ITEMS = [
     icon: FiscalIcon,
   },
   {
-    href: '/dashboard/conciliacao',
-    label: 'Conciliação',
-    icon: ConciliacaoIcon,
+    href: '/dashboard/contabil',
+    label: 'Contábil',
+    icon: ContabilIcon,
+    // A tela de revisão da conciliação (/dashboard/conciliacao/[id]) continua na URL
+    // antiga — só a listagem foi movida para /dashboard/contabil/conciliacao.
+    extraPrefixes: ['/dashboard/conciliacao'],
   },
   {
-    href: '/dashboard/logs',
-    label: 'Logs',
-    icon: LogsIcon,
+    href: '/dashboard/dp',
+    label: 'DP',
+    icon: DpIcon,
   },
   {
-    href: '/dashboard/regras',
-    label: 'Regras',
-    icon: RegrasIcon,
+    href: '/dashboard/societario',
+    label: 'Societário',
+    icon: SocietarioIcon,
+  },
+  {
+    href: '/dashboard/financeiro',
+    label: 'Financeiro',
+    icon: FinanceiroIcon,
+  },
+  {
+    href: '/dashboard/atendimento',
+    label: 'Atendimento',
+    icon: AtendimentoIcon,
+  },
+  {
+    type: 'separator',
+    key: 'separador-admin',
   },
   {
     href: '/dashboard/usuarios',
     label: 'Usuários',
     icon: UsuariosIcon,
-  },
-  {
-    href: '/dashboard/comunicacao',
-    label: 'Comunicação',
-    icon: NotificacoesIcon,
-    badge: true,
   },
   {
     href: '/admin/clientes',
@@ -67,7 +75,7 @@ const NAV_ITEMS = [
 ];
 
 function isRouteActive(pathname, item) {
-  const { href, exact, activePrefix } = item;
+  const { href, exact, activePrefix, extraPrefixes } = item;
   const routeBase = activePrefix || href;
 
   if (!pathname) {
@@ -78,11 +86,17 @@ function isRouteActive(pathname, item) {
     return true;
   }
 
+  if (!exact && pathname.startsWith(`${routeBase}/`)) {
+    return true;
+  }
+
   if (exact) {
     return false;
   }
 
-  return pathname.startsWith(`${routeBase}/`);
+  return (extraPrefixes || []).some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 }
 
 function sidebarLinkClasses(ativo) {
@@ -93,18 +107,9 @@ function sidebarLinkClasses(ativo) {
   return 'text-slate-400 hover:bg-white/5 hover:text-white';
 }
 
-function badgeClasses(total) {
-  if (total > 0) {
-    return 'bg-rose-500 text-white';
-  }
-
-  return 'bg-white/10 text-slate-300';
-}
-
 export default function Sidebar() {
   const pathname = usePathname();
   const { logout, user } = useAuth();
-  const { naoLidas } = useNotificacoes();
 
   return (
     <aside className="nova-sidebar w-full border-b border-white/10 text-slate-300 md:fixed md:inset-y-0 md:w-[264px] md:border-b-0 md:border-r">
@@ -131,6 +136,12 @@ export default function Sidebar() {
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="grid gap-1.5">
             {NAV_ITEMS.map((item) => {
+              if (item.type === 'separator') {
+                return (
+                  <li key={item.key} aria-hidden="true" className="my-2 border-t border-white/10" />
+                );
+              }
+
               const ativo = isRouteActive(pathname, item);
               const Icon = item.icon;
 
@@ -142,15 +153,6 @@ export default function Sidebar() {
                   >
                     <Icon />
                     <span className="flex-1">{item.label}</span>
-                    {item.badge ? (
-                      <span
-                        className={`min-w-6 rounded-full px-2 py-0.5 text-center text-xs font-semibold ${badgeClasses(
-                          naoLidas,
-                        )}`}
-                      >
-                        {naoLidas}
-                      </span>
-                    ) : null}
                   </Link>
                 </li>
               );
@@ -200,40 +202,6 @@ function DashboardIcon() {
   );
 }
 
-function ObrigacoesIcon() {
-  return (
-    <IconBase>
-      <path d="M7 3.5v3" />
-      <path d="M17 3.5v3" />
-      <rect x="4" y="6.5" width="16" height="14" rx="2" />
-      <path d="M4 10h16" />
-    </IconBase>
-  );
-}
-
-function ProcessosIcon() {
-  return (
-    <IconBase>
-      <path d="M3.5 7.5h17" />
-      <rect x="3.5" y="4" width="17" height="16.5" rx="2" />
-      <path d="M8 12h8" />
-      <path d="M8 15.5h5" />
-    </IconBase>
-  );
-}
-
-function FolhaIcon() {
-  return (
-    <IconBase>
-      <path d="M7 3.5h7l3.5 3.5v13.5H7z" />
-      <path d="M14 3.5V7h3.5" />
-      <path d="M9.5 11h5" />
-      <path d="M9.5 14h5" />
-      <path d="M9.5 17h3" />
-    </IconBase>
-  );
-}
-
 function FiscalIcon() {
   return (
     <IconBase>
@@ -241,16 +209,6 @@ function FiscalIcon() {
       <path d="M15 3.5V7h3" />
       <path d="M9 12.5h6" />
       <path d="M9 16h6" />
-    </IconBase>
-  );
-}
-
-function ConciliacaoIcon() {
-  return (
-    <IconBase>
-      <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
-      <path d="M3.5 9.5h17" />
-      <path d="M8 14.5l2.5 2.5L16 12" />
     </IconBase>
   );
 }
@@ -265,13 +223,63 @@ function LogsIcon() {
   );
 }
 
-function RegrasIcon() {
+function EfficienceIcon() {
   return (
     <IconBase>
-      <circle cx="8" cy="8" r="2.2" />
-      <circle cx="16" cy="16" r="2.2" />
-      <path d="M9.7 9.7l4.6 4.6" />
-      <path d="M14.3 9.7l-4.6 4.6" />
+      <path d="M13 3 5 13.5h5.5L11 21l8-10.5h-5.5z" />
+    </IconBase>
+  );
+}
+
+function ContabilIcon() {
+  return (
+    <IconBase>
+      <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
+      <path d="M3.5 9.5h17" />
+      <path d="M8 14.5l2.5 2.5L16 12" />
+    </IconBase>
+  );
+}
+
+function DpIcon() {
+  return (
+    <IconBase>
+      <circle cx="12" cy="8" r="3.2" />
+      <path d="M5.5 20c0-3.3 2.9-6 6.5-6s6.5 2.7 6.5 6" />
+    </IconBase>
+  );
+}
+
+function SocietarioIcon() {
+  return (
+    <IconBase>
+      <path d="M12 3.5 4 7v2h16V7z" />
+      <path d="M5.5 9v9" />
+      <path d="M9.5 9v9" />
+      <path d="M14.5 9v9" />
+      <path d="M18.5 9v9" />
+      <path d="M4 20.5h16" />
+    </IconBase>
+  );
+}
+
+function FinanceiroIcon() {
+  return (
+    <IconBase>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v8" />
+      <path d="M9.5 10a2.2 2.2 0 0 1 2.2-1.7h.6A2.1 2.1 0 0 1 14.5 10c0 1.2-.9 1.7-2.5 2.2s-2.5 1-2.5 2.2a2.1 2.1 0 0 0 2.2 1.7h.6a2.2 2.2 0 0 0 2.2-1.7" />
+    </IconBase>
+  );
+}
+
+function AtendimentoIcon() {
+  return (
+    <IconBase>
+      <path d="M4 12a8 8 0 0 1 16 0v4.5a2 2 0 0 1-2 2h-1" />
+      <rect x="3.5" y="12" width="4" height="5.5" rx="1.2" />
+      <rect x="16.5" y="12" width="4" height="5.5" rx="1.2" />
+      <path d="M14.5 18.5a2 2 0 0 1-2 2h-1.5" />
     </IconBase>
   );
 }
@@ -283,15 +291,6 @@ function UsuariosIcon() {
       <path d="M4.5 19c0-2.5 2-4.5 4.5-4.5S13.5 16.5 13.5 19" />
       <circle cx="17.5" cy="9.5" r="2.2" />
       <path d="M15.5 18.8c.3-2 1.9-3.6 3.9-3.9" />
-    </IconBase>
-  );
-}
-
-function NotificacoesIcon() {
-  return (
-    <IconBase>
-      <path d="M12 4.5a4.5 4.5 0 0 0-4.5 4.5v2.7L6 14v1h12v-1l-1.5-2.3V9A4.5 4.5 0 0 0 12 4.5Z" />
-      <path d="M9.5 17.5a2.5 2.5 0 0 0 5 0" />
     </IconBase>
   );
 }
