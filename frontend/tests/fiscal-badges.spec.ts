@@ -79,7 +79,7 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(saida).toHaveClass(/text-rose-700/);
 
     const sidebar = page.locator('aside.nova-sidebar');
-    const fiscalLink = sidebar.getByRole('link', { name: 'Fiscal' });
+    const fiscalLink = sidebar.getByRole('link', { name: 'Fiscal', exact: true });
 
     await expect(fiscalLink).toBeVisible();
     await expect(fiscalLink).toHaveAttribute('href', '/dashboard/fiscal');
