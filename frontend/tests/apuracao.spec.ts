@@ -9,9 +9,22 @@ import { login } from './helpers/auth';
 // anterior.
 // O seletor de Ano só oferece o ano atual e os 4 anteriores (ver
 // obterAnosDisponiveis em page.jsx) — a competência pseudo-única precisa
-// cair dentro dessa janela.
-const ANO = new Date().getFullYear() - (Date.now() % 4);
-const MES = (Date.now() % 12) + 1;
+// cair dentro dessa janela (60 combinações possíveis de mês×ano).
+// `Date.now() % 12` sozinho colide fácil entre dois testes do mesmo arquivo
+// rodando a poucos segundos de distância — por isso soma um índice que avança
+// a cada chamada, garantindo competências distintas dentro do mesmo run.
+let indiceCompetencia = 0;
+
+function proximaCompetencia() {
+  const anoAtual = new Date().getFullYear();
+  const slot = (Date.now() + indiceCompetencia) % 60;
+  indiceCompetencia += 1;
+
+  return {
+    ano: anoAtual - Math.floor(slot / 12),
+    mes: (slot % 12) + 1,
+  };
+}
 
 test.describe('Apuração Fiscal — página /dashboard/apuracoes (issue #356)', () => {
   test.beforeEach(async ({ page }) => {
@@ -27,23 +40,25 @@ test.describe('Apuração Fiscal — página /dashboard/apuracoes (issue #356)',
   });
 
   test('calcula o DAS e exibe o breakdown completo (RBT12, Anexo, alíquota, valor)', async ({ page }) => {
-    await page.getByLabel('Mês').selectOption(String(MES));
-    await page.getByLabel('Ano').selectOption(String(ANO));
+    const { ano, mes } = proximaCompetencia();
+    await page.getByLabel('Mês').selectOption(String(mes));
+    await page.getByLabel('Ano').selectOption(String(ano));
     await page.getByRole('button', { name: 'Calcular DAS' }).click();
 
     await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible({
       timeout: 15000,
     });
-    await expect(page.getByText('Simples Nacional')).toBeVisible();
+    await expect(page.getByText('Simples Nacional', { exact: true })).toBeVisible();
     await expect(page.getByText('RBT12')).toBeVisible();
     await expect(page.getByText('Alíquota nominal')).toBeVisible();
     await expect(page.getByText('Alíquota efetiva')).toBeVisible();
-    await expect(page.getByText('Valor do DAS')).toBeVisible();
+    await expect(page.getByText('Valor do DAS', { exact: true })).toBeVisible();
   });
 
   test('edita o valor com motivo e o histórico de edições aparece na tela', async ({ page }) => {
-    await page.getByLabel('Mês').selectOption(String(MES));
-    await page.getByLabel('Ano').selectOption(String(ANO));
+    const { ano, mes } = proximaCompetencia();
+    await page.getByLabel('Mês').selectOption(String(mes));
+    await page.getByLabel('Ano').selectOption(String(ano));
     await page.getByRole('button', { name: 'Calcular DAS' }).click();
     await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible({
       timeout: 15000,
@@ -64,8 +79,9 @@ test.describe('Apuração Fiscal — página /dashboard/apuracoes (issue #356)',
   });
 
   test('aprova o DAS via modal de confirmação e o status muda visualmente', async ({ page }) => {
-    await page.getByLabel('Mês').selectOption(String(MES));
-    await page.getByLabel('Ano').selectOption(String(ANO));
+    const { ano, mes } = proximaCompetencia();
+    await page.getByLabel('Mês').selectOption(String(mes));
+    await page.getByLabel('Ano').selectOption(String(ano));
     await page.getByRole('button', { name: 'Calcular DAS' }).click();
     await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible({
       timeout: 15000,

@@ -11,6 +11,7 @@ import {
 } from '../../../services/apuracao.service';
 
 const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
+const REGIME_SIMPLES_NACIONAL = 'simples_nacional';
 
 const MESES = [
   { value: 1, label: 'Janeiro' },
@@ -39,8 +40,38 @@ function obterMensagemErro(error, fallback = 'Não foi possível processar a sol
   );
 }
 
+// O backend (AP-5) não devolve um campo `codigo` — só `{ erro: <mensagem> }`.
+// Pro Fator R sem folha, essa mensagem já é o código bruto ("FATOR_R_SEM_FOLHA");
+// pro regime não suportado, é uma frase legível. Mapeamos os dois aqui pra
+// escolher qual banner mostrar sem depender de um contrato que o backend não tem.
 function obterCodigoErro(error) {
-  return error?.response?.data?.codigo || null;
+  const mensagem = error?.response?.data?.erro;
+
+  if (mensagem === 'FATOR_R_SEM_FOLHA') {
+    return 'FATOR_R_SEM_FOLHA';
+  }
+
+  if (mensagem === 'Regime tributário não suportado') {
+    return 'REGIME_NAO_SUPORTADO';
+  }
+
+  return null;
+}
+
+function obterValorExibido(apuracao) {
+  return apuracao?.valor_editado ?? apuracao?.valor_calculado;
+}
+
+// aprovado_por vem como o UUID do usuário (req.usuario.id no backend), sem
+// nome — não existe endpoint pra resolver id -> nome ainda. Como o único
+// jeito de chegar em status "aprovado" nesta tela é o próprio usuário logado
+// aprovando, mostramos o nome/email dele quando o id bate.
+function obterNomeAprovador(apuracao, user) {
+  if (apuracao?.aprovado_por && apuracao.aprovado_por === user?.id) {
+    return user?.nome || user?.email || apuracao.aprovado_por;
+  }
+
+  return apuracao?.aprovado_por;
 }
 
 function normalizarClientes(payload) {
@@ -240,9 +271,14 @@ export default function ApuracoesPage() {
     setShowAprovarModal(false);
 
     try {
-      const resultado = await calcularApuracao({ clienteId: clienteIdEfetivo, mes, ano });
+      const resultado = await calcularApuracao({
+        clienteId: clienteIdEfetivo,
+        mes,
+        ano,
+        regime: REGIME_SIMPLES_NACIONAL,
+      });
       setApuracao(resultado);
-      setValorEditado(formatarValorInput(resultado?.valor_calculado));
+      setValorEditado(formatarValorInput(obterValorExibido(resultado)));
       setMotivo('');
       setErroEdicao('');
     } catch (error) {
@@ -254,7 +290,7 @@ export default function ApuracoesPage() {
 
   async function handleSalvarEdicao() {
     const novo = Number(valorEditado);
-    const anterior = Number(apuracao?.valor_final);
+    const anterior = Number(obterValorExibido(apuracao));
 
     if (!Number.isFinite(novo) || novo <= 0) {
       setErroEdicao(MENSAGEM_ERRO_EDICAO);
@@ -271,12 +307,11 @@ export default function ApuracoesPage() {
 
     try {
       const atualizado = await editarApuracao(apuracao.id, {
-        valorFinal: novo,
+        valor_editado: novo,
         motivo: motivo.trim(),
-        clienteId: clienteIdEfetivo,
       });
       setApuracao(atualizado);
-      setValorEditado(formatarValorInput(atualizado?.valor_final));
+      setValorEditado(formatarValorInput(obterValorExibido(atualizado)));
       setMotivo('');
     } catch (error) {
       setErroEdicao(obterMensagemErro(error, 'Não foi possível salvar a edição.'));
@@ -307,7 +342,7 @@ export default function ApuracoesPage() {
     setErroAprovar('');
 
     try {
-      const atualizado = await aprovarApuracao(apuracao.id, { clienteId: clienteIdEfetivo });
+      const atualizado = await aprovarApuracao(apuracao.id);
       setApuracao(atualizado);
       setShowAprovarModal(false);
     } catch (error) {
@@ -575,7 +610,7 @@ export default function ApuracoesPage() {
             <div className="mt-5 flex flex-wrap items-baseline justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 p-5">
               <span className="text-xs font-semibold text-sky-800">Valor do DAS</span>
               <span className="font-mono text-3xl font-semibold tracking-tight text-sky-900">
-                {formatarValor(apuracao.valor_final)}
+                {formatarValor(obterValorExibido(apuracao))}
               </span>
             </div>
           </section>
@@ -675,7 +710,7 @@ export default function ApuracoesPage() {
           <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             {statusAprovado ? (
               <p className="text-sm font-semibold text-emerald-700">
-                Aprovado por {apuracao.aprovado_por} em {formatarDataHora(apuracao.aprovado_em)}
+                Aprovado por {obterNomeAprovador(apuracao, user)} em {formatarDataHora(apuracao.aprovado_em)}
               </p>
             ) : (
               <p className="text-sm text-zinc-500">Revise os dados acima antes de aprovar este DAS.</p>
@@ -698,7 +733,7 @@ export default function ApuracoesPage() {
           <section className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-xl">
             <h2 className="text-lg font-semibold text-zinc-900">Confirmar aprovação</h2>
             <p className="mt-3 text-sm leading-relaxed text-zinc-700">
-              Confirmar aprovação do DAS de <strong>{formatarValor(apuracao?.valor_final)}</strong>{' '}
+              Confirmar aprovação do DAS de <strong>{formatarValor(obterValorExibido(apuracao))}</strong>{' '}
               para <strong>{clienteSelecionadoNome}</strong> referente a{' '}
               <strong>{competenciaLabel}</strong>?
             </p>
