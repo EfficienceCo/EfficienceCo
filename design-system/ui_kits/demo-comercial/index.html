@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Efficience Co — Demo Comercial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ===================== Tokens (design-system/colors_and_type.css) ===================== */
+:root{
+  --brand-50:#F0F9FF;--brand-100:#E0F2FE;--brand-200:#BAE6FD;--brand-300:#7DD3FC;--brand-400:#38BDF8;--brand-500:#0EA5E9;--brand-600:#0284C7;--brand-700:#0369A1;--brand-800:#075985;--brand-900:#0C4A6E;
+  --slate-50:#F8FAFC;--slate-100:#F1F5F9;--slate-200:#E2E8F0;--slate-300:#CBD5E1;--slate-400:#94A3B8;--slate-500:#64748B;--slate-600:#475569;--slate-700:#334155;--slate-800:#1E293B;--slate-900:#0F172A;
+  --success-100:#D1FAE5;--success-500:#10B981;--success-600:#059669;--success-700:#047857;
+  --warning-100:#FEF3C7;--warning-500:#F59E0B;--warning-600:#D97706;--warning-700:#B45309;
+  --danger-100:#FFE4E6;--danger-500:#F43F5E;--danger-600:#E11D48;--danger-700:#BE123C;
+  --bg:var(--slate-100);--border:var(--slate-200);--fg:var(--slate-900);--fg-muted:var(--slate-500);
+  --font-display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;
+  --font-sans:'Manrope',ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --r-sm:6px;--r-md:8px;--r-lg:12px;--r-xl:16px;--r-full:9999px;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.06),0 1px 1px rgba(15,23,42,.04);
+  --dur:180ms;--ease-out:cubic-bezier(.22,1,.36,1);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;background:var(--bg);}
+body{font-family:var(--font-sans);color:var(--fg);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+button{font-family:inherit;cursor:pointer;}
+input,select{font-family:inherit;}
+a{color:var(--brand-700);}
+svg{width:16px;height:16px;flex-shrink:0;display:inline-block;vertical-align:-3px;}
+#app{height:100vh;}
+.tnum{font-variant-numeric:tabular-nums;}
+
+/* ===================== Login ===================== */
+.login{min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(700px 380px at 20% -8%,rgba(56,189,248,.16),transparent 65%),linear-gradient(190deg,#0B1422,#070d18 72%);padding:24px;}
+.login-card{width:380px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.10);border-radius:var(--r-xl);padding:32px 28px;backdrop-filter:blur(6px);}
+.login-brand{display:flex;align-items:center;gap:10px;margin-bottom:22px;}
+.login-brand .wm{font-family:var(--font-display);font-weight:600;font-size:17px;color:#fff;letter-spacing:-0.02em;}
+.login-eyebrow{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--brand-300);margin-bottom:8px;}
+.login-h{margin:0 0 6px;font-family:var(--font-display);font-weight:600;font-size:23px;color:#fff;letter-spacing:-0.01em;}
+.login-sub{margin:0 0 22px;font-size:13.5px;color:var(--slate-400);line-height:1.5;}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:12.5px;font-weight:600;color:var(--slate-300);margin-bottom:6px;}
+.field input{width:100%;padding:10px 12px;border-radius:var(--r-md);border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#fff;font-size:13.5px;outline:none;transition:border-color var(--dur);}
+.field input:focus{border-color:var(--brand-400);}
+.field input::placeholder{color:var(--slate-500);}
+.btn{border:none;border-radius:var(--r-md);font-weight:600;font-size:13.5px;padding:10px 16px;transition:background var(--dur) var(--ease-out),transform var(--dur) var(--ease-out);}
+.btn-primary{width:100%;background:linear-gradient(160deg,var(--brand-400),var(--brand-600));color:#052235;padding:11px 16px;margin-top:4px;}
+.btn-primary:hover{transform:translateY(-1px);}
+.login-hint{margin-top:16px;font-size:11.5px;color:var(--slate-500);text-align:center;}
+
+/* ===================== Shell ===================== */
+.shell{display:flex;height:100vh;overflow:hidden;}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+.scroll{flex:1;overflow-y:auto;}
+
+/* ===================== Sidebar ===================== */
+.sidebar{width:250px;flex:none;display:flex;flex-direction:column;background:radial-gradient(420px 200px at 30% -6%,rgba(14,165,233,.16),transparent 70%),linear-gradient(190deg,#0B1422,#070d18 70%);border-right:1px solid rgba(255,255,255,.06);color:var(--slate-300);}
+.sb-brand{padding:20px 18px 18px;display:flex;gap:11px;align-items:center;}
+.sb-wm{font-family:var(--font-display);font-weight:600;font-size:17px;letter-spacing:-0.02em;color:#fff;}
+.sb-wm .co{color:var(--slate-500);}
+.sb-nav{flex:1;overflow-y:auto;padding:6px 12px 12px;display:flex;flex-direction:column;gap:2px;}
+.sb-section{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--slate-600);padding:16px 10px 7px;}
+.ni{position:relative;display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:var(--r-md);font-weight:500;font-size:13.5px;color:var(--slate-400);border:1px solid transparent;text-align:left;background:none;width:100%;transition:background var(--dur) var(--ease-out),color var(--dur) var(--ease-out);}
+.ni:hover{background:rgba(255,255,255,.05);color:#fff;}
+.ni.active{background:rgba(56,189,248,.12);color:#fff;font-weight:600;}
+.ni.active::before{content:"";position:absolute;left:-12px;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--brand-400);}
+.ni svg{width:17px;height:17px;stroke:currentColor;stroke-width:1.8;fill:none;flex:none;}
+.ni.active svg{color:var(--brand-300);}
+.agent-card{margin:4px 12px 10px;padding:12px 13px;border-radius:var(--r-lg);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);}
+.agent-top{display:flex;align-items:center;gap:9px;}
+.heartbeat{width:9px;height:9px;border-radius:50%;background:var(--success-500);position:relative;flex:none;}
+.heartbeat::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--success-500);animation:hb 2.2s var(--ease-out) infinite;}
+@keyframes hb{0%{transform:scale(.6);opacity:.9;}70%,100%{transform:scale(1.9);opacity:0;}}
+.agent-name{font-weight:600;font-size:12.5px;color:#fff;}
+.agent-state{margin-left:auto;font-size:11px;color:var(--success-500);font-weight:600;}
+.agent-meta{font-size:11px;color:var(--slate-500);margin-top:7px;}
+.sb-user{margin:0 12px 14px;padding:11px 12px;border-radius:var(--r-lg);display:flex;align-items:center;gap:10px;border:1px solid rgba(255,255,255,.06);}
+.avatar{width:32px;height:32px;border-radius:var(--r-full);background:linear-gradient(160deg,var(--brand-400),var(--brand-600));color:#052235;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:none;}
+.sb-uname{font-weight:600;font-size:12.5px;color:#fff;line-height:1.2;}
+.sb-umail{font-size:11px;color:var(--slate-500);}
+.sb-logout{margin-left:auto;color:var(--slate-500);background:none;border:none;display:inline-flex;padding:5px;border-radius:6px;transition:color var(--dur),background var(--dur);}
+.sb-logout:hover{color:#fff;background:rgba(255,255,255,.06);}
+.sb-logout svg{width:17px;height:17px;stroke:currentColor;stroke-width:1.8;fill:none;}
+
+/* ===================== Topbar ===================== */
+.topbar{height:60px;flex:none;background:rgba(255,255,255,.86);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 26px;position:sticky;top:0;z-index:5;}
+.crumb{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--fg-muted);}
+.crumb .sep{color:var(--slate-300);}
+.crumb .here{color:var(--slate-900);font-weight:600;}
+.tb-actions{display:flex;align-items:center;gap:10px;}
+.competencia{display:flex;align-items:center;gap:8px;background:var(--slate-100);border:1px solid var(--border);border-radius:var(--r-md);padding:7px 12px;font-size:12.5px;font-weight:600;color:var(--slate-700);}
+.competencia svg{width:15px;height:15px;stroke:var(--brand-600);stroke-width:1.9;fill:none;}
+.icon-btn{width:36px;height:36px;border-radius:var(--r-md);border:1px solid var(--border);background:#fff;display:inline-flex;align-items:center;justify-content:center;color:var(--slate-600);position:relative;}
+.icon-btn svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.8;fill:none;}
+.icon-btn .ping{position:absolute;top:6px;right:7px;width:7px;height:7px;border-radius:50%;background:var(--danger-500);border:2px solid #fff;}
+
+/* ===================== Page ===================== */
+.page{padding:26px 30px 46px;display:flex;flex-direction:column;gap:18px;max-width:1280px;}
+.page-head h1{font-family:var(--font-display);font-weight:600;font-size:26px;letter-spacing:-0.02em;color:var(--slate-900);margin:0;}
+.page-head p{font-size:14px;color:var(--fg-muted);margin:7px 0 0;}
+.crumbline{margin:0 0 4px;font-size:13px;color:var(--fg-muted);}
+.crumbline b{color:var(--brand-700);font-weight:600;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+@media (max-width:1120px){.grid2{grid-template-columns:1fr;}.grid3{grid-template-columns:1fr 1fr;}.grid4{grid-template-columns:1fr 1fr;}}
+.card{background:#fff;border:1px solid var(--border);border-radius:var(--r-xl);box-shadow:var(--shadow-sm);}
+.card-pad{padding:20px;}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--slate-100);}
+.card-head h2{margin:0;font-size:16px;font-weight:600;color:var(--slate-900);}
+
+/* ===================== Automation cards ===================== */
+.acard{background:#fff;border:1px solid var(--border);border-radius:var(--r-xl);box-shadow:var(--shadow-sm);padding:18px;transition:border-color var(--dur) var(--ease-out),transform var(--dur) var(--ease-out);text-align:left;display:block;width:100%;}
+.acard.clickable{cursor:pointer;}
+.acard.clickable:hover{border-color:var(--slate-300);transform:translateY(-1px);}
+.acard-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.acard-ico{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:var(--r-md);background:var(--brand-50);color:var(--brand-700);flex:none;}
+.acard-ico svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.8;fill:none;}
+.acard-title{margin-top:12px;font-weight:600;font-size:14px;color:var(--slate-900);}
+.acard-desc{margin-top:4px;font-size:13px;line-height:1.5;color:var(--fg-muted);}
+
+/* ===================== Badges / tables ===================== */
+.badge{display:inline-flex;align-items:center;border-radius:var(--r-full);padding:4px 10px;font-size:11.5px;font-weight:600;white-space:nowrap;}
+.badge-ok{background:var(--success-100);color:var(--success-700);box-shadow:inset 0 0 0 1px #A7F3D0;}
+.badge-warn{background:var(--warning-100);color:var(--warning-700);box-shadow:inset 0 0 0 1px #FDE68A;}
+.badge-err{background:var(--danger-100);color:var(--danger-700);box-shadow:inset 0 0 0 1px #FECDD3;}
+.badge-neutral{background:var(--slate-100);color:var(--slate-600);box-shadow:inset 0 0 0 1px var(--slate-200);}
+.tbl-wrap{overflow-x:auto;}
+table{border-collapse:collapse;width:100%;}
+th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--slate-500);background:var(--slate-50);padding:9px 16px;white-space:nowrap;}
+td{padding:11px 16px;font-size:13px;color:var(--slate-700);border-top:1px solid var(--slate-100);white-space:nowrap;}
+.mono{font-family:var(--font-mono);}
+.strong{font-weight:600;color:var(--slate-900);}
+
+/* ===================== KPI stats ===================== */
+.stat{background:#fff;border:1px solid var(--border);border-radius:var(--r-xl);box-shadow:var(--shadow-sm);padding:16px 18px;}
+.stat-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--fg-muted);}
+.stat-value{margin-top:8px;font-family:var(--font-display);font-size:26px;font-weight:600;letter-spacing:-0.02em;color:var(--slate-900);}
+
+/* ===================== Progress / checklist ===================== */
+.progress-track{flex:1;height:8px;border-radius:var(--r-full);background:var(--slate-200);overflow:hidden;}
+.progress-fill{height:100%;border-radius:var(--r-full);}
+.proc-row{display:flex;flex-direction:column;gap:8px;padding:14px 0;border-top:1px solid var(--slate-100);}
+.proc-row:first-child{border-top:none;padding-top:0;}
+.proc-top{display:flex;justify-content:space-between;align-items:center;gap:12px;}
+.proc-name{font-size:13.5px;font-weight:600;color:var(--slate-900);}
+.proc-bar{display:flex;align-items:center;gap:10px;}
+.proc-pct{font-size:12px;font-weight:600;color:var(--slate-500);min-width:32px;text-align:right;}
+.step-row{display:flex;align-items:center;gap:11px;padding:11px 0;border-top:1px solid var(--slate-100);font-size:13.5px;color:var(--slate-800);}
+.step-row:first-child{border-top:none;}
+.step-note{font-size:11.5px;color:var(--slate-400);}
+.step-empty{width:17px;height:17px;border-radius:5px;border:1.5px solid var(--slate-300);flex:none;}
+
+/* ===================== Log / timeline ===================== */
+.log-item{display:flex;align-items:flex-start;gap:11px;padding:12px 0;border-top:1px solid var(--slate-100);}
+.log-item:first-child{border-top:none;}
+.log-dot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex:none;}
+.log-dot.info{background:var(--brand-500);}
+.log-dot.sucesso{background:var(--success-500);}
+.log-dot.alerta{background:var(--warning-500);}
+.log-text{font-size:13.5px;color:var(--slate-800);}
+.log-meta{font-size:11.5px;color:var(--fg-muted);margin-top:2px;}
+
+/* ===================== Filters / segradio / buttons ===================== */
+.filter{border-radius:var(--r-md);border:1px solid var(--slate-300);background:#fff;padding:8px 14px;font-size:13.5px;color:var(--slate-700);}
+.seg{display:inline-flex;border-radius:var(--r-md);border:1px solid var(--slate-300);background:#fff;padding:4px;box-shadow:var(--shadow-sm);}
+.seg button{padding:6px 14px;border-radius:6px;font-size:13.5px;color:var(--slate-600);background:none;border:none;font-weight:500;}
+.seg button.active{background:var(--slate-900);color:#fff;font-weight:600;}
+.btn-dark{border-radius:var(--r-md);background:var(--slate-900);color:#fff;padding:9px 16px;font-size:13.5px;font-weight:600;border:none;}
+.btn-line{border-radius:var(--r-md);border:1px solid var(--slate-300);background:#fff;padding:8px 14px;font-size:13px;font-weight:500;color:var(--slate-700);}
+.btn-confirm{border-radius:6px;border:1px solid #6EE7B7;background:#ECFDF5;color:#047857;padding:5px 12px;font-size:12px;font-weight:600;}
+.btn-reject{border-radius:6px;border:1px solid #FDA4AF;background:#FFF1F2;color:#BE123C;padding:5px 12px;font-size:12px;font-weight:600;}
+.link-btn{font-size:12.5px;font-weight:600;color:var(--brand-700);background:none;border:none;padding:0;margin-right:14px;}
+.footnote{padding:14px 20px;border-top:1px solid var(--slate-100);font-size:12px;color:var(--slate-400);line-height:1.6;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+"use strict";
+/* ============================================================================
+   EFFICIENCE CO — Demo Comercial Interativo
+   Single-file, vanilla JS. Every automation shows "Disponível" — this is the
+   product's sales-demo face, not the real build state (see AreasDetail kit
+   in ../plataforma for the honest one). Ref: projetos/efficience-co-demo-
+   comercial-interativo.md in efficience-vault.
+   ============================================================================ */
+
+/* ---------- icon set (mirrors ui_kits/plataforma/Icons.jsx) ---------- */
+var ICON_PATHS = {
+  dashboard:'<rect x="3.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.4"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.4"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.4"/>',
+  obrigacoes:'<path d="M7 3.5v3"/><path d="M17 3.5v3"/><rect x="4" y="6.5" width="16" height="14" rx="2"/><path d="M4 10.5h16"/><path d="M12.5 14.5l-3 3-1.5-1.5"/>',
+  processos:'<rect x="3.5" y="4" width="17" height="16.5" rx="2"/><path d="M3.5 8h17"/><path d="M8 12h8"/><path d="M8 15.5h5"/>',
+  logs:'<path d="M5 5.5h14"/><path d="M5 12h14"/><path d="M5 18.5h9"/>',
+  regras:'<circle cx="7" cy="7" r="2.4"/><circle cx="17" cy="17" r="2.4"/><path d="M7 9.4v5.2a2 2 0 0 0 2 2h5.6"/><path d="M14.6 16.6l-2 0M14.6 16.6l0-2"/>',
+  usuarios:'<circle cx="9" cy="8.5" r="3"/><path d="M3.8 19c0-2.6 2.3-4.5 5.2-4.5s5.2 1.9 5.2 4.5"/><path d="M16.5 7.6a2.6 2.6 0 0 1 0 5.1"/><path d="M17.5 14.7c1.9.5 3.2 1.9 3.2 3.8"/>',
+  clientes:'<path d="M3.5 20.5V8l6-4 6 4v12.5"/><path d="M15.5 11l5 3v6.5"/><path d="M3.5 20.5h17"/><path d="M7 11h2M7 14.5h2M11.5 11h.5M11.5 14.5h.5"/>',
+  bell:'<path d="M12 4a5 5 0 0 0-5 5v3l-1.5 2.3v.7h13v-.7L17 12V9a5 5 0 0 0-5-5Z"/><path d="M9.5 18a2.5 2.5 0 0 0 5 0"/>',
+  search:'<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-3.5-3.5"/>',
+  bolt:'<path d="M13 3 5 13h6l-1 8 8-10h-6l1-8Z"/>',
+  logout:'<path d="M9 4.5H6a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 6 19.5h3"/><path d="M14 8l4 4-4 4"/><path d="M18 12H9"/>',
+  check:'<path d="M5 12.5l4.5 4.5L19 7"/>',
+  checkcircle:'<circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/>',
+  clock:'<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>',
+  upload:'<path d="M12 15.5V4M12 4 7.5 8.5M12 4l4.5 4.5"/><path d="M4.5 15.5v3a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-3"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  x:'<path d="M6 6l12 12M18 6 6 18"/>',
+  fiscal:'<path d="M6 3.5h9l3 3v13.5H6z"/><path d="M15 3.5V7h3"/><path d="M9 12.5h6"/><path d="M9 16h6"/>',
+  contabil:'<rect x="3.5" y="5" width="17" height="14" rx="1.5"/><path d="M3.5 9.5h17"/><path d="M8 14.5l2.5 2.5L16 12"/>',
+  dp:'<circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c0-3.3 2.9-6 6.5-6s6.5 2.7 6.5 6"/>',
+  societario:'<path d="M12 3.5 4 7v2h16V7z"/><path d="M5.5 9v9"/><path d="M9.5 9v9"/><path d="M14.5 9v9"/><path d="M18.5 9v9"/><path d="M4 20.5h16"/>',
+  financeiro:'<circle cx="12" cy="12" r="8"/><path d="M12 8v8"/><path d="M9.5 10a2.2 2.2 0 0 1 2.2-1.7h.6A2.1 2.1 0 0 1 14.5 10c0 1.2-.9 1.7-2.5 2.2s-2.5 1-2.5 2.2a2.1 2.1 0 0 0 2.2 1.7h.6a2.2 2.2 0 0 0 2.2-1.7"/>',
+  atendimento:'<path d="M4 12a8 8 0 0 1 16 0v4.5a2 2 0 0 1-2 2h-1"/><rect x="3.5" y="12" width="4" height="5.5" rx="1.2"/><rect x="16.5" y="12" width="4" height="5.5" rx="1.2"/><path d="M14.5 18.5a2 2 0 0 1-2 2h-1.5"/>',
+  documento:'<path d="M7 3.5h7l4 4v13H7z"/><path d="M14 3.5V7.5h4"/><path d="M9.5 13h5"/><path d="M9.5 16.5h5"/>',
+  calculadora:'<rect x="5.5" y="3.5" width="13" height="17" rx="1.5"/><path d="M8 7.5h8"/><path d="M8.2 12h1.2M12 12h1.2M15.6 12h1.2"/><path d="M8.2 15.5h1.2M12 15.5h1.2M15.6 15.5h1.2"/>',
+  guia:'<rect x="4.5" y="6" width="15" height="12" rx="1.5"/><path d="M4.5 10h15"/><path d="M8 13.5h3"/><path d="M8 16h6"/>',
+  pasta:'<path d="M4 6.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.2h7A1.5 1.5 0 0 1 20 8.7v9.3a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18V6.5z"/>',
+  transmissao:'<circle cx="12" cy="12" r="2"/><path d="M8.3 15.7a5.2 5.2 0 0 1 0-7.4"/><path d="M15.7 8.3a5.2 5.2 0 0 1 0 7.4"/><path d="M5.6 18.4a9.2 9.2 0 0 1 0-12.8"/><path d="M18.4 5.6a9.2 9.2 0 0 1 0 12.8"/>',
+  etiqueta:'<path d="M11.2 4H6a1.5 1.5 0 0 0-1.5 1.5v5.2c0 .4.16.78.44 1.06l7.6 7.6a1.5 1.5 0 0 0 2.12 0l5.2-5.2a1.5 1.5 0 0 0 0-2.12l-7.6-7.6A1.5 1.5 0 0 0 11.2 4z"/><circle cx="8.5" cy="8.5" r="1.2"/>',
+  cifrao:'<path d="M12 4v16"/><path d="M15.5 7.5a3 3 0 0 0-3-1.5h-1a2.6 2.6 0 0 0 0 5.2h1a2.6 2.6 0 0 1 0 5.2h-1a3 3 0 0 1-3-1.5"/>',
+  lupa:'<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15 20 20"/>',
+  sino:'<path d="M6 17v-5.5a6 6 0 0 1 12 0V17l1.5 2h-15z"/><path d="M10.3 20.5a1.8 1.8 0 0 0 3.4 0"/>',
+  predio:'<rect x="5" y="3.5" width="10" height="17" rx="1"/><rect x="15" y="9.5" width="4.5" height="11" rx="1"/><path d="M8 7.5h1.5M11.5 7.5H13M8 11h1.5M11.5 11H13M8 14.5h1.5M11.5 14.5H13"/>',
+  selo:'<circle cx="12" cy="9.5" r="5.5"/><path d="M9 14.5 8 20.5l4-2 4 2-1-6"/>',
+  escudo:'<path d="M12 3.5 5 6v6c0 4.4 2.9 7.6 7 8.5 4.1-.9 7-4.1 7-8.5V6z"/><path d="M9.2 12 11 13.8 15 9.8"/>',
+  assinatura:'<path d="M4 17.5c2-3.5 3.6-5.6 4.8-6.1 1-.4 1.2.7.6 1.6-.8 1.2-.6 1.9.5 1.4 1.7-.8 3.6-2.7 4.8-4.4.9-1.3-.2-2.3-1.3-1.2-1.6 1.6-2.4 3.7-1.6 4.9.7 1 2.6.6 4.2-.6"/><path d="M4 20.5h16"/>',
+  ciclo:'<path d="M19 12a7 7 0 0 1-11.9 5"/><path d="M5 12a7 7 0 0 1 11.9-5"/><path d="M17.5 4.5v3.2h-3.2"/><path d="M6.5 19.5v-3.2h3.2"/>',
+  comprovante:'<path d="M6.5 3.5h11v17l-2-1.3-1.8 1.3-1.7-1.3-1.8 1.3-1.7-1.3-2 1.3z"/><path d="M9 8h6"/><path d="M9 11.2h6"/><path d="M9 14.4h3.5"/>',
+  calendario:'<rect x="4" y="5" width="16" height="15" rx="1.5"/><path d="M4 9.5h16"/><path d="M8 3.5v3M16 3.5v3"/><path d="M8 13h1.5M12 13h1.5M16 13h.01"/>',
+  pessoa:'<circle cx="12" cy="8.2" r="3.2"/><path d="M5.5 20c0-3.4 2.9-6 6.5-6s6.5 2.6 6.5 6"/>',
+  cruzmedica:'<circle cx="12" cy="12" r="8"/><path d="M12 8.5v7M8.5 12h7"/>',
+  relogio:'<circle cx="12" cy="12.5" r="7.5"/><path d="M12 8.5V13l3 2"/><path d="M9.5 2.5h5"/>',
+  onibus:'<rect x="4" y="5.5" width="16" height="11" rx="2"/><path d="M4 11h16"/><circle cx="8" cy="19" r="1.3"/><circle cx="16" cy="19" r="1.3"/>',
+  telefone:'<path d="M6 3.5c1 0 2.5 2.5 2.5 3.5S7 8.5 7 9.5c0 2.5 4 6.5 6.5 6.5 1 0 1.5-1.5 2.5-1.5s3.5 1.5 3.5 2.5c0 1.5-1.5 3-3 3-6 0-13-7-13-13 0-1.5 1.5-3 2.5-3z"/>',
+  grafico:'<path d="M4 20.5h16"/><path d="M7 20.5v-6M12 20.5V8M17 20.5v-9.5"/><path d="M5.5 11 10 6.5l3 3 5.5-5.5"/><path d="M15.5 4h3v3"/>',
+  envelope:'<rect x="3.5" y="5.5" width="17" height="13" rx="1.5"/><path d="M4 6.5 12 13l8-6.5"/>',
+  entrada:'<path d="M10 21H5.5A1.5 1.5 0 0 1 4 19.5v-15A1.5 1.5 0 0 1 5.5 3H10"/><path d="M15 16l5-4-5-4"/><path d="M20 12H10"/>'
+};
+function icon(name){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (ICON_PATHS[name]||'') + '</svg>'; }
+
+/* ---------- helpers ---------- */
+function esc(s){ return String(s==null?'':s); }
+function fmtBRL(v){ return v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+function statusKind(t){
+  var s = (t||'').toLowerCase();
+  if (/atras|vencid|rejeitad/.test(s)) return 'err';
+  if (/pendente|andamento|apura|fechamento|valida|gerando|diverg|renova.*inici|inicia|n[aã]o configurado|n[aã]o iniciado|vence em|aguardando/.test(s)) return 'warn';
+  return 'ok';
+}
+function badge(text, kindOverride){
+  var kind = kindOverride || statusKind(text);
+  return '<span class="badge badge-'+kind+'">'+esc(text)+'</span>';
+}
+function cell(v, isLast, isStatusCol){
+  if (isStatusCol) return '<td>'+badge(v)+'</td>';
+  return '<td>'+esc(v)+'</td>';
+}
+function table(cols, rows){
+  var statusIdx = cols.indexOf('Status');
+  var head = '<tr>'+cols.map(function(c){return '<th>'+esc(c)+'</th>';}).join('')+'</tr>';
+  var body = rows.map(function(r){
+    return '<tr>'+r.map(function(v,i){ return cell(v, i===r.length-1, i===statusIdx); }).join('')+'</tr>';
+  }).join('');
+  return '<div class="tbl-wrap"><table><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div>';
+}
+
+/* ---------- data: clientes ---------- */
+var CLIENTES = [
+  { id:'padaria', nome:'Padaria do João Ltda', cnpj:'12.345.678/0001-99', regime:'Simples Nacional — Anexo I', func:5 },
+  { id:'oficina', nome:'Oficina Silva ME', cnpj:'98.765.432/0001-11', regime:'Simples Nacional — Anexo III', func:3 },
+  { id:'clinica', nome:'Clínica Rosa S/S', cnpj:'11.222.333/0001-44', regime:'Lucro Presumido', func:8 },
+  { id:'transportes', nome:'Transportes Veloz ME', cnpj:'33.444.555/0001-66', regime:'Simples Nacional — Anexo III', func:4 },
+  { id:'mercado', nome:'Mercado Bom Preço Ltda', cnpj:'55.666.777/0001-22', regime:'Simples Nacional — Anexo I', func:6 }
+];
+
+/* ---------- data: navigation ---------- */
+var NAV_TOP = [ {key:'dashboard',label:'Dashboard',ic:'dashboard'}, {key:'logs',label:'Logs do agente',ic:'logs'}, {key:'roi',label:'Efficience',ic:'bolt'} ];
+var NAV_AREAS = [ {key:'fiscal',label:'Fiscal',ic:'fiscal'}, {key:'contabil',label:'Contábil',ic:'contabil'}, {key:'dp',label:'DP',ic:'dp'}, {key:'societario',label:'Societário',ic:'societario'}, {key:'financeiro',label:'Financeiro',ic:'financeiro'}, {key:'atendimento',label:'Atendimento',ic:'atendimento'} ];
+var NAV_OP = [ {key:'obrigacoes',label:'Obrigações',ic:'obrigacoes'}, {key:'processos',label:'Processos',ic:'processos'}, {key:'regras',label:'Regras',ic:'regras'} ];
+var NAV_GESTAO = [ {key:'usuarios',label:'Usuários',ic:'usuarios'}, {key:'admin',label:'Clientes',ic:'clientes'} ];
+
+var TITLES = { dashboard:'Dashboard', roi:'Efficience', obrigacoes:'Obrigações', processos:'Processos', logs:'Logs do agente', regras:'Regras', usuarios:'Usuários', admin:'Clientes',
+  fiscal:'Fiscal', contabil:'Contábil', dp:'DP', societario:'Societário', financeiro:'Financeiro', atendimento:'Atendimento' };
+var AREA_LABEL = { fiscal:'Fiscal', contabil:'Contábil', dp:'DP', societario:'Societário', financeiro:'Financeiro', atendimento:'Atendimento' };
+var AREA_SUB = {
+  fiscal:'Automações tributárias e de escrituração fiscal.',
+  contabil:'Automações de conciliação e fechamento contábil.',
+  dp:'Automações de departamento pessoal e folha de pagamento.',
+  societario:'Automações de constituição, alteração e regularização de empresas.',
+  financeiro:'Automações financeiras do próprio escritório.',
+  atendimento:'Automações de relacionamento e comunicação com o cliente.'
+};
+
+/* ---------- data: 39 automações (todas "Disponível") ---------- */
+var AUTOMACOES = [
+  /* ---- Fiscal (12) ---- */
+  { id:'escrituracao-nfe', area:'fiscal', ic:'documento', nome:'Escrituração NF-e', desc:'Lê os XMLs de NF-e recebidos e gera o lançamento fiscal automaticamente.', tipo:'bespoke' },
+  { id:'apuracao-simples', area:'fiscal', ic:'calculadora', nome:'Apuração Simples Nacional', desc:'Calcula o DAS a partir dos lançamentos fiscais do período.', tipo:'resumo',
+    kpis:[['Total apurado','R$ 4.983,00'],['Alíquota efetiva média','5,2%'],['Guias geradas','4']],
+    cols:['Cliente','Anexo','Receita 12m','Alíquota efetiva','DAS gerado','Status'],
+    rows:[['Padaria do João','Anexo I','R$ 412.000,00','4,50%','R$ 1.247,00','Emitida'],['Oficina Silva','Anexo III','R$ 198.500,00','6,20%','R$ 890,00','Emitida'],['Transportes Veloz','Anexo III','R$ 256.000,00','7,10%','R$ 1.680,00','Emitida'],['Mercado Bom Preço','Anexo I','R$ 388.000,00','4,80%','R$ 1.166,00','Pendente']] },
+  { id:'apuracao-presumido', area:'fiscal', ic:'calculadora', nome:'Apuração Lucro Presumido/Real', desc:'Calcula IRPJ, CSLL, PIS e COFINS por atividade — hoje aplicado à Clínica Rosa.', tipo:'resumo',
+    kpis:[['Base presumida (3º tri)','R$ 48.000,00'],['IRPJ apurado','R$ 3.240,00'],['CSLL apurada','R$ 1.944,00']],
+    cols:['Trimestre','Base presumida','IRPJ','CSLL','PIS','COFINS','Status'],
+    rows:[['1º tri/2026','R$ 42.000,00','R$ 2.835,00','R$ 1.701,00','R$ 273,00','R$ 1.260,00','Apurado'],['2º tri/2026','R$ 45.500,00','R$ 3.071,00','R$ 1.843,00','R$ 296,00','R$ 1.365,00','Apurado'],['3º tri/2026','R$ 48.000,00','R$ 3.240,00','R$ 1.944,00','R$ 312,00','R$ 1.440,00','Emitida']] },
+  { id:'emissao-das-darf', area:'fiscal', ic:'guia', nome:'Emissão DAS/DARF', desc:'Lista de guias com código de barras e vencimento, geradas automaticamente.', tipo:'tabela',
+    cols:['Guia','Cliente','Competência','Vencimento','Valor','Status'],
+    rows:[['DAS','Padaria do João','Ago/2026','20/08/2026','R$ 1.247,00','Emitida'],['DAS','Oficina Silva','Ago/2026','20/08/2026','R$ 890,00','Emitida'],['DARF IRPJ','Clínica Rosa','3º tri/2026','25/08/2026','R$ 3.240,00','Pendente'],['DAS','Transportes Veloz','Ago/2026','20/08/2026','R$ 1.680,00','Paga'],['DAS','Mercado Bom Preço','Ago/2026','20/08/2026','R$ 1.166,00','Emitida']] },
+  { id:'retencoes-fonte', area:'fiscal', ic:'cifrao', nome:'Retenções na fonte', desc:'Identifica e calcula IRRF, INSS e ISS retidos em cada nota fiscal.', tipo:'tabela',
+    cols:['NF','Cliente','Tipo retenção','Base de cálculo','Alíquota','Valor retido'],
+    rows:[['000891','Clínica Rosa','ISS','R$ 4.200,00','5%','R$ 210,00'],['004521','Transportes Veloz','IRRF','R$ 8.400,00','1,5%','R$ 126,00'],['000034','Clínica Rosa','INSS','R$ 3.100,00','11%','R$ 341,00'],['007654','Transportes Veloz','ISS','R$ 5.600,00','3%','R$ 168,00']] },
+  { id:'revisao-nfe', area:'fiscal', ic:'lupa', nome:'Revisão NF-e', desc:'Checklist de inconsistências identificadas em notas emitidas pelo cliente.', tipo:'tabela',
+    cols:['NF','Cliente','Inconsistência encontrada','Status'],
+    rows:[['000892','Mercado Bom Preço','CFOP divergente do cadastro','Corrigida automaticamente'],['004521','Padaria do João','Sem retenção esperada','Sem pendência'],['019872','Padaria do João','NCM desatualizado','Corrigida automaticamente'],['000034','Oficina Silva','Valor de ICMS zerado','Revisada']] },
+  { id:'ncm-cfop', area:'fiscal', ic:'etiqueta', nome:'Classificação NCM/CFOP', desc:'Sugere NCM e CFOP para itens novos, com base no histórico do cliente.', tipo:'tabela',
+    cols:['Item','Cliente','NCM sugerido','CFOP sugerido','Confiança'],
+    rows:[['Farinha de trigo tipo 1','Padaria do João','1101.00.10','5102','98%'],['Óleo de motor 20W50','Oficina Silva','2710.19.32','5102','95%'],['Pneu 175/70 R13','Oficina Silva','4011.10.00','1102','91%'],['Embalagem plástica','Mercado Bom Preço','3923.21.00','1102','96%']] },
+  { id:'sped-fiscal', area:'fiscal', ic:'pasta', nome:'SPED Fiscal', desc:'Monta, valida e transmite o arquivo SPED Fiscal do período.', tipo:'progresso',
+    clientes:[['Padaria do João','Transmitido',100],['Oficina Silva','Transmitido',100],['Clínica Rosa','Validando',70],['Transportes Veloz','Transmitido',100],['Mercado Bom Preço','Gerando',40]] },
+  { id:'efd-contribuicoes', area:'fiscal', ic:'pasta', nome:'EFD-Contribuições', desc:'Apura crédito e débito de PIS/COFINS e transmite a EFD do período.', tipo:'tabela',
+    cols:['Cliente','Competência','PIS apurado','COFINS apurado','Status'],
+    rows:[['Padaria do João','Ago/2026','R$ 412,00','R$ 1.898,00','Transmitida'],['Oficina Silva','Ago/2026','R$ 198,50','R$ 913,00','Transmitida'],['Clínica Rosa','Ago/2026','R$ 312,00','R$ 1.440,00','Transmitida'],['Mercado Bom Preço','Ago/2026','R$ 388,00','R$ 1.786,00','Pendente']] },
+  { id:'dctf-web', area:'fiscal', ic:'transmissao', nome:'DCTF/DCTFWeb', desc:'Confronta tributos declarados com os DARFs emitidos e transmite.', tipo:'tabela',
+    cols:['Cliente','Competência','Tributos declarados','DARFs vinculados','Status'],
+    rows:[['Clínica Rosa','Ago/2026','IRPJ + CSLL + PIS + COFINS','4 guias','Transmitida'],['Transportes Veloz','Ago/2026','PIS + COFINS','2 guias','Transmitida'],['Padaria do João','Ago/2026','INSS retido','1 guia','Transmitida']] },
+  { id:'efd-reinf', area:'fiscal', ic:'transmissao', nome:'EFD-Reinf', desc:'Transmite os eventos de retenção e informações do contribuinte por categoria.', tipo:'tabela',
+    cols:['Cliente','Evento','Competência','Status'],
+    rows:[['Clínica Rosa','R-2010 Retenções tomadas','Ago/2026','Transmitido'],['Transportes Veloz','R-2010 Retenções tomadas','Ago/2026','Transmitido'],['Padaria do João','R-1000 Info do contribuinte','Ago/2026','Transmitido']] },
+  { id:'alerta-aliquota', area:'fiscal', ic:'sino', nome:'Alerta de alíquota', desc:'Feed de mudanças legislativas com os clientes impactados por cada uma.', tipo:'log',
+    entries:[['20/08','Simples Nacional — Anexo III','Sublimite de receita bruta atualizado para 2026 (impacta Oficina Silva e Transportes Veloz)','alerta'],['12/08','ISS município sede','Alíquota de serviços de saúde alterada de 3% para 3,5% (impacta Clínica Rosa)','alerta'],['05/08','ICMS estadual','Nova tabela de CFOP para farinha de trigo publicada (impacta Padaria do João)','info']] },
+
+  /* ---- Contábil (6) ---- */
+  { id:'conciliacao-bancaria', area:'contabil', ic:'transmissao', nome:'Conciliação bancária', desc:'Importa o extrato OFX e concilia automaticamente com os lançamentos internos.', tipo:'bespoke' },
+  { id:'balancete-mensal', area:'contabil', ic:'calendario', nome:'Balancete mensal', desc:'Fecha o balancete do mês com saldo inicial, movimento e saldo final por conta.', tipo:'tabela',
+    cols:['Cliente','Competência','Saldo inicial','Movimento','Saldo final','Status'],
+    rows:[['Padaria do João','Ago/2026','R$ 18.420,00','R$ 6.850,00','R$ 25.270,00','Fechado'],['Oficina Silva','Ago/2026','R$ 9.120,00','R$ 3.240,00','R$ 12.360,00','Fechado'],['Clínica Rosa','Ago/2026','R$ 41.800,00','R$ 12.100,00','R$ 53.900,00','Fechado'],['Mercado Bom Preço','Ago/2026','R$ 22.900,00','R$ 8.410,00','R$ 31.310,00','Em fechamento']] },
+  { id:'relatorios-gerenciais', area:'contabil', ic:'grafico', nome:'Relatórios gerenciais', desc:'Gera DRE resumida e envia o pacote gerencial no calendário configurado.', tipo:'resumo',
+    kpis:[['Receita do mês (agregado)','R$ 187.400,00'],['Despesas do mês (agregado)','R$ 132.900,00'],['Resultado','R$ 54.500,00']],
+    cols:['Cliente','Envio configurado','Último envio','Status'],
+    rows:[['Padaria do João','Mensal — dia 5','05/08/2026','Enviado'],['Clínica Rosa','Mensal — dia 5','05/08/2026','Enviado'],['Transportes Veloz','Quinzenal','18/08/2026','Enviado'],['Mercado Bom Preço','Mensal — dia 5','—','Pendente']] },
+  { id:'depreciacao', area:'contabil', ic:'grafico', nome:'Depreciação de ativos', desc:'Calcula a depreciação mensal e lança o valor residual de cada ativo.', tipo:'tabela',
+    cols:['Ativo','Cliente','Aquisição','Vida útil','Depreciação mensal','Valor residual'],
+    rows:[['Forno industrial','Padaria do João','03/2023','10 anos','R$ 145,00','R$ 8.700,00'],['Elevador veicular','Oficina Silva','06/2021','8 anos','R$ 210,00','R$ 5.040,00'],['Caminhão 3/4','Transportes Veloz','01/2022','5 anos','R$ 890,00','R$ 21.360,00'],['Equipamento de raio-x','Clínica Rosa','09/2020','10 anos','R$ 680,00','R$ 40.800,00']] },
+  { id:'conciliacao-contas', area:'contabil', ic:'documento', nome:'Conciliação de contas contábeis', desc:'Cruza os saldos entre contas contábeis relacionadas e aponta divergências.', tipo:'tabela',
+    cols:['Conta','Cliente','Saldo contábil','Saldo auxiliar','Divergência','Status'],
+    rows:[['Caixa','Padaria do João','R$ 3.240,00','R$ 3.240,00','R$ 0,00','Conciliada'],['Clientes a receber','Clínica Rosa','R$ 18.900,00','R$ 18.400,00','R$ 500,00','Divergente'],['Fornecedores','Mercado Bom Preço','R$ 9.120,00','R$ 9.120,00','R$ 0,00','Conciliada'],['Estoque','Oficina Silva','R$ 12.600,00','R$ 12.310,00','R$ 290,00','Divergente']] },
+  { id:'encerramento-exercicio', area:'contabil', ic:'pasta', nome:'Encerramento de exercício', desc:'Conduz a apuração e o checklist de encerramento do exercício contábil.', tipo:'progresso',
+    clientes:[['Padaria do João','Concluído',100],['Oficina Silva','Concluído',100],['Clínica Rosa','Em apuração',60],['Transportes Veloz','Concluído',100],['Mercado Bom Preço','Não iniciado',0]] },
+
+  /* ---- DP (8) ---- */
+  { id:'folha-pagamento', area:'dp', ic:'comprovante', nome:'Folha de pagamento', desc:'Processa a planilha da folha e calcula INSS, IRRF e FGTS por funcionário.', tipo:'bespoke' },
+  { id:'ferias', area:'dp', ic:'calendario', nome:'Férias', desc:'Controla o período aquisitivo e calcula o valor das férias de cada funcionário.', tipo:'tabela',
+    cols:['Funcionário','Cliente','Período aquisitivo','Vencimento','Dias disponíveis','Status'],
+    rows:[['Marcos Ferreira','Padaria do João','15/08/25 – 14/08/26','14/08/2026','30','Programadas'],['Juliana Prado','Oficina Silva','01/03/25 – 28/02/26','28/02/2026','20','Pendente de aviso'],['Ricardo Alves','Transportes Veloz','10/06/25 – 09/06/26','09/06/2026','30','Programadas'],['Beatriz Souza','Clínica Rosa','22/01/25 – 21/01/26','21/01/2026','15','Pendente de aviso']] },
+  { id:'decimo-terceiro', area:'dp', ic:'cifrao', nome:'13º salário', desc:'Calcula a primeira e a segunda parcela do 13º de cada cliente.', tipo:'tabela',
+    cols:['Cliente','Funcionários','1ª parcela','2ª parcela','Status'],
+    rows:[['Padaria do João','5','R$ 6.200,00 (pago 28/11)','R$ 6.200,00 (prevista 20/12)','1ª parcela paga'],['Oficina Silva','3','R$ 3.900,00 (pago 28/11)','R$ 3.900,00 (prevista 20/12)','1ª parcela paga'],['Clínica Rosa','8','R$ 14.800,00 (pago 28/11)','R$ 14.800,00 (prevista 20/12)','1ª parcela paga'],['Transportes Veloz','4','R$ 5.100,00 (pago 28/11)','R$ 5.100,00 (prevista 20/12)','1ª parcela paga']] },
+  { id:'esocial', area:'dp', ic:'transmissao', nome:'eSocial', desc:'Transmite os eventos obrigatórios do eSocial por tipo de ocorrência.', tipo:'tabela',
+    cols:['Evento','Cliente','Descrição','Data envio','Status'],
+    rows:[['S-2200','Padaria do João','Admissão — Marcos Ferreira','15/08/2026','Aceito'],['S-2230','Oficina Silva','Afastamento — Juliana Prado (atestado)','12/08/2026','Aceito'],['S-1200','Clínica Rosa','Remuneração — folha ago/2026','05/08/2026','Aceito'],['S-2299','Mercado Bom Preço','Desligamento — Pedro Lima','10/08/2026','Aceito']] },
+  { id:'atestados', area:'dp', ic:'cruzmedica', nome:'Atestados e afastamentos', desc:'Registra afastamentos por CID e envia o evento S-2230 correspondente.', tipo:'tabela',
+    cols:['Funcionário','Cliente','CID','Período','Evento eSocial','Status'],
+    rows:[['Juliana Prado','Oficina Silva','M54','10/08 – 12/08','S-2230 enviado','Registrado'],['Carlos Nunes','Clínica Rosa','J11','05/08 – 07/08','S-2230 enviado','Registrado'],['Fernanda Lima','Mercado Bom Preço','Z76','18/08 – 18/08','S-2230 enviado','Registrado']] },
+  { id:'fgts-inss', area:'dp', ic:'guia', nome:'FGTS/GRF/INSS', desc:'Gera as guias de FGTS e INSS do período, prontas para pagamento.', tipo:'tabela',
+    cols:['Guia','Cliente','Competência','Vencimento','Valor','Status'],
+    rows:[['GRF','Padaria do João','Ago/2026','07/09/2026','R$ 660,00','Gerada'],['GPS','Clínica Rosa','Ago/2026','20/09/2026','R$ 2.960,00','Gerada'],['GRF','Transportes Veloz','Ago/2026','07/09/2026','R$ 512,00','Gerada'],['GPS','Mercado Bom Preço','Ago/2026','20/09/2026','R$ 1.140,00','Pendente']] },
+  { id:'horas-extras', area:'dp', ic:'relogio', nome:'Horas extras', desc:'Importa o relatório de ponto e calcula horas extras e adicionais legais.', tipo:'tabela',
+    cols:['Funcionário','Cliente','Horas 50%','Horas 100%','Valor adicional','Status'],
+    rows:[['Marcos Ferreira','Padaria do João','6h','0h','R$ 187,50','Calculado'],['Ricardo Alves','Transportes Veloz','12h','4h','R$ 620,00','Calculado'],['Ana Cordeiro','Oficina Silva','3h','0h','R$ 94,50','Calculado']] },
+  { id:'vt-vr', area:'dp', ic:'onibus', nome:'Vale-transporte/VR', desc:'Calcula e recarrega o vale-transporte e o vale-refeição por funcionário.', tipo:'tabela',
+    cols:['Cliente','Funcionários','VT recarregado','VR recarregado','Status'],
+    rows:[['Padaria do João','5','R$ 440,00','R$ 900,00','Recarregado'],['Oficina Silva','3','R$ 264,00','R$ 540,00','Recarregado'],['Clínica Rosa','8','R$ 704,00','R$ 1.440,00','Recarregado'],['Transportes Veloz','4','R$ 352,00','R$ 720,00','Recarregado']] },
+
+  /* ---- Societário (6) ---- */
+  { id:'abertura-empresa', area:'societario', ic:'predio', nome:'Abertura de empresa', desc:'Checklist de progresso da abertura — algumas etapas rodam automaticamente.', tipo:'bespoke' },
+  { id:'alteracao-contratual', area:'societario', ic:'documento', nome:'Alteração contratual', desc:'Preenche a alteração no contrato social e acompanha as etapas na Junta.', tipo:'progresso',
+    clientes:[['Oficina Silva ME — mudança de endereço + nova atividade','Em andamento',50],['Transportes Veloz — inclusão de sócio','Concluída',100]] },
+  { id:'baixa-empresa', area:'societario', ic:'predio', nome:'Baixa de empresa', desc:'Monta o checklist de documentação para encerramento da empresa.', tipo:'progresso',
+    clientes:[['Doceria Estrela ME — encerramento de atividades','Concluída',100]] },
+  { id:'alvaras-licencas', area:'societario', ic:'selo', nome:'Alvarás e licenças', desc:'Acompanha vencimentos e emite alvarás e licenças por órgão.', tipo:'tabela',
+    cols:['Licença','Cliente','Órgão','Vencimento','Status'],
+    rows:[['Alvará de funcionamento','Padaria do João','Prefeitura Municipal','15/03/2027','Vigente'],['Licença sanitária','Padaria do João','Vigilância Sanitária','22/06/2027','Vigente'],['Alvará de funcionamento','Oficina Silva','Prefeitura Municipal','30/09/2026','Vence em 41 dias'],['Licença ambiental','Transportes Veloz','Órgão estadual de meio ambiente','10/01/2027','Vigente'],['Alvará sanitário','Clínica Rosa','Vigilância Sanitária','05/08/2026','Renovação em andamento']] },
+  { id:'certificado-digital', area:'societario', ic:'escudo', nome:'Certificado digital', desc:'Alerta e conduz a renovação do certificado digital de cada cliente.', tipo:'tabela',
+    cols:['Cliente','Tipo','Validade','Status'],
+    rows:[['Padaria do João','e-CNPJ A1','14/02/2027','Vigente'],['Oficina Silva','e-CNPJ A1','30/08/2026','Renovação iniciada'],['Clínica Rosa','e-CNPJ A3 (cartão)','19/11/2026','Vigente'],['Transportes Veloz','e-CNPJ A1','05/05/2027','Vigente'],['Mercado Bom Preço','e-CNPJ A1','22/12/2026','Vigente']] },
+  { id:'procuracoes', area:'societario', ic:'assinatura', nome:'Procurações e-CAC/Gov.br', desc:'Controla a validade e conduz a renovação das procurações eletrônicas.', tipo:'tabela',
+    cols:['Cliente','Sistema','Validade','Status'],
+    rows:[['Padaria do João','e-CAC Receita Federal','12/2027','Vigente'],['Oficina Silva','Gov.br','03/2027','Vigente'],['Clínica Rosa','e-CAC Receita Federal','07/2026','Renovação em andamento'],['Mercado Bom Preço','Gov.br','09/2027','Vigente']] },
+
+  /* ---- Financeiro (5) ---- */
+  { id:'honorarios-boletos', area:'financeiro', ic:'comprovante', nome:'Honorários e boletos', desc:'Gera e acompanha os boletos de honorários mensais dos clientes.', tipo:'tabela',
+    cols:['Cliente','Competência','Valor','Vencimento','Status'],
+    rows:[['Padaria do João','Ago/2026','R$ 890,00','10/08/2026','Pago'],['Oficina Silva','Ago/2026','R$ 650,00','10/08/2026','Pago'],['Clínica Rosa','Ago/2026','R$ 1.480,00','10/08/2026','Pago'],['Transportes Veloz','Ago/2026','R$ 720,00','10/08/2026','Atrasado'],['Mercado Bom Preço','Ago/2026','R$ 810,00','10/08/2026','Pendente']] },
+  { id:'cobranca-inadimplentes', area:'financeiro', ic:'telefone', nome:'Cobrança de inadimplentes', desc:'Régua de cobrança automática para honorários em atraso.', tipo:'log',
+    entries:[['19/08','Transportes Veloz','2º lembrete de honorários em atraso enviado por e-mail','alerta'],['12/08','Transportes Veloz','1º lembrete enviado por WhatsApp','info'],['20/08','Mercado Bom Preço','Boleto de agosto ainda não identificado como pago','info']] },
+  { id:'reajuste-honorarios', area:'financeiro', ic:'grafico', nome:'Reajuste de honorários', desc:'Simula e aplica o reajuste anual de honorários por índice.', tipo:'tabela',
+    cols:['Cliente','Índice','Valor atual','Valor reajustado','Vigência'],
+    rows:[['Padaria do João','IGP-M (4,8%)','R$ 890,00','R$ 932,72','Jan/2027'],['Oficina Silva','IGP-M (4,8%)','R$ 650,00','R$ 681,20','Jan/2027'],['Clínica Rosa','IPCA (4,2%)','R$ 1.480,00','R$ 1.542,16','Jan/2027']] },
+  { id:'renovacao-contratos', area:'financeiro', ic:'documento', nome:'Renovação de contratos', desc:'Acompanha vigências e alerta sobre o vencimento de contratos.', tipo:'tabela',
+    cols:['Cliente','Contrato','Vigência','Vencimento','Status'],
+    rows:[['Padaria do João','Honorários mensais','12 meses','31/12/2026','Vigente'],['Oficina Silva','Honorários mensais','12 meses','30/11/2026','Vigente'],['Clínica Rosa','Honorários mensais','12 meses','15/09/2026','Renovação em andamento'],['Transportes Veloz','Honorários mensais','12 meses','28/02/2027','Vigente']] },
+  { id:'folha-interna', area:'financeiro', ic:'pessoa', nome:'Folha interna', desc:'Processa a folha de pagamento dos funcionários do próprio escritório.', tipo:'tabela',
+    cols:['Funcionário','Cargo','Salário base','Descontos','Líquido','Status'],
+    rows:[['João Silva','Sócio-administrador','R$ 8.500,00','R$ 1.700,00','R$ 6.800,00','Processada'],['Carla Mendes','Contadora','R$ 5.200,00','R$ 890,00','R$ 4.310,00','Processada'],['Marcos Tavares','Analista fiscal','R$ 3.800,00','R$ 590,00','R$ 3.210,00','Processada'],['Ana Paula Costa','Analista de DP','R$ 3.600,00','R$ 540,00','R$ 3.060,00','Processada']] },
+
+  /* ---- Atendimento (2) ---- */
+  { id:'cobranca-doc', area:'atendimento', ic:'envelope', nome:'Cobrança de doc pendente', desc:'Histórico de lembretes automáticos por cliente até o documento chegar.', tipo:'log',
+    entries:[['19/08','Padaria do João','Lembrete #2 enviado — extrato bancário de julho','info'],['18/08','Mercado Bom Preço','Lembrete #1 enviado — comprovantes de despesas de agosto','info'],['15/08','Oficina Silva','Documento recebido — extrato bancário de julho','sucesso']] },
+  { id:'relatorios-periodicos', area:'atendimento', ic:'grafico', nome:'Relatórios periódicos', desc:'Configura e envia o pacote de relatórios mensal de cada cliente.', tipo:'tabela',
+    cols:['Cliente','Pacote','Frequência','Próximo envio','Status'],
+    rows:[['Padaria do João','DRE + fluxo de caixa','Mensal','05/09/2026','Configurado'],['Clínica Rosa','DRE + indicadores','Mensal','05/09/2026','Configurado'],['Transportes Veloz','DRE resumida','Quinzenal','22/08/2026','Configurado'],['Mercado Bom Preço','DRE + fluxo de caixa','Mensal','—','Não configurado']] }
+];
+var AUT_BY_ID = {}; AUTOMACOES.forEach(function(a){ AUT_BY_ID[a.id]=a; });
+var AUT_BY_AREA = {}; AUTOMACOES.forEach(function(a){ (AUT_BY_AREA[a.area]=AUT_BY_AREA[a.area]||[]).push(a); });
+
+/* ---------- app state ---------- */
+var STATE = { user:null, conciliacao:null, folhaModal:null };
+
+/* ---------- render: sidebar / topbar / page frame ---------- */
+function renderSidebar(active){
+  function items(list){ return list.map(function(it){
+    return '<button class="ni'+(active===it.key?' active':'')+'" data-nav="'+it.key+'">'+icon(it.ic)+'<span style="flex:1">'+it.label+'</span></button>';
+  }).join(''); }
+  return '<aside class="sidebar">'
+    + '<div class="sb-brand">'+LOGO_SVG(30)+'<div class="sb-wm">Efficience <span class="co">Co</span></div></div>'
+    + '<nav class="sb-nav">'
+      + items(NAV_TOP)
+      + '<div class="sb-section">Áreas de automação</div>' + items(NAV_AREAS)
+      + '<div class="sb-section">Operacional</div>' + items(NAV_OP)
+      + '<div class="sb-section">Gestão · admin do escritório</div>' + items(NAV_GESTAO)
+    + '</nav>'
+    + '<div class="agent-card"><div class="agent-top"><span class="heartbeat"></span><span class="agent-name">Agente local</span><span class="agent-state">Online</span></div><div class="agent-meta">Sincronizou há 2 min · 1.243 automações hoje</div></div>'
+    + '<div class="sb-user"><span class="avatar">JS</span><div style="flex:1"><div class="sb-uname">'+STATE.user.nome+'</div><div class="sb-umail">'+STATE.user.email+'</div></div><button class="sb-logout" data-logout>'+icon('logout')+'</button></div>'
+  + '</aside>';
+}
+function renderTopbar(route){
+  return '<header class="topbar"><div class="crumb"><span>Plataforma</span><span class="sep">/</span><span class="here">'+(TITLES[route]||'Dashboard')+'</span></div>'
+    + '<div class="tb-actions"><div class="competencia">'+icon('calendario')+' Competência · Agosto 2026</div>'
+    + '<div class="icon-btn">'+icon('search')+'</div><div class="icon-btn">'+icon('bell')+'<span class="ping"></span></div></div></header>';
+}
+function LOGO_SVG(size){
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 64 64" fill="none"><rect width="64" height="64" rx="15" fill="url(#ec-grad)"/><rect x="18" y="19" width="29" height="7" rx="3.5" fill="#fff"/><rect x="18" y="29.5" width="18" height="7" rx="3.5" fill="#fff" fill-opacity="0.72"/><rect x="18" y="40" width="24" height="7" rx="3.5" fill="#fff"/><defs><linearGradient id="ec-grad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse"><stop stop-color="#38BDF8"/><stop offset="1" stop-color="#0284C7"/></linearGradient></defs></svg>';
+}
+
+/* ---------- render: automation card + area page ---------- */
+function autCard(a){
+  return '<button type="button" class="acard clickable" data-nav="automacao/'+a.id+'">'
+    + '<div class="acard-head"><span class="acard-ico">'+icon(a.ic)+'</span>'+badge('Disponível','ok')+'</div>'
+    + '<div class="acard-title">'+a.nome+'</div><div class="acard-desc">'+a.desc+'</div></button>';
+}
+function renderArea(key){
+  var list = AUT_BY_AREA[key] || [];
+  return '<div class="page"><div class="page-head"><h1>'+AREA_LABEL[key]+'</h1><p>'+AREA_SUB[key]+'</p></div>'
+    + '<div class="grid3">'+list.map(autCard).join('')+'</div></div>';
+}
+
+/* ---------- render: generic automation detail templates ---------- */
+function detailHeader(a){
+  return '<div class="page-head"><p class="crumbline"><b>'+AREA_LABEL[a.area]+'</b> &gt; '+a.nome+'</p><h1>'+a.nome+'</h1><p>'+a.desc+'</p></div>';
+}
+function renderTabelaDetail(a){
+  return '<div class="page">'+detailHeader(a)+'<div class="card">'+table(a.cols, a.rows)+'</div></div>';
+}
+function renderResumoDetail(a){
+  var kpis = a.kpis.map(function(k){ return '<div class="stat"><div class="stat-label">'+k[0]+'</div><div class="stat-value tnum">'+k[1]+'</div></div>'; }).join('');
+  return '<div class="page">'+detailHeader(a)+'<div class="grid3">'+kpis+'</div><div class="card">'+table(a.cols, a.rows)+'</div></div>';
+}
+function renderLogDetail(a){
+  var items = a.entries.map(function(e){
+    return '<div class="log-item"><span class="log-dot '+e[3]+'"></span><div><div class="log-text"><b>'+e[1]+'</b> — '+e[2]+'</div><div class="log-meta">'+e[0]+'</div></div></div>';
+  }).join('');
+  return '<div class="page">'+detailHeader(a)+'<div class="card card-pad">'+items+'</div></div>';
+}
+function renderProgressoDetail(a){
+  var barColor = { 'ok':'var(--success-600)', 'warn':'var(--warning-600)' };
+  var rows = a.clientes.map(function(c){
+    var kind = statusKind(c[1]);
+    var col = kind==='ok' ? 'var(--success-600)' : (kind==='warn' ? 'var(--warning-600)' : 'var(--slate-300)');
+    return '<div class="proc-row"><div class="proc-top"><span class="proc-name">'+c[0]+'</span>'+badge(c[1])+'</div>'
+      + '<div class="proc-bar"><div class="progress-track"><div class="progress-fill" style="width:'+c[2]+'%;background:'+col+'"></div></div><span class="proc-pct tnum">'+c[2]+'%</span></div></div>';
+  }).join('');
+  return '<div class="page">'+detailHeader(a)+'<div class="card card-pad">'+rows+'</div></div>';
+}
+
+/* ---------- bespoke: Fiscal / Escrituração NF-e ---------- */
+var ESCRIT_ROWS = [
+  ['01/08','Entrada','Distribuidora ABC Ltda','004521','R$ 8.420,00','1102'],
+  ['03/08','Saída','Restaurante Central','000891','R$ 1.280,00','5102'],
+  ['07/08','Entrada','Gráfica Sul Ltda','000034','R$ 640,00','1556'],
+  ['12/08','Saída','Mercado Vizinho','000892','R$ 3.100,00','5102'],
+  ['15/08','Entrada','Importadora Nacional','019872','R$ 12.400,00','1101'],
+  ['18/08','Saída','Padaria Central','000893','R$ 980,00','5102'],
+  ['20/08','Entrada','Fornecedora Embalagens','007654','R$ 1.850,00','1102'],
+  ['22/08','Saída','Café Colonial','000894','R$ 430,00','5102']
+];
+function renderEscrituracao(){
+  var entradas = 8420+640+12400+1850, saidas = 1280+3100+980+430;
+  var rows = ESCRIT_ROWS.map(function(r){ return '<tr><td>'+r[0]+'</td><td>'+badge(r[1]==='Entrada'?'Entrada':'Saída', r[1]==='Entrada'?'ok':'err')+'</td><td>'+r[2]+'</td><td class="mono">'+r[3]+'</td><td class="strong">'+r[4]+'</td><td class="mono">'+r[5]+'</td></tr>'; }).join('');
+  return '<div class="page">'
+    + '<div class="page-head"><p class="crumbline"><b>Fiscal</b> &gt; Escrituração NF-e</p><h1>Escrituração NF-e — Padaria do João</h1><p>Lançamentos de NF-e registrados automaticamente pelo agente a partir dos XMLs recebidos.</p></div>'
+    + '<div class="card"><div class="tbl-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Emitente / Destinatário</th><th>NF</th><th>Valor</th><th>CFOP</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    + '<div class="footnote" style="display:flex;gap:32px;font-size:13px;"><span>Entradas <b class="strong">'+fmtBRL(entradas)+'</b></span><span>Saídas <b class="strong">'+fmtBRL(saidas)+'</b></span></div></div>'
+    + '</div>';
+}
+
+/* ---------- bespoke: Contábil / Conciliação bancária ---------- */
+var CONC_PROVAVEL_SEED = [
+  {id:'p1',dataBanco:'14/08',descBanco:'TED Recebida Distrib ABC',dataLanc:'15/08',descLanc:'Recebimento cliente',valor:2450},
+  {id:'p2',dataBanco:'16/08',descBanco:'PIX Enviado Embalagens',dataLanc:'16/08',descLanc:'Pagto fornecedor',valor:890.15},
+  {id:'p3',dataBanco:'19/08',descBanco:'Tarifa bancária',dataLanc:'18/08',descLanc:'Despesa bancária',valor:42.90},
+  {id:'p4',dataBanco:'20/08',descBanco:'DOC Recebido Mercado V.',dataLanc:'21/08',descLanc:'Recebimento cliente',valor:1180}
+];
+function conciliacaoState(){
+  if (!STATE.conciliacao) STATE.conciliacao = { automatico: 38, provavel: CONC_PROVAVEL_SEED.slice() };
+  return STATE.conciliacao;
+}
+function renderConciliacao(){
+  var s = conciliacaoState();
+  var total = 47, conciliadas = s.automatico + (CONC_PROVAVEL_SEED.length - s.provavel.length);
+  var pct = Math.round(conciliadas/total*100);
+  var provRows = s.provavel.map(function(p){
+    return '<tr><td>'+p.dataBanco+'</td><td>'+p.descBanco+'</td><td>'+p.dataLanc+'</td><td>'+p.descLanc+'</td><td class="strong">'+fmtBRL(p.valor)+'</td>'
+      + '<td><button class="btn-confirm" data-conc-confirm="'+p.id+'">Confirmar</button> <button class="btn-reject" data-conc-reject="'+p.id+'">Rejeitar</button></td></tr>';
+  }).join('') || '<tr><td colspan="6" style="color:var(--fg-muted)">Nenhum par provável pendente.</td></tr>';
+  return '<div class="page">'
+    + '<div class="page-head"><p class="crumbline"><b>Contábil</b> &gt; Conciliação bancária</p><h1>Revisão da conciliação — Padaria do João</h1><p>Conta Bradesco 1234-5 · Agosto/2026</p></div>'
+    + '<div class="card card-pad"><div style="font-size:12.5px;font-weight:600;color:var(--slate-700);margin-bottom:8px;">'+conciliadas+' de '+total+' transações conciliadas</div>'
+    + '<div style="display:flex;align-items:center;gap:12px;"><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%;background:var(--slate-900)"></div></div><span class="proc-pct tnum">'+pct+'%</span></div></div>'
+    + '<div class="card"><div class="card-head" style="background:var(--success-100);border-color:#A7F3D0;"><h2 style="color:#064E3B">Automático</h2>'+badge(s.automatico+' matches automáticos','ok')+'</div></div>'
+    + '<div class="card"><div class="card-head" style="background:var(--warning-100);border-color:#FDE68A;"><h2 style="color:#78350F">Provável</h2>'+badge(s.provavel.length+' sem decisão','warn')+'</div>'
+    + '<div class="tbl-wrap"><table><thead><tr><th>Data banco</th><th>Descrição banco</th><th>Data lançamento</th><th>Descrição lançamento</th><th>Valor</th><th>Ações</th></tr></thead><tbody>'+provRows+'</tbody></table></div></div>'
+    + '<div class="card"><div class="card-head"><h2>Sem par</h2></div><div class="card-pad" style="font-size:12.5px;color:var(--fg-muted);">3 transações sem lançamento · 2 lançamentos sem transação — leitura apenas, resolva fora do sistema.</div></div>'
+    + '</div>';
+}
+
+/* ---------- bespoke: DP / Folha de pagamento ---------- */
+var FOLHA_ROWS = [
+  ['Marcos Ferreira','Padaria do João','R$ 2.200,00','R$ 242,00','R$ 128,00','R$ 176,00','Calculado'],
+  ['Ana Cordeiro','Oficina Silva','R$ 2.400,00','R$ 264,00','R$ 148,00','R$ 192,00','Calculado'],
+  ['Beatriz Souza','Clínica Rosa','R$ 3.100,00','R$ 341,00','R$ 264,00','R$ 248,00','Calculado'],
+  ['Ricardo Alves','Transportes Veloz','R$ 2.600,00','R$ 286,00','R$ 168,00','R$ 208,00','Calculado'],
+  ['Pedro Lima','Mercado Bom Preço','R$ 2.100,00','R$ 231,00','R$ 112,00','R$ 168,00','Pendente']
+];
+var FOLHA_CLIENTES_STATUS = [ ['Padaria do João','ok'], ['Oficina Silva','ok'], ['Clínica Rosa','ok'], ['Transportes Veloz','ok'], ['Mercado Bom Preço','pendente'] ];
+function renderFolha(){
+  var rows = FOLHA_ROWS.map(function(r){ return '<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td class="strong">'+r[2]+'</td><td>'+r[3]+'</td><td>'+r[4]+'</td><td>'+r[5]+'</td><td>'+badge(r[6])+'</td></tr>'; }).join('');
+  var done = FOLHA_CLIENTES_STATUS.filter(function(c){return c[1]==='ok';}).length, pct = Math.round(done/FOLHA_CLIENTES_STATUS.length*100);
+  var checklist = FOLHA_CLIENTES_STATUS.map(function(c){ return '<div class="step-row">'+icon(c[1]==='ok'?'checkcircle':'clock')+'<span>'+c[0]+'</span></div>'; }).join('');
+  var modal = '';
+  if (STATE.folhaModal === 'status') {
+    modal = renderModal('Status da folha', 'Agosto · 2026', '<div style="margin-bottom:14px;"><div style="font-size:12.5px;color:var(--fg-muted);margin-bottom:6px;">'+done+' de '+FOLHA_CLIENTES_STATUS.length+' clientes processados</div><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%;background:var(--success-600)"></div></div></div>'+checklist);
+  } else if (STATE.folhaModal === 'upload') {
+    modal = renderModal('Upload da folha', 'Envie a planilha preenchida para iniciar o processamento.', '<div style="border:1.5px dashed var(--slate-300);border-radius:var(--r-md);padding:26px;text-align:center;color:var(--fg-muted);font-size:13px;">'+icon('upload')+'<div style="margin-top:8px;">Arraste o arquivo ou clique para selecionar (.xlsx, .csv)</div></div>', true);
+  }
+  return '<div class="page">'
+    + '<div class="page-head"><p class="crumbline"><b>DP</b> &gt; Folha de pagamento</p><h1>Folha de pagamento — Agosto/2026</h1><p>Processa a planilha enviada e calcula INSS, IRRF e FGTS por funcionário.</p></div>'
+    + '<div class="grid2"><button type="button" class="acard clickable" data-folha-modal="upload"><div class="acard-head"><span class="acard-ico">'+icon('upload')+'</span></div><div class="acard-title">Upload da folha</div><div class="acard-desc">Envie a planilha preenchida para iniciar o processamento.</div></button>'
+    + '<button type="button" class="acard clickable" data-folha-modal="status"><div class="acard-head"><span class="acard-ico">'+icon('checkcircle')+'</span></div><div class="acard-title">Status da folha</div><div class="acard-desc">Acompanhe o processamento da folha enviada — '+done+'/'+FOLHA_CLIENTES_STATUS.length+' clientes.</div></button></div>'
+    + '<div class="card"><div class="tbl-wrap"><table><thead><tr><th>Funcionário</th><th>Cliente</th><th>Salário base</th><th>INSS</th><th>IRRF</th><th>FGTS</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'
+    + '</div>' + modal;
+}
+
+/* ---------- bespoke: Societário / Abertura de empresa ---------- */
+var ABERTURA_STEPS = [
+  ['Gerar contrato social','automático','ok'],['Criar estrutura de pastas','automático','ok'],
+  ['Protocolar na Junta Comercial','manual — concluído','ok'],['Solicitar CNPJ na Receita Federal','manual — concluído','ok'],
+  ['Aguardar CNPJ','manual — prazo 3 dias úteis','warn'],['Inscrição Estadual','—','pending'],
+  ['Inscrição Municipal / Alvará','—','pending'],['Abertura de conta bancária','—','pending'],
+  ['Certificado digital e-CNPJ','automático após CNPJ','pending'],['Cadastrar no sistema de folha','automático','pending']
+];
+function renderAbertura(){
+  var done = ABERTURA_STEPS.filter(function(s){return s[2]==='ok';}).length, pct = Math.round(done/ABERTURA_STEPS.length*100);
+  var rows = ABERTURA_STEPS.map(function(s){
+    var ic = s[2]==='ok' ? icon('checkcircle') : (s[2]==='warn' ? icon('clock') : '<span class="step-empty"></span>');
+    var col = s[2]==='ok' ? 'color:var(--success-600)' : (s[2]==='warn' ? 'color:var(--warning-600)' : 'color:var(--slate-400)');
+    return '<div class="step-row"><span style="'+col+';display:inline-flex;">'+ic+'</span><span style="'+(s[2]==='pending'?'color:var(--slate-400)':'')+'">'+s[0]+'</span><span class="step-note">('+s[1]+')</span>'+(s[2]==='warn'?'<span style="margin-left:auto;">'+badge('Em andamento','warn')+'</span>':'')+'</div>';
+  }).join('');
+  return '<div class="page">'
+    + '<div class="page-head"><p class="crumbline"><b>Societário</b> &gt; Abertura de empresa</p><h1>Nova Empresa Ltda</h1><p>Sociedade Limitada · Capital R$ 100.000,00 · Simples Nacional</p></div>'
+    + '<div class="card card-pad"><div class="proc-top" style="margin-bottom:8px;"><span style="font-size:13px;font-weight:600;color:var(--slate-700)">Progresso do processo</span><span style="font-size:12.5px;color:var(--fg-muted)">'+done+' de '+ABERTURA_STEPS.length+' etapas</span></div>'
+    + '<div style="display:flex;align-items:center;gap:12px;"><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">'+pct+'%</span></div></div>'
+    + '<div class="card"><div class="card-head"><h2>Checklist de abertura</h2></div><div class="card-pad">'+rows+'</div></div>'
+    + '</div>';
+}
+
+/* ---------- modal helper (used by Folha upload/status) ---------- */
+function renderModal(title, subtitle, body, hasFooter){
+  return '<div class="modal-overlay" data-modal-close>'
+    + '<div class="modal-box" onclick="event.stopPropagation()">'
+    + '<div class="modal-head"><div><div class="modal-title">'+title+'</div><div class="modal-sub">'+subtitle+'</div></div><button class="icon-btn" data-modal-close>'+icon('x')+'</button></div>'
+    + '<div class="modal-body">'+body+'</div>'
+    + (hasFooter ? '<div class="modal-foot"><button class="btn-line" data-modal-close>Cancelar</button><button class="btn-dark" data-folha-send>Enviar planilha</button></div>' : '')
+    + '</div></div>';
+}
+
+/* ---------- Nível 1: Dashboard ---------- */
+function renderDashboard(){
+  return '<div class="page">'
+  + '<div class="page-head"><h1>Bom dia, João</h1><p>Acompanhe os principais dados dos módulos em tempo real.</p></div>'
+  + '<div class="grid2">'
+    + '<div class="card card-pad"><h2 style="margin:0 0 12px;font-size:16px;font-weight:600;">Vencimentos dos próximos 7 dias</h2>'
+      + row('DAS ago/26 — Padaria do João','Vencimento 20/08',badge('Vencida hoje','err'))
+      + row('DAS ago/26 — Oficina Silva','Vencimento 20/08',badge('Vencida hoje','err'))
+      + row('DARF IRPJ — Clínica Rosa','Vencimento 25/08',badge('5 dias','warn'))
+      + row('SPED Fiscal — Padaria do João','Vencimento 30/08',badge('10 dias','ok'))
+    + '</div>'
+    + '<div class="card card-pad"><h2 style="margin:0 0 12px;font-size:16px;font-weight:600;">Folha de agosto/2026</h2>'
+      + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;"><div class="progress-track"><div class="progress-fill" style="width:80%;background:var(--slate-900)"></div></div><span style="font-size:12px;font-weight:600;color:var(--slate-500)">80% (4/5)</span></div>'
+      + ['Padaria do João','Oficina Silva','Clínica Rosa','Transportes Veloz'].map(function(n){return '<div style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--slate-700);padding:4px 0;">'+icon('checkcircle')+n+'</div>';}).join('')
+      + '<div style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--slate-400);padding:4px 0;">'+icon('clock')+'Mercado Bom Preço — pendente</div>'
+    + '</div>'
+    + '<div class="card card-pad"><h2 style="margin:0 0 14px;font-size:16px;font-weight:600;">Processos em andamento</h2>'
+      + procMini('Abertura Nova Empresa Ltda','4/10 etapas',40)
+      + procMini('Folha Mercado Bom Preço ago/26','3/10 etapas',30)
+    + '</div>'
+    + '<div class="card card-pad"><div style="display:flex;justify-content:space-between;"><h2 style="margin:0;font-size:16px;font-weight:600;">Licença ativa</h2>'+badge('Ativa','ok')+'</div>'
+      + '<p style="margin:12px 0 0;font-size:13.5px;">Plano Escritório · 5 usuários</p><p style="margin:4px 0 0;font-size:13.5px;color:var(--fg-muted);">Válida até 19/08/2027</p></div>'
+    + '<div class="card card-pad"><div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><h2 style="margin:0;font-size:16px;font-weight:600;">Notificações</h2><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9999px;background:var(--slate-900);color:#fff;font-size:11px;font-weight:700;">3</span></div>'
+      + notif('err','DAS Mercado Bom Preço venceu hoje') + notif('warn','Doc pendente: extrato Padaria do João') + notif('ok','NF 4521 arquivada automaticamente')
+    + '</div>'
+    + '<div class="card"><div class="card-head"><h2>Últimas execuções do agente</h2></div><div class="tbl-wrap"><table><thead><tr><th>Hora</th><th>Automação</th><th>Cliente</th><th></th></tr></thead><tbody>'
+      + agentRow('14:32','Organização NF-e','Padaria do João') + agentRow('13:15','Apuração Simples','Padaria do João') + agentRow('11:40','Conciliação Bancária','Clínica Rosa') + agentRow('10:05','Emissão DAS','Padaria do João') + agentRow('09:22','Abertura de Empresa','Nova Empresa Ltda')
+    + '</tbody></table></div></div>'
+  + '</div></div>';
+  function row(t,s,b){ return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--slate-100);"><div><p style="margin:0;font-size:13.5px;font-weight:600;color:var(--slate-900);">'+t+'</p><p style="margin:2px 0 0;font-size:12px;color:var(--fg-muted);">'+s+'</p></div>'+b+'</div>'; }
+  function procMini(name, sub, pct){ return '<div style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="font-size:13.5px;font-weight:600;color:var(--slate-900);">'+name+'</span><span style="font-size:12px;color:var(--fg-muted);">'+sub+'</span></div><div style="display:flex;align-items:center;gap:10px;"><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">'+pct+'%</span></div></div>'; }
+  function notif(kind, text){ var c = kind==='err'?'var(--danger-500)':(kind==='warn'?'var(--warning-500)':'var(--success-500)'); return '<div style="display:flex;align-items:start;gap:10px;padding:5px 0;"><span style="width:8px;height:8px;border-radius:9999px;background:'+c+';margin-top:5px;flex-shrink:0;"></span><span style="font-size:13.5px;color:var(--slate-700);">'+text+'</span></div>'; }
+  function agentRow(h,a,c){ return '<tr><td class="mono">'+h+'</td><td>'+a+'</td><td>'+c+'</td><td>'+icon('check')+'</td></tr>'; }
+}
+
+/* ---------- Nível 1: Efficience / ROI ---------- */
+var ROI_PERIODS = { '7':{h:'9h',ex:'78',rs:'R$ 1.530,00'}, '15':{h:'18h',ex:'156',rs:'R$ 3.060,00'}, '30':{h:'35h',ex:'312',rs:'R$ 6.120,00'} };
+var ROI_BREAKDOWN = [ ['Organização NF-e','189','9,5h'], ['Conciliação bancária','47','8h'], ['Apuração Simples Nacional','23','5,7h'], ['Folha de pagamento','5','4h'], ['Abertura de empresa','2','3h'], ['Emissão DAS/DARF','28','2,8h'], ['Cobrança de doc pendente','18','2h'] ];
+var roiPeriod = '30';
+function renderROI(){
+  var p = ROI_PERIODS[roiPeriod];
+  var seg = ['7','15','30'].map(function(k){ return '<button class="'+(k===roiPeriod?'active':'')+'" data-roi-period="'+k+'">'+k+' dias</button>'; }).join('');
+  var rows = ROI_BREAKDOWN.map(function(r){ return '<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td class="strong">'+r[2]+'</td></tr>'; }).join('');
+  return '<div class="page">'
+  + '<div class="page-head" style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:16px;"><div><h1>Efficience — seu escritório em números</h1><p>Acompanhe o impacto real das automações.</p></div><div class="seg">'+seg+'</div></div>'
+  + '<div class="grid3"><div class="stat"><div class="stat-label">Horas economizadas</div><div class="stat-value tnum">'+p.h+'</div></div><div class="stat"><div class="stat-label">Automações executadas</div><div class="stat-value tnum">'+p.ex+'</div></div><div class="stat"><div class="stat-label">Equivalente em R$</div><div class="stat-value tnum">'+p.rs+'</div></div></div>'
+  + '<div class="card"><div class="card-head"><h2>Detalhamento por automação</h2></div><div class="tbl-wrap"><table><thead><tr><th>Automação</th><th>Execuções</th><th>Horas economizadas</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'
+  + '<div class="card card-pad"><h2 style="margin:0 0 16px;font-size:16px;font-weight:600;">Licença</h2><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">'
+    + '<div style="display:flex;gap:32px;"><div><p style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--fg-muted);">Plano</p><p style="margin:4px 0 0;font-size:14px;font-weight:500;">Escritório · 5 usuários</p></div>'
+    + '<div><p style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--fg-muted);">Vencimento</p><p style="margin:4px 0 0;font-size:14px;font-weight:500;">19/08/2027</p></div>'
+    + '<div><p style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--fg-muted);">Status</p>'+badge('Ativa','ok')+'</div></div>'
+    + '<button class="btn-dark">Pagar licença</button></div></div>'
+  + '</div>';
+}
+
+/* ---------- Nível 1: Obrigações ---------- */
+function renderObrigacoes(){
+  var cols = ['Obrigação','Cliente','Vencimento','Dias','Status'];
+  var rows = [['DAS ago/26','Padaria do João','20/08/2026','Hoje','Vencida'],['DAS ago/26','Oficina Silva','20/08/2026','Hoje','Vencida'],['DAS ago/26','Transportes Veloz','20/08/2026','Hoje','Paga'],['DARF IRPJ tri','Clínica Rosa','25/08/2026','5 dias','Pendente'],['DCTFWeb ago/26','Mercado Bom Preço','25/08/2026','5 dias','Pendente'],['SPED Fiscal','Padaria do João','30/08/2026','10 dias','Pendente'],['EFD-Contribuições','Oficina Silva','30/08/2026','10 dias','Pendente'],['EFD-Reinf ago/26','Clínica Rosa','15/09/2026','26 dias','Pendente']];
+  return '<div class="page"><div class="page-head" style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:16px;"><h1>Obrigações</h1><div style="display:flex;gap:10px;"><span class="filter">Mês: agosto 2026</span><span class="filter">Cliente: Todos</span></div></div>'
+  + '<div class="card">'+table(cols, rows)+'<div class="footnote">DAS — guia mensal do Simples Nacional (vence dia 20) · DARF — Lucro Presumido/Real · DCTF — débitos e créditos tributários federais · SPED — escrituração fiscal digital · EFD-Reinf — retenções e contribuições.</div></div></div>';
+}
+
+/* ---------- Nível 1: Processos ---------- */
+function renderProcessos(){
+  var folha = [['Padaria do João',100,'Concluído'],['Oficina Silva',100,'Concluído'],['Clínica Rosa',100,'Concluído'],['Transportes Veloz',100,'Concluído'],['Mercado Bom Preço',30,'Em andamento']];
+  var folhaRows = folha.map(function(f){ var col = f[1]===100?'var(--success-600)':'var(--warning-600)'; return '<div class="proc-row"><div class="proc-top"><span class="proc-name">'+f[0]+'</span><span style="font-size:12.5px;color:var(--fg-muted)">'+(f[1]/10)+'/10 etapas</span></div><div class="proc-bar"><div class="progress-track"><div class="progress-fill" style="width:'+f[1]+'%;background:'+col+'"></div></div><span class="proc-pct tnum">'+f[1]+'%</span>'+badge(f[2])+'</div></div>'; }).join('');
+  var aberturaSteps = ['Contrato social','Pastas criadas','Junta Comercial','CNPJ solicitado'];
+  var steps = aberturaSteps.map(function(s){ return '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--slate-700);padding:3px 0;">'+icon('checkcircle')+s+'</div>'; }).join('')
+    + '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--warning-600);font-weight:600;padding:3px 0;">'+icon('clock')+'Aguardando CNPJ</div>'
+    + '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--slate-400);padding:3px 0;"><span class="step-empty"></span>Inscrição Estadual…</div>';
+  return '<div class="page"><div class="page-head"><h1>Processos</h1></div>'
+  + '<div class="card card-pad"><h2 style="margin:0 0 4px;font-size:16px;font-weight:600;">Folha de agosto/2026</h2>'+folhaRows+'</div>'
+  + '<div class="card card-pad"><h2 style="margin:0 0 4px;font-size:16px;font-weight:600;">Outros processos</h2>'
+    + '<div class="proc-row"><div class="proc-top"><span class="proc-name">Abertura Nova Empresa Ltda</span>'+badge('4/10 · Em andamento','warn')+'</div><div class="proc-bar" style="margin-bottom:12px;"><div class="progress-track"><div class="progress-fill" style="width:40%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">40%</span></div>'+steps+'</div>'
+    + '<div class="proc-row"><div class="proc-top"><span class="proc-name">Alteração contratual — Oficina Silva ME</span>'+badge('3/6 · Em andamento','warn')+'</div><div class="proc-bar"><div class="progress-track"><div class="progress-fill" style="width:50%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">50%</span></div><p style="margin:6px 0 0;font-size:12.5px;color:var(--fg-muted);">Mudança de endereço + nova atividade</p></div>'
+  + '</div></div>';
+}
+
+/* ---------- Nível 1: Logs ---------- */
+function renderLogsPage(){
+  var cols = ['Horário','Automação','Cliente','Resultado','Duração'];
+  var rows = [
+    ['19/08 14:32','Organização NF-e','Padaria do João','NF_001234_DistribABC.xml → NFs/','0,3s'],
+    ['19/08 14:28','Organização NF-e','Oficina Silva','NF_005678_GraficaSul.xml → NFs/','0,3s'],
+    ['19/08 13:15','Apuração Simples','Padaria do João','DAS ago/26 R$1.247,00 (Anexo I, 4,5%)','1,2s'],
+    ['19/08 11:40','Conciliação Bancária','Clínica Rosa','42/47 pares (89%) — Bradesco 1234-5','3,8s'],
+    ['19/08 10:05','Emissão DAS','Padaria do João','DAS_08_2026_CNPJ12345678.pdf','0,8s'],
+    ['19/08 09:22','Abertura de Empresa','Nova Empresa Ltda','Pastas criadas + contrato_social.docx','2,1s'],
+    ['18/08 17:55','Folha de Pagamento','Oficina Silva','5 holerites gerados, CNAB exportado','4,5s'],
+    ['18/08 16:30','eSocial Admissão','Padaria do João','S-2200 — Marcos Ferreira (admitido 15/08)','1,0s'],
+    ['18/08 15:10','Honorários','(escritório)','32 boletos gerados e enviados','8,2s'],
+    ['18/08 14:00','Cobrança doc pendente','Mercado Bom Preço','Lembrete #2 enviado — extrato julho','0,1s']
+  ];
+  var body = rows.map(function(r){ return '<tr><td class="mono">'+r[0]+'</td><td>'+r[1]+'</td><td>'+r[2]+'</td><td class="mono" style="font-size:12px;">'+r[3]+'</td><td class="mono">'+r[4]+'</td><td>'+icon('check')+'</td></tr>'; }).join('');
+  return '<div class="page"><div class="page-head" style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:16px;"><h1>Logs do agente</h1><div style="display:flex;gap:8px;"><span class="filter" style="background:var(--slate-900);color:#fff;">Todos</span><span class="filter">Tipo</span><span class="filter">Período</span></div></div>'
+  + '<div class="card"><div class="tbl-wrap"><table><thead><tr><th>'+cols.join('</th><th>')+'</th><th></th></tr></thead><tbody>'+body+'</tbody></table></div></div></div>';
+}
+
+/* ---------- Nível 1: Regras ---------- */
+function renderRegras(){
+  var rows = [
+    ['NF-e entrada','ENTRADA/','CLIENTES/ATIVO/[cliente]/NFs/','tipo=nfe, cfop_entrada','Mover + renomear',true],
+    ['Holerites DP','ENTRADA/DP/','CLIENTES/ATIVO/[cliente]/Folha/','tipo=holerite','Mover + renomear',true],
+    ['Extratos bancários','ENTRADA/','CLIENTES/ATIVO/[cliente]/Extrato/','tipo=extrato_ofx','Mover + iniciar conciliação',true],
+    ['Atestados médicos','ENTRADA/DP/','CLIENTES/ATIVO/[cliente]/DP/Atestados/','tipo=atestado','Mover + registrar afastamento',true],
+    ['Docs societários','ENTRADA/SOCIETARIO/','CLIENTES/ATIVO/[cliente]/Documentos/','tipo=contrato','Mover + renomear',true],
+    ['Guias pagas (legado)','PAGO/','CLIENTES/ATIVO/[cliente]/Guias/','tipo=guia','Mover',false]
+  ];
+  var body = rows.map(function(r){ return '<tr'+(r[5]?'':' style="opacity:.55"')+'><td class="strong">'+r[0]+'</td><td class="mono">'+r[1]+'</td><td class="mono">'+r[2]+'</td><td class="mono">'+r[3]+'</td><td>'+r[4]+'</td><td>'+toggle(r[5])+'</td><td><button class="link-btn">Editar</button></td></tr>'; }).join('');
+  function toggle(on){ return on ? '<span style="width:34px;height:20px;border-radius:9999px;background:var(--slate-900);position:relative;display:inline-block;"><span style="position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:9999px;background:#fff;"></span></span>' : '<span style="width:34px;height:20px;border-radius:9999px;background:var(--slate-200);position:relative;display:inline-block;"><span style="position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:9999px;background:#fff;"></span></span>'; }
+  return '<div class="page"><div class="page-head" style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:16px;"><h1>Regras de automação</h1><button class="btn-dark">'+icon('plus')+' Nova regra</button></div>'
+  + '<div class="card"><div class="tbl-wrap"><table><thead><tr><th>Nome</th><th>Pasta origem</th><th>Pasta destino</th><th>Condição</th><th>Ação</th><th>Status</th><th></th></tr></thead><tbody>'+body+'</tbody></table></div></div></div>';
+}
+
+/* ---------- Nível 1: Usuários ---------- */
+function renderUsuarios(){
+  var rows = [['JS','João Silva','joao@escritoriopereira.com.br','Admin','Agora',false],['CM','Carla Mendes','carla@escritoriopereira.com.br','Funcionária','Hoje 14:20',true],['MT','Marcos Tavares','marcos@escritoriopereira.com.br','Funcionário','Ontem 09:15',true],['AC','Ana Paula Costa','ana@escritoriopereira.com.br','Funcionária','15/08 16:40',true]];
+  var body = rows.map(function(r){ return '<tr><td><span style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9999px;background:var(--brand-100);color:var(--brand-800);font-size:11.5px;font-weight:700;margin-right:10px;">'+r[0]+'</span>'+r[1]+'</td><td>'+r[2]+'</td><td>'+r[3]+'</td><td>'+r[4]+'</td><td><button class="link-btn">Editar</button>'+(r[5]?'<button class="link-btn">Remover</button>':'')+'</td></tr>'; }).join('');
+  return '<div class="page"><div class="page-head" style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:16px;"><h1>Usuários</h1><button class="btn-dark">'+icon('plus')+' Novo usuário</button></div>'
+  + '<div class="card"><div class="tbl-wrap"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Último acesso</th><th>Ações</th></tr></thead><tbody>'+body+'</tbody></table></div><div class="footnote">Funcionários têm acesso ao dashboard mas não gerenciam regras, usuários ou configurações.</div></div></div>';
+}
+
+/* ---------- Nível 1: Admin Clientes ---------- */
+function renderAdmin(){
+  var body = CLIENTES.map(function(c){ return '<tr><td class="strong">'+c.nome+'</td><td class="mono">'+c.cnpj+'</td><td>'+c.regime+'</td><td>'+c.func+'</td><td>'+badge('Ativo','ok')+'</td><td><button class="link-btn">Ver detalhes</button><button class="link-btn">Editar</button></td></tr>'; }).join('');
+  return '<div class="page"><div class="page-head" style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:16px;"><h1>Clientes do escritório</h1><button class="btn-dark">'+icon('plus')+' Novo cliente</button></div>'
+  + '<div class="grid4"><div class="stat"><div class="stat-label">Clientes ativos</div><div class="stat-value tnum">5</div></div><div class="stat"><div class="stat-label">Automações este mês</div><div class="stat-value tnum">312</div></div><div class="stat"><div class="stat-label">Obrigações em atraso</div><div class="stat-value tnum" style="color:var(--danger-700)">3</div></div><div class="stat"><div class="stat-label">Licença</div><div class="stat-value" style="font-size:18px;">Válida — ago/2027</div></div></div>'
+  + '<div class="card"><div class="tbl-wrap"><table><thead><tr><th>Cliente</th><th>CNPJ</th><th>Regime tributário</th><th>Funcionários</th><th>Status</th><th>Ações</th></tr></thead><tbody>'+body+'</tbody></table></div></div></div>';
+}
+
+/* ---------- Login ---------- */
+function renderLogin(){
+  return '<div class="login"><form class="login-card" id="login-form">'
+  + '<div class="login-brand">'+LOGO_SVG(34)+'<span class="wm">Efficience Co</span></div>'
+  + '<div class="login-eyebrow">Plataforma</div><h1 class="login-h">Entrar na plataforma</h1><p class="login-sub">Escritório Pereira Contabilidade · use seu e-mail e senha para acessar.</p>'
+  + '<div class="field"><label>E-mail</label><input type="email" id="login-email" value="joao@escritoriopereira.com.br"></div>'
+  + '<div class="field"><label>Senha</label><input type="password" id="login-senha" value="demo1234"></div>'
+  + '<button class="btn btn-primary" type="submit">Entrar</button>'
+  + '<div class="login-hint">Protegido por JWT · dados tratados conforme a LGPD</div>'
+  + '</form></div>';
+}
+
+/* ---------- router / dispatch ---------- */
+function currentRoute(){ return (location.hash || '#dashboard').slice(1); }
+function pageFor(route){
+  if (route.indexOf('automacao/') === 0){
+    var a = AUT_BY_ID[route.slice('automacao/'.length)];
+    if (!a) return renderDashboard();
+    if (a.tipo === 'bespoke') return BESPOKE[a.id]();
+    if (a.tipo === 'tabela') return renderTabelaDetail(a);
+    if (a.tipo === 'resumo') return renderResumoDetail(a);
+    if (a.tipo === 'log') return renderLogDetail(a);
+    if (a.tipo === 'progresso') return renderProgressoDetail(a);
+    return renderTabelaDetail(a);
+  }
+  switch(route){
+    case 'dashboard': return renderDashboard();
+    case 'roi': return renderROI();
+    case 'obrigacoes': return renderObrigacoes();
+    case 'processos': return renderProcessos();
+    case 'logs': return renderLogsPage();
+    case 'regras': return renderRegras();
+    case 'usuarios': return renderUsuarios();
+    case 'admin': return renderAdmin();
+    case 'fiscal': case 'contabil': case 'dp': case 'societario': case 'financeiro': case 'atendimento':
+      return renderArea(route);
+    default: return renderDashboard();
+  }
+}
+var BESPOKE = { 'escrituracao-nfe':renderEscrituracao, 'conciliacao-bancaria':renderConciliacao, 'folha-pagamento':renderFolha, 'abertura-empresa':renderAbertura };
+function activeNavKey(route){
+  if (route.indexOf('automacao/') === 0){ var a = AUT_BY_ID[route.slice(10)]; return a ? a.area : 'dashboard'; }
+  return route;
+}
+
+var MODAL_CSS_INJECTED = false;
+function injectModalCss(){
+  if (MODAL_CSS_INJECTED) return; MODAL_CSS_INJECTED = true;
+  var css = '.modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}'
+  + '.modal-box{width:420px;max-width:100%;background:#fff;border-radius:var(--r-xl);box-shadow:0 24px 64px -16px rgba(15,23,42,.35);}'
+  + '.modal-head{display:flex;align-items:flex-start;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--slate-100);}'
+  + '.modal-title{font-size:15.5px;font-weight:700;color:var(--slate-900);}'
+  + '.modal-sub{font-size:12.5px;color:var(--fg-muted);margin-top:3px;}'
+  + '.modal-body{padding:18px 20px;}'
+  + '.modal-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--slate-100);}';
+  var st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
+}
+
+function render(){
+  var app = document.getElementById('app');
+  if (!STATE.user){ app.innerHTML = renderLogin(); bindLogin(); return; }
+  injectModalCss();
+  var route = currentRoute();
+  app.innerHTML = '<div class="shell">' + renderSidebar(activeNavKey(route)) + '<div class="main">' + renderTopbar(activeNavKey(route)) + '<div class="scroll">' + pageFor(route) + '</div></div></div>';
+  bindShell();
+}
+function bindLogin(){
+  document.getElementById('login-form').addEventListener('submit', function(e){
+    e.preventDefault();
+    STATE.user = { nome:'João Silva', email: document.getElementById('login-email').value || 'joao@escritoriopereira.com.br' };
+    location.hash = '#dashboard';
+    render();
+  });
+}
+function bindShell(){
+  document.querySelectorAll('[data-nav]').forEach(function(el){
+    el.addEventListener('click', function(){ location.hash = '#' + el.getAttribute('data-nav'); });
+  });
+  var logoutBtn = document.querySelector('[data-logout]');
+  if (logoutBtn) logoutBtn.addEventListener('click', function(){ STATE.user = null; STATE.conciliacao = null; STATE.folhaModal = null; location.hash = '#dashboard'; render(); });
+
+  document.querySelectorAll('[data-roi-period]').forEach(function(el){
+    el.addEventListener('click', function(){ roiPeriod = el.getAttribute('data-roi-period'); render(); });
+  });
+
+  document.querySelectorAll('[data-conc-confirm]').forEach(function(el){
+    el.addEventListener('click', function(){
+      var id = el.getAttribute('data-conc-confirm'); var s = conciliacaoState();
+      s.provavel = s.provavel.filter(function(p){ return p.id !== id; }); s.automatico += 1; render();
+    });
+  });
+  document.querySelectorAll('[data-conc-reject]').forEach(function(el){
+    el.addEventListener('click', function(){
+      var id = el.getAttribute('data-conc-reject'); var s = conciliacaoState();
+      s.provavel = s.provavel.filter(function(p){ return p.id !== id; }); render();
+    });
+  });
+
+  document.querySelectorAll('[data-folha-modal]').forEach(function(el){
+    el.addEventListener('click', function(){ STATE.folhaModal = el.getAttribute('data-folha-modal'); render(); });
+  });
+  document.querySelectorAll('[data-modal-close]').forEach(function(el){
+    el.addEventListener('click', function(){ STATE.folhaModal = null; render(); });
+  });
+  var sendBtn = document.querySelector('[data-folha-send]');
+  if (sendBtn) sendBtn.addEventListener('click', function(){ STATE.folhaModal = null; render(); });
+}
+
+window.addEventListener('hashchange', render);
+render();
+</script>
+</body>
+</html>
