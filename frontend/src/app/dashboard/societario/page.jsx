@@ -1,55 +1,63 @@
 'use client';
 
 import AutomacaoCard from '../../../components/dashboard/AutomacaoCard';
+import {
+  AssinaturaIcon,
+  CicloIcon,
+  DocumentoIcon,
+  EscudoIcon,
+  PredioIcon,
+  SeloIcon,
+} from '../../../components/icons/AutomacaoIcons';
 
 const AUTOMACOES = [
   {
-    icone: '🏢',
+    icon: PredioIcon,
     nome: 'Abertura de empresa',
-    descricao: 'Geração automática da documentação e estrutura de pastas de abertura.',
+    descricao: 'Gera a documentação e a estrutura de pastas de abertura.',
     status: 'em_desenvolvimento',
     observacao: 'QA pendente',
   },
   {
-    icone: '📝',
+    icon: DocumentoIcon,
     nome: 'Alteração contratual',
-    descricao: 'Preenchimento automático de alterações no contrato social.',
+    descricao: 'Preenche as alterações no contrato social.',
     status: 'planejado',
   },
   {
-    icone: '🚫',
+    icon: PredioIcon,
     nome: 'Baixa de empresa',
-    descricao: 'Automatiza a documentação necessária para encerramento de empresa.',
+    descricao: 'Monta a documentação necessária para o encerramento da empresa.',
     status: 'planejado',
   },
   {
-    icone: '📜',
+    icon: SeloIcon,
     nome: 'Alvarás e licenças',
-    descricao: 'Acompanhamento e emissão automática de alvarás e licenças.',
+    descricao: 'Acompanha vencimentos e emite alvarás e licenças.',
     status: 'planejado',
   },
   {
-    icone: '🔐',
+    icon: EscudoIcon,
     nome: 'Certificado digital',
-    descricao: 'Alerta e automação do fluxo de renovação de certificado digital.',
+    descricao: 'Alerta e conduz a renovação do certificado digital.',
     status: 'planejado',
   },
   {
-    icone: '🏛️',
+    icon: PredioIcon,
     nome: 'Registro em órgãos',
-    descricao: 'Automação do registro de atos societários nos órgãos competentes.',
+    descricao: 'Registra os atos societários nos órgãos competentes.',
     status: 'planejado',
   },
   {
-    icone: '✍️',
+    icon: AssinaturaIcon,
     nome: 'Procurações (e-CAC, Gov.br)',
-    descricao: 'Geração automática de procurações eletrônicas para os clientes.',
+    descricao: 'Gera as procurações eletrônicas para os clientes.',
     status: 'planejado',
   },
   {
-    icone: '🔄',
+    icon: CicloIcon,
     nome: 'Regularização cadastral',
-    descricao: 'Identificação e correção automática de pendências cadastrais.',
+    descricao: 'Identifica e corrige pendências cadastrais.',
     status: 'planejado',
   },
 ];

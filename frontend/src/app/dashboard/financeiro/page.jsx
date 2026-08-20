@@ -1,36 +1,43 @@
 'use client';
 
 import AutomacaoCard from '../../../components/dashboard/AutomacaoCard';
+import {
+  ComprovanteIcon,
+  DocumentoIcon,
+  GraficoIcon,
+  PessoaIcon,
+  TelefoneIcon,
+} from '../../../components/icons/AutomacaoIcons';
 
 const AUTOMACOES = [
   {
-    icone: '🧾',
+    icon: ComprovanteIcon,
     nome: 'Emissão de honorários e boletos',
-    descricao: 'Geração automática de boletos de honorários mensais dos clientes.',
+    descricao: 'Gera os boletos de honorários mensais dos clientes.',
     status: 'planejado',
   },
   {
-    icone: '📞',
+    icon: TelefoneIcon,
     nome: 'Cobrança de inadimplentes',
-    descricao: 'Régua automática de cobrança para honorários em atraso.',
+    descricao: 'Régua de cobrança para honorários em atraso.',
     status: 'planejado',
   },
   {
-    icone: '📈',
+    icon: GraficoIcon,
     nome: 'Reajuste de honorários',
-    descricao: 'Cálculo e aplicação automática de reajuste anual de honorários.',
+    descricao: 'Calcula e aplica o reajuste anual de honorários.',
     status: 'planejado',
   },
   {
-    icone: '📄',
+    icon: DocumentoIcon,
     nome: 'Renovação de contratos',
-    descricao: 'Alerta e geração automática de renovação de contratos de prestação de serviço.',
+    descricao: 'Alerta e gera a renovação de contratos de prestação de serviço.',
     status: 'planejado',
   },
   {
-    icone: '👥',
+    icon: PessoaIcon,
     nome: 'Folha dos funcionários do escritório',
-    descricao: 'Processamento automático da folha interna do próprio escritório.',
+    descricao: 'Processa a folha interna do próprio escritório.',
     status: 'planejado',
   },
 ];

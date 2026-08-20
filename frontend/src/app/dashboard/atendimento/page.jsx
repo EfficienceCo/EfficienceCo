@@ -1,30 +1,36 @@
 'use client';
 
 import AutomacaoCard from '../../../components/dashboard/AutomacaoCard';
+import {
+  DocumentoIcon,
+  EntradaIcon,
+  EnvelopeIcon,
+  GraficoIcon,
+} from '../../../components/icons/AutomacaoIcons';
 
 const AUTOMACOES = [
   {
-    icone: '📬',
+    icon: EnvelopeIcon,
     nome: 'Cobrança de documentação pendente',
-    descricao: 'Lembretes automáticos para clientes com documentos pendentes de envio.',
+    descricao: 'Lembra clientes com documentos pendentes de envio.',
     status: 'planejado',
   },
   {
-    icone: '📤',
+    icon: GraficoIcon,
     nome: 'Envio de relatórios periódicos',
-    descricao: 'Envio automático de relatórios e resultados para o cliente.',
+    descricao: 'Envia relatórios e resultados para o cliente.',
     status: 'planejado',
   },
   {
-    icone: '📄',
+    icon: DocumentoIcon,
     nome: 'Renovação de contratos',
-    descricao: 'Alerta automático de vencimento e renovação de contratos com clientes.',
+    descricao: 'Alerta sobre vencimento e renovação de contratos com clientes.',
     status: 'planejado',
   },
   {
-    icone: '🚀',
+    icon: EntradaIcon,
     nome: 'Onboarding de novo cliente',
-    descricao: 'Automatiza parte da coleta de dados e documentos na entrada de um novo cliente.',
+    descricao: 'Conduz parte da coleta de dados e documentos na entrada de um novo cliente.',
     status: 'planejado',
     observacao: 'Parcial',
   },

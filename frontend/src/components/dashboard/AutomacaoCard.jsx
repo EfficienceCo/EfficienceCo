@@ -21,15 +21,18 @@ function obterStatusMeta(status) {
   return STATUS_META[status] || STATUS_META.planejado;
 }
 
-export default function AutomacaoCard({ icone, nome, descricao, status, href, observacao }) {
+export default function AutomacaoCard({ icon: Icon, nome, descricao, status, href, observacao }) {
   const meta = obterStatusMeta(status);
   const clicavel = status === 'disponivel' && Boolean(href);
 
   const conteudo = (
     <>
       <div className="flex items-start justify-between gap-3">
-        <span className="text-2xl" aria-hidden="true">
-          {icone}
+        <span
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg"
+          style={{ background: 'var(--brand-soft)', color: 'var(--brand-soft-fg)' }}
+        >
+          {Icon ? <Icon className="h-[18px] w-[18px]" /> : null}
         </span>
         <span
           className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${meta.classes}`}
@@ -53,7 +56,7 @@ export default function AutomacaoCard({ icone, nome, descricao, status, href, ob
     return (
       <Link
         href={href}
-        className="block rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md"
+        className="block rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-zinc-300"
       >
         {conteudo}
       </Link>

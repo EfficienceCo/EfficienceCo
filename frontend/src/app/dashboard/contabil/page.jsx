@@ -1,43 +1,50 @@
 'use client';
 
 import AutomacaoCard from '../../../components/dashboard/AutomacaoCard';
+import {
+  CalendarioIcon,
+  DocumentoIcon,
+  GraficoIcon,
+  PastaIcon,
+  TransmissaoIcon,
+} from '../../../components/icons/AutomacaoIcons';
 
 const AUTOMACOES = [
   {
-    icone: '🏦',
+    icon: TransmissaoIcon,
     nome: 'Conciliação Bancária',
-    descricao: 'Importa o extrato OFX e concilia automaticamente com os lançamentos internos.',
+    descricao: 'Importa o extrato OFX e concilia com os lançamentos internos.',
     status: 'disponivel',
     href: '/dashboard/contabil/conciliacao',
   },
   {
-    icone: '📒',
+    icon: DocumentoIcon,
     nome: 'Conciliação de contas contábeis',
-    descricao: 'Cruzamento automático de saldos entre contas contábeis relacionadas.',
+    descricao: 'Cruza os saldos entre contas contábeis relacionadas.',
     status: 'planejado',
   },
   {
-    icone: '📉',
+    icon: GraficoIcon,
     nome: 'Depreciação e amortização',
-    descricao: 'Cálculo automático de depreciação e amortização de ativos do cliente.',
+    descricao: 'Calcula a depreciação e amortização dos ativos do cliente.',
     status: 'planejado',
   },
   {
-    icone: '📊',
+    icon: GraficoIcon,
     nome: 'Relatórios gerenciais',
-    descricao: 'Geração automática de relatórios gerenciais periódicos para o cliente.',
+    descricao: 'Gera os relatórios gerenciais periódicos do cliente.',
     status: 'planejado',
   },
   {
-    icone: '📅',
+    icon: CalendarioIcon,
     nome: 'Balancete mensal',
-    descricao: 'Fechamento e geração automática do balancete mensal.',
+    descricao: 'Fecha e gera o balancete do mês.',
     status: 'planejado',
   },
   {
-    icone: '📁',
+    icon: PastaIcon,
     nome: 'Encerramento de exercício',
-    descricao: 'Rotina automática de apuração e encerramento do exercício contábil.',
+    descricao: 'Conduz a apuração e o encerramento do exercício contábil.',
     status: 'planejado',
   },
 ];
