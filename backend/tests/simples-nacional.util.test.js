@@ -82,6 +82,24 @@ describe("calcularSimplesNacional — Fator R (Anexo V)", () => {
   });
 });
 
+describe("calcularSimplesNacional — RBT12 = 0 (sem faturamento nos últimos 12 meses)", () => {
+  it("Anexo I: não gera NaN/Infinity — aliquota_efetiva cai pro nominal e DAS fica 0", () => {
+    const r = calcularSimplesNacional({ rbt12: 0, receita_mes: 0, anexo: "I" });
+    assert.equal(r.aliquota_efetiva, 0.04);
+    assert.equal(r.valor_das, 0);
+    assert.equal(Number.isFinite(r.aliquota_efetiva), true);
+    assert.equal(Number.isFinite(r.valor_das), true);
+  });
+
+  it("Anexo V: Fator R fica 0 (sem receita acumulada pra apurar) e permanece no Anexo V", () => {
+    const r = calcularSimplesNacional({ rbt12: 0, receita_mes: 0, anexo: "V", folha12: 0 });
+    assert.equal(r.fator_r, 0);
+    assert.equal(r.anexo_efetivo, "V");
+    assert.equal(Number.isFinite(r.aliquota_efetiva), true);
+    assert.equal(r.valor_das, 0);
+  });
+});
+
 describe("calcularSimplesNacional — erros", () => {
   it("RBT12 acima de 4.800.000 → erro RBT12_ACIMA_DO_LIMITE", () => {
     const r = calcularSimplesNacional({ rbt12: 5000000, receita_mes: 100000, anexo: "I" });

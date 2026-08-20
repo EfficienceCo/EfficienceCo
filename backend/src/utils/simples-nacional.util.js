@@ -73,7 +73,10 @@ export function calcularSimplesNacional({ rbt12, receita_mes, anexo, folha12 = n
 
   if (anexo === "V") {
     if (semDadosFolha) return { erro: "FATOR_R_SEM_FOLHA" };
-    fator_r = arredondar(folha12 / rbt12);
+    // RBT12 = 0 (sem faturamento nos últimos 12 meses) deixaria folha12/rbt12
+    // indefinido — sem receita acumulada não há como apurar o Fator R, então
+    // fica em 0 e permanece na tabela do Anexo V.
+    fator_r = rbt12 === 0 ? 0 : arredondar(folha12 / rbt12);
     if (fator_r >= FATOR_R_LIMIAR) anexo_efetivo = "III";
   }
 
@@ -82,9 +85,14 @@ export function calcularSimplesNacional({ rbt12, receita_mes, anexo, folha12 = n
   if (!faixa) return { erro: "RBT12_ACIMA_DO_LIMITE" };
 
   const [faixa_limite, aliquota_nominal, parcela_deduzir] = faixa;
-  // Arredonda a alíquota efetiva antes de multiplicar pela receita do mês —
-  // arredondar só no final acumula erro em relação ao cálculo manual da lei.
-  const aliquota_efetiva = arredondar((rbt12 * aliquota_nominal - parcela_deduzir) / rbt12);
+  // RBT12 = 0 só cai na 1ª faixa de cada tabela, onde parcela_deduzir já é 0
+  // — o limite de (rbt12*nominal - 0)/rbt12 quando rbt12 -> 0 é o próprio
+  // aliquota_nominal. Sem esse guard, a divisão por zero vira NaN/Infinity e
+  // quebra o insert (aliquota_efetiva é NOT NULL). Como receita_mes também é
+  // necessariamente 0 quando rbt12 é 0 (RBT12 inclui o mês corrente), o
+  // valor_das final dá 0 de qualquer forma.
+  const aliquota_efetiva =
+    rbt12 === 0 ? aliquota_nominal : arredondar((rbt12 * aliquota_nominal - parcela_deduzir) / rbt12);
   const valor_das = arredondar(receita_mes * aliquota_efetiva);
 
   return {
