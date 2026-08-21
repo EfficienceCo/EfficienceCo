@@ -18,6 +18,7 @@ import folhaRoutes from "./routes/folha.routes.js";
 import lancamentosFiscaisRoutes from "./routes/lancamentos-fiscais.routes.js";
 import lancamentosContabeisRoutes from "./routes/lancamentos-contabeis.routes.js";
 import conciliacoesRoutes from "./routes/conciliacoes.routes.js";
+import apuracoesRoutes from "./routes/apuracoes.routes.js";
 
 console.log("[app.js] Criando instancia do app...");
 const app = express();
@@ -83,6 +84,9 @@ console.log("[app.js] Rota /lancamentos-contabeis registrada");
 
 app.use("/conciliacoes", conciliacoesRoutes);
 console.log("[app.js] Rota /conciliacoes registrada");
+
+app.use("/apuracoes", apuracoesRoutes);
+console.log("[app.js] Rota /apuracoes registrada");
 
 console.log("[app.js] Exportando app...");
 export default app;
