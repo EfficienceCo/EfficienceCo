@@ -57,8 +57,15 @@ const TABELAS_SIMPLES = {
 
 const FATOR_R_LIMIAR = 0.28;
 
-function arredondar(valor) {
-  return Math.round(valor * 10000) / 10000;
+function arredondarMoeda(valor) {
+  return Math.round((valor + Number.EPSILON) * 100) / 100;
+}
+
+// O PGDAS-D considera duas casas decimais sem arredondamento para o Fator R.
+// O EPSILON evita que um 0,28 exato representado como 0,27999999999999997 seja
+// truncado indevidamente para 0,27.
+function truncarFatorR(valor) {
+  return Math.trunc((valor + Number.EPSILON) * 100) / 100;
 }
 
 // Recebe rbt12 (receita bruta dos últimos 12 meses), receita_mes, anexo
@@ -67,16 +74,27 @@ function arredondar(valor) {
 // de folha suficientes para apurar o Fator R.
 export function calcularSimplesNacional({ rbt12, receita_mes, anexo, folha12 = null, semDadosFolha = false }) {
   if (!TABELAS_SIMPLES[anexo]) return { erro: "ANEXO_INVALIDO" };
+  if (!Number.isFinite(rbt12) || rbt12 < 0) return { erro: "RBT12_INVALIDO" };
+  if (!Number.isFinite(receita_mes) || receita_mes < 0) return { erro: "RECEITA_MES_INVALIDA" };
 
   let anexo_efetivo = anexo;
   let fator_r = null;
 
   if (anexo === "V") {
-    if (semDadosFolha) return { erro: "FATOR_R_SEM_FOLHA" };
-    // RBT12 = 0 (sem faturamento nos últimos 12 meses) deixaria folha12/rbt12
-    // indefinido — sem receita acumulada não há como apurar o Fator R, então
-    // fica em 0 e permanece na tabela do Anexo V.
-    fator_r = rbt12 === 0 ? 0 : arredondar(folha12 / rbt12);
+    if (semDadosFolha || folha12 === null || folha12 === undefined) {
+      return { erro: "FATOR_R_SEM_FOLHA" };
+    }
+    if (!Number.isFinite(folha12) || folha12 < 0) return { erro: "FOLHA12_INVALIDA" };
+
+    // Resolução CGSN 140/2018, art. 26, § 7º:
+    // - FS12 = 0 e RBT12 = 0: Fator R = 0,01;
+    // - FS12 > 0 e RBT12 = 0: Fator R = 0,28.
+    // Nos demais casos o PGDAS-D trunca o quociente em duas casas, sem arredondar.
+    if (rbt12 === 0) {
+      fator_r = folha12 > 0 ? 0.28 : 0.01;
+    } else {
+      fator_r = truncarFatorR(folha12 / rbt12);
+    }
     if (fator_r >= FATOR_R_LIMIAR) anexo_efetivo = "III";
   }
 
@@ -85,15 +103,15 @@ export function calcularSimplesNacional({ rbt12, receita_mes, anexo, folha12 = n
   if (!faixa) return { erro: "RBT12_ACIMA_DO_LIMITE" };
 
   const [faixa_limite, aliquota_nominal, parcela_deduzir] = faixa;
-  // RBT12 = 0 só cai na 1ª faixa de cada tabela, onde parcela_deduzir já é 0
-  // — o limite de (rbt12*nominal - 0)/rbt12 quando rbt12 -> 0 é o próprio
-  // aliquota_nominal. Sem esse guard, a divisão por zero vira NaN/Infinity e
-  // quebra o insert (aliquota_efetiva é NOT NULL). Como receita_mes também é
-  // necessariamente 0 quando rbt12 é 0 (RBT12 inclui o mês corrente), o
-  // valor_das final dá 0 de qualquer forma.
+  // Para a alíquota efetiva, o manual do PGDAS-D orienta considerar RBT12 = 1
+  // quando o acumulado for zero. Na primeira faixa a parcela a deduzir é zero,
+  // portanto o resultado é a própria alíquota nominal.
   const aliquota_efetiva =
-    rbt12 === 0 ? aliquota_nominal : arredondar((rbt12 * aliquota_nominal - parcela_deduzir) / rbt12);
-  const valor_das = arredondar(receita_mes * aliquota_efetiva);
+    rbt12 === 0 ? aliquota_nominal : (rbt12 * aliquota_nominal - parcela_deduzir) / rbt12;
+
+  // O PGDAS-D usa todas as casas da alíquota no cálculo. Somente o valor
+  // monetário final é arredondado para centavos.
+  const valor_das = arredondarMoeda(receita_mes * aliquota_efetiva);
 
   return {
     anexo_original: anexo,

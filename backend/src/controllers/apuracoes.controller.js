@@ -23,23 +23,84 @@ function resolverClienteIdBody(req) {
 }
 
 function arredondar(valor) {
-  return Math.round(valor * 100) / 100;
+  return Math.round((valor + Number.EPSILON) * 100) / 100;
 }
 
-// RBT12 é o acumulado móvel de 12 meses TERMINANDO no mês de apuração (inclui
-// o próprio mês) — ver referencias/apuracao-impostos-guia-reuniao.md: "se
-// estamos em agosto, RBT12 = soma de setembro do ano passado até agosto deste
-// ano". O Fator R usa a mesma janela (folha dos últimos 12 meses).
-function calcularJanela12Meses(mes, ano) {
-  const indiceFim = ano * 12 + (mes - 1);
+function inteiroEstrito(valor) {
+  if (typeof valor === "string" && !/^\d+$/.test(valor.trim())) return null;
+  if (typeof valor !== "string" && typeof valor !== "number") return null;
+  const numero = Number(valor);
+  return Number.isInteger(numero) ? numero : null;
+}
+
+function numeroNaoNegativo(valor) {
+  if (typeof valor === "string") {
+    const normalizado = valor.trim();
+    if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalizado)) return null;
+    valor = normalizado;
+  } else if (typeof valor !== "number") {
+    return null;
+  }
+
+  const numero = Number(valor);
+  return Number.isFinite(numero) && numero >= 0 ? numero : null;
+}
+
+function chaveMes(ano, mes) {
+  return `${ano}-${String(mes).padStart(2, "0")}`;
+}
+
+// A RBT12 e a FS12 usam os 12 meses ANTERIORES ao período de apuração. Para
+// agosto/2026, por exemplo, a janela correta é agosto/2025 a julho/2026.
+function calcularJanela12MesesAnteriores(mes, ano) {
+  const indiceFim = ano * 12 + (mes - 1) - 1;
   const indiceInicio = indiceFim - 11;
   const anoInicio = Math.floor(indiceInicio / 12);
   const mesInicio = (indiceInicio % 12) + 1;
+  const anoFim = Math.floor(indiceFim / 12);
+  const mesFim = (indiceFim % 12) + 1;
 
   const inicio = `${anoInicio}-${String(mesInicio).padStart(2, "0")}-01`;
-  const fim = ultimoDiaDoMes(ano, mes);
+  const fim = ultimoDiaDoMes(anoFim, mesFim);
+  const meses = new Set();
 
-  return { inicio, fim };
+  for (let indice = indiceInicio; indice <= indiceFim; indice += 1) {
+    meses.add(chaveMes(Math.floor(indice / 12), (indice % 12) + 1));
+  }
+
+  return { inicio, fim, meses };
+}
+
+function somarHistoricoReceita(historico, mesesEsperados, mesesComNotas) {
+  if (historico == null) return { total: 0 };
+  if (!Array.isArray(historico)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
+
+  const receitasPorMes = new Map();
+
+  for (const entrada of historico) {
+    const mes = inteiroEstrito(entrada?.mes);
+    const ano = inteiroEstrito(entrada?.ano);
+    const receita = numeroNaoNegativo(entrada?.receita);
+
+    if (mes === null || mes < 1 || mes > 12 || ano === null || ano < 2020 || receita === null) {
+      return { erro: "HISTORICO_RECEITA_INVALIDO" };
+    }
+
+    const referencia = chaveMes(ano, mes);
+    if (receitasPorMes.has(referencia)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
+    receitasPorMes.set(referencia, receita);
+  }
+
+  let total = 0;
+  for (const [referencia, receita] of receitasPorMes) {
+    // NFes importadas são a fonte primária. O histórico manual só completa os
+    // meses ainda ausentes no sistema, evitando dupla contagem.
+    if (mesesEsperados.has(referencia) && !mesesComNotas.has(referencia)) {
+      total += receita;
+    }
+  }
+
+  return { total: arredondar(total) };
 }
 
 export async function dispararApuracao(req, res) {
@@ -54,11 +115,11 @@ export async function dispararApuracao(req, res) {
   }
 
   if (!REGIMES_SUPORTADOS.has(regime)) {
-    return res.status(422).json({ erro: "Regime tributário não suportado" });
+    return res.status(422).json({ erro: "REGIME_NAO_SUPORTADO" });
   }
 
-  const mesNum = parseInt(mes, 10);
-  const anoNum = parseInt(ano, 10);
+  const mesNum = inteiroEstrito(mes);
+  const anoNum = inteiroEstrito(ano);
 
   // Mesmos limites da CHECK constraint em database/migrations/71.sql — falhar aqui
   // com 400 em vez de deixar o Postgres rejeitar o insert com um 500 genérico.
@@ -75,7 +136,11 @@ export async function dispararApuracao(req, res) {
       .eq("periodo_ano", anoNum)
       .eq("regime", regime)
       .maybeSingle(),
-    supabase.from("clientes").select("anexo_simples").eq("id", clienteId).maybeSingle(),
+    supabase
+      .from("clientes")
+      .select("anexo_simples, regime_tributario, historico_receita")
+      .eq("id", clienteId)
+      .maybeSingle(),
   ]);
 
   if (erroExistente) {
@@ -96,16 +161,21 @@ export async function dispararApuracao(req, res) {
     return res.status(404).json({ erro: "Cliente não encontrado" });
   }
 
-  const { inicio, fim } = calcularJanela12Meses(mesNum, anoNum);
-  const mesReferenciaAtual = `${anoNum}-${String(mesNum).padStart(2, "0")}`;
+  if (cliente.regime_tributario !== "simples_nacional") {
+    return res.status(422).json({ erro: "REGIME_NAO_SUPORTADO" });
+  }
+
+  const janelaRbt12 = calcularJanela12MesesAnteriores(mesNum, anoNum);
+  const mesReferenciaAtual = chaveMes(anoNum, mesNum);
+  const fimMesAtual = ultimoDiaDoMes(anoNum, mesNum);
 
   const { data: notas, error: erroNotas } = await supabase
     .from("lancamentos_fiscais")
     .select("valor_total, data_emissao")
     .eq("cliente_id", clienteId)
     .eq("tipo", "saida")
-    .gte("data_emissao", inicio)
-    .lte("data_emissao", fim);
+    .gte("data_emissao", janelaRbt12.inicio)
+    .lte("data_emissao", fimMesAtual);
 
   if (erroNotas) {
     console.error("[apuracoes.controller] Erro ao buscar lançamentos fiscais:", erroNotas.message);
@@ -113,8 +183,16 @@ export async function dispararApuracao(req, res) {
   }
 
   const linhasNotas = notas || [];
+  const notasRbt12 = linhasNotas.filter((linha) => janelaRbt12.meses.has(linha.data_emissao.slice(0, 7)));
+  const mesesComNotas = new Set(notasRbt12.map((linha) => linha.data_emissao.slice(0, 7)));
+  const historico = somarHistoricoReceita(cliente.historico_receita, janelaRbt12.meses, mesesComNotas);
+
+  if (historico.erro) {
+    return res.status(422).json({ erro: historico.erro });
+  }
+
   const rbt12 = arredondar(
-    linhasNotas.reduce((soma, linha) => soma + Number(linha.valor_total), 0),
+    notasRbt12.reduce((soma, linha) => soma + Number(linha.valor_total), 0) + historico.total,
   );
   const receitaMes = arredondar(
     linhasNotas
@@ -128,25 +206,36 @@ export async function dispararApuracao(req, res) {
   if (cliente.anexo_simples === "V") {
     const { data: processamentos, error: erroProcessamentos } = await supabase
       .from("processamentos_folha")
-      .select("id")
+      .select("id, mes_referencia, criado_em")
       .eq("cliente_id", clienteId)
       .eq("status", "concluido")
-      .gte("mes_referencia", inicio)
-      .lte("mes_referencia", fim);
+      .gte("mes_referencia", janelaRbt12.inicio)
+      .lte("mes_referencia", janelaRbt12.fim)
+      .order("criado_em", { ascending: false });
 
     if (erroProcessamentos) {
       console.error("[apuracoes.controller] Erro ao buscar processamentos de folha:", erroProcessamentos.message);
       return res.status(500).json({ erro: "Erro ao buscar dados de folha" });
     }
 
-    const idsProcessamentos = (processamentos || []).map((p) => p.id);
+    // Pode haver reprocessamento do mesmo mês; usa apenas o mais recente para
+    // não duplicar a folha. A consulta já vem em criado_em decrescente.
+    const processamentoPorMes = new Map();
+    for (const processamento of processamentos || []) {
+      const referencia = processamento.mes_referencia?.slice(0, 7);
+      if (janelaRbt12.meses.has(referencia) && !processamentoPorMes.has(referencia)) {
+        processamentoPorMes.set(referencia, processamento.id);
+      }
+    }
 
-    if (idsProcessamentos.length === 0) {
+    const idsProcessamentos = [...processamentoPorMes.values()];
+
+    if (idsProcessamentos.length !== 12) {
       semDadosFolha = true;
     } else {
       const { data: calculos, error: erroCalculos } = await supabase
         .from("folha_calculos")
-        .select("salario_bruto")
+        .select("base_calculo, fgts")
         .in("processamento_id", idsProcessamentos);
 
       if (erroCalculos) {
@@ -154,7 +243,14 @@ export async function dispararApuracao(req, res) {
         return res.status(500).json({ erro: "Erro ao buscar dados de folha" });
       }
 
-      folha12 = arredondar((calculos || []).reduce((soma, linha) => soma + Number(linha.salario_bruto), 0));
+      // FS12 inclui remunerações e FGTS. A contribuição patronal precisa ser
+      // incorporada quando o pipeline de folha passar a persistir esse valor.
+      folha12 = arredondar(
+        (calculos || []).reduce(
+          (soma, linha) => soma + Number(linha.base_calculo) + Number(linha.fgts),
+          0,
+        ),
+      );
     }
   }
 
@@ -209,6 +305,13 @@ export async function listarApuracoes(req, res) {
   }
 
   const { mes, ano } = req.query;
+  const mesNum = mes === undefined ? null : inteiroEstrito(mes);
+  const anoNum = ano === undefined ? null : inteiroEstrito(ano);
+
+  if ((mes !== undefined && (mesNum === null || mesNum < 1 || mesNum > 12)) ||
+      (ano !== undefined && (anoNum === null || anoNum < 2020))) {
+    return res.status(400).json({ erro: "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020" });
+  }
 
   let query = supabase
     .from("apuracoes")
@@ -217,8 +320,8 @@ export async function listarApuracoes(req, res) {
     .order("periodo_ano", { ascending: false })
     .order("periodo_mes", { ascending: false });
 
-  if (mes) query = query.eq("periodo_mes", parseInt(mes, 10));
-  if (ano) query = query.eq("periodo_ano", parseInt(ano, 10));
+  if (mesNum !== null) query = query.eq("periodo_mes", mesNum);
+  if (anoNum !== null) query = query.eq("periodo_ano", anoNum);
 
   const { data, error } = await query;
 
@@ -251,6 +354,16 @@ export async function detalharApuracao(req, res) {
 export async function editarApuracao(req, res) {
   const { id } = req.params;
   const { valor_editado: valorEditado, motivo } = req.body;
+  const motivoNormalizado = typeof motivo === "string" ? motivo.trim() : "";
+  const valorNumerico = numeroNaoNegativo(valorEditado);
+
+  if (!motivoNormalizado) {
+    return res.status(400).json({ erro: "motivo é obrigatório" });
+  }
+
+  if (valorNumerico === null) {
+    return res.status(400).json({ erro: "valor_editado deve ser um número não negativo" });
+  }
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
@@ -271,35 +384,33 @@ export async function editarApuracao(req, res) {
     return res.status(409).json({ erro: "Apuração já aprovada não pode ser editada" });
   }
 
-  if (!motivo) {
-    return res.status(400).json({ erro: "motivo é obrigatório" });
-  }
-
-  if (valorEditado === undefined || valorEditado === null) {
-    return res.status(400).json({ erro: "valor_editado é obrigatório" });
-  }
-
   const valorAnterior = apuracao.valor_editado ?? apuracao.valor_calculado;
   const historicoAtualizado = [
-    ...(apuracao.historico_edicoes || []),
+    ...(Array.isArray(apuracao.historico_edicoes) ? apuracao.historico_edicoes : []),
     {
       valor_anterior: valorAnterior,
-      valor_novo: valorEditado,
-      motivo,
+      valor_novo: valorNumerico,
+      motivo: motivoNormalizado,
+      editado_por: req.usuario?.email || req.usuario?.id,
       editado_em: new Date().toISOString(),
     },
   ];
 
   const { data, error } = await supabase
     .from("apuracoes")
-    .update({ valor_editado: valorEditado, historico_edicoes: historicoAtualizado })
+    .update({ valor_editado: valorNumerico, historico_edicoes: historicoAtualizado })
     .eq("id", id)
+    .eq("status", "rascunho")
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error("[apuracoes.controller] Erro ao editar apuração:", error.message);
     return res.status(500).json({ erro: "Erro ao editar apuração" });
+  }
+
+  if (!data) {
+    return res.status(409).json({ erro: "Apuração já aprovada não pode ser editada" });
   }
 
   return res.status(200).json(data);
@@ -331,16 +442,21 @@ export async function aprovarApuracao(req, res) {
     .from("apuracoes")
     .update({
       status: "aprovado",
-      aprovado_por: req.usuario?.id,
+      aprovado_por: req.usuario?.email || req.usuario?.id,
       aprovado_em: new Date().toISOString(),
     })
     .eq("id", id)
+    .eq("status", "rascunho")
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error("[apuracoes.controller] Erro ao aprovar apuração:", error.message);
     return res.status(500).json({ erro: "Erro ao aprovar apuração" });
+  }
+
+  if (!data) {
+    return res.status(409).json({ erro: "Apuração já está aprovada" });
   }
 
   return res.status(200).json(data);
