@@ -38,13 +38,18 @@ describe("calcularSimplesNacional — um Anexo por faixa (parcela_deduzir = 0, f
 });
 
 describe("calcularSimplesNacional — faixa com parcela a deduzir", () => {
-  it("Anexo I, RBT12 = 250.000, receita do mês = 20.000 → DAS = 984,00", () => {
-    // (250000 * 0.073 - 5940) / 250000 = 0.0492 → DAS = 20000 * 0.0492 = 984,00
+  it("Anexo I, RBT12 = 250.000, receita do mês = 20.000 → DAS = 984,80", () => {
+    // O PGDAS-D preserva todas as casas: alíquota = 0,04924; DAS = 984,80.
     const r = calcularSimplesNacional({ rbt12: 250000, receita_mes: 20000, anexo: "I" });
     assert.equal(r.aliquota_nominal, 0.073);
     assert.equal(r.parcela_deduzir, 5940);
-    assert.equal(r.aliquota_efetiva, 0.0492);
-    assert.equal(r.valor_das, 984);
+    assert.equal(r.aliquota_efetiva, 0.04924);
+    assert.equal(r.valor_das, 984.8);
+  });
+
+  it("arredonda somente o valor monetário final para centavos", () => {
+    const r = calcularSimplesNacional({ rbt12: 250000, receita_mes: 12345.67, anexo: "I" });
+    assert.equal(r.valor_das, 607.9);
   });
 });
 
@@ -55,9 +60,9 @@ describe("calcularSimplesNacional — Fator R (Anexo V)", () => {
     assert.equal(r.fator_r, 0.4);
     assert.equal(r.anexo_original, "V");
     assert.equal(r.anexo_efetivo, "III");
-    // (500000 * 0.135 - 17640) / 500000 = 0.0997 → DAS = 40000 * 0.0997 = 3988,00
-    assert.equal(r.aliquota_efetiva, 0.0997);
-    assert.equal(r.valor_das, 3988);
+    // (500000 * 0.135 - 17640) / 500000 = 0.09972 → DAS = 3988,80
+    assert.equal(r.aliquota_efetiva, 0.09972);
+    assert.equal(r.valor_das, 3988.8);
   });
 
   it("Fator R < 28% → permanece no Anexo V", () => {
@@ -76,9 +81,39 @@ describe("calcularSimplesNacional — Fator R (Anexo V)", () => {
     assert.equal(r.anexo_efetivo, "III");
   });
 
+  it("Fator R é truncado em duas casas sem arredondamento", () => {
+    const r = calcularSimplesNacional({ rbt12: 100000, receita_mes: 10000, anexo: "V", folha12: 27999 });
+    assert.equal(r.fator_r, 0.27);
+    assert.equal(r.anexo_efetivo, "V");
+  });
+
   it("semDadosFolha: true → retorna erro FATOR_R_SEM_FOLHA sem calcular nada", () => {
     const r = calcularSimplesNacional({ rbt12: 500000, receita_mes: 40000, anexo: "V", semDadosFolha: true });
     assert.deepEqual(r, { erro: "FATOR_R_SEM_FOLHA" });
+  });
+});
+
+describe("calcularSimplesNacional — RBT12 = 0 (sem faturamento nos últimos 12 meses)", () => {
+  it("Anexo I: não gera NaN/Infinity — aliquota_efetiva cai pro nominal e DAS fica 0", () => {
+    const r = calcularSimplesNacional({ rbt12: 0, receita_mes: 0, anexo: "I" });
+    assert.equal(r.aliquota_efetiva, 0.04);
+    assert.equal(r.valor_das, 0);
+    assert.equal(Number.isFinite(r.aliquota_efetiva), true);
+    assert.equal(Number.isFinite(r.valor_das), true);
+  });
+
+  it("Anexo V: folha e receita zeradas resultam em Fator R 0,01", () => {
+    const r = calcularSimplesNacional({ rbt12: 0, receita_mes: 0, anexo: "V", folha12: 0 });
+    assert.equal(r.fator_r, 0.01);
+    assert.equal(r.anexo_efetivo, "V");
+    assert.equal(Number.isFinite(r.aliquota_efetiva), true);
+    assert.equal(r.valor_das, 0);
+  });
+
+  it("Anexo V: folha positiva e receita zerada resultam em Fator R 0,28", () => {
+    const r = calcularSimplesNacional({ rbt12: 0, receita_mes: 0, anexo: "V", folha12: 100 });
+    assert.equal(r.fator_r, 0.28);
+    assert.equal(r.anexo_efetivo, "III");
   });
 });
 
@@ -91,5 +126,20 @@ describe("calcularSimplesNacional — erros", () => {
   it("Anexo inválido → erro ANEXO_INVALIDO", () => {
     const r = calcularSimplesNacional({ rbt12: 100000, receita_mes: 10000, anexo: "VI" });
     assert.deepEqual(r, { erro: "ANEXO_INVALIDO" });
+  });
+
+  it("rejeita valores negativos e folha ausente", () => {
+    assert.deepEqual(
+      calcularSimplesNacional({ rbt12: -1, receita_mes: 100, anexo: "I" }),
+      { erro: "RBT12_INVALIDO" },
+    );
+    assert.deepEqual(
+      calcularSimplesNacional({ rbt12: 100, receita_mes: -1, anexo: "I" }),
+      { erro: "RECEITA_MES_INVALIDA" },
+    );
+    assert.deepEqual(
+      calcularSimplesNacional({ rbt12: 100, receita_mes: 10, anexo: "V" }),
+      { erro: "FATOR_R_SEM_FOLHA" },
+    );
   });
 });
