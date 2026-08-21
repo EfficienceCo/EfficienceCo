@@ -1,9 +1,18 @@
 import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
+import { validarTokenLicenca } from "../services/licenca.service.js";
 import { calcularSimplesNacional } from "../utils/simples-nacional.util.js";
 import { ultimoDiaDoMes } from "../utils/periodo.util.js";
 
 const REGIMES_SUPORTADOS = new Set(["simples_nacional"]);
+const FOLHA_STATUS = {
+  PENDENTE: "pendente",
+  VERIFICADO: "verificado",
+  SEM_DADOS: "sem_dados",
+};
+// Mesma ideia de LIMITE_ETAPAS_POR_POLLING em processos.controller.js — evita
+// resposta ilimitada quando pendências de folha se acumulam para um cliente.
+const LIMITE_APURACOES_POR_POLLING = 50;
 
 // GET usa clienteId (camelCase) — mesmo padrão do dashboard em lancamentos-fiscais.controller.js.
 function resolverClienteIdQuery(req) {
@@ -221,6 +230,61 @@ function enriquecerApuracao(apuracao, resultado, bases) {
   };
 }
 
+// Busca folha12 (FS12: base_calculo + fgts) e semDadosFolha pra Anexo V —
+// exige processamentos_folha "concluido" para os 12 meses inteiros da janela.
+// Usada tanto na criação (dispararApuracao) quanto no recálculo
+// (recalcularApuracao, #365) depois que o agente confirma a folha local e/ou
+// novo upload chega via POST /folha/upload/agente.
+async function coletarFolha12(clienteId, janelaRbt12) {
+  const { data: processamentos, error: erroProcessamentos } = await supabase
+    .from("processamentos_folha")
+    .select("id, mes_referencia, criado_em")
+    .eq("cliente_id", clienteId)
+    .eq("status", "concluido")
+    .gte("mes_referencia", janelaRbt12.inicio)
+    .lte("mes_referencia", janelaRbt12.fim)
+    .order("criado_em", { ascending: false });
+
+  if (erroProcessamentos) {
+    console.error("[apuracoes.controller] Erro ao buscar processamentos de folha:", erroProcessamentos.message);
+    return { erro: "Erro ao buscar dados de folha" };
+  }
+
+  // Pode haver reprocessamento do mesmo mês; usa apenas o mais recente para
+  // não duplicar a folha. A consulta já vem em criado_em decrescente.
+  const processamentoPorMes = new Map();
+  for (const processamento of processamentos || []) {
+    const referencia = processamento.mes_referencia?.slice(0, 7);
+    if (janelaRbt12.meses.has(referencia) && !processamentoPorMes.has(referencia)) {
+      processamentoPorMes.set(referencia, processamento.id);
+    }
+  }
+
+  const idsProcessamentos = [...processamentoPorMes.values()];
+
+  if (idsProcessamentos.length !== 12) {
+    return { folha12: null, semDadosFolha: true };
+  }
+
+  const { data: calculos, error: erroCalculos } = await supabase
+    .from("folha_calculos")
+    .select("base_calculo, fgts")
+    .in("processamento_id", idsProcessamentos);
+
+  if (erroCalculos) {
+    console.error("[apuracoes.controller] Erro ao buscar cálculos de folha:", erroCalculos.message);
+    return { erro: "Erro ao buscar dados de folha" };
+  }
+
+  // FS12 inclui remunerações e FGTS. A contribuição patronal precisa ser
+  // incorporada quando o pipeline de folha passar a persistir esse valor.
+  const folha12 = arredondar(
+    (calculos || []).reduce((soma, linha) => soma + Number(linha.base_calculo) + Number(linha.fgts), 0),
+  );
+
+  return { folha12, semDadosFolha: false };
+}
+
 export async function dispararApuracao(req, res) {
   const clienteId = resolverClienteIdBody(req);
   if (!clienteId) {
@@ -313,54 +377,11 @@ export async function dispararApuracao(req, res) {
   let semDadosFolha = false;
 
   if (cliente.anexo_simples === "V") {
-    const { data: processamentos, error: erroProcessamentos } = await supabase
-      .from("processamentos_folha")
-      .select("id, mes_referencia, criado_em")
-      .eq("cliente_id", clienteId)
-      .eq("status", "concluido")
-      .gte("mes_referencia", janelaRbt12.inicio)
-      .lte("mes_referencia", janelaRbt12.fim)
-      .order("criado_em", { ascending: false });
-
-    if (erroProcessamentos) {
-      console.error("[apuracoes.controller] Erro ao buscar processamentos de folha:", erroProcessamentos.message);
-      return res.status(500).json({ erro: "Erro ao buscar dados de folha" });
+    const insumosFolha = await coletarFolha12(clienteId, janelaRbt12);
+    if (insumosFolha.erro) {
+      return res.status(500).json({ erro: insumosFolha.erro });
     }
-
-    // Pode haver reprocessamento do mesmo mês; usa apenas o mais recente para
-    // não duplicar a folha. A consulta já vem em criado_em decrescente.
-    const processamentoPorMes = new Map();
-    for (const processamento of processamentos || []) {
-      const referencia = processamento.mes_referencia?.slice(0, 7);
-      if (janelaRbt12.meses.has(referencia) && !processamentoPorMes.has(referencia)) {
-        processamentoPorMes.set(referencia, processamento.id);
-      }
-    }
-
-    const idsProcessamentos = [...processamentoPorMes.values()];
-
-    if (idsProcessamentos.length !== 12) {
-      semDadosFolha = true;
-    } else {
-      const { data: calculos, error: erroCalculos } = await supabase
-        .from("folha_calculos")
-        .select("base_calculo, fgts")
-        .in("processamento_id", idsProcessamentos);
-
-      if (erroCalculos) {
-        console.error("[apuracoes.controller] Erro ao buscar cálculos de folha:", erroCalculos.message);
-        return res.status(500).json({ erro: "Erro ao buscar dados de folha" });
-      }
-
-      // FS12 inclui remunerações e FGTS. A contribuição patronal precisa ser
-      // incorporada quando o pipeline de folha passar a persistir esse valor.
-      folha12 = arredondar(
-        (calculos || []).reduce(
-          (soma, linha) => soma + Number(linha.base_calculo) + Number(linha.fgts),
-          0,
-        ),
-      );
-    }
+    ({ folha12, semDadosFolha } = insumosFolha);
   }
 
   const resultado = calcularSimplesNacional({
@@ -620,6 +641,246 @@ export async function aprovarApuracao(req, res) {
 
   if (!data) {
     return res.status(409).json({ erro: "Apuração já está aprovada" });
+  }
+
+  return res.status(200).json(data);
+}
+
+// Refaz o cálculo com os dados atuais de lancamentos_fiscais/processamentos_folha
+// — fecha o loop do #365: o agente só confirma que a folha existe localmente
+// (resultado-folha), quem efetivamente traz os números pro banco é o upload em
+// POST /folha/upload/agente; recalcular é o que lê esses números atualizados e
+// substitui fator_r/aliquota_efetiva/valor_calculado.
+export async function recalcularApuracao(req, res) {
+  const { id } = req.params;
+
+  const { data: apuracao, error: erroBusca } = await supabase
+    .from("apuracoes")
+    .select("id, cliente_id, periodo_mes, periodo_ano, status, anexo, fator_r")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (erroBusca) {
+    console.error("[apuracoes.controller] Erro ao buscar apuração:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar apuração" });
+  }
+
+  if (!apuracao || (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && apuracao.cliente_id !== req.usuario?.cliente_id)) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
+
+  if (apuracao.status === "aprovado") {
+    return res.status(409).json({ erro: "Apuração já aprovada não pode ser recalculada" });
+  }
+
+  const { data: cliente, error: erroCliente } = await supabase
+    .from("clientes")
+    .select("historico_receita")
+    .eq("id", apuracao.cliente_id)
+    .maybeSingle();
+
+  if (erroCliente) {
+    console.error("[apuracoes.controller] Erro ao buscar cliente:", erroCliente.message);
+    return res.status(500).json({ erro: "Erro ao buscar dados do cliente" });
+  }
+
+  if (!cliente) {
+    return res.status(404).json({ erro: "Cliente não encontrado" });
+  }
+
+  // O anexo persistido é o efetivo — mesma reconstrução de detalharApuracao():
+  // fator_r preenchido identifica que o cadastro original era Anexo V, mesmo
+  // quando permaneceu no V.
+  const anexoOriginal = apuracao.fator_r == null ? apuracao.anexo : "V";
+
+  const janelaRbt12 = calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano);
+  const fimMesAtual = ultimoDiaDoMes(apuracao.periodo_ano, apuracao.periodo_mes);
+
+  const { data: notas, error: erroNotas } = await supabase
+    .from("lancamentos_fiscais")
+    .select("id, chave_nfe, tipo, valor_total, data_emissao")
+    .eq("cliente_id", apuracao.cliente_id)
+    .gte("data_emissao", janelaRbt12.inicio)
+    .lte("data_emissao", fimMesAtual);
+
+  if (erroNotas) {
+    console.error("[apuracoes.controller] Erro ao buscar lançamentos fiscais:", erroNotas.message);
+    return res.status(500).json({ erro: "Erro ao buscar lançamentos fiscais" });
+  }
+
+  const bases = montarBasesCalculo({
+    notas,
+    historicoReceita: cliente.historico_receita,
+    mes: apuracao.periodo_mes,
+    ano: apuracao.periodo_ano,
+  });
+
+  if (bases.erro) {
+    return res.status(422).json({ erro: bases.erro });
+  }
+
+  let folha12 = null;
+  let semDadosFolha = false;
+
+  if (anexoOriginal === "V") {
+    const insumosFolha = await coletarFolha12(apuracao.cliente_id, janelaRbt12);
+    if (insumosFolha.erro) {
+      return res.status(500).json({ erro: insumosFolha.erro });
+    }
+    ({ folha12, semDadosFolha } = insumosFolha);
+  }
+
+  const resultado = calcularSimplesNacional({
+    rbt12: bases.rbt12,
+    receita_mes: bases.receitaMes,
+    anexo: anexoOriginal,
+    folha12,
+    semDadosFolha,
+  });
+
+  if (resultado.erro) {
+    return res.status(422).json({ erro: resultado.erro });
+  }
+
+  // .eq("status", "rascunho") de novo: trava otimista contra uma aprovação que
+  // aconteça entre o SELECT de cima e este UPDATE.
+  const { data, error } = await supabase
+    .from("apuracoes")
+    .update({
+      rbt12_usado: resultado.rbt12_usado,
+      receita_mes: resultado.receita_mes,
+      anexo: resultado.anexo_efetivo,
+      fator_r: resultado.fator_r,
+      folha12,
+      aliquota_efetiva: resultado.aliquota_efetiva,
+      valor_calculado: resultado.valor_das,
+      // Um override manual anterior foi feito em cima do cálculo antigo — com
+      // números novos de folha, ele deixa de fazer sentido sem revisão.
+      valor_editado: null,
+    })
+    .eq("id", id)
+    .eq("status", "rascunho")
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error("[apuracoes.controller] Erro ao recalcular apuração:", error.message);
+    return res.status(500).json({ erro: "Erro ao recalcular apuração" });
+  }
+
+  if (!data) {
+    return res.status(409).json({ erro: "Apuração foi aprovada por outra solicitação" });
+  }
+
+  return res.status(200).json(enriquecerApuracao(data, resultado, bases));
+}
+
+// Rota do agente — autenticada via x-licenca-token (polling), mesmo padrão de
+// processos.controller.js (#273). Só apurações originadas de cliente Anexo V
+// (fator_r preenchido — mesma inferência de detalharApuracao/recalcularApuracao)
+// usam Fator R e precisam da folha dos últimos 12 meses.
+export async function listarFolhaPendente(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  const { data, error } = await supabase
+    .from("apuracoes")
+    .select("id, cliente_id, periodo_mes, periodo_ano")
+    .eq("cliente_id", licenca.cliente_id)
+    .not("fator_r", "is", null)
+    .eq("folha_status", FOLHA_STATUS.PENDENTE)
+    .limit(LIMITE_APURACOES_POR_POLLING);
+
+  if (error) {
+    console.error("[apuracoes.controller] Erro ao listar apurações com folha pendente:", error.message);
+    return res.status(500).json({ erro: "Erro ao listar apurações com folha pendente" });
+  }
+
+  const apuracoes = (data || []).map((apuracao) => ({
+    id: apuracao.id,
+    clienteId: apuracao.cliente_id,
+    mes: apuracao.periodo_mes,
+    ano: apuracao.periodo_ano,
+  }));
+
+  return res.status(200).json(apuracoes);
+}
+
+// Rota do agente — reporta o que encontrou ao verificar as pastas locais de
+// folha. Não recalcula o DAS: o contador clica em "Recalcular" depois.
+export async function registrarResultadoFolha(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  const { id } = req.params;
+  const { temDozeMeses, mesesEncontrados, totalMesesEncontrados } = req.body || {};
+
+  if (typeof temDozeMeses !== "boolean") {
+    return res.status(400).json({ erro: "temDozeMeses deve ser booleano" });
+  }
+
+  if (!Array.isArray(mesesEncontrados)) {
+    return res.status(400).json({ erro: "mesesEncontrados deve ser uma lista" });
+  }
+
+  if (!Number.isInteger(totalMesesEncontrados)) {
+    return res.status(400).json({ erro: "totalMesesEncontrados deve ser um inteiro" });
+  }
+
+  if (totalMesesEncontrados !== mesesEncontrados.length) {
+    return res.status(400).json({ erro: "totalMesesEncontrados não corresponde ao tamanho de mesesEncontrados" });
+  }
+
+  const { data: apuracao, error: erroBusca } = await supabase
+    .from("apuracoes")
+    .select("id, cliente_id, status, fator_r")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (erroBusca) {
+    console.error("[apuracoes.controller] Erro ao buscar apuração:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar apuração" });
+  }
+
+  // Nunca revelar que o registro existe quando pertence a outra licença — 404, não 403.
+  if (!apuracao || apuracao.cliente_id !== licenca.cliente_id) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
+
+  // fator_r preenchido = apuração originada de cliente Anexo V (mesma
+  // inferência de detalharApuracao/recalcularApuracao) — coerente com o
+  // filtro de listarFolhaPendente.
+  if (apuracao.fator_r === null) {
+    return res.status(400).json({ erro: "Apuração não é do Anexo V" });
+  }
+
+  // Mesma trava de editarApuracao/aprovarApuracao — DAS já aprovado não pode
+  // ser reescrito por um relatório de folha atrasado do agente.
+  if (apuracao.status === "aprovado") {
+    return res.status(409).json({ erro: "Apuração já aprovada não pode ser alterada" });
+  }
+
+  const { data, error } = await supabase
+    .from("apuracoes")
+    .update({
+      folha_status: temDozeMeses ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.SEM_DADOS,
+      dados_folha: { temDozeMeses, mesesEncontrados, totalMesesEncontrados },
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error("[apuracoes.controller] Erro ao registrar resultado de folha:", error.message);
+    return res.status(500).json({ erro: "Erro ao registrar resultado de folha" });
   }
 
   return res.status(200).json(data);
