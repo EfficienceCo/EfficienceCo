@@ -147,6 +147,15 @@ describe("POST /apuracoes", () => {
 
     assert.equal(res.statusCode, 201);
     assert.equal(res.body.id, "nova-apuracao");
+    assert.equal(res.body.anexo_original, "I");
+    assert.equal(res.body.anexo_efetivo, "I");
+    assert.equal(res.body.rbt12, 40000);
+    assert.equal(res.body.faixa_limite, 180000);
+    assert.equal(res.body.aliquota_nominal, 0.04);
+    assert.equal(res.body.parcela_deduzir, 0);
+    assert.equal(res.body.valor_calculado, 1800);
+    assert.equal(res.body.rbt12_mensal.length, 12);
+    assert.equal(res.body.notas_fiscais.consideradas.length, 2);
   });
 
   it("422 quando regime não é simples_nacional", async () => {
@@ -239,6 +248,57 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 201);
     assert.equal(insert.payload.rbt12_usado, 140000);
     assert.equal(insert.payload.receita_mes, 45000);
+  });
+
+  it("expõe a composição mensal e as NFes consideradas e excluídas para auditoria", async () => {
+    queueSemDuplicata();
+    queueCliente("I", {
+      historico_receita: [{ mes: 8, ano: 2025, receita: 100000 }],
+    });
+    queueNotas([
+      {
+        id: "nfe-rbt12",
+        chave_nfe: "35250800000000000000550010000000011000000010",
+        tipo: "saida",
+        valor_total: 40000,
+        data_emissao: "2025-09-15",
+      },
+      {
+        id: "nfe-competencia",
+        chave_nfe: "35260800000000000000550010000000021000000020",
+        tipo: "saida",
+        valor_total: 45000,
+        data_emissao: "2026-08-10",
+      },
+      {
+        id: "nfe-entrada",
+        chave_nfe: "35260800000000000000550010000000031000000030",
+        tipo: "entrada",
+        valor_total: 12000,
+        data_emissao: "2026-08-11",
+      },
+    ]);
+    queue("apuracoes", "single", { data: { id: "nova-apuracao" }, error: null });
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.rbt12, 140000);
+    assert.deepEqual(
+      res.body.rbt12_mensal.find((item) => item.referencia === "2025-08"),
+      {
+        referencia: "2025-08",
+        mes: 8,
+        ano: 2025,
+        receita_nfes: 0,
+        receita_historico: 100000,
+        total: 100000,
+      },
+    );
+    assert.equal(res.body.notas_fiscais.consideradas.length, 2);
+    assert.equal(res.body.notas_fiscais.excluidas.length, 1);
+    assert.match(res.body.notas_fiscais.excluidas[0].motivo, /entrada não compõe/);
   });
 
   it("422 quando faltam meses de folha na janela completa do Fator R", async () => {
@@ -366,15 +426,69 @@ describe("GET /apuracoes", () => {
 describe("GET /apuracoes/:id", () => {
   it("200 com o detalhe completo quando a apuração pertence ao cliente", async () => {
     queue("apuracoes", "maybeSingle", {
-      data: { id: APURACAO_ID, cliente_id: CLIENTE_A, valor_calculado: 2790 },
+      data: {
+        id: APURACAO_ID,
+        cliente_id: CLIENTE_A,
+        periodo_mes: 8,
+        periodo_ano: 2026,
+        regime: "simples_nacional",
+        rbt12_usado: 40000,
+        receita_mes: 45000,
+        anexo: "I",
+        fator_r: null,
+        folha12: null,
+        aliquota_efetiva: 0.04,
+        valor_calculado: 1800,
+      },
       error: null,
     });
+    queueCliente("I");
+    queueNotas([
+      { tipo: "saida", valor_total: 40000, data_emissao: "2025-09-15" },
+      { tipo: "saida", valor_total: 45000, data_emissao: "2026-08-10" },
+    ]);
 
     const res = criarResposta();
     await detalharApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.id, APURACAO_ID);
+    assert.equal(res.body.anexo_efetivo, "I");
+    assert.equal(res.body.aliquota_nominal, 0.04);
+    assert.equal(res.body.rbt12_mensal.length, 12);
+  });
+
+  it("reconstrói o anexo original e a migração do Fator R no detalhe", async () => {
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        id: APURACAO_ID,
+        cliente_id: CLIENTE_A,
+        periodo_mes: 8,
+        periodo_ano: 2026,
+        regime: "simples_nacional",
+        rbt12_usado: 100000,
+        receita_mes: 50000,
+        anexo: "III",
+        fator_r: 0.3,
+        folha12: 30000,
+        aliquota_efetiva: 0.06,
+        valor_calculado: 3000,
+      },
+      error: null,
+    });
+    queueCliente("V");
+    queueNotas([
+      { tipo: "saida", valor_total: 100000, data_emissao: "2026-07-15" },
+      { tipo: "saida", valor_total: 50000, data_emissao: "2026-08-10" },
+    ]);
+
+    const res = criarResposta();
+    await detalharApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.anexo_original, "V");
+    assert.equal(res.body.anexo_efetivo, "III");
+    assert.equal(res.body.fator_r, 0.3);
   });
 
   it("404 quando a apuração não existe", async () => {

@@ -19,7 +19,7 @@ test.describe('Sidebar — link de Conciliação (issue #333)', () => {
     const link = sidebar.getByRole('link', { name: 'Conciliação' });
     await expect(link).toHaveClass(/bg-sky-400\/10/);
 
-    const outroLink = sidebar.getByRole('link', { name: 'Fiscal' });
+    const outroLink = sidebar.getByRole('link', { name: 'Fiscal', exact: true });
     await expect(outroLink).not.toHaveClass(/bg-sky-400\/10/);
   });
 
@@ -40,12 +40,12 @@ test.describe('Sidebar — link de Conciliação (issue #333)', () => {
     await expect(sidebar.getByRole('link', { name: 'Obrigações' })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'Processos' })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'Folha' })).toBeVisible();
-    await expect(sidebar.getByRole('link', { name: 'Fiscal' })).toBeVisible();
+    await expect(sidebar.getByRole('link', { name: 'Fiscal', exact: true })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'Logs', exact: true })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'Regras' })).toBeVisible();
 
     await page.goto('/dashboard/fiscal');
-    await expect(sidebar.getByRole('link', { name: 'Fiscal' })).toHaveClass(/bg-sky-400\/10/);
+    await expect(sidebar.getByRole('link', { name: 'Fiscal', exact: true })).toHaveClass(/bg-sky-400\/10/);
     await expect(sidebar.getByRole('link', { name: 'Conciliação' })).not.toHaveClass(/bg-sky-400\/10/);
   });
 });
