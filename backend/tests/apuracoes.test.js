@@ -20,6 +20,7 @@ const APURACAO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 const originalFrom = supabase.from;
 const filas = new Map();
+const operacoes = [];
 function chave(t, m) { return `${t}:${m}`; }
 function queue(tabela, metodo, resultado) {
   const k = chave(tabela, metodo);
@@ -36,8 +37,8 @@ supabase.from = function (tabela) {
   };
   const builder = {
     select() { return builder; },
-    insert() { return builder; },
-    update() { return builder; },
+    insert(payload) { operacoes.push({ tabela, metodo: "insert", payload }); return builder; },
+    update(payload) { operacoes.push({ tabela, metodo: "update", payload }); return builder; },
     eq() { return builder; },
     gte() { return builder; },
     lte() { return builder; },
@@ -56,7 +57,10 @@ after(() => {
   supabase.from = originalFrom;
 });
 
-beforeEach(() => filas.clear());
+beforeEach(() => {
+  filas.clear();
+  operacoes.length = 0;
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -76,7 +80,7 @@ function reqAdmin(overrides = {}) {
     body: {},
     params: {},
     query: {},
-    usuario: { perfil: PERFIS.ADMIN_CLIENTE, cliente_id: CLIENTE_A, id: "user-1" },
+    usuario: { perfil: PERFIS.ADMIN_CLIENTE, cliente_id: CLIENTE_A, id: "user-1", email: "contador@teste.com" },
     ...overrides,
   };
 }
@@ -95,12 +99,33 @@ function queueSemDuplicata() {
   queue("apuracoes", "maybeSingle", { data: null, error: null });
 }
 
-function queueCliente(anexo_simples) {
-  queue("clientes", "maybeSingle", { data: { anexo_simples }, error: null });
+function queueCliente(anexo_simples, overrides = {}) {
+  queue("clientes", "maybeSingle", {
+    data: {
+      anexo_simples,
+      regime_tributario: "simples_nacional",
+      historico_receita: [],
+      ...overrides,
+    },
+    error: null,
+  });
 }
 
 function queueNotas(linhas) {
   queue("lancamentos_fiscais", "await", { data: linhas, error: null });
+}
+
+function processamentosDosDozeMeses() {
+  return Array.from({ length: 12 }, (_, indice) => {
+    const numeroMes = 2025 * 12 + 7 + indice;
+    const ano = Math.floor(numeroMes / 12);
+    const mes = (numeroMes % 12) + 1;
+    return {
+      id: `proc-${indice + 1}`,
+      mes_referencia: `${ano}-${String(mes).padStart(2, "0")}-01`,
+      criado_em: `${ano}-${String(mes).padStart(2, "0")}-02T00:00:00.000Z`,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -166,9 +191,12 @@ describe("POST /apuracoes", () => {
   it("201 quando Anexo V com folha suficiente para cair no Fator R (Anexo III efetivo)", async () => {
     queueSemDuplicata();
     queueCliente("V");
-    queueNotas([{ valor_total: 50000, data_emissao: "2026-08-10" }]);
-    queue("processamentos_folha", "await", { data: [{ id: "proc-1" }], error: null });
-    queue("folha_calculos", "await", { data: [{ salario_bruto: 20000 }], error: null });
+    queueNotas([
+      { valor_total: 50000, data_emissao: "2026-07-10" },
+      { valor_total: 50000, data_emissao: "2026-08-10" },
+    ]);
+    queue("processamentos_folha", "await", { data: processamentosDosDozeMeses(), error: null });
+    queue("folha_calculos", "await", { data: [{ base_calculo: 19000, fgts: 1000 }], error: null });
     queue("apuracoes", "single", { data: { id: "nova-apuracao-v", anexo: "III" }, error: null });
 
     const res = criarResposta();
@@ -176,6 +204,60 @@ describe("POST /apuracoes", () => {
 
     assert.equal(res.statusCode, 201);
     assert.equal(res.body.anexo, "III");
+  });
+
+  it("422 quando o cliente cadastrado não pertence ao Simples Nacional", async () => {
+    queueSemDuplicata();
+    queueCliente("I", { regime_tributario: "lucro_presumido" });
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "REGIME_NAO_SUPORTADO");
+  });
+
+  it("soma histórico manual apenas nos meses sem notas e dentro da RBT12", async () => {
+    queueSemDuplicata();
+    queueCliente("I", {
+      historico_receita: [
+        { mes: 8, ano: 2025, receita: 100000 },
+        { mes: 9, ano: 2025, receita: 999999 },
+        { mes: 7, ano: 2025, receita: 888888 },
+      ],
+    });
+    queueNotas([
+      { valor_total: 40000, data_emissao: "2025-09-15" },
+      { valor_total: 45000, data_emissao: "2026-08-10" },
+    ]);
+    queue("apuracoes", "single", { data: { id: "nova-apuracao" }, error: null });
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
+
+    const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+    assert.equal(res.statusCode, 201);
+    assert.equal(insert.payload.rbt12_usado, 140000);
+    assert.equal(insert.payload.receita_mes, 45000);
+  });
+
+  it("422 quando faltam meses de folha na janela completa do Fator R", async () => {
+    queueSemDuplicata();
+    queueCliente("V");
+    queueNotas([
+      { valor_total: 50000, data_emissao: "2026-07-10" },
+      { valor_total: 50000, data_emissao: "2026-08-10" },
+    ]);
+    queue("processamentos_folha", "await", {
+      data: processamentosDosDozeMeses().slice(0, 11),
+      error: null,
+    });
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "FATOR_R_SEM_FOLHA");
   });
 
   it("400 quando mes/ano/regime faltando", async () => {
@@ -197,6 +279,14 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ ano: 1999 }) }), res);
 
     assert.equal(res.statusCode, 400);
+  });
+
+  it("400 quando mes contém sufixo não numérico", async () => {
+    for (const mes of ["8abc", true]) {
+      const res = criarResposta();
+      await dispararApuracao(reqAdmin({ body: payloadValido({ mes }) }), res);
+      assert.equal(res.statusCode, 400);
+    }
   });
 
   it("400 quando clienteId ausente (perfil admin_efficience sem body.clienteId)", async () => {
@@ -260,6 +350,13 @@ describe("GET /apuracoes", () => {
 
     assert.equal(res.statusCode, 500);
   });
+
+  it("400 quando um filtro de período é malformado", async () => {
+    const res = criarResposta();
+    await listarApuracoes(reqAdmin({ query: { mes: "8abc", ano: "2026" } }), res);
+
+    assert.equal(res.statusCode, 400);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -316,8 +413,12 @@ describe("PATCH /apuracoes/:id", () => {
       },
       error: null,
     });
-    queue("apuracoes", "single", {
-      data: { id: APURACAO_ID, valor_editado: 2500, historico_edicoes: [{ valor_novo: 2500 }] },
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        id: APURACAO_ID,
+        valor_editado: 2500,
+        historico_edicoes: [{ valor_novo: 2500, editado_por: "contador@teste.com" }],
+      },
       error: null,
     });
 
@@ -330,6 +431,40 @@ describe("PATCH /apuracoes/:id", () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.valor_editado, 2500);
     assert.equal(res.body.historico_edicoes.length, 1);
+    assert.equal(res.body.historico_edicoes[0].editado_por, "contador@teste.com");
+  });
+
+  it("400 quando valor_editado é negativo ou não numérico", async () => {
+    for (const valor_editado of [-1, "valor-inválido", "", "  ", false, []]) {
+      const res = criarResposta();
+      await editarApuracao(
+        reqAdmin({ params: { id: APURACAO_ID }, body: { valor_editado, motivo: "ajuste" } }),
+        res,
+      );
+      assert.equal(res.statusCode, 400);
+    }
+  });
+
+  it("409 quando a apuração é aprovada entre a leitura e a edição", async () => {
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        cliente_id: CLIENTE_A,
+        status: "rascunho",
+        valor_editado: null,
+        valor_calculado: 2790,
+        historico_edicoes: [],
+      },
+      error: null,
+    });
+    queue("apuracoes", "maybeSingle", { data: null, error: null });
+
+    const res = criarResposta();
+    await editarApuracao(
+      reqAdmin({ params: { id: APURACAO_ID }, body: { valor_editado: 2500, motivo: "ajuste" } }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 409);
   });
 
   it("409 quando a apuração já está aprovada", async () => {
@@ -385,8 +520,8 @@ describe("PATCH /apuracoes/:id", () => {
 describe("PATCH /apuracoes/:id/aprovar", () => {
   it("200 e marca como aprovado", async () => {
     queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho" }, error: null });
-    queue("apuracoes", "single", {
-      data: { id: APURACAO_ID, status: "aprovado", aprovado_por: "user-1" },
+    queue("apuracoes", "maybeSingle", {
+      data: { id: APURACAO_ID, status: "aprovado", aprovado_por: "contador@teste.com" },
       error: null,
     });
 
@@ -395,6 +530,17 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.status, "aprovado");
+    assert.equal(res.body.aprovado_por, "contador@teste.com");
+  });
+
+  it("409 quando outra requisição aprova entre a leitura e a atualização", async () => {
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: null, error: null });
+
+    const res = criarResposta();
+    await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 409);
   });
 
   it("409 quando já está aprovada", async () => {
