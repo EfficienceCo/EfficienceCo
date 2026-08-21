@@ -72,7 +72,7 @@ function calcularJanela12MesesAnteriores(mes, ano) {
 }
 
 function somarHistoricoReceita(historico, mesesEsperados, mesesComNotas) {
-  if (historico == null) return { total: 0 };
+  if (historico == null) return { total: 0, receitasUsadas: new Map() };
   if (!Array.isArray(historico)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
 
   const receitasPorMes = new Map();
@@ -92,15 +92,133 @@ function somarHistoricoReceita(historico, mesesEsperados, mesesComNotas) {
   }
 
   let total = 0;
+  const receitasUsadas = new Map();
   for (const [referencia, receita] of receitasPorMes) {
     // NFes importadas são a fonte primária. O histórico manual só completa os
     // meses ainda ausentes no sistema, evitando dupla contagem.
     if (mesesEsperados.has(referencia) && !mesesComNotas.has(referencia)) {
       total += receita;
+      receitasUsadas.set(referencia, receita);
     }
   }
 
-  return { total: arredondar(total) };
+  return { total: arredondar(total), receitasUsadas };
+}
+
+function referenciaDaNota(nota) {
+  return typeof nota?.data_emissao === "string" ? nota.data_emissao.slice(0, 7) : "";
+}
+
+function ehNotaDeSaida(nota) {
+  // Os mocks mais antigos não informavam o tipo; mantemos essa compatibilidade
+  // sem afrouxar o comportamento real, pois o banco sempre persiste o campo.
+  return nota?.tipo === undefined || nota?.tipo === "saida";
+}
+
+function resumirNota(nota, detalhes) {
+  return {
+    id: nota.id ?? null,
+    chave_nfe: nota.chave_nfe ?? null,
+    tipo: nota.tipo ?? "saida",
+    data_emissao: nota.data_emissao,
+    valor_total: arredondar(Number(nota.valor_total) || 0),
+    ...detalhes,
+  };
+}
+
+function montarBasesCalculo({ notas, historicoReceita, mes, ano }) {
+  const janelaRbt12 = calcularJanela12MesesAnteriores(mes, ano);
+  const mesReferenciaAtual = chaveMes(ano, mes);
+  const linhasNotas = Array.isArray(notas) ? notas : [];
+  const notasSaida = linhasNotas.filter(ehNotaDeSaida);
+  const notasRbt12 = notasSaida.filter((nota) => janelaRbt12.meses.has(referenciaDaNota(nota)));
+  const notasReceitaMes = notasSaida.filter((nota) => referenciaDaNota(nota) === mesReferenciaAtual);
+  const mesesComNotas = new Set(notasRbt12.map(referenciaDaNota));
+  const historico = somarHistoricoReceita(historicoReceita, janelaRbt12.meses, mesesComNotas);
+
+  if (historico.erro) return historico;
+
+  const receitaNfesPorMes = new Map();
+  for (const nota of notasRbt12) {
+    const referencia = referenciaDaNota(nota);
+    receitaNfesPorMes.set(
+      referencia,
+      arredondar((receitaNfesPorMes.get(referencia) || 0) + Number(nota.valor_total)),
+    );
+  }
+
+  const rbt12Mensal = [...janelaRbt12.meses].map((referencia) => {
+    const [anoReferencia, mesReferencia] = referencia.split("-").map(Number);
+    const receitaNfes = receitaNfesPorMes.get(referencia) || 0;
+    const receitaHistorico = historico.receitasUsadas.get(referencia) || 0;
+
+    return {
+      referencia,
+      mes: mesReferencia,
+      ano: anoReferencia,
+      receita_nfes: receitaNfes,
+      receita_historico: receitaHistorico,
+      total: arredondar(receitaNfes + receitaHistorico),
+    };
+  });
+
+  const rbt12 = arredondar(rbt12Mensal.reduce((soma, item) => soma + item.total, 0));
+  const receitaMes = arredondar(
+    notasReceitaMes.reduce((soma, nota) => soma + Number(nota.valor_total), 0),
+  );
+
+  const notasConsideradas = notasSaida.map((nota) => {
+    const referencia = referenciaDaNota(nota);
+    const compoeRbt12 = janelaRbt12.meses.has(referencia);
+    const compoeReceitaMes = referencia === mesReferenciaAtual;
+    const motivo = compoeRbt12
+      ? "Nota fiscal de saída incluída na RBT12."
+      : "Nota fiscal de saída incluída na receita da competência."
+
+    return resumirNota(nota, {
+      compoe_rbt12: compoeRbt12,
+      compoe_receita_mes: compoeReceitaMes,
+      motivo,
+    });
+  });
+
+  const notasExcluidas = linhasNotas
+    .filter((nota) => !ehNotaDeSaida(nota))
+    .map((nota) => resumirNota(nota, {
+      compoe_rbt12: false,
+      compoe_receita_mes: false,
+      motivo: "Nota fiscal de entrada não compõe a receita bruta.",
+    }));
+
+  return {
+    janelaRbt12,
+    rbt12,
+    receitaMes,
+    rbt12Mensal,
+    notasFiscais: {
+      consideradas: notasConsideradas,
+      excluidas: notasExcluidas,
+    },
+  };
+}
+
+function enriquecerApuracao(apuracao, resultado, bases) {
+  return {
+    ...apuracao,
+    anexo_original: resultado.anexo_original,
+    anexo_efetivo: resultado.anexo_efetivo,
+    faixa_limite: resultado.faixa_limite,
+    aliquota_nominal: resultado.aliquota_nominal,
+    parcela_deduzir: resultado.parcela_deduzir,
+    aliquota_efetiva: resultado.aliquota_efetiva,
+    valor_calculado: resultado.valor_das,
+    fator_r: resultado.fator_r,
+    rbt12: resultado.rbt12_usado,
+    rbt12_usado: resultado.rbt12_usado,
+    receita_mes: resultado.receita_mes,
+    rbt12_mensal: bases.rbt12Mensal,
+    notas_fiscais: bases.notasFiscais,
+  };
 }
 
 export async function dispararApuracao(req, res) {
@@ -166,14 +284,12 @@ export async function dispararApuracao(req, res) {
   }
 
   const janelaRbt12 = calcularJanela12MesesAnteriores(mesNum, anoNum);
-  const mesReferenciaAtual = chaveMes(anoNum, mesNum);
   const fimMesAtual = ultimoDiaDoMes(anoNum, mesNum);
 
   const { data: notas, error: erroNotas } = await supabase
     .from("lancamentos_fiscais")
-    .select("valor_total, data_emissao")
+    .select("id, chave_nfe, tipo, valor_total, data_emissao")
     .eq("cliente_id", clienteId)
-    .eq("tipo", "saida")
     .gte("data_emissao", janelaRbt12.inicio)
     .lte("data_emissao", fimMesAtual);
 
@@ -182,23 +298,16 @@ export async function dispararApuracao(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar lançamentos fiscais" });
   }
 
-  const linhasNotas = notas || [];
-  const notasRbt12 = linhasNotas.filter((linha) => janelaRbt12.meses.has(linha.data_emissao.slice(0, 7)));
-  const mesesComNotas = new Set(notasRbt12.map((linha) => linha.data_emissao.slice(0, 7)));
-  const historico = somarHistoricoReceita(cliente.historico_receita, janelaRbt12.meses, mesesComNotas);
+  const bases = montarBasesCalculo({
+    notas,
+    historicoReceita: cliente.historico_receita,
+    mes: mesNum,
+    ano: anoNum,
+  });
 
-  if (historico.erro) {
-    return res.status(422).json({ erro: historico.erro });
+  if (bases.erro) {
+    return res.status(422).json({ erro: bases.erro });
   }
-
-  const rbt12 = arredondar(
-    notasRbt12.reduce((soma, linha) => soma + Number(linha.valor_total), 0) + historico.total,
-  );
-  const receitaMes = arredondar(
-    linhasNotas
-      .filter((linha) => linha.data_emissao.slice(0, 7) === mesReferenciaAtual)
-      .reduce((soma, linha) => soma + Number(linha.valor_total), 0),
-  );
 
   let folha12 = null;
   let semDadosFolha = false;
@@ -255,8 +364,8 @@ export async function dispararApuracao(req, res) {
   }
 
   const resultado = calcularSimplesNacional({
-    rbt12,
-    receita_mes: receitaMes,
+    rbt12: bases.rbt12,
+    receita_mes: bases.receitaMes,
     anexo: cliente.anexo_simples,
     folha12,
     semDadosFolha,
@@ -294,7 +403,7 @@ export async function dispararApuracao(req, res) {
     return res.status(500).json({ erro: "Erro ao registrar apuração" });
   }
 
-  return res.status(201).json(data);
+  return res.status(201).json(enriquecerApuracao(data, resultado, bases));
 }
 
 export async function listarApuracoes(req, res) {
@@ -348,7 +457,61 @@ export async function detalharApuracao(req, res) {
     return res.status(404).json({ erro: "Apuração não encontrada" });
   }
 
-  return res.status(200).json(data);
+  const janelaRbt12 = calcularJanela12MesesAnteriores(data.periodo_mes, data.periodo_ano);
+  const fimMesAtual = ultimoDiaDoMes(data.periodo_ano, data.periodo_mes);
+  const [{ data: cliente, error: erroCliente }, { data: notas, error: erroNotas }] = await Promise.all([
+    supabase
+      .from("clientes")
+      .select("anexo_simples, historico_receita")
+      .eq("id", data.cliente_id)
+      .maybeSingle(),
+    supabase
+      .from("lancamentos_fiscais")
+      .select("id, chave_nfe, tipo, valor_total, data_emissao")
+      .eq("cliente_id", data.cliente_id)
+      .gte("data_emissao", janelaRbt12.inicio)
+      .lte("data_emissao", fimMesAtual),
+  ]);
+
+  if (erroCliente || erroNotas) {
+    console.error(
+      "[apuracoes.controller] Erro ao reconstruir detalhamento:",
+      erroCliente?.message || erroNotas?.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar detalhamento da apuração" });
+  }
+
+  if (!cliente) {
+    return res.status(404).json({ erro: "Cliente não encontrado" });
+  }
+
+  const bases = montarBasesCalculo({
+    notas,
+    historicoReceita: cliente.historico_receita,
+    mes: data.periodo_mes,
+    ano: data.periodo_ano,
+  });
+
+  if (bases.erro) {
+    return res.status(422).json({ erro: bases.erro });
+  }
+
+  // O anexo persistido é o efetivo. Fator R preenchido identifica que o
+  // cadastro original era Anexo V, inclusive quando ele permaneceu no V.
+  const anexoOriginal = data.fator_r == null ? data.anexo : "V";
+  const resultado = calcularSimplesNacional({
+    rbt12: Number(data.rbt12_usado),
+    receita_mes: Number(data.receita_mes),
+    anexo: anexoOriginal,
+    folha12: data.folha12 == null ? null : Number(data.folha12),
+  });
+
+  if (resultado.erro) {
+    console.error("[apuracoes.controller] Apuração persistida com dados inválidos:", resultado.erro);
+    return res.status(500).json({ erro: "Erro ao reconstruir cálculo da apuração" });
+  }
+
+  return res.status(200).json(enriquecerApuracao(data, resultado, bases));
 }
 
 export async function editarApuracao(req, res) {

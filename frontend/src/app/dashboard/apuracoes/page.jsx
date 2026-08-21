@@ -6,8 +6,10 @@ import { useAuth } from '../../../context/AuthContext';
 import { listarClientes } from '../../../services/clientes.service';
 import {
   aprovarApuracao,
+  buscarApuracao,
   calcularApuracao,
   editarApuracao,
+  listarApuracoes,
 } from '../../../services/apuracao.service';
 
 const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
@@ -40,10 +42,6 @@ function obterMensagemErro(error, fallback = 'Não foi possível processar a sol
   );
 }
 
-// O backend (AP-5) não devolve um campo `codigo` — só `{ erro: <mensagem> }`.
-// Pro Fator R sem folha, essa mensagem já é o código bruto ("FATOR_R_SEM_FOLHA");
-// pro regime não suportado, é uma frase legível. Mapeamos os dois aqui pra
-// escolher qual banner mostrar sem depender de um contrato que o backend não tem.
 function obterCodigoErro(error) {
   const mensagem = error?.response?.data?.erro;
 
@@ -51,7 +49,7 @@ function obterCodigoErro(error) {
     return 'FATOR_R_SEM_FOLHA';
   }
 
-  if (mensagem === 'Regime tributário não suportado') {
+  if (mensagem === 'REGIME_NAO_SUPORTADO' || mensagem === 'Regime tributário não suportado') {
     return 'REGIME_NAO_SUPORTADO';
   }
 
@@ -62,10 +60,8 @@ function obterValorExibido(apuracao) {
   return apuracao?.valor_editado ?? apuracao?.valor_calculado;
 }
 
-// aprovado_por vem como o UUID do usuário (req.usuario.id no backend), sem
-// nome — não existe endpoint pra resolver id -> nome ainda. Como o único
-// jeito de chegar em status "aprovado" nesta tela é o próprio usuário logado
-// aprovando, mostramos o nome/email dele quando o id bate.
+// Registros antigos podem ter o UUID do usuário; os novos guardam o e-mail.
+// Quando ainda for UUID do usuário logado, mostramos uma identificação legível.
 function obterNomeAprovador(apuracao, user) {
   if (apuracao?.aprovado_por && apuracao.aprovado_por === user?.id) {
     return user?.nome || user?.email || apuracao.aprovado_por;
@@ -92,6 +88,14 @@ function normalizarClientes(payload) {
   }
 
   return [];
+}
+
+function normalizarApuracoes(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  return Array.isArray(payload?.data) ? payload.data : [];
 }
 
 function obterIdCliente(cliente) {
@@ -147,6 +151,25 @@ function formatarDataHora(data) {
   }
 
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(valor);
+}
+
+function formatarReferencia(item) {
+  const mesReferencia = Number(item?.mes);
+  const anoReferencia = Number(item?.ano);
+
+  if (mesReferencia >= 1 && mesReferencia <= 12 && Number.isInteger(anoReferencia)) {
+    return `${MESES[mesReferencia - 1].label}/${anoReferencia}`;
+  }
+
+  return item?.referencia || '-';
+}
+
+function identificarNota(nota) {
+  if (nota?.chave_nfe) {
+    return `NF-e …${String(nota.chave_nfe).slice(-8)}`;
+  }
+
+  return nota?.id ? `NF-e ${nota.id}` : 'NF-e sem chave';
 }
 
 function Spinner() {
@@ -271,12 +294,36 @@ export default function ApuracoesPage() {
     setShowAprovarModal(false);
 
     try {
-      const resultado = await calcularApuracao({
-        clienteId: clienteIdEfetivo,
-        mes,
-        ano,
-        regime: REGIME_SIMPLES_NACIONAL,
-      });
+      const buscarExistente = async () => {
+        const lista = normalizarApuracoes(
+          await listarApuracoes({ clienteId: clienteIdEfetivo, mes, ano }),
+        );
+        const existente = lista.find((item) => item.regime === REGIME_SIMPLES_NACIONAL);
+        return existente?.id ? buscarApuracao(existente.id) : null;
+      };
+
+      let resultado = await buscarExistente();
+
+      if (!resultado) {
+        try {
+          resultado = await calcularApuracao({
+            clienteId: clienteIdEfetivo,
+            mes,
+            ano,
+            regime: REGIME_SIMPLES_NACIONAL,
+          });
+        } catch (error) {
+          // Outra requisição pode ter criado a mesma competência entre o GET e
+          // o POST. Nesse caso, abrimos o registro vencedor em vez de exibir 409.
+          if (error?.response?.status !== 409) {
+            throw error;
+          }
+
+          resultado = await buscarExistente();
+          if (!resultado) throw error;
+        }
+      }
+
       setApuracao(resultado);
       setValorEditado(formatarValorInput(obterValorExibido(resultado)));
       setMotivo('');
@@ -292,12 +339,17 @@ export default function ApuracoesPage() {
     const novo = Number(valorEditado);
     const anterior = Number(obterValorExibido(apuracao));
 
-    if (!Number.isFinite(novo) || novo <= 0) {
+    if (!Number.isFinite(novo) || novo < 0) {
       setErroEdicao(MENSAGEM_ERRO_EDICAO);
       return;
     }
 
-    if (novo !== anterior && !motivo.trim()) {
+    if (novo === anterior) {
+      setErroEdicao('Altere o valor antes de salvar uma nova edição.');
+      return;
+    }
+
+    if (!motivo.trim()) {
       setErroEdicao(MENSAGEM_ERRO_EDICAO);
       return;
     }
@@ -310,8 +362,9 @@ export default function ApuracoesPage() {
         valor_editado: novo,
         motivo: motivo.trim(),
       });
-      setApuracao(atualizado);
-      setValorEditado(formatarValorInput(obterValorExibido(atualizado)));
+      const resultadoCompleto = { ...apuracao, ...atualizado };
+      setApuracao(resultadoCompleto);
+      setValorEditado(formatarValorInput(obterValorExibido(resultadoCompleto)));
       setMotivo('');
     } catch (error) {
       setErroEdicao(obterMensagemErro(error, 'Não foi possível salvar a edição.'));
@@ -343,7 +396,7 @@ export default function ApuracoesPage() {
 
     try {
       const atualizado = await aprovarApuracao(apuracao.id);
-      setApuracao(atualizado);
+      setApuracao((anterior) => ({ ...anterior, ...atualizado }));
       setShowAprovarModal(false);
     } catch (error) {
       setErroAprovar(obterMensagemErro(error, 'Não foi possível aprovar o DAS.'));
@@ -364,9 +417,19 @@ export default function ApuracoesPage() {
   const podeCalcular = Boolean(clienteIdEfetivo) && !loading;
   const statusRascunho = apuracao?.status === 'rascunho';
   const statusAprovado = apuracao?.status === 'aprovado';
-  const anexoMigrado = Boolean(apuracao) && apuracao.anexo_original !== apuracao.anexo_efetivo;
+  const anexoEfetivo = apuracao?.anexo_efetivo || apuracao?.anexo;
+  const anexoMigrado = Boolean(
+    apuracao?.anexo_original && anexoEfetivo && apuracao.anexo_original !== anexoEfetivo,
+  );
   const mostrarFatorR = Boolean(apuracao) && apuracao.fator_r !== null && apuracao.fator_r !== undefined;
   const historicoEdicoes = Array.isArray(apuracao?.historico_edicoes) ? apuracao.historico_edicoes : [];
+  const rbt12Mensal = Array.isArray(apuracao?.rbt12_mensal) ? apuracao.rbt12_mensal : [];
+  const notasConsideradas = Array.isArray(apuracao?.notas_fiscais?.consideradas)
+    ? apuracao.notas_fiscais.consideradas
+    : [];
+  const notasExcluidas = Array.isArray(apuracao?.notas_fiscais?.excluidas)
+    ? apuracao.notas_fiscais.excluidas
+    : [];
   const competenciaLabel = `${MESES[mes - 1]?.label}/${ano}`;
 
   return (
@@ -480,8 +543,8 @@ export default function ApuracoesPage() {
             <div>
               <p className="font-semibold text-amber-800">Não foi possível calcular o Fator R</p>
               <p className="mt-1 text-sm text-zinc-700">
-                O agente não encontrou pastas de folha de pagamento dos últimos 12 meses para esta
-                empresa.
+                Importe as folhas de pagamento dos 12 meses anteriores à competência e tente
+                calcular novamente.
               </p>
             </div>
           </section>
@@ -550,7 +613,7 @@ export default function ApuracoesPage() {
                   Anexo efetivo
                 </div>
                 <div className="mt-1 text-sm font-semibold text-zinc-900">
-                  Anexo {apuracao.anexo_efetivo}
+                  Anexo {anexoEfetivo || '-'}
                 </div>
                 {anexoMigrado ? (
                   <div className="mt-1 text-xs text-sky-700">
@@ -562,7 +625,7 @@ export default function ApuracoesPage() {
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">RBT12</div>
                 <div className="mt-1 font-mono text-sm font-semibold text-zinc-700">
-                  {formatarValor(apuracao.rbt12)}
+                  {formatarValor(apuracao.rbt12 ?? apuracao.rbt12_usado)}
                 </div>
               </div>
 
@@ -578,7 +641,25 @@ export default function ApuracoesPage() {
               ) : null}
             </div>
 
-            <div className="mt-5 grid gap-4 border-t border-zinc-100 pt-4 sm:grid-cols-3">
+            <div className="mt-5 grid gap-4 border-t border-zinc-100 pt-4 sm:grid-cols-2 lg:grid-cols-5">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  Receita da competência
+                </div>
+                <div className="mt-1 font-mono text-sm font-semibold text-zinc-700">
+                  {formatarValor(apuracao.receita_mes)}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  Faixa de receita
+                </div>
+                <div className="mt-1 font-mono text-sm font-semibold text-zinc-700">
+                  Até {formatarValor(apuracao.faixa_limite)}
+                </div>
+              </div>
+
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
                   Alíquota nominal
@@ -593,7 +674,7 @@ export default function ApuracoesPage() {
                   Parcela deduzida
                 </div>
                 <div className="mt-1 font-mono text-sm font-semibold text-zinc-700">
-                  {formatarValor(apuracao.parcela_deduzida)}
+                  {formatarValor(apuracao.parcela_deduzir ?? apuracao.parcela_deduzida)}
                 </div>
               </div>
 
@@ -616,6 +697,113 @@ export default function ApuracoesPage() {
           </section>
         ) : null}
 
+        {apuracao && rbt12Mensal.length > 0 ? (
+          <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+            <header className="border-b border-zinc-100 px-6 py-4">
+              <h2 className="text-base font-bold text-zinc-900">Composição da RBT12</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                Receitas dos 12 meses anteriores usadas no cálculo da alíquota.
+              </p>
+            </header>
+
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-left text-sm">
+                <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
+                  <tr>
+                    <th className="px-6 py-3 font-semibold">Competência</th>
+                    <th className="px-6 py-3 text-right font-semibold">NF-es</th>
+                    <th className="px-6 py-3 text-right font-semibold">Histórico informado</th>
+                    <th className="px-6 py-3 text-right font-semibold">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {rbt12Mensal.map((item) => (
+                    <tr key={item.referencia}>
+                      <td className="px-6 py-3 font-medium text-zinc-700">{formatarReferencia(item)}</td>
+                      <td className="px-6 py-3 text-right font-mono text-zinc-600">
+                        {formatarValor(item.receita_nfes)}
+                      </td>
+                      <td className="px-6 py-3 text-right font-mono text-zinc-600">
+                        {formatarValor(item.receita_historico)}
+                      </td>
+                      <td className="px-6 py-3 text-right font-mono font-semibold text-zinc-900">
+                        {formatarValor(item.total)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="border-t border-zinc-200 bg-zinc-50">
+                  <tr>
+                    <td colSpan={3} className="px-6 py-3 text-right text-xs font-semibold uppercase text-zinc-500">
+                      RBT12
+                    </td>
+                    <td className="px-6 py-3 text-right font-mono font-bold text-zinc-900">
+                      {formatarValor(apuracao.rbt12 ?? apuracao.rbt12_usado)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </section>
+        ) : null}
+
+        {apuracao ? (
+          <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <h2 className="text-base font-bold text-zinc-900">Notas fiscais auditadas</h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              Confira quais NF-es foram consideradas ou excluídas e o motivo.
+            </p>
+
+            <div className="mt-5 grid gap-6 lg:grid-cols-2">
+              <div>
+                <h3 className="text-sm font-semibold text-emerald-700">
+                  Consideradas ({notasConsideradas.length})
+                </h3>
+                <div className="mt-2 divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+                  {notasConsideradas.length > 0 ? notasConsideradas.map((nota, index) => (
+                    <div key={nota.id || nota.chave_nfe || index} className="p-3 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium text-zinc-800">{identificarNota(nota)}</span>
+                        <span className="font-mono font-semibold text-zinc-700">
+                          {formatarValor(nota.valor_total)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {nota.data_emissao || 'Data não informada'} · {nota.motivo}
+                      </p>
+                    </div>
+                  )) : (
+                    <p className="p-3 text-sm text-zinc-500">Nenhuma NF-e de saída encontrada.</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-rose-700">
+                  Excluídas ({notasExcluidas.length})
+                </h3>
+                <div className="mt-2 divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+                  {notasExcluidas.length > 0 ? notasExcluidas.map((nota, index) => (
+                    <div key={nota.id || nota.chave_nfe || index} className="p-3 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium text-zinc-800">{identificarNota(nota)}</span>
+                        <span className="font-mono font-semibold text-zinc-700">
+                          {formatarValor(nota.valor_total)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {nota.data_emissao || 'Data não informada'} · {nota.motivo}
+                      </p>
+                    </div>
+                  )) : (
+                    <p className="p-3 text-sm text-zinc-500">Nenhuma NF-e foi excluída.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         {apuracao && statusRascunho ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
             <h2 className="text-base font-bold text-zinc-900">Editar valor</h2>
@@ -628,6 +816,7 @@ export default function ApuracoesPage() {
                 <span className="text-sm font-medium text-zinc-700">Valor final</span>
                 <input
                   type="number"
+                  min="0"
                   step="0.01"
                   value={valorEditado}
                   onChange={(event) => {
@@ -649,7 +838,7 @@ export default function ApuracoesPage() {
                     setErroEdicao('');
                   }}
                   disabled={isSalvandoEdicao}
-                  placeholder="Obrigatório se o valor for diferente do calculado"
+                  placeholder="Obrigatório para registrar a alteração"
                   className="w-full resize-y rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </label>
@@ -684,7 +873,7 @@ export default function ApuracoesPage() {
             <div className="divide-y divide-zinc-100">
               {historicoEdicoes.map((item, index) => (
                 <div
-                  key={`${item?.data || index}`}
+                  key={`${item?.editado_em || item?.data || index}`}
                   className="flex flex-wrap items-center justify-between gap-4 px-6 py-3.5"
                 >
                   <div className="flex items-center gap-2 font-mono text-sm text-zinc-700">
@@ -697,8 +886,9 @@ export default function ApuracoesPage() {
                     </span>
                   </div>
                   <div className="flex-1 text-sm text-zinc-600">{item?.motivo}</div>
-                  <div className="whitespace-nowrap text-xs text-zinc-500">
-                    {formatarDataHora(item?.data)}
+                  <div className="text-right text-xs text-zinc-500">
+                    <div>{formatarDataHora(item?.editado_em || item?.data)}</div>
+                    {item?.editado_por ? <div className="mt-0.5">por {item.editado_por}</div> : null}
                   </div>
                 </div>
               ))}
