@@ -458,6 +458,9 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
 
     const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
     assert.equal(update.payload.valor_editado, null);
+    // Anexo fora do V — folha_status não é relevante (fator_r fica null,
+    // fora do filtro do polling), mas segue o default por consistência.
+    assert.equal(update.payload.folha_status, "pendente");
   });
 
   it("200 recalcula Anexo V (fator_r preenchido = originalmente V) reconstituindo folha", async () => {
@@ -478,6 +481,10 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
 
     const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
     assert.ok(update.payload.fator_r > 0);
+    // #365 — folha reconstituída com sucesso no recálculo (semDadosFolha:
+    // false) não deve deixar a apuração pendente na fila do agente. Mesmo
+    // achado do PR #366 (Vinícius), aplicado também ao caminho de recálculo.
+    assert.equal(update.payload.folha_status, "verificado");
   });
 
   it("409 quando a apuração foi aprovada entre a leitura e o recálculo (trava otimista)", async () => {
