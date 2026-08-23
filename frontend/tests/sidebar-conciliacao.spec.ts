@@ -26,7 +26,7 @@ test.describe('Sidebar — Conciliação nested em Contábil (issue #333, atuali
     const link = sidebar.getByRole('link', { name: 'Contábil' });
     await expect(link).toHaveClass(/bg-sky-400\/10/);
 
-    const outroLink = sidebar.getByRole('link', { name: 'Fiscal' });
+    const outroLink = sidebar.getByRole('link', { name: 'Fiscal', exact: true });
     await expect(outroLink).not.toHaveClass(/bg-sky-400\/10/);
   });
 

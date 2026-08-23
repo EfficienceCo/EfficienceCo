@@ -13,7 +13,7 @@ export async function listarClientes(req, res) {
   const { data, error } = await supabase
     .from("clientes")
     .select("*")
-    .order("data_vinculo", { ascending: false });
+    .order("criado_em", { ascending: false });
 
   if (error) {
     console.error(
