@@ -807,38 +807,98 @@ function bindAlertaAliquota(){
    CONTÁBIL
    ============================================================================ */
 
-/* ---- Conciliação bancária (a2): padrão-ouro, já implementada ---- */
+/* ---- Conciliação bancária (a2): réplica do fluxo real de
+   frontend/src/app/dashboard/conciliacao/[id]/page.jsx — ✅ Automático /
+   ⚠️ Provável (Confirmar/Rejeitar) / ❌ Sem par (2 sub-tabelas reais), badge
+   de status, "Concluir conciliação" travado até zerar os prováveis, e
+   "Download Relatório" depois de concluída. ---- */
 var CONC_PROVAVEL_SEED = [
   {id:'p1',dataBanco:'14/08',descBanco:'TED Recebida Distrib ABC',dataLanc:'15/08',descLanc:'Recebimento cliente',valor:2450},
   {id:'p2',dataBanco:'16/08',descBanco:'PIX Enviado Embalagens',dataLanc:'16/08',descLanc:'Pagto fornecedor',valor:890.15},
   {id:'p3',dataBanco:'19/08',descBanco:'Tarifa bancária',dataLanc:'18/08',descLanc:'Despesa bancária',valor:42.90},
   {id:'p4',dataBanco:'20/08',descBanco:'DOC Recebido Mercado V.',dataLanc:'21/08',descLanc:'Recebimento cliente',valor:1180}
 ];
-function conciliacaoState(){ return ex('conciliacao-bancaria', function(){ return { automatico: 38, provavel: CONC_PROVAVEL_SEED.slice() }; }); }
+var CONC_SEM_PAR_TRANSACOES = [
+  { data:'17/08', desc:'Estorno cartão POS', valor:64.30 },
+  { data:'19/08', desc:'IOF sobre operação', valor:8.12 },
+  { data:'21/08', desc:'TED não identificada', valor:530 }
+];
+var CONC_SEM_PAR_LANCAMENTOS = [
+  { data:'13/08', desc:'Pagamento fornecedor Embalagens Rio', valor:410.50 },
+  { data:'20/08', desc:'Reembolso despesa de viagem', valor:220 }
+];
+function conciliacaoState(){ return ex('conciliacao-bancaria', function(){ return { automatico: 38, provavel: CONC_PROVAVEL_SEED.slice(), status:'em_andamento', showConcluir:false, concluindo:false, baixando:false }; }); }
 function renderConciliacao(){
   var s = conciliacaoState();
   var total = 47, conciliadas = s.automatico + (CONC_PROVAVEL_SEED.length - s.provavel.length);
   var pct = Math.round(conciliadas/total*100);
+  var podeConcluir = s.provavel.length === 0;
   var provRows = s.provavel.map(function(p){
     return '<tr><td>'+p.dataBanco+'</td><td>'+p.descBanco+'</td><td>'+p.dataLanc+'</td><td>'+p.descLanc+'</td><td class="strong">'+fmtBRL(p.valor)+'</td>'
       + '<td><button class="btn-confirm" data-conc-confirm="'+p.id+'">Confirmar</button> <button class="btn-reject" data-conc-reject="'+p.id+'">Rejeitar</button></td></tr>';
-  }).join('') || '<tr><td colspan="6" style="color:var(--fg-muted)">Nenhum par provável pendente.</td></tr>';
+  }).join('') || '<tr><td colspan="6" style="color:var(--fg-muted)">Nenhum par provável pendente de decisão.</td></tr>';
+
+  var semParTabela = function(titulo, lista, cols){
+    if (!lista.length) return '<div><h3 style="font-size:13px;font-weight:600;color:var(--slate-700);margin-bottom:8px;">'+titulo+' (0)</h3><p style="font-size:13px;color:var(--fg-muted);">Nenhum item nesta lista.</p></div>';
+    var rows = lista.map(function(x){ return '<tr><td>'+x.data+'</td><td>'+x.desc+'</td><td class="strong">'+fmtBRL(x.valor)+'</td></tr>'; }).join('');
+    return '<div><h3 style="font-size:13px;font-weight:600;color:var(--slate-700);margin-bottom:8px;">'+titulo+' ('+lista.length+')</h3>'
+      + '<div class="tbl-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  };
+
+  var statusBadge = s.status==='concluida' ? badge('Concluída','ok') : badge('Em andamento','warn');
+  var acaoHeader = s.status==='concluida'
+    ? '<button class="btn-line" data-conc-baixar>'+(s.baixando?(sp()+' Baixando...'):'Download Relatório')+'</button>'
+    : '<button class="btn-dark" data-conc-abrir-concluir '+(podeConcluir?'':'disabled style="opacity:.5;cursor:not-allowed;" title="Resolva todos os pares prováveis antes de concluir"')+'>Concluir conciliação</button>';
+
+  var modal = '';
+  if (s.showConcluir){
+    modal = '<div class="modal-overlay" data-conc-fechar-concluir><div class="modal-box" onclick="event.stopPropagation()">'
+      + '<div class="modal-head"><div><div class="modal-title">Concluir conciliação</div></div><button class="icon-btn" data-conc-fechar-concluir>'+icon('x')+'</button></div>'
+      + '<div class="modal-body"><p style="font-size:13.5px;line-height:1.6;">Deseja realmente concluir esta conciliação? Essa ação marca as transações e lançamentos conciliados como definitivos.</p></div>'
+      + '<div class="modal-foot"><button class="btn-line" data-conc-fechar-concluir>Cancelar</button><button class="btn-dark" data-conc-confirmar-concluir>'+(s.concluindo?(sp()+' Concluindo...'):'Concluir conciliação')+'</button></div>'
+      + '</div></div>';
+  }
+
   return '<div class="page">'
-    + '<div class="page-head"><p class="crumbline"><b>Contábil</b> &gt; Conciliação bancária</p><h1>Revisão da conciliação — Padaria do João</h1><p>Conta Bradesco 1234-5 · Agosto/2026</p></div>'
+    + '<div class="page-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">'
+    + '<div><p class="crumbline"><b>Contábil</b> &gt; Conciliação bancária</p><h1>Revisão da conciliação</h1><p>Padaria do João · Conta Bradesco 1234-5 · Agosto/2026</p></div>'
+    + '<div style="display:flex;align-items:center;gap:10px;">'+statusBadge+acaoHeader+'</div>'
+    + '</div>'
     + '<div class="card card-pad"><div style="font-size:12.5px;font-weight:600;color:var(--slate-700);margin-bottom:8px;">'+conciliadas+' de '+total+' transações conciliadas</div>'
     + '<div style="display:flex;align-items:center;gap:12px;"><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%;background:var(--slate-900)"></div></div><span class="proc-pct tnum">'+pct+'%</span></div></div>'
-    + '<div class="card"><div class="card-head" style="background:var(--success-100);border-color:#A7F3D0;"><h2 style="color:#064E3B">Automático</h2>'+badge(s.automatico+' matches automáticos','ok')+'</div></div>'
-    + '<div class="card"><div class="card-head" style="background:var(--warning-100);border-color:#FDE68A;"><h2 style="color:#78350F">Provável</h2>'+badge(s.provavel.length+' sem decisão','warn')+'</div>'
+    + '<div class="card"><div class="card-head" style="background:var(--success-100);border-color:#A7F3D0;"><h2 style="color:#064E3B">✅ Automático</h2>'+badge(s.automatico+' matches automáticos','ok')+'</div></div>'
+    + '<div class="card"><div class="card-head" style="background:var(--warning-100);border-color:#FDE68A;"><h2 style="color:#78350F">⚠️ Provável</h2>'+badge(s.provavel.length+' sem decisão','warn')+'</div>'
     + '<div class="tbl-wrap"><table><thead><tr><th>Data banco</th><th>Descrição banco</th><th>Data lançamento</th><th>Descrição lançamento</th><th>Valor</th><th>Ações</th></tr></thead><tbody>'+provRows+'</tbody></table></div></div>'
-    + '<div class="card"><div class="card-head"><h2>Sem par</h2></div><div class="card-pad" style="font-size:12.5px;color:var(--fg-muted);">3 transações sem lançamento · 2 lançamentos sem transação — leitura apenas, resolva fora do sistema.</div></div>'
-    + '</div>';
+    + '<div class="card card-pad"><div style="font-weight:700;font-size:15px;color:var(--slate-900);margin-bottom:2px;">❌ Sem par</div>'
+    + '<p style="font-size:13px;color:var(--fg-muted);margin:0 0 14px;">Leitura apenas — resolva fora do sistema (lance ou ignore).</p>'
+    + '<div class="grid2">'
+    + semParTabela('Transações sem lançamento', CONC_SEM_PAR_TRANSACOES)
+    + semParTabela('Lançamentos sem transação', CONC_SEM_PAR_LANCAMENTOS)
+    + '</div></div>'
+    + '</div>' + modal;
 }
 function bindConciliacao(){
+  var s = conciliacaoState();
   document.querySelectorAll('[data-conc-confirm]').forEach(function(el){
-    el.addEventListener('click', function(){ var id = el.getAttribute('data-conc-confirm'); var s = conciliacaoState(); s.provavel = s.provavel.filter(function(p){ return p.id !== id; }); s.automatico += 1; render(); });
+    el.addEventListener('click', function(){ var id = el.getAttribute('data-conc-confirm'); s.provavel = s.provavel.filter(function(p){ return p.id !== id; }); s.automatico += 1; render(); });
   });
   document.querySelectorAll('[data-conc-reject]').forEach(function(el){
-    el.addEventListener('click', function(){ var id = el.getAttribute('data-conc-reject'); var s = conciliacaoState(); s.provavel = s.provavel.filter(function(p){ return p.id !== id; }); render(); });
+    el.addEventListener('click', function(){ var id = el.getAttribute('data-conc-reject'); s.provavel = s.provavel.filter(function(p){ return p.id !== id; }); render(); });
+  });
+  var abrirBtn = document.querySelector('[data-conc-abrir-concluir]');
+  if (abrirBtn) abrirBtn.addEventListener('click', function(){ if (abrirBtn.hasAttribute('disabled')) return; s.showConcluir = true; render(); });
+  document.querySelectorAll('[data-conc-fechar-concluir]').forEach(function(el){ el.addEventListener('click', function(){ if (s.concluindo) return; s.showConcluir = false; render(); }); });
+  var confirmarBtn = document.querySelector('[data-conc-confirmar-concluir]');
+  if (confirmarBtn) confirmarBtn.addEventListener('click', function(){
+    if (s.concluindo) return;
+    s.concluindo = true; render();
+    setTimeout(function(){ s.concluindo = false; s.showConcluir = false; s.status = 'concluida'; render(); }, 900);
+  });
+  var baixarBtn = document.querySelector('[data-conc-baixar]');
+  if (baixarBtn) baixarBtn.addEventListener('click', function(){
+    if (s.baixando) return;
+    s.baixando = true; render();
+    setTimeout(function(){ s.baixando = false; render(); }, 700);
   });
 }
 
@@ -1501,20 +1561,50 @@ function bindAdmissaoFuncionario(){
    SOCIETÁRIO
    ============================================================================ */
 
-/* ---- Abertura de empresa (a4): checklist sequencial já implementado ---- */
+/* ---- Abertura de empresa (a4): réplica do fluxo real de
+   frontend/src/app/dashboard/processos/page.jsx — etapa manual = checkbox
+   que salva na hora; etapa automatizada pendente = formulário/confirmação
+   inline + botão "Concluir" que mostra "Processando..." (como o polling
+   real de 3s) e assenta em "✓ Execução concluída" com arquivo gerado. ---- */
 var ABERTURA_STEPS = [
-  ['Gerar contrato social','automático','ok'],['Criar estrutura de pastas','automático','ok'],
-  ['Protocolar na Junta Comercial','manual — concluído','ok'],['Solicitar CNPJ na Receita Federal','manual — concluído','ok'],
-  ['Aguardar CNPJ','manual — prazo 3 dias úteis','warn'],['Inscrição Estadual','—','pending'],
-  ['Inscrição Municipal / Alvará','—','pending'],['Abertura de conta bancária','—','pending'],
-  ['Certificado digital e-CNPJ','automático após CNPJ','pending'],['Cadastrar no sistema de folha','automático','pending']
+  { nome:'Gerar contrato social', tipo:'auto', status:'ok', nota:'automático', arquivo:'contrato_social_v1.docx' },
+  { nome:'Criar estrutura de pastas', tipo:'auto', status:'ok', nota:'automático', arquivo:null },
+  { nome:'Protocolar na Junta Comercial', tipo:'manual', status:'ok', nota:'manual — concluído' },
+  { nome:'Solicitar CNPJ na Receita Federal', tipo:'manual', status:'ok', nota:'manual — concluído' },
+  { nome:'Aguardar CNPJ', tipo:'manual', status:'warn', nota:'manual — prazo 3 dias úteis' },
+  { nome:'Inscrição Estadual', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Inscrição Municipal / Alvará', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Abertura de conta bancária', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Certificado digital e-CNPJ', tipo:'auto', status:'pending', nota:'automático após CNPJ', arquivo:null, acao:'certificado' },
+  { nome:'Cadastrar no sistema de folha', tipo:'auto', status:'pending', nota:'automático', arquivo:null, acao:'cadastro_folha' }
 ];
+function aberturaState(){ return ex('abertura-empresa', function(){ return { execAberto:null, execProcessando:false }; }); }
 function renderAbertura(){
-  var done = ABERTURA_STEPS.filter(function(s){return s[2]==='ok';}).length, pct = Math.round(done/ABERTURA_STEPS.length*100);
-  var rows = ABERTURA_STEPS.map(function(s){
-    var ic = s[2]==='ok' ? icon('checkcircle') : (s[2]==='warn' ? icon('clock') : '<span class="step-empty"></span>');
-    var col = s[2]==='ok' ? 'color:var(--success-600)' : (s[2]==='warn' ? 'color:var(--warning-600)' : 'color:var(--slate-400)');
-    return '<div class="step-row"><span style="'+col+';display:inline-flex;">'+ic+'</span><span style="'+(s[2]==='pending'?'color:var(--slate-400)':'')+'">'+s[0]+'</span><span class="step-note">('+s[1]+')</span>'+(s[2]==='warn'?'<span style="margin-left:auto;">'+badge('Em andamento','warn')+'</span>':'')+'</div>';
+  var s = aberturaState();
+  var done = ABERTURA_STEPS.filter(function(st){return st.status==='ok';}).length, pct = Math.round(done/ABERTURA_STEPS.length*100);
+  var rows = ABERTURA_STEPS.map(function(st,i){
+    if (st.status==='ok'){
+      var arquivoLink = st.arquivo ? '<span class="step-note" style="color:var(--success-700);">— arquivo: '+st.arquivo+'</span>' : '';
+      return '<div class="step-row"><span style="color:var(--success-600);display:inline-flex;">'+icon('checkcircle')+'</span><span>'+st.nome+'</span><span class="step-note">('+st.nota+')</span>'+arquivoLink+'</div>';
+    }
+    if (st.status==='warn'){
+      return '<div class="step-row"><span style="color:var(--warning-600);display:inline-flex;">'+icon('clock')+'</span><span>'+st.nome+'</span><span class="step-note">('+st.nota+')</span>'
+        + '<span style="margin-left:auto;display:flex;align-items:center;gap:8px;">'+badge('Em andamento','warn')+'<button class="btn-line" data-abertura-cnpj-obtido>Marcar CNPJ obtido</button></span></div>';
+    }
+    // pending
+    if (st.tipo==='manual'){
+      return '<label class="step-row" style="cursor:pointer;"><input type="checkbox" data-abertura-manual="'+i+'" style="width:15px;height:15px;"><span style="color:var(--slate-400);">'+st.nome+'</span><span class="step-note">('+st.nota+')</span></label>';
+    }
+    // automatizada pendente
+    var aberto = s.execAberto === i;
+    var linha = '<div class="step-row" style="cursor:pointer;" data-abertura-abrir="'+i+'"><span class="step-empty"></span><span style="color:var(--slate-400);">'+st.nome+'</span><span class="step-note">('+st.nota+')</span><span style="margin-left:auto;">'+badge('Pendente','neutral')+'</span></div>';
+    if (!aberto) return linha;
+    var painel = s.execProcessando
+      ? '<div class="form-mock-field" style="justify-content:flex-start;gap:10px;">'+sp()+'<span>A solicitação foi enviada. O resultado aparecerá automaticamente.</span></div>'
+      : '<div style="border:1px solid var(--slate-200);border-radius:var(--r-md);background:var(--slate-50);padding:14px;margin-top:2px;">'
+        + '<p style="font-size:12.5px;color:var(--fg-muted);margin:0 0 12px;">O agente executará esta etapa automaticamente. Nenhum dado adicional é necessário.</p>'
+        + '<div style="display:flex;justify-content:flex-end;"><button class="btn-dark" data-abertura-concluir="'+i+'">Concluir</button></div></div>';
+    return linha + painel;
   }).join('');
   return '<div class="page">'
     + '<div class="page-head"><p class="crumbline"><b>Societário</b> &gt; Abertura de empresa</p><h1>Nova Empresa Ltda</h1><p>Sociedade Limitada · Capital R$ 100.000,00 · Simples Nacional</p></div>'
@@ -1522,6 +1612,42 @@ function renderAbertura(){
     + '<div style="display:flex;align-items:center;gap:12px;"><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">'+pct+'%</span></div></div>'
     + '<div class="card"><div class="card-head"><h2>Checklist de abertura</h2></div><div class="card-pad">'+rows+'</div></div>'
     + '</div>';
+}
+function bindAbertura(){
+  var s = aberturaState();
+  document.querySelectorAll('[data-abertura-manual]').forEach(function(el){
+    el.addEventListener('change', function(){
+      var i = +el.getAttribute('data-abertura-manual');
+      ABERTURA_STEPS[i].status = 'ok';
+      render();
+    });
+  });
+  var cnpjBtn = document.querySelector('[data-abertura-cnpj-obtido]');
+  if (cnpjBtn) cnpjBtn.addEventListener('click', function(){
+    var st = ABERTURA_STEPS.find(function(x){ return x.nome==='Aguardar CNPJ'; });
+    if (st) st.status = 'ok';
+    render();
+  });
+  document.querySelectorAll('[data-abertura-abrir]').forEach(function(el){
+    el.addEventListener('click', function(){
+      var i = +el.getAttribute('data-abertura-abrir');
+      s.execAberto = (s.execAberto === i) ? null : i;
+      render();
+    });
+  });
+  var concluirBtn = document.querySelector('[data-abertura-concluir]');
+  if (concluirBtn) concluirBtn.addEventListener('click', function(e){
+    e.stopPropagation();
+    var i = +concluirBtn.getAttribute('data-abertura-concluir');
+    if (s.execProcessando) return;
+    s.execProcessando = true; render();
+    setTimeout(function(){
+      ABERTURA_STEPS[i].status = 'ok';
+      ABERTURA_STEPS[i].arquivo = ABERTURA_STEPS[i].acao === 'certificado' ? 'certificado_e-cnpj.pfx' : 'cadastro_folha_confirmacao.pdf';
+      s.execProcessando = false; s.execAberto = null;
+      render();
+    }, 1400);
+  });
 }
 
 /* ---- Alteração contratual (b17): diff no topo ---- */
@@ -2251,7 +2377,7 @@ var BESPOKE_BIND = {
   'folha-pagamento': bindFolha, 'ferias': bindFerias, 'decimo-terceiro': bindDecimoTerceiro,
   'esocial': bindEsocial, 'atestados': bindAtestados, 'fgts-inss': bindFgtsInss,
   'horas-extras': bindHorasExtras, 'vt-vr': bindVtVr, 'admissao-funcionario': bindAdmissaoFuncionario,
-  'alteracao-contratual': bindAlteracaoContratual, 'baixa-empresa': bindBaixaEmpresa,
+  'abertura-empresa': bindAbertura, 'alteracao-contratual': bindAlteracaoContratual, 'baixa-empresa': bindBaixaEmpresa,
   'alvaras-licencas': bindAlvarasLicencas, 'certificado-digital': bindCertificadoDigital, 'procuracoes': bindProcuracoes,
   'regularizacao-cadastral': bindRegularizacaoCadastral,
   'honorarios-boletos': bindHonorarios, 'cobranca-inadimplentes': bindCobrancaInadimplentes, 'reajuste-honorarios': bindReajusteHonorarios,
