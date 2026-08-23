@@ -1562,40 +1562,118 @@ function bindAdmissaoFuncionario(){
    ============================================================================ */
 
 /* ---- Abertura de empresa (a4): réplica do fluxo real de
-   frontend/src/app/dashboard/processos/page.jsx — etapa manual = checkbox
-   que salva na hora; etapa automatizada pendente = formulário/confirmação
-   inline + botão "Concluir" que mostra "Processando..." (como o polling
-   real de 3s) e assenta em "✓ Execução concluída" com arquivo gerado. ---- */
-var ABERTURA_STEPS = [
-  { nome:'Gerar contrato social', tipo:'auto', status:'ok', nota:'automático', arquivo:'contrato_social_v1.docx' },
-  { nome:'Criar estrutura de pastas', tipo:'auto', status:'ok', nota:'automático', arquivo:null },
-  { nome:'Protocolar na Junta Comercial', tipo:'manual', status:'ok', nota:'manual — concluído' },
-  { nome:'Solicitar CNPJ na Receita Federal', tipo:'manual', status:'ok', nota:'manual — concluído' },
-  { nome:'Aguardar CNPJ', tipo:'manual', status:'warn', nota:'manual — prazo 3 dias úteis' },
+   frontend/src/app/dashboard/processos/page.jsx, começando limpo — sem
+   nada pré-pronto: 1) formulário de dados da empresa, 2) "Gerar contrato
+   social" processa e mostra a mensagem de sucesso (nada é gerado de
+   verdade), 3) "Criar estrutura de pastas" aparece como próxima ação,
+   processa e mostra sucesso, 4) só então o checklist completo aparece —
+   etapa manual = checkbox, etapa automatizada = confirmação inline +
+   "Concluir" que mostra "Processando..." e assenta em "✓ Execução
+   concluída" com arquivo/confirmação gerada. ---- */
+var ABERTURA_CHECKLIST_BASE = [
+  { nome:'Protocolar na Junta Comercial', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Solicitar CNPJ na Receita Federal', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Aguardar CNPJ', tipo:'manual', status:'pending', nota:'manual — prazo 3 dias úteis' },
   { nome:'Inscrição Estadual', tipo:'manual', status:'pending', nota:'—' },
   { nome:'Inscrição Municipal / Alvará', tipo:'manual', status:'pending', nota:'—' },
   { nome:'Abertura de conta bancária', tipo:'manual', status:'pending', nota:'—' },
   { nome:'Certificado digital e-CNPJ', tipo:'auto', status:'pending', nota:'automático após CNPJ', arquivo:null, acao:'certificado' },
   { nome:'Cadastrar no sistema de folha', tipo:'auto', status:'pending', nota:'automático', arquivo:null, acao:'cadastro_folha' }
 ];
-function aberturaState(){ return ex('abertura-empresa', function(){ return { execAberto:null, execProcessando:false }; }); }
-function renderAbertura(){
-  var s = aberturaState();
-  var done = ABERTURA_STEPS.filter(function(st){return st.status==='ok';}).length, pct = Math.round(done/ABERTURA_STEPS.length*100);
-  var rows = ABERTURA_STEPS.map(function(st,i){
+function socioVazio(){ return { nome:'', cpf:'', participacao:'' }; }
+function aberturaState(){
+  return ex('abertura-empresa', function(){
+    return {
+      fase:'form',
+      form:{ nomeEmpresa:'', capitalSocial:'', objetoSocial:'', endereco:'' },
+      socios:[ socioVazio() ],
+      erroForm:'',
+      contratoStatus:'idle', pastasStatus:'idle',
+      steps: ABERTURA_CHECKLIST_BASE.map(function(s){ return Object.assign({}, s); }),
+      execAberto:null, execProcessando:false
+    };
+  });
+}
+function renderAberturaForm(s){
+  var inputCss = 'border:1px solid var(--slate-300);border-radius:6px;padding:8px 10px;font-size:13px;width:100%;';
+  var sociosHtml = s.socios.map(function(soc,i){
+    return '<div style="display:grid;grid-template-columns:2fr 1.3fr 0.8fr auto;gap:10px;margin-bottom:8px;align-items:end;">'
+      + '<label><span class="stat-label" style="display:block;margin-bottom:6px;">Sócio '+(i+1)+' — nome</span><input type="text" style="'+inputCss+'" data-abertura-socio-nome="'+i+'" value="'+esc(soc.nome)+'"></label>'
+      + '<label><span class="stat-label" style="display:block;margin-bottom:6px;">CPF</span><input type="text" style="'+inputCss+'" placeholder="000.000.000-00" data-abertura-socio-cpf="'+i+'" value="'+esc(soc.cpf)+'"></label>'
+      + '<label><span class="stat-label" style="display:block;margin-bottom:6px;">Participação %</span><input type="text" style="'+inputCss+'" data-abertura-socio-part="'+i+'" value="'+esc(soc.participacao)+'"></label>'
+      + (s.socios.length>1 ? '<button class="btn-line" data-abertura-remover-socio="'+i+'" title="Remover sócio">×</button>' : '<span></span>')
+      + '</div>';
+  }).join('');
+  return '<div class="page">'
+    + '<div class="page-head"><p class="crumbline"><b>Societário</b> &gt; Abertura de empresa</p><h1>Nova Abertura de Empresa</h1><p>Preencha os dados — o contrato social e a estrutura de pastas são gerados automaticamente a partir daqui.</p></div>'
+    + '<div class="card card-pad">'
+    + '<label style="display:block;margin-bottom:14px;"><span class="stat-label" style="display:block;margin-bottom:6px;">Nome da empresa</span><input type="text" style="'+inputCss+'" placeholder="Ex: Nova Empresa Ltda" data-abertura-campo="nomeEmpresa" value="'+esc(s.form.nomeEmpresa)+'"></label>'
+    + '<div style="font-weight:600;font-size:13px;color:var(--slate-700);margin-bottom:8px;">Sócios</div>'
+    + sociosHtml
+    + '<button class="btn-line" data-abertura-add-socio style="margin-bottom:16px;">+ Adicionar sócio</button>'
+    + '<div class="grid2" style="margin-bottom:14px;">'
+    + '<label><span class="stat-label" style="display:block;margin-bottom:6px;">Capital social (R$)</span><input type="text" style="'+inputCss+'" placeholder="Ex: 100000" data-abertura-campo="capitalSocial" value="'+esc(s.form.capitalSocial)+'"></label>'
+    + '<label><span class="stat-label" style="display:block;margin-bottom:6px;">Endereço</span><input type="text" style="'+inputCss+'" data-abertura-campo="endereco" value="'+esc(s.form.endereco)+'"></label>'
+    + '</div>'
+    + '<label style="display:block;margin-bottom:16px;"><span class="stat-label" style="display:block;margin-bottom:6px;">Objeto social</span><input type="text" style="'+inputCss+'" placeholder="Ex: Comércio varejista de produtos alimentícios" data-abertura-campo="objetoSocial" value="'+esc(s.form.objetoSocial)+'"></label>'
+    + (s.erroForm ? '<p style="margin-bottom:12px;border:1px solid var(--danger-200,#FECDD3);background:var(--danger-50,#FFF1F2);color:var(--danger-700);border-radius:6px;padding:8px 12px;font-size:13px;">'+esc(s.erroForm)+'</p>' : '')
+    + '<div style="display:flex;justify-content:flex-end;"><button class="btn-dark" data-abertura-iniciar>Iniciar Abertura de Empresa</button></div>'
+    + '</div></div>';
+}
+function renderAberturaProcesso(s){
+  var nome = s.form.nomeEmpresa || 'a empresa';
+  var intro = '';
+
+  // etapa 1 — contrato social
+  if (s.contratoStatus === 'idle' || s.contratoStatus === 'processando'){
+    intro += '<div class="card card-pad" style="margin-bottom:14px;">'
+      + '<div style="font-weight:600;font-size:14px;color:var(--slate-900);margin-bottom:6px;">Gerando contrato social</div>'
+      + '<div class="form-mock-field" style="justify-content:flex-start;gap:10px;">'+sp()+'<span>Preenchendo a minuta do contrato social com os dados informados...</span></div>'
+      + '</div>';
+    return '<div class="page">'+aberturaHeader(nome)+intro+'</div>';
+  }
+  intro += '<div class="card card-pad" style="margin-bottom:14px;background:var(--success-50,#ECFDF5);border-color:var(--success-200,#A7F3D0);">'
+    + '<div style="display:flex;align-items:center;gap:8px;color:var(--success-700);font-weight:600;font-size:13.5px;">'+icon('checkcircle')+'<span>Contrato social gerado</span></div>'
+    + '<div style="font-size:12.5px;color:var(--fg-muted);margin-top:4px;">contrato_social_v1.docx — pronto para revisão</div>'
+    + '</div>';
+
+  // etapa 2 — estrutura de pastas
+  if (s.pastasStatus === 'idle'){
+    intro += '<div class="card card-pad" style="margin-bottom:14px;">'
+      + '<div style="font-weight:600;font-size:14px;color:var(--slate-900);margin-bottom:8px;">Criar estrutura de pastas</div>'
+      + '<p style="font-size:12.5px;color:var(--fg-muted);margin:0 0 12px;">Cria automaticamente a árvore de pastas do cliente no servidor (Documentos, NFs, Folha, Declarações).</p>'
+      + '<div style="display:flex;justify-content:flex-end;"><button class="btn-dark" data-abertura-criar-pastas>Criar estrutura de pastas</button></div>'
+      + '</div>';
+    return '<div class="page">'+aberturaHeader(nome)+intro+'</div>';
+  }
+  if (s.pastasStatus === 'processando'){
+    intro += '<div class="card card-pad" style="margin-bottom:14px;">'
+      + '<div style="font-weight:600;font-size:14px;color:var(--slate-900);margin-bottom:6px;">Criando estrutura de pastas</div>'
+      + '<div class="form-mock-field" style="justify-content:flex-start;gap:10px;">'+sp()+'<span>A solicitação foi enviada. O resultado aparecerá automaticamente.</span></div>'
+      + '</div>';
+    return '<div class="page">'+aberturaHeader(nome)+intro+'</div>';
+  }
+  intro += '<div class="card card-pad" style="margin-bottom:14px;background:var(--success-50,#ECFDF5);border-color:var(--success-200,#A7F3D0);">'
+    + '<div style="display:flex;align-items:center;gap:8px;color:var(--success-700);font-weight:600;font-size:13.5px;">'+icon('checkcircle')+'<span>Estrutura de pastas criada</span></div>'
+    + '<div style="font-size:12.5px;color:var(--fg-muted);margin-top:4px;">CLIENTES/'+esc(nome)+'/Documentos, /NFs, /Folha, /Declarações</div>'
+    + '</div>';
+
+  // checklist completo
+  var doneChecklist = s.steps.filter(function(st){return st.status==='ok';}).length;
+  var doneTotal = 2 + doneChecklist, totalSteps = 2 + s.steps.length;
+  var pct = Math.round(doneTotal/totalSteps*100);
+  var rows = s.steps.map(function(st,i){
     if (st.status==='ok'){
       var arquivoLink = st.arquivo ? '<span class="step-note" style="color:var(--success-700);">— arquivo: '+st.arquivo+'</span>' : '';
       return '<div class="step-row"><span style="color:var(--success-600);display:inline-flex;">'+icon('checkcircle')+'</span><span>'+st.nome+'</span><span class="step-note">('+st.nota+')</span>'+arquivoLink+'</div>';
     }
-    if (st.status==='warn'){
+    if (st.nome==='Aguardar CNPJ' && s.steps[1].status==='ok' && st.status==='pending'){
       return '<div class="step-row"><span style="color:var(--warning-600);display:inline-flex;">'+icon('clock')+'</span><span>'+st.nome+'</span><span class="step-note">('+st.nota+')</span>'
         + '<span style="margin-left:auto;display:flex;align-items:center;gap:8px;">'+badge('Em andamento','warn')+'<button class="btn-line" data-abertura-cnpj-obtido>Marcar CNPJ obtido</button></span></div>';
     }
-    // pending
     if (st.tipo==='manual'){
       return '<label class="step-row" style="cursor:pointer;"><input type="checkbox" data-abertura-manual="'+i+'" style="width:15px;height:15px;"><span style="color:var(--slate-400);">'+st.nome+'</span><span class="step-note">('+st.nota+')</span></label>';
     }
-    // automatizada pendente
     var aberto = s.execAberto === i;
     var linha = '<div class="step-row" style="cursor:pointer;" data-abertura-abrir="'+i+'"><span class="step-empty"></span><span style="color:var(--slate-400);">'+st.nome+'</span><span class="step-note">('+st.nota+')</span><span style="margin-left:auto;">'+badge('Pendente','neutral')+'</span></div>';
     if (!aberto) return linha;
@@ -1606,25 +1684,68 @@ function renderAbertura(){
         + '<div style="display:flex;justify-content:flex-end;"><button class="btn-dark" data-abertura-concluir="'+i+'">Concluir</button></div></div>';
     return linha + painel;
   }).join('');
-  return '<div class="page">'
-    + '<div class="page-head"><p class="crumbline"><b>Societário</b> &gt; Abertura de empresa</p><h1>Nova Empresa Ltda</h1><p>Sociedade Limitada · Capital R$ 100.000,00 · Simples Nacional</p></div>'
-    + '<div class="card card-pad"><div class="proc-top" style="margin-bottom:8px;"><span style="font-size:13px;font-weight:600;color:var(--slate-700)">Progresso do processo</span><span style="font-size:12.5px;color:var(--fg-muted)">'+done+' de '+ABERTURA_STEPS.length+' etapas</span></div>'
+
+  intro += '<div class="card card-pad" style="margin-bottom:14px;"><div class="proc-top" style="margin-bottom:8px;"><span style="font-size:13px;font-weight:600;color:var(--slate-700)">Progresso do processo</span><span style="font-size:12.5px;color:var(--fg-muted)">'+doneTotal+' de '+totalSteps+' etapas</span></div>'
     + '<div style="display:flex;align-items:center;gap:12px;"><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">'+pct+'%</span></div></div>'
-    + '<div class="card"><div class="card-head"><h2>Checklist de abertura</h2></div><div class="card-pad">'+rows+'</div></div>'
-    + '</div>';
+    + '<div class="card"><div class="card-head"><h2>Checklist de abertura</h2></div><div class="card-pad">'+rows+'</div></div>';
+
+  return '<div class="page">'+aberturaHeader(nome)+intro+'</div>';
+}
+function aberturaHeader(nome){
+  return '<div class="page-head"><p class="crumbline"><b>Societário</b> &gt; Abertura de empresa</p><h1>'+esc(nome)+'</h1><p>Acompanhamento do processo de abertura.</p></div>';
+}
+function renderAbertura(){
+  var s = aberturaState();
+  return s.fase==='form' ? renderAberturaForm(s) : renderAberturaProcesso(s);
 }
 function bindAbertura(){
   var s = aberturaState();
+
+  // formulário
+  document.querySelectorAll('[data-abertura-campo]').forEach(function(el){
+    el.addEventListener('input', function(){ s.form[el.getAttribute('data-abertura-campo')] = el.value; });
+  });
+  document.querySelectorAll('[data-abertura-socio-nome]').forEach(function(el){
+    el.addEventListener('input', function(){ s.socios[+el.getAttribute('data-abertura-socio-nome')].nome = el.value; });
+  });
+  document.querySelectorAll('[data-abertura-socio-cpf]').forEach(function(el){
+    el.addEventListener('input', function(){ s.socios[+el.getAttribute('data-abertura-socio-cpf')].cpf = el.value; });
+  });
+  document.querySelectorAll('[data-abertura-socio-part]').forEach(function(el){
+    el.addEventListener('input', function(){ s.socios[+el.getAttribute('data-abertura-socio-part')].participacao = el.value; });
+  });
+  var addSocioBtn = document.querySelector('[data-abertura-add-socio]');
+  if (addSocioBtn) addSocioBtn.addEventListener('click', function(){ s.socios.push(socioVazio()); render(); });
+  document.querySelectorAll('[data-abertura-remover-socio]').forEach(function(el){
+    el.addEventListener('click', function(){ s.socios.splice(+el.getAttribute('data-abertura-remover-socio'), 1); render(); });
+  });
+  var iniciarBtn = document.querySelector('[data-abertura-iniciar]');
+  if (iniciarBtn) iniciarBtn.addEventListener('click', function(){
+    if (!s.form.nomeEmpresa || !s.form.nomeEmpresa.trim()){
+      s.erroForm = 'Informe o nome da empresa.'; render(); return;
+    }
+    s.erroForm = '';
+    s.fase = 'processo'; s.contratoStatus = 'processando'; render();
+    setTimeout(function(){ s.contratoStatus = 'pronto'; render(); }, 1400);
+  });
+
+  // etapa contrato/pastas
+  var pastasBtn = document.querySelector('[data-abertura-criar-pastas]');
+  if (pastasBtn) pastasBtn.addEventListener('click', function(){
+    s.pastasStatus = 'processando'; render();
+    setTimeout(function(){ s.pastasStatus = 'pronto'; render(); }, 1400);
+  });
+
+  // checklist
   document.querySelectorAll('[data-abertura-manual]').forEach(function(el){
     el.addEventListener('change', function(){
-      var i = +el.getAttribute('data-abertura-manual');
-      ABERTURA_STEPS[i].status = 'ok';
+      s.steps[+el.getAttribute('data-abertura-manual')].status = 'ok';
       render();
     });
   });
   var cnpjBtn = document.querySelector('[data-abertura-cnpj-obtido]');
   if (cnpjBtn) cnpjBtn.addEventListener('click', function(){
-    var st = ABERTURA_STEPS.find(function(x){ return x.nome==='Aguardar CNPJ'; });
+    var st = s.steps.find(function(x){ return x.nome==='Aguardar CNPJ'; });
     if (st) st.status = 'ok';
     render();
   });
@@ -1642,8 +1763,8 @@ function bindAbertura(){
     if (s.execProcessando) return;
     s.execProcessando = true; render();
     setTimeout(function(){
-      ABERTURA_STEPS[i].status = 'ok';
-      ABERTURA_STEPS[i].arquivo = ABERTURA_STEPS[i].acao === 'certificado' ? 'certificado_e-cnpj.pfx' : 'cadastro_folha_confirmacao.pdf';
+      s.steps[i].status = 'ok';
+      s.steps[i].arquivo = s.steps[i].acao === 'certificado' ? 'certificado_e-cnpj.pfx' : 'cadastro_folha_confirmacao.pdf';
       s.execProcessando = false; s.execAberto = null;
       render();
     }, 1400);
