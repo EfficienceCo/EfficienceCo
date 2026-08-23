@@ -76,6 +76,8 @@ test.describe('Tela Efficience (issue #358)', () => {
 
     await page.route('**/eficiencia**', async (route) => {
       const { searchParams } = new URL(route.request().url());
+      expect(searchParams.get('cliente_id')).toBe(CLIENTE_ID);
+
       const periodo = searchParams.get('periodo') || '30';
       const totalExecucoes = periodo === '7' ? 3 : 9;
       const totalHoras = (totalExecucoes * 30) / 60;
