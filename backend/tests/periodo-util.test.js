@@ -75,4 +75,34 @@ describe("aplicarFiltroPeriodo", () => {
       ["lte", "data_emissao", "2026-12-31"],
     ]);
   });
+
+  // Achado do Victor no review do PR #316: Number.parseInt para no primeiro
+  // caractere inválido em vez de rejeitar a string inteira, então "7abc"
+  // virava mês 7 válido. Number() exige a string inteira numérica.
+  it("ignora o filtro quando mes tem sufixo não numérico (ex.: 7abc)", () => {
+    const { query, chamadas } = criarQueryFake();
+
+    assert.doesNotThrow(() => aplicarFiltroPeriodo(query, "data_emissao", "7abc", "2026"));
+    assert.deepEqual(chamadas, [
+      ["gte", "data_emissao", "2026-01-01"],
+      ["lte", "data_emissao", "2026-12-31"],
+    ]);
+  });
+
+  it("ignora o filtro quando mes é decimal (ex.: 7.9)", () => {
+    const { query, chamadas } = criarQueryFake();
+
+    assert.doesNotThrow(() => aplicarFiltroPeriodo(query, "data_emissao", "7.9", "2026"));
+    assert.deepEqual(chamadas, [
+      ["gte", "data_emissao", "2026-01-01"],
+      ["lte", "data_emissao", "2026-12-31"],
+    ]);
+  });
+
+  it("ignora o filtro quando ano tem sufixo não numérico (ex.: 2026xyz)", () => {
+    const { query, chamadas } = criarQueryFake();
+
+    assert.doesNotThrow(() => aplicarFiltroPeriodo(query, "data_emissao", "7", "2026xyz"));
+    assert.deepEqual(chamadas, []);
+  });
 });

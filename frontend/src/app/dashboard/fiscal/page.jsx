@@ -160,11 +160,11 @@ function formatarTipo(tipo) {
 
 function classeBadgeTipo(tipo) {
   if (tipo === 'entrada') {
-    return 'bg-sky-100 text-sky-700';
+    return 'bg-emerald-100 text-emerald-700';
   }
 
   if (tipo === 'saida') {
-    return 'bg-emerald-100 text-emerald-700';
+    return 'bg-rose-100 text-rose-700';
   }
 
   return 'bg-zinc-100 text-zinc-700';
