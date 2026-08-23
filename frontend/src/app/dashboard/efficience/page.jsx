@@ -177,7 +177,7 @@ export default function EfficiencePage() {
     const parametrosClienteId = isAdminEfficience ? clienteId : undefined;
 
     const [resultadoMetricas, resultadoLicenca] = await Promise.allSettled([
-      buscarMetricas(periodo, parametrosClienteId),
+      buscarMetricas(periodo),
       getStatusLicencaClienteLogado({ clienteId: parametrosClienteId }),
     ]);
 
