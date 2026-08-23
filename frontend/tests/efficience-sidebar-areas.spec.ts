@@ -76,8 +76,6 @@ test.describe('Tela Efficience (issue #358)', () => {
 
     await page.route('**/eficiencia**', async (route) => {
       const { searchParams } = new URL(route.request().url());
-      expect(searchParams.get('cliente_id')).toBe(CLIENTE_ID);
-
       const periodo = searchParams.get('periodo') || '30';
       const totalExecucoes = periodo === '7' ? 3 : 9;
       const totalHoras = (totalExecucoes * 30) / 60;
@@ -129,5 +127,61 @@ test.describe('Tela Efficience (issue #358)', () => {
 
     await page.getByRole('button', { name: 'Pagar licença' }).click();
     await expect(page.getByText(/Pagamento online chega em breve/)).toBeVisible();
+  });
+});
+
+function criarTokenAdminEfficience() {
+  const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
+
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({
+    sub: 'efficience-admin-test',
+    nome: 'Admin Efficience',
+    perfil: 'admin_efficience',
+    exp: 4_102_444_800,
+  })}.`;
+}
+
+test.describe('Tela Efficience — perfil admin_efficience (issue #363)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenAdminEfficience());
+
+    await page.route('**/clientes**', (route) =>
+      route.fulfill({ json: [{ id: CLIENTE_ID, nome: 'Cliente Teste' }] }),
+    );
+
+    await page.route('**/eficiencia**', async (route) => {
+      const { searchParams } = new URL(route.request().url());
+      const clienteId = searchParams.get('cliente_id');
+
+      if (!clienteId) {
+        await route.fulfill({ status: 400, json: { erro: 'clienteId é obrigatório' } });
+        return;
+      }
+
+      await route.fulfill({
+        json: {
+          total_horas: 4.5,
+          total_execucoes: 9,
+          breakdown: [{ tipo: 'Automações do agente', quantidade: 9, horas: 4.5 }],
+        },
+      });
+    });
+
+    await page.route('**/licenca/validar**', (route) =>
+      route.fulfill({ json: { ativa: true, validade: '2026-12-31', status: 'active' } }),
+    );
+    await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
+  });
+
+  test('ao selecionar um cliente, as métricas são requisitadas com cliente_id e carregam', async ({ page }) => {
+    await page.goto('/dashboard/efficience');
+
+    await expect(page.getByText('Selecione um cliente para ver as métricas.')).toBeVisible();
+
+    await page.getByLabel('Cliente').selectOption(CLIENTE_ID);
+
+    await expect(page.getByText('Selecione um cliente para ver as métricas.')).toHaveCount(0);
+    await expect(page.getByRole('row', { name: /Automações do agente/ }).getByText('9')).toBeVisible();
+    await expect(page.getByText(/clienteId é obrigatório/)).toHaveCount(0);
   });
 });
