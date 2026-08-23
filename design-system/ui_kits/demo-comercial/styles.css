@@ -160,6 +160,7 @@ td{padding:11px 16px;font-size:13px;color:var(--slate-700);border-top:1px solid 
 .seg button{padding:6px 14px;border-radius:6px;font-size:13.5px;color:var(--slate-600);background:none;border:none;font-weight:500;}
 .seg button.active{background:var(--slate-900);color:#fff;font-weight:600;}
 .btn-dark{border-radius:var(--r-md);background:var(--slate-900);color:#fff;padding:9px 16px;font-size:13.5px;font-weight:600;border:none;}
+button:disabled{opacity:.45;cursor:not-allowed;}
 .btn-line{border-radius:var(--r-md);border:1px solid var(--slate-300);background:#fff;padding:8px 14px;font-size:13px;font-weight:500;color:var(--slate-700);}
 .btn-confirm{border-radius:6px;border:1px solid #6EE7B7;background:#ECFDF5;color:#047857;padding:5px 12px;font-size:12px;font-weight:600;}
 .btn-reject{border-radius:6px;border:1px solid #FDA4AF;background:#FFF1F2;color:#BE123C;padding:5px 12px;font-size:12px;font-weight:600;}
@@ -221,6 +222,310 @@ td{padding:11px 16px;font-size:13px;color:var(--slate-700);border-top:1px solid 
 .mx-cell svg{width:14px;height:14px;stroke:currentColor;stroke-width:2.4;fill:none;}
 .matrix-legend{display:flex;gap:18px;padding:12px 20px;border-top:1px solid var(--slate-100);font-size:11.5px;color:var(--fg-muted);}
 .matrix-legend span{display:inline-flex;align-items:center;gap:6px;}
+
+/* ===================== Ação simulada: átomos genéricos ===================== */
+.mini-spin{display:inline-block;width:13px;height:13px;border-radius:50%;border:2px solid var(--slate-300);border-top-color:var(--slate-600);animation:spin .7s linear infinite;vertical-align:-2px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.clickable-row{cursor:pointer;}
+.clickable-row:hover{background:var(--slate-50);}
+.g-lbl{display:block;font-size:11px;color:var(--fg-muted);}
+.g-val{display:block;font-size:13.5px;font-weight:600;color:var(--slate-900);margin-top:2px;}
+.ring-gauge{display:block;width:76px !important;height:76px !important;}
+.ring-label{font-family:var(--font-display);font-size:14px;font-weight:600;fill:var(--slate-900);}
+.mgauge{width:70px;height:8px;border-radius:var(--r-full);background:var(--slate-200);display:inline-block;overflow:hidden;vertical-align:middle;}
+.mgauge-fill{height:100%;border-radius:var(--r-full);}
+.stepper3{display:flex;align-items:center;flex:1;}
+.st3-node{display:flex;flex-direction:column;align-items:center;gap:4px;width:100px;flex:none;}
+.st3-dot{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid var(--slate-300);color:#fff;flex:none;}
+.st3-dot svg{width:13px;height:13px;stroke-width:3;}
+.st3-done .st3-dot{background:var(--success-500);border-color:var(--success-500);}
+.st3-active .st3-dot{border-color:var(--brand-500);background:var(--brand-100);animation:pulseDot 1.4s ease-in-out infinite;}
+@keyframes pulseDot{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.4);}50%{box-shadow:0 0 0 6px rgba(56,189,248,0);}}
+.st3-todo .st3-dot{background:#fff;}
+.st3-label{font-size:11px;color:var(--fg-muted);text-align:center;}
+.st3-done .st3-label,.st3-active .st3-label{color:var(--slate-800);font-weight:600;}
+.st3-line{flex:1;height:2px;background:var(--slate-200);margin:0 -6px 18px;}
+.st3-line-done{background:var(--success-400,#34D399);}
+
+/* ===================== Escrituração NF-e ===================== */
+.inbox-strip{display:flex;align-items:center;gap:9px;background:var(--slate-900);color:#fff;border-radius:var(--r-md);padding:10px 16px;font-size:12.5px;}
+.inbox-strip svg{stroke:var(--brand-300);}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--success-500);margin-left:auto;position:relative;}
+.live-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--success-500);animation:hb 2.2s var(--ease-out) infinite;}
+.escrit-ghost td{color:var(--slate-400);font-style:italic;}
+.escrit-just-in{animation:justIn 1s ease-out;}
+@keyframes justIn{0%{background:#FEF9C3;}100%{background:transparent;}}
+.escrit-alert-row{box-shadow:inset 3px 0 0 var(--warning-500);}
+.escrit-alert{display:inline-flex;color:var(--warning-600);cursor:pointer;vertical-align:-3px;}
+.escrit-alert svg{width:14px;height:14px;}
+
+/* ===================== Apuração Simples / Presumido ===================== */
+.apsim-expand td{background:var(--slate-50);font-size:12.5px;padding-top:10px;padding-bottom:10px;}
+.apsim-msg{margin-top:6px;color:var(--brand-700);font-size:12px;}
+.trim-trail{display:flex;align-items:stretch;gap:0;}
+.trim-node{flex:1;background:#fff;border:1px solid var(--border);border-radius:var(--r-md);padding:12px;text-align:left;display:flex;flex-direction:column;gap:4px;}
+.trim-connector{width:16px;flex:none;}
+.trim-atual{border-color:var(--brand-400);box-shadow:0 0 0 2px var(--brand-100);}
+.trim-sel{background:var(--brand-50);}
+.trim-pending{opacity:.55;}
+.trim-title{font-size:12.5px;font-weight:700;color:var(--slate-900);}
+.trim-sub{font-size:11.5px;color:var(--fg-muted);}
+.trim-hint{margin:10px 0 0;font-size:11.5px;color:var(--fg-muted);}
+.appres-card h3{margin:0 0 10px;font-size:13.5px;}
+.appres-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+
+/* ===================== Emissão de guias: barcode drawing ===================== */
+.guia-barcode.drawing{animation:barcodeDraw .85s ease-out;}
+@keyframes barcodeDraw{from{clip-path:inset(0 100% 0 0);}to{clip-path:inset(0 0 0 0);}}
+
+/* ===================== Retenções na fonte / cálculo expansível ===================== */
+.calc-row td{background:var(--slate-50);}
+.calc-line{font-size:13px;color:var(--slate-700);}
+.revnfe-edit-input{border:1px solid var(--slate-300);border-radius:6px;padding:6px 9px;font-size:12.5px;width:200px;}
+
+/* ===================== NCM/CFOP ===================== */
+.ncm-resolved{opacity:.55;}
+.ncm-suggest{margin-top:6px;display:flex;flex-direction:column;gap:4px;}
+.ncm-suggest-item{text-align:left;border:1px solid var(--slate-200);background:#fff;border-radius:6px;padding:6px 9px;font-size:12px;color:var(--slate-700);}
+.ncm-suggest-item:hover{background:var(--brand-50);}
+
+/* ===================== SPED Fiscal ===================== */
+.sped-row{display:flex;align-items:center;gap:20px;padding:14px 0;border-top:1px solid var(--slate-100);flex-wrap:wrap;}
+.sped-row:first-child{border-top:none;}
+.sped-row.clickable{cursor:pointer;}
+.sped-cliente{width:140px;flex:none;font-size:13px;font-weight:600;color:var(--slate-900);}
+.sped-log{flex-basis:100%;font-family:var(--font-mono);font-size:11.5px;color:var(--fg-muted);padding-left:160px;}
+
+/* ===================== EFD-Contribuições ===================== */
+.dualbar{display:inline-flex;align-items:center;gap:2px;height:8px;vertical-align:middle;margin-right:6px;}
+.dualbar-pis{height:8px;background:var(--brand-400);border-radius:2px;}
+.dualbar-cofins{height:8px;background:var(--slate-700);border-radius:2px;}
+
+/* ===================== DCTF/DCTFWeb ===================== */
+.dctf-chip{border:1px solid var(--slate-300);background:#fff;border-radius:var(--r-full);padding:4px 11px;font-size:11.5px;font-weight:600;color:var(--slate-700);}
+.dctf-chip.active{background:var(--brand-600);border-color:var(--brand-600);color:#fff;}
+.dctf-dots{display:inline-block;width:14px;border-bottom:1px dashed var(--slate-300);margin:0 2px;}
+.dctf-link-note{font-size:11px;color:var(--brand-700);margin-left:6px;}
+
+/* ===================== Alerta de alíquota ===================== */
+.alertaliq-item{border-top:1px solid var(--slate-100);padding:12px 0;}
+.alertaliq-item:first-child{border-top:none;}
+.alertaliq-head{display:flex;align-items:flex-start;gap:11px;cursor:pointer;}
+.alertaliq-headtext{flex:1;font-size:13.5px;color:var(--slate-800);}
+.alertaliq-caret{color:var(--slate-400);font-size:11px;}
+.alertaliq-body{padding:10px 0 0 19px;}
+.alertaliq-item.resolved{opacity:.6;}
+
+/* ===================== Balancete mensal ===================== */
+.balancete-flash{animation:balFlash .3s ease;}
+@keyframes balFlash{0%{background:#FEF9C3;}100%{background:transparent;}}
+.cadeado-anim{display:inline-flex;color:var(--slate-500);animation:lockClose .32s ease;}
+@keyframes lockClose{0%{transform:rotate(-14deg) scale(1.15);}100%{transform:rotate(0) scale(1);}}
+
+/* ===================== Relatórios gerenciais: A4 preview ===================== */
+.a4-modal{width:420px;}
+.a4-sheet{position:relative;background:#fff;border:1px solid var(--slate-200);border-radius:6px;padding:22px;box-shadow:var(--shadow-sm);aspect-ratio:1/1.35;overflow:hidden;}
+.a4-text{font-size:12.5px;line-height:1.6;color:var(--slate-700);}
+.a4-chart{display:flex;align-items:flex-end;gap:14px;height:90px;margin-top:18px;}
+.a4-bar{width:36px;border-radius:4px 4px 0 0;}
+.a4-bar-receita{background:var(--brand-500);}
+.a4-bar-despesa{background:var(--slate-400);}
+.a4-legend{display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--fg-muted);}
+.a4-legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;}
+.a4-stamp{position:absolute;top:38px;right:-38px;background:var(--success-600);color:#fff;padding:5px 46px;font-size:12px;font-weight:700;letter-spacing:.06em;transform:rotate(28deg);box-shadow:0 2px 6px rgba(0,0,0,.2);}
+
+/* ===================== Depreciação: barra de desgaste ===================== */
+.wear-bar{position:relative;height:6px;background:var(--slate-100);border-radius:var(--r-full);margin-top:6px;width:160px;}
+.wear-fill{position:absolute;right:0;top:0;height:100%;background:var(--warning-400,#FBBF24);border-radius:var(--r-full);}
+.wear-marker{position:absolute;top:-3px;width:2px;height:12px;background:var(--slate-700);}
+.deprec-flash{background:var(--brand-50);border:1px solid var(--brand-200);border-radius:var(--r-md);padding:10px 14px;font-size:13px;color:var(--brand-800);}
+.deprec-lanc{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--slate-700);padding:4px 0;}
+
+/* ===================== Conciliação de contas: ponte ===================== */
+.bridge{width:36px;height:2px;margin:0 auto;}
+.bridge-ok{background:var(--success-500);}
+.bridge-bad{background:repeating-linear-gradient(90deg,var(--danger-500) 0 4px,transparent 4px 7px);}
+
+/* ===================== Encerramento de exercício ===================== */
+.encerr-checklist{margin-top:10px;display:flex;flex-direction:column;gap:2px;}
+.encerr-item{display:flex;align-items:center;gap:9px;padding:8px 0;border-top:1px solid var(--slate-100);font-size:13px;color:var(--slate-700);}
+.encerr-item:first-child{border-top:none;}
+.encerr-item svg{width:15px;height:15px;color:var(--slate-400);}
+.encerr-item.done{color:var(--slate-400);}
+.encerr-item.done svg{color:var(--success-500);}
+.encerr-auto-tag{margin-left:auto;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--brand-600);background:var(--brand-50);padding:2px 7px;border-radius:var(--r-full);}
+
+/* ===================== Férias: régua de tempo ===================== */
+.gantt-row{position:relative;width:150px;height:8px;background:var(--slate-100);border-radius:var(--r-full);margin-top:6px;overflow:visible;}
+.gantt-risk{position:absolute;top:0;bottom:0;right:0;width:16.5%;background:linear-gradient(90deg,transparent,var(--warning-400,#FBBF24));}
+.gantt-gozo{position:absolute;top:0;bottom:0;background:var(--success-500);border-radius:var(--r-full);}
+.gantt-now{position:absolute;top:-3px;width:2px;height:14px;background:var(--slate-900);}
+.ferias-gozo-form{margin-top:8px;display:flex;gap:8px;align-items:center;}
+.ferias-gozo-form input{width:70px;border:1px solid var(--slate-300);border-radius:6px;padding:5px 8px;font-size:12px;}
+
+/* ===================== 13º salário: card partido ===================== */
+.dt-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+@media (max-width:1120px){.dt-grid{grid-template-columns:1fr;}}
+.dt-card{position:relative;background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:16px;}
+.dt-flash{animation:balFlash .35s ease;}
+.dt-receipt{position:absolute;top:-8px;right:12px;font-size:18px;animation:receiptPop .4s ease;}
+.dt-receipt svg{width:20px;height:20px;color:var(--brand-600);background:#fff;border-radius:4px;}
+@keyframes receiptPop{0%{transform:translateY(6px) scale(.6);opacity:0;}100%{transform:translateY(0) scale(1);opacity:1;}}
+.dt-head{display:flex;justify-content:space-between;margin-bottom:12px;}
+.dt-func{font-size:11.5px;color:var(--fg-muted);}
+.dt-split{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.dt-half{border-radius:var(--r-md);padding:10px 12px;}
+.dt-half-past{background:var(--success-100);}
+.dt-half-future{background:var(--slate-50);}
+.dt-lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--fg-muted);}
+.dt-val{font-family:var(--font-display);font-weight:600;font-size:15px;color:var(--slate-900);margin-top:3px;}
+.dt-seal{font-size:11px;color:var(--success-700);margin-top:4px;font-weight:600;}
+.dt-countdown{font-size:11px;color:var(--warning-700);margin-top:4px;font-weight:600;}
+
+/* ===================== eSocial: wizard ===================== */
+.esoc-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+@media (max-width:1120px){.esoc-picker{grid-template-columns:1fr;}}
+.esoc-pick-card{display:flex;flex-direction:column;align-items:center;gap:10px;background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);padding:22px;box-shadow:var(--shadow-sm);font-size:13.5px;font-weight:600;color:var(--slate-800);}
+.esoc-pick-card:hover{border-color:var(--brand-400);}
+.esoc-pick-card svg{width:26px;height:26px;color:var(--brand-600);}
+.esoc-input{border:1px solid var(--slate-300);border-radius:6px;padding:6px 9px;font-size:13px;width:200px;text-align:right;}
+.esoc-invalid .esoc-input{border-color:var(--danger-400,#FB7185);}
+.esoc-error{font-size:10.5px;color:var(--danger-600);text-align:right;margin-top:2px;}
+.esoc-preview{width:400px;}
+.esoc-preview-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;font-size:13px;}
+.esoc-done{padding:10px 0;}
+
+/* ===================== Atestados: leitura dramatizada ===================== */
+.atest-dropzone{border:1.5px dashed var(--slate-300);border-radius:var(--r-md);padding:24px;text-align:center;color:var(--fg-muted);font-size:13px;cursor:pointer;}
+.atest-progress{width:100%;max-width:280px;margin:10px auto 4px;height:6px;border-radius:var(--r-full);background:var(--slate-200);overflow:hidden;}
+.atest-progress-fill{height:100%;width:60%;background:var(--brand-500);border-radius:var(--r-full);animation:atestProg 1s ease-in-out infinite;}
+@keyframes atestProg{0%{transform:translateX(-100%);}100%{transform:translateX(280%);}}
+.ocr-fields{margin-top:14px;display:flex;flex-direction:column;gap:6px;}
+.ocr-field{font-size:13px;color:var(--slate-800);background:var(--slate-50);border-radius:6px;padding:7px 11px;animation:justIn .8s ease-out;width:fit-content;}
+.atest-branch{margin-top:12px;border-radius:var(--r-md);padding:12px 14px;font-size:13px;}
+.atest-branch-green{background:var(--success-100);color:var(--success-700);}
+.atest-branch-blue{background:var(--brand-50);color:var(--brand-800);}
+
+/* ===================== FGTS/INSS: cadeia de dependência ===================== */
+.chain-strip{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--slate-600);}
+.chain-arrow{color:var(--slate-400);}
+
+/* ===================== Horas extras: barra empilhada ===================== */
+.upload-strip{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--slate-700);}
+.stack-bar{display:flex;height:8px;width:120px;border-radius:var(--r-full);overflow:hidden;background:var(--slate-100);margin-bottom:6px;}
+.stack-50{background:var(--brand-400);animation:growLeft .5s ease-out;}
+.stack-100{background:var(--warning-500);animation:growLeft .5s ease-out .1s backwards;}
+@keyframes growLeft{from{transform:scaleX(0);transform-origin:left;}to{transform:scaleX(1);}}
+
+/* ===================== Vale-transporte/VR ===================== */
+.vtvr-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+@media (max-width:1120px){.vtvr-grid{grid-template-columns:1fr;}}
+.vtvr-card{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:16px;}
+.vtvr-func{font-size:11.5px;color:var(--fg-muted);margin-bottom:10px;}
+.vtvr-gauge-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.vtvr-gauge-lbl{font-size:11px;color:var(--fg-muted);}
+.vtvr-vals{display:flex;gap:20px;}
+.vtvr-spin svg{display:inline-block;animation:spin 1s linear infinite;width:14px;height:14px;vertical-align:-2px;}
+
+/* ===================== Admissão de funcionário: slots ===================== */
+.doc-slots{display:flex;gap:10px;flex-wrap:wrap;}
+.doc-slot{width:110px;height:78px;border:1.5px dashed var(--slate-300);border-radius:var(--r-md);background:var(--slate-50);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:11px;color:var(--slate-500);text-align:center;padding:6px;}
+.doc-slot.filled{border-style:solid;border-color:var(--success-400,#34D399);background:var(--success-100);color:var(--success-700);font-weight:600;}
+.doc-slot svg{width:16px;height:16px;}
+
+/* ===================== Alteração contratual: diff ===================== */
+.diff-card{margin-top:10px;background:var(--slate-50);border-radius:var(--r-md);padding:12px 14px;display:flex;flex-direction:column;gap:6px;}
+.diff-line{font-size:12.5px;}
+.diff-lbl{color:var(--fg-muted);}
+.diff-old{color:var(--danger-600);text-decoration:line-through;}
+.diff-new{color:var(--success-700);font-weight:600;}
+.diff-arrow{color:var(--slate-400);}
+
+/* ===================== Baixa de empresa: tom grave ===================== */
+.baixa-checklist{margin-top:10px;}
+.baixa-final{margin-top:12px;background:#1C1917;border:1px solid #57534E;border-radius:var(--r-md);padding:14px;}
+.baixa-final p{margin:0 0 10px;color:var(--warning-300,#FCD34D);font-size:12.5px;display:flex;align-items:center;gap:8px;}
+
+/* ===================== Alvarás e licenças ===================== */
+.alvara-band{margin-bottom:16px;}
+.alvara-band-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:6px 0;}
+.alvara-band-red{color:var(--danger-700);}
+.alvara-band-amber{color:var(--warning-700);}
+.alvara-band-green{color:var(--success-700);}
+.alvara-band-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;}
+.alvara-card{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:14px;}
+.alvara-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px;}
+.alvara-cliente{font-size:12.5px;color:var(--slate-700);}
+.alvara-orgao{font-size:11.5px;color:var(--fg-muted);}
+.alvara-venc{font-size:11.5px;color:var(--fg-muted);margin-top:2px;}
+.alvara-checklist{margin-top:10px;display:flex;flex-direction:column;gap:6px;}
+.alvara-item{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--slate-700);}
+
+/* ===================== Certificado digital ===================== */
+.certdig-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;}
+.certdig-card{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:16px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;}
+.certdig-tipo{font-size:11.5px;color:var(--fg-muted);}
+.certdig-validade{font-size:11.5px;color:var(--fg-muted);}
+.certdig-checklist{margin-top:8px;width:100%;text-align:left;display:flex;flex-direction:column;gap:6px;}
+.certdig-checklist input[type="date"]{margin-top:4px;border:1px solid var(--slate-300);border-radius:6px;padding:4px 7px;font-size:12px;}
+
+/* ===================== Procurações: carrossel ===================== */
+.carousel-modal{width:640px;max-width:92vw;}
+.carousel-row{display:flex;gap:12px;overflow-x:auto;padding-bottom:4px;}
+.carousel-card{flex:none;width:150px;background:var(--slate-50);border:1px solid var(--slate-200);border-radius:var(--r-md);padding:12px;}
+.carousel-num{width:22px;height:22px;border-radius:50%;background:var(--slate-900);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+.carousel-thumb{margin:10px 0;height:70px;border-radius:6px;background:repeating-linear-gradient(135deg,var(--slate-200) 0 8px,var(--slate-100) 8px 16px);}
+.carousel-text{font-size:11.5px;color:var(--slate-700);line-height:1.4;}
+
+/* ===================== Regularização cadastral ===================== */
+.regcad-select{display:flex;align-items:center;gap:10px;font-size:13px;}
+.regcad-select select{border:1px solid var(--slate-300);border-radius:6px;padding:7px 10px;font-size:13px;}
+.regcad-field{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13px;}
+.regcad-field input{border:1px solid var(--slate-300);border-radius:6px;padding:7px 10px;font-size:13px;flex:1;max-width:280px;}
+
+/* ===================== Cobrança de inadimplentes: timeline ===================== */
+.cob-card{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:16px;margin-bottom:14px;}
+.cob-ultima{font-size:12px;color:var(--fg-muted);margin:2px 0 14px;}
+.cob-timeline{position:relative;display:flex;justify-content:space-between;padding:0 4px;margin-bottom:8px;}
+.cob-marker{display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;}
+.cob-dot{width:10px;height:10px;border-radius:50%;background:var(--slate-200);}
+.cob-marker-past .cob-dot{background:var(--slate-600);}
+.cob-mlabel{font-size:10.5px;color:var(--slate-400);text-align:center;}
+.cob-marker-past .cob-mlabel{color:var(--slate-700);font-weight:600;}
+.cob-pointer{position:absolute;top:-6px;width:2px;height:22px;background:var(--danger-500);}
+.cob-note{font-size:12px;color:var(--slate-700);background:var(--slate-50);border-radius:6px;padding:6px 10px;margin-top:8px;display:flex;gap:6px;align-items:center;}
+.cob-note-form{display:flex;gap:8px;margin-top:10px;}
+.cob-note-form input{flex:1;border:1px solid var(--slate-300);border-radius:6px;padding:7px 10px;font-size:12.5px;}
+
+/* ===================== Reajuste de honorários ===================== */
+.reaj-cell{background:none;border:1px dashed transparent;border-radius:6px;padding:3px 6px;font-size:13px;color:var(--slate-900);font-weight:600;position:relative;}
+.reaj-cell:hover{border-color:var(--slate-300);}
+.reaj-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--brand-500);margin-left:6px;vertical-align:middle;}
+.reaj-flash{animation:balFlash .4s ease;}
+
+/* ===================== Renovação de contratos ===================== */
+.renov-compare{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:14px 4px;}
+.renov-col{background:var(--slate-50);border-radius:var(--r-md);padding:14px;}
+.renov-col-new{background:var(--brand-50);}
+.renov-col-title{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--fg-muted);margin-bottom:8px;}
+.renov-val{font-family:var(--font-display);font-weight:600;font-size:18px;color:var(--slate-900);margin-top:6px;}
+.renov-radio{display:block;font-size:12.5px;margin-bottom:6px;}
+
+/* ===================== Cobrança de doc pendente: quadro por cliente ===================== */
+.doc-client-card{}
+.doc-item{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--slate-100);}
+.doc-item:first-child{border-top:none;}
+.doc-dot{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.doc-dot svg{width:13px;height:13px;stroke-width:2.6;}
+.doc-dot-ok{background:var(--success-100);color:var(--success-700);}
+.doc-dot-warn{background:var(--warning-100);color:var(--warning-700);}
+.doc-name{font-size:12.5px;color:var(--slate-800);flex:1;}
+.doc-nota{width:100%;font-size:11px;color:var(--fg-muted);padding-left:30px;}
+
+/* ===================== Onboarding de clientes ===================== */
+.page-head-flex{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+.client-view-card{background:#fff;border:1px solid var(--border);border-radius:var(--r-xl);box-shadow:var(--shadow-sm);padding:32px;text-align:center;}
+.client-view-text{margin-top:16px;font-size:16px;font-weight:600;color:var(--slate-800);}
 
 /* ===================== Modal (Folha upload/status) ===================== */
 .modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
