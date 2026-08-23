@@ -213,6 +213,13 @@ describe("POST /apuracoes", () => {
 
     assert.equal(res.statusCode, 201);
     assert.equal(res.body.anexo, "III");
+
+    // #365 — folha já completa na criação não deve entrar na fila de polling
+    // do agente (GET /apuracoes/folha-pendente filtra por folha_status =
+    // "pendente"). Achado no review do PR #366 (Vinícius): sem isso, toda
+    // apuração Anexo V aparecia "pendente" mesmo já calculada com dado completo.
+    const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+    assert.equal(insert.payload.folha_status, "verificado");
   });
 
   it("422 quando o cliente cadastrado não pertence ao Simples Nacional", async () => {
@@ -248,6 +255,9 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 201);
     assert.equal(insert.payload.rbt12_usado, 140000);
     assert.equal(insert.payload.receita_mes, 45000);
+    // Anexo fora do V nunca entra na fila de folha do agente (fator_r fica
+    // null), mas o valor gravado segue o default da coluna por consistência.
+    assert.equal(insert.payload.folha_status, "pendente");
   });
 
   it("expõe a composição mensal e as NFes consideradas e excluídas para auditoria", async () => {
