@@ -19,6 +19,7 @@ const APURACAO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const originalFrom = supabase.from;
 const filas = new Map();
 const operacoes = [];
+const chamadasPorTabela = new Map();
 function chave(t, m) {
   return `${t}:${m}`;
 }
@@ -27,8 +28,12 @@ function queue(tabela, metodo, resultado) {
   if (!filas.has(k)) filas.set(k, []);
   filas.get(k).push(resultado);
 }
+function chamadasTabela(tabela) {
+  return chamadasPorTabela.get(tabela) || 0;
+}
 
 supabase.from = function (tabela) {
+  chamadasPorTabela.set(tabela, (chamadasPorTabela.get(tabela) || 0) + 1);
   const consumir = (metodo, fallback) => {
     const k = chave(tabela, metodo);
     const fila = filas.get(k);
@@ -88,6 +93,7 @@ after(() => {
 beforeEach(() => {
   filas.clear();
   operacoes.length = 0;
+  chamadasPorTabela.clear();
 });
 
 // ---------------------------------------------------------------------------
@@ -162,7 +168,7 @@ describe("GET /apuracoes/folha-pendente (#365)", () => {
     assert.equal(res.statusCode, 401);
   });
 
-  it("200 com lista vazia quando não há apurações pendentes", async () => {
+  it("200 com lista vazia quando não há apurações pendentes (sem query desnecessária em clientes)", async () => {
     tokenLicencaValido(CLIENTE_A);
     queue("apuracoes", "await", { data: [], error: null });
 
@@ -171,25 +177,62 @@ describe("GET /apuracoes/folha-pendente (#365)", () => {
 
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body, []);
+    assert.equal(chamadasTabela("clientes"), 0);
   });
 
-  it("200 retorna apurações Anexo V pendentes do cliente da licença, no formato esperado pelo agente", async () => {
+  it("200 retorna apurações Anexo V pendentes do cliente da licença, com nomeEmpresa (agente localiza pasta pelo nome, não por UUID)", async () => {
     tokenLicencaValido(CLIENTE_A);
     queue("apuracoes", "await", {
       data: [{ id: APURACAO_ID, cliente_id: CLIENTE_A, periodo_mes: 3, periodo_ano: 2026 }],
       error: null,
     });
+    queue("clientes", "maybeSingle", { data: { nome: "Souza Contabilidade" }, error: null });
 
     const res = criarResposta();
     await listarFolhaPendente(reqAgente({ headers: { "x-licenca-token": "token-valido" } }), res);
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.body, [{ id: APURACAO_ID, clienteId: CLIENTE_A, mes: 3, ano: 2026 }]);
+    assert.deepEqual(res.body, [
+      { id: APURACAO_ID, clienteId: CLIENTE_A, nomeEmpresa: "Souza Contabilidade", mes: 3, ano: 2026 },
+    ]);
   });
 
-  it("500 quando a consulta falha", async () => {
+  it("busca o nome do cliente em uma única query mesmo com várias apurações pendentes (sem N+1)", async () => {
+    tokenLicencaValido(CLIENTE_A);
+    queue("apuracoes", "await", {
+      data: [
+        { id: "apuracao-1", cliente_id: CLIENTE_A, periodo_mes: 1, periodo_ano: 2026 },
+        { id: "apuracao-2", cliente_id: CLIENTE_A, periodo_mes: 2, periodo_ano: 2026 },
+      ],
+      error: null,
+    });
+    queue("clientes", "maybeSingle", { data: { nome: "Souza Contabilidade" }, error: null });
+
+    const res = criarResposta();
+    await listarFolhaPendente(reqAgente({ headers: { "x-licenca-token": "token-valido" } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.every((item) => item.nomeEmpresa === "Souza Contabilidade"), true);
+    assert.equal(chamadasTabela("clientes"), 1);
+  });
+
+  it("500 quando a consulta de apurações falha", async () => {
     tokenLicencaValido(CLIENTE_A);
     queue("apuracoes", "await", { data: null, error: { message: "falha" } });
+
+    const res = criarResposta();
+    await listarFolhaPendente(reqAgente({ headers: { "x-licenca-token": "token-valido" } }), res);
+
+    assert.equal(res.statusCode, 500);
+  });
+
+  it("500 quando a busca do nome do cliente falha", async () => {
+    tokenLicencaValido(CLIENTE_A);
+    queue("apuracoes", "await", {
+      data: [{ id: APURACAO_ID, cliente_id: CLIENTE_A, periodo_mes: 3, periodo_ano: 2026 }],
+      error: null,
+    });
+    queue("clientes", "maybeSingle", { data: null, error: { message: "falha" } });
 
     const res = criarResposta();
     await listarFolhaPendente(reqAgente({ headers: { "x-licenca-token": "token-valido" } }), res);

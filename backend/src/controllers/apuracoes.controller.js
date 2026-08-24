@@ -779,6 +779,8 @@ export async function recalcularApuracao(req, res) {
 // processos.controller.js (#273). Só apurações originadas de cliente Anexo V
 // (fator_r preenchido — mesma inferência de detalharApuracao/recalcularApuracao)
 // usam Fator R e precisam da folha dos últimos 12 meses.
+// nomeEmpresa vai junto porque o agente localiza a pasta pelo nome da empresa,
+// nunca pelo UUID de clienteId (mesmo padrão de estrutura_pastas.py).
 export async function listarFolhaPendente(req, res) {
   const token = req.headers["x-licenca-token"];
   const licenca = await validarTokenLicenca(token);
@@ -800,9 +802,26 @@ export async function listarFolhaPendente(req, res) {
     return res.status(500).json({ erro: "Erro ao listar apurações com folha pendente" });
   }
 
+  let nomeEmpresa = null;
+  if ((data || []).length > 0) {
+    const { data: cliente, error: erroCliente } = await supabase
+      .from("clientes")
+      .select("nome")
+      .eq("id", licenca.cliente_id)
+      .maybeSingle();
+
+    if (erroCliente) {
+      console.error("[apuracoes.controller] Erro ao buscar nome do cliente:", erroCliente.message);
+      return res.status(500).json({ erro: "Erro ao buscar dados do cliente" });
+    }
+
+    nomeEmpresa = cliente?.nome ?? null;
+  }
+
   const apuracoes = (data || []).map((apuracao) => ({
     id: apuracao.id,
     clienteId: apuracao.cliente_id,
+    nomeEmpresa,
     mes: apuracao.periodo_mes,
     ano: apuracao.periodo_ano,
   }));
