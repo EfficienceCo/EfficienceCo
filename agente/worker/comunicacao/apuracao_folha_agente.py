@@ -16,7 +16,8 @@ def _headers_licenca():
 def buscar_folha_pendente():
     """
     GET /apuracoes/folha-pendente
-    Retorna lista de dicts (pode ser vazia). Levanta ApiError/RuntimeError em falha HTTP.
+    Retorna [{ id, clienteId, nomeEmpresa, mes, ano }, ...] (pode ser vazia).
+    Levanta ApiError/RuntimeError em falha HTTP.
     """
     response = client.get(
         "/apuracoes/folha-pendente",

@@ -20,12 +20,11 @@ def _subtrair_meses(ano, mes, n):
 
 def resolver_nome_cliente(item):
     """
-    Resolve o nome da pasta em disco a partir do item do poll.
+    Nome da pasta em disco = clientes.nome, nunca o UUID de clienteId.
 
-    Em aberto: lookup clienteId → clientes.nome (disco usa nome, não UUID).
-    Por enquanto só aceita nome já presente no payload do GET, se o backend enviar.
+    Contrato do GET /apuracoes/folha-pendente (#365): campo nomeEmpresa.
     """
-    for chave in ("nome", "nomeEmpresa", "pasta"):
+    for chave in ("nomeEmpresa", "nome", "pasta"):
         valor = item.get(chave)
         if isinstance(valor, str) and valor.strip():
             return valor.strip()
@@ -100,10 +99,9 @@ def _processar_item(item):
 
     nome = resolver_nome_cliente(item)
     if not nome:
-        # Resolução clienteId → nome ainda em aberto; sem nome não dá para achar a pasta.
         print(
-            f"[folha_fator_r] Sem nome/pasta no item (apuracao={apuracao_id}, "
-            f"clienteId={item.get('clienteId')}) — resolução UUID→nome em aberto; pulando"
+            f"[folha_fator_r] Sem nomeEmpresa no item (apuracao={apuracao_id}, "
+            f"clienteId={item.get('clienteId')}) — impossível resolver pasta local; pulando"
         )
         return
 

@@ -23,9 +23,10 @@ def test_subtrair_meses_virada_de_ano():
     assert _subtrair_meses(2026, 3, 11) == (2025, 4)
 
 
-def test_resolver_nome_cliente_aceita_nome_no_payload():
-    assert resolver_nome_cliente({"nome": " Padaria do João "}) == "Padaria do João"
-    assert resolver_nome_cliente({"nomeEmpresa": "X"}) == "X"
+def test_resolver_nome_cliente_prioriza_nome_empresa():
+    assert resolver_nome_cliente({"nomeEmpresa": " Padaria do João "}) == "Padaria do João"
+    assert resolver_nome_cliente({"nome": "legado"}) == "legado"
+    assert resolver_nome_cliente({"nomeEmpresa": "Oficial", "nome": "legado"}) == "Oficial"
     assert resolver_nome_cliente({"clienteId": "uuid-sem-nome"}) is None
 
 
@@ -162,7 +163,7 @@ def test_processar_folha_fator_r_fluxo_completo(tmp_path):
     item = {
         "id": "apuracao-1",
         "clienteId": "uuid",
-        "nome": nome,
+        "nomeEmpresa": nome,
         "mes": 3,
         "ano": 2026,
     }
