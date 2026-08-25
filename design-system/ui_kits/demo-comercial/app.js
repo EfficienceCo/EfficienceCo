@@ -134,7 +134,7 @@ function renderSidebar(active){
       + '<div class="sb-section">Gestão · admin do escritório</div>' + items(NAV_GESTAO)
     + '</nav>'
     + '<div class="agent-card"><div class="agent-top"><span class="heartbeat"></span><span class="agent-name">Agente local</span><span class="agent-state">Online</span></div><div class="agent-meta">Sincronizou há 2 min · 1.243 automações hoje</div></div>'
-    + '<div class="sb-user"><span class="avatar">JS</span><div style="flex:1"><div class="sb-uname">'+STATE.user.nome+'</div><div class="sb-umail">'+STATE.user.email+'</div></div><button class="sb-logout" data-logout>'+icon('logout')+'</button></div>'
+    + '<div class="sb-user"><span class="avatar">JS</span><div style="flex:1;min-width:0"><div class="sb-uname">'+STATE.user.nome+'</div><div class="sb-umail">'+STATE.user.email+'</div></div><button class="sb-logout" data-logout>'+icon('logout')+'</button></div>'
   + '</aside>';
 }
 function renderTopbar(route){
@@ -861,7 +861,9 @@ function renderConciliacao(){
 
   return '<div class="page">'
     + '<div class="page-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">'
-    + '<div><p class="crumbline"><b>Contábil</b> &gt; Conciliação bancária</p><h1>Revisão da conciliação</h1><p>Padaria do João · Conta Bradesco 1234-5 · Agosto/2026</p></div>'
+    + '<div><p class="crumbline"><b>Contábil</b> &gt; Conciliação bancária</p>'
+    + '<div class="client-pill">'+icon('predio')+'<span>Padaria do João Ltda</span></div>'
+    + '<h1>Revisão da conciliação</h1><p>Conta Bradesco 1234-5 · Agosto/2026</p></div>'
     + '<div style="display:flex;align-items:center;gap:10px;">'+statusBadge+acaoHeader+'</div>'
     + '</div>'
     + '<div class="card card-pad"><div style="font-size:12.5px;font-weight:600;color:var(--slate-700);margin-bottom:8px;">'+conciliadas+' de '+total+' transações conciliadas</div>'
@@ -1140,13 +1142,14 @@ function renderFolha(){
       var arquivos = c[1]==='concluido' ? '<button class="btn-line" data-folha-baixar="'+c[0]+'" style="margin-left:8px;">Baixar holerites</button>' : '';
       return '<div class="step-row" style="justify-content:space-between;"><span>'+c[0]+'</span><span>'+badge(rotulo,kind)+arquivos+'</span></div>';
     }).join('');
-    var statusBody = '<div class="grid4" style="margin-bottom:16px;">'
+    var statusBody = noteChip('Este status acompanha só o processamento da planilha enviada. O checklist da página "Processos" é um controle separado e pode não bater com o que aparece aqui — um cliente pode aparecer pendente ali mesmo já com a folha calculada, ou vice-versa.')
+      + '<div class="grid4" style="margin:14px 0 16px;">'
       + '<div class="stat"><div class="stat-label">Pendente</div><div class="stat-value tnum" style="color:var(--warning-700);">'+contadores.pendente+'</div></div>'
       + '<div class="stat"><div class="stat-label">Processando</div><div class="stat-value tnum" style="color:var(--brand-700);">'+contadores.processando+'</div></div>'
       + '<div class="stat"><div class="stat-label">Concluído</div><div class="stat-value tnum" style="color:var(--success-700);">'+contadores.concluido+'</div></div>'
       + '<div class="stat"><div class="stat-label">Erro</div><div class="stat-value tnum" style="color:var(--danger-700);">'+contadores.erro+'</div></div>'
       + '</div>' + linhas;
-    modal = renderModal('Status da folha', 'Agosto · 2026', statusBody);
+    modal = renderModal('Status da folha', 'Agosto · 2026', statusBody, false, 'modal-wide');
   } else if (s.modal === 'upload') {
     modal = renderModal('Upload da folha', 'Envie a planilha preenchida para iniciar o processamento.', '<div style="border:1.5px dashed var(--slate-300);border-radius:var(--r-md);padding:26px;text-align:center;color:var(--fg-muted);font-size:13px;">'+icon('upload')+'<div style="margin-top:8px;">Arraste o arquivo ou clique para selecionar (.xlsx)</div></div>', true);
   }
@@ -1180,9 +1183,9 @@ function bindFolha(){
     if (pendente) setTimeout(function(){ pendente[1] = 'concluido'; render(); }, 2200);
   });
 }
-function renderModal(title, subtitle, body, hasFooter){
+function renderModal(title, subtitle, body, hasFooter, extraClass){
   return '<div class="modal-overlay" data-modal-close>'
-    + '<div class="modal-box" onclick="event.stopPropagation()">'
+    + '<div class="modal-box'+(extraClass?' '+extraClass:'')+'" onclick="event.stopPropagation()">'
     + '<div class="modal-head"><div><div class="modal-title">'+title+'</div><div class="modal-sub">'+subtitle+'</div></div><button class="icon-btn" data-modal-close>'+icon('x')+'</button></div>'
     + '<div class="modal-body">'+body+'</div>'
     + (hasFooter ? '<div class="modal-foot"><button class="btn-line" data-modal-close>Cancelar</button><button class="btn-dark" data-folha-send>Enviar planilha</button></div>' : '')
@@ -1281,17 +1284,58 @@ var ESOCIAL_EVENTS_HIST_SEED = [
   {codigo:'S-1200', cliente:'Clínica Rosa', desc:'Remuneração — folha ago/2026', data:'05/08/2026'},
   {codigo:'S-2299', cliente:'Mercado Bom Preço', desc:'Desligamento — Pedro Lima', data:'10/08/2026'}
 ];
+/* Pacote de 12 eventos decidido em reunião de sprint (24/08/2026) — Grupos
+   2, 3 e 4 completos (ver automacoes/a3-esocial.md). Todos os 12 aparecem
+   como cards idênticos (demo comercial não expõe o que está "em
+   desenvolvimento" ou "protótipo" pro público) — só a Admissão (S-2200)
+   tem `enabled:true` e de fato abre o formulário; os outros 11 não têm
+   data-esoc-pick, então o clique não faz nada. */
 var ESOCIAL_EVENT_TYPES = [
-  { key:'S-2200', label:'Admissão (S-2200)', ic:'entrada' },
-  { key:'S-2230', label:'Afastamento (S-2230)', ic:'cruzmedica' },
-  { key:'S-2299', label:'Desligamento (S-2299)', ic:'logout' }
+  { key:'S-2200', grupo:'Ciclo de vida do vínculo', label:'Admissão (S-2200)', ic:'entrada', enabled:true },
+  { key:'S-2205', grupo:'Ciclo de vida do vínculo', label:'Alteração de dados cadastrais (S-2205)', ic:'pessoa', enabled:false },
+  { key:'S-2206', grupo:'Ciclo de vida do vínculo', label:'Alteração de contrato (S-2206)', ic:'documento', enabled:false },
+  { key:'S-2230', grupo:'Ciclo de vida do vínculo', label:'Afastamento temporário (S-2230)', ic:'calendario', enabled:false },
+  { key:'S-2298', grupo:'Ciclo de vida do vínculo', label:'Reintegração (S-2298)', ic:'ciclo', enabled:false },
+  { key:'S-2299', grupo:'Ciclo de vida do vínculo', label:'Desligamento (S-2299)', ic:'logout', enabled:false },
+  { key:'S-2210', grupo:'Saúde e segurança do trabalho', label:'Comunicação de acidente — CAT (S-2210)', ic:'escudo', enabled:false },
+  { key:'S-2220', grupo:'Saúde e segurança do trabalho', label:'Monitoramento da saúde — ASO (S-2220)', ic:'cruzmedica', enabled:false },
+  { key:'S-2240', grupo:'Saúde e segurança do trabalho', label:'Condições ambientais (S-2240)', ic:'selo', enabled:false },
+  { key:'S-1200', grupo:'Fechamento periódico da folha', label:'Remuneração mensal (S-1200)', ic:'comprovante', enabled:false },
+  { key:'S-1210', grupo:'Fechamento periódico da folha', label:'Pagamentos (S-1210)', ic:'cifrao', enabled:false },
+  { key:'S-1299', grupo:'Fechamento periódico da folha', label:'Fechamento dos eventos (S-1299)', ic:'pasta', enabled:false }
 ];
 function esocialState(){ return ex('esocial', function(){ return { step:0, evento:null, form:{ nome:'', cpf:'', nit:'', nasc:'', extra:'' }, transmitting:false, hist: ESOCIAL_EVENTS_HIST_SEED.slice() }; }); }
 function cpfValida(v){ return /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(v||''); }
+function maskCpf(v){
+  var d = String(v||'').replace(/\D/g,'').slice(0,11);
+  if (d.length > 9) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4');
+  if (d.length > 6) return d.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+  if (d.length > 3) return d.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+  return d;
+}
 function esocialExtraLabel(evt){ return evt==='S-2200' ? 'Cargo / Salário' : (evt==='S-2230' ? 'CID / Período' : 'Motivo do desligamento'); }
+function esocialPrefill(key){
+  if (key === 'S-2200') return { nome:'Marcos Ferreira', cpf:'123.456.789-00', nit:'123.45678.90-1', nasc:'1998-04-12', extra:'Auxiliar de padaria — R$ 2.200,00' };
+  return { nome:'', cpf:'', nit:'', nasc:'', extra:'' };
+}
+function renderEsocPicker(){
+  var groups = [];
+  ESOCIAL_EVENT_TYPES.forEach(function(t){
+    var g = groups.filter(function(x){ return x.nome===t.grupo; })[0];
+    if (!g){ g = { nome:t.grupo, items:[] }; groups.push(g); }
+    g.items.push(t);
+  });
+  return groups.map(function(g){
+    var cards = g.items.map(function(t){
+      var attr = t.enabled ? ' data-esoc-pick="'+t.key+'"' : '';
+      return '<button type="button" class="esoc-pick-card"'+attr+'>'+icon(t.ic)+'<span>'+t.label+'</span></button>';
+    }).join('');
+    return '<div class="esoc-group-label">'+g.nome+'</div><div class="esoc-picker">'+cards+'</div>';
+  }).join('');
+}
 function renderEsocial(){
   var s = esocialState();
-  var picker = s.step===1 ? '<div class="esoc-picker">'+ESOCIAL_EVENT_TYPES.map(function(t){ return '<button type="button" class="esoc-pick-card" data-esoc-pick="'+t.key+'">'+icon(t.ic)+'<span>'+t.label+'</span></button>'; }).join('')+'</div>' : '';
+  var picker = s.step===1 ? renderEsocPicker() : '';
   var form = '';
   if (s.step===2){
     var cpfOk = s.form.cpf === '' || cpfValida(s.form.cpf);
@@ -1329,10 +1373,16 @@ function bindEsocial(){
   var newBtn = document.querySelector('[data-esoc-new]');
   if (newBtn) newBtn.addEventListener('click', function(){ s.step = 1; render(); });
   document.querySelectorAll('[data-esoc-pick]').forEach(function(el){
-    el.addEventListener('click', function(){ s.evento = el.getAttribute('data-esoc-pick'); s.step = 2; s.form = { nome:'', cpf:'', nit:'', nasc:'', extra:'' }; render(); });
+    el.addEventListener('click', function(){ s.evento = el.getAttribute('data-esoc-pick'); s.step = 2; s.form = esocialPrefill(s.evento); render(); });
   });
   document.querySelectorAll('[data-esoc-field]').forEach(function(el){
-    el.addEventListener('input', function(){ s.form[el.getAttribute('data-esoc-field')] = el.value; render(); });
+    el.addEventListener('input', function(){
+      var key = el.getAttribute('data-esoc-field');
+      var val = key === 'cpf' ? maskCpf(el.value) : el.value;
+      if (key === 'cpf') el.value = val;
+      s.form[key] = val;
+      render();
+    });
   });
   var next = document.querySelector('[data-esoc-next]');
   if (next) next.addEventListener('click', function(){ s.step = 3; s.transmitDone = false; render(); });
@@ -1561,34 +1611,38 @@ function bindAdmissaoFuncionario(){
    SOCIETÁRIO
    ============================================================================ */
 
-/* ---- Abertura de empresa (a4): réplica do fluxo real de
-   frontend/src/app/dashboard/processos/page.jsx, começando limpo — sem
-   nada pré-pronto: 1) formulário de dados da empresa, 2) "Gerar contrato
-   social" processa e mostra a mensagem de sucesso (nada é gerado de
-   verdade), 3) "Criar estrutura de pastas" aparece como próxima ação,
-   processa e mostra sucesso, 4) só então o checklist completo aparece —
-   etapa manual = checkbox, etapa automatizada = confirmação inline +
-   "Concluir" que mostra "Processando..." e assenta em "✓ Execução
-   concluída" com arquivo/confirmação gerada. ---- */
+/* ---- Abertura de empresa (a4): réplica fiel do checklist real de
+   ETAPAS_PADRAO (backend/src/services/processos.service.js) — 9 etapas,
+   não 10 (a versão antiga desta tela tinha uma etapa inventada "Aguardar
+   CNPJ" e duas ações automatizadas — certificado digital, cadastro de
+   folha — que não existem no backend real; corrigido conforme
+   automacoes/a4-abertura-de-empresa.md, seção Especificação técnica).
+   1) formulário de dados da empresa, 2) checklist único de 9 itens na
+   ordem real — etapa manual = checkbox, etapa automatizada (Gerar
+   contrato social / Criar estrutura de pastas, únicas automatizadas de
+   verdade) = formulário inline + "Concluir" com "Processando..." e
+   card verde "✓ Execução concluída", igual ao componente EtapaAutomatizada
+   de frontend/src/app/dashboard/processos/page.jsx. Lista expansível,
+   não kanban — a UI real também não é kanban. ---- */
 var ABERTURA_CHECKLIST_BASE = [
-  { nome:'Protocolar na Junta Comercial', tipo:'manual', status:'pending', nota:'—' },
-  { nome:'Solicitar CNPJ na Receita Federal', tipo:'manual', status:'pending', nota:'—' },
-  { nome:'Aguardar CNPJ', tipo:'manual', status:'pending', nota:'manual — prazo 3 dias úteis' },
-  { nome:'Inscrição Estadual', tipo:'manual', status:'pending', nota:'—' },
-  { nome:'Inscrição Municipal / Alvará', tipo:'manual', status:'pending', nota:'—' },
-  { nome:'Abertura de conta bancária', tipo:'manual', status:'pending', nota:'—' },
-  { nome:'Certificado digital e-CNPJ', tipo:'auto', status:'pending', nota:'automático após CNPJ', arquivo:null, acao:'certificado' },
-  { nome:'Cadastrar no sistema de folha', tipo:'auto', status:'pending', nota:'automático', arquivo:null, acao:'cadastro_folha' }
+  { nome:'Verificar viabilidade do nome empresarial', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Registrar na Junta Comercial', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Gerar contrato social', tipo:'auto', status:'pending', nota:'automático', arquivo:null, acao:'gerar_contrato_social' },
+  { nome:'Obter CNPJ na Receita Federal', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Registrar no município (Alvará)', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Registrar no estado (Inscrição Estadual, se aplicável)', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Abrir conta bancária pessoa jurídica', tipo:'manual', status:'pending', nota:'—' },
+  { nome:'Criar estrutura de pastas', tipo:'auto', status:'pending', nota:'automático', arquivo:null, acao:'criar_pastas' },
+  { nome:'Configurar emissão de NFS-e', tipo:'manual', status:'pending', nota:'—' }
 ];
 function socioVazio(){ return { nome:'', cpf:'', participacao:'' }; }
 function aberturaState(){
   return ex('abertura-empresa', function(){
     return {
       fase:'form',
-      form:{ nomeEmpresa:'', capitalSocial:'', objetoSocial:'', endereco:'' },
-      socios:[ socioVazio() ],
+      form:{ nomeEmpresa:'Padaria Estrela Ltda', capitalSocial:'50000', objetoSocial:'Comércio varejista de pães, doces e produtos de padaria', endereco:'Rua das Acácias, 245 — São Paulo/SP' },
+      socios:[ { nome:'Fernanda Duarte', cpf:'234.567.890-11', participacao:'60' }, { nome:'Rafael Nunes', cpf:'345.678.901-22', participacao:'40' } ],
       erroForm:'',
-      contratoStatus:'idle', pastasStatus:'idle',
       steps: ABERTURA_CHECKLIST_BASE.map(function(s){ return Object.assign({}, s); }),
       execAberto:null, execProcessando:false
     };
@@ -1622,60 +1676,21 @@ function renderAberturaForm(s){
 }
 function renderAberturaProcesso(s){
   var nome = s.form.nomeEmpresa || 'a empresa';
-  var intro = '';
 
-  // etapa 1 — contrato social
-  if (s.contratoStatus === 'idle' || s.contratoStatus === 'processando'){
-    intro += '<div class="card card-pad" style="margin-bottom:14px;">'
-      + '<div style="font-weight:600;font-size:14px;color:var(--slate-900);margin-bottom:6px;">Gerando contrato social</div>'
-      + '<div class="form-mock-field" style="justify-content:flex-start;gap:10px;">'+sp()+'<span>Preenchendo a minuta do contrato social com os dados informados...</span></div>'
-      + '</div>';
-    return '<div class="page">'+aberturaHeader(nome)+intro+'</div>';
-  }
-  intro += '<div class="card card-pad" style="margin-bottom:14px;background:var(--success-50,#ECFDF5);border-color:var(--success-200,#A7F3D0);">'
-    + '<div style="display:flex;align-items:center;gap:8px;color:var(--success-700);font-weight:600;font-size:13.5px;">'+icon('checkcircle')+'<span>Contrato social gerado</span></div>'
-    + '<div style="font-size:12.5px;color:var(--fg-muted);margin-top:4px;">contrato_social_v1.docx — pronto para revisão</div>'
-    + '</div>';
-
-  // etapa 2 — estrutura de pastas
-  if (s.pastasStatus === 'idle'){
-    intro += '<div class="card card-pad" style="margin-bottom:14px;">'
-      + '<div style="font-weight:600;font-size:14px;color:var(--slate-900);margin-bottom:8px;">Criar estrutura de pastas</div>'
-      + '<p style="font-size:12.5px;color:var(--fg-muted);margin:0 0 12px;">Cria automaticamente a árvore de pastas do cliente no servidor (Documentos, NFs, Folha, Declarações).</p>'
-      + '<div style="display:flex;justify-content:flex-end;"><button class="btn-dark" data-abertura-criar-pastas>Criar estrutura de pastas</button></div>'
-      + '</div>';
-    return '<div class="page">'+aberturaHeader(nome)+intro+'</div>';
-  }
-  if (s.pastasStatus === 'processando'){
-    intro += '<div class="card card-pad" style="margin-bottom:14px;">'
-      + '<div style="font-weight:600;font-size:14px;color:var(--slate-900);margin-bottom:6px;">Criando estrutura de pastas</div>'
-      + '<div class="form-mock-field" style="justify-content:flex-start;gap:10px;">'+sp()+'<span>A solicitação foi enviada. O resultado aparecerá automaticamente.</span></div>'
-      + '</div>';
-    return '<div class="page">'+aberturaHeader(nome)+intro+'</div>';
-  }
-  intro += '<div class="card card-pad" style="margin-bottom:14px;background:var(--success-50,#ECFDF5);border-color:var(--success-200,#A7F3D0);">'
-    + '<div style="display:flex;align-items:center;gap:8px;color:var(--success-700);font-weight:600;font-size:13.5px;">'+icon('checkcircle')+'<span>Estrutura de pastas criada</span></div>'
-    + '<div style="font-size:12.5px;color:var(--fg-muted);margin-top:4px;">CLIENTES/'+esc(nome)+'/Documentos, /NFs, /Folha, /Declarações</div>'
-    + '</div>';
-
-  // checklist completo
-  var doneChecklist = s.steps.filter(function(st){return st.status==='ok';}).length;
-  var doneTotal = 2 + doneChecklist, totalSteps = 2 + s.steps.length;
+  var doneTotal = s.steps.filter(function(st){return st.status==='ok';}).length;
+  var totalSteps = s.steps.length;
   var pct = Math.round(doneTotal/totalSteps*100);
   var rows = s.steps.map(function(st,i){
     if (st.status==='ok'){
-      var arquivoLink = st.arquivo ? '<span class="step-note" style="color:var(--success-700);">— arquivo: '+st.arquivo+'</span>' : '';
-      return '<div class="step-row"><span style="color:var(--success-600);display:inline-flex;">'+icon('checkcircle')+'</span><span>'+st.nome+'</span><span class="step-note">('+st.nota+')</span>'+arquivoLink+'</div>';
-    }
-    if (st.nome==='Aguardar CNPJ' && s.steps[1].status==='ok' && st.status==='pending'){
-      return '<div class="step-row"><span style="color:var(--warning-600);display:inline-flex;">'+icon('clock')+'</span><span>'+st.nome+'</span><span class="step-note">('+st.nota+')</span>'
-        + '<span style="margin-left:auto;display:flex;align-items:center;gap:8px;">'+badge('Em andamento','warn')+'<button class="btn-line" data-abertura-cnpj-obtido>Marcar CNPJ obtido</button></span></div>';
+      var arquivoLink = st.arquivo ? '<span class="step-note" style="color:var(--success-700);">— '+st.arquivo+'</span>' : '';
+      var autoTagDone = st.tipo==='auto' ? '<span class="badge-auto">'+icon('bolt')+'Automatizado</span>' : '';
+      return '<div class="step-row'+(st.tipo==='auto'?' step-row-auto':'')+'"><span style="color:var(--success-600);display:inline-flex;">'+icon('checkcircle')+'</span><span>'+st.nome+'</span>'+autoTagDone+arquivoLink+'</div>';
     }
     if (st.tipo==='manual'){
-      return '<label class="step-row" style="cursor:pointer;"><input type="checkbox" data-abertura-manual="'+i+'" style="width:15px;height:15px;"><span style="color:var(--slate-400);">'+st.nome+'</span><span class="step-note">('+st.nota+')</span></label>';
+      return '<label class="step-row" style="cursor:pointer;"><input type="checkbox" data-abertura-manual="'+i+'" style="width:15px;height:15px;"><span style="color:var(--slate-400);">'+st.nome+'</span></label>';
     }
     var aberto = s.execAberto === i;
-    var linha = '<div class="step-row" style="cursor:pointer;" data-abertura-abrir="'+i+'"><span class="step-empty"></span><span style="color:var(--slate-400);">'+st.nome+'</span><span class="step-note">('+st.nota+')</span><span style="margin-left:auto;">'+badge('Pendente','neutral')+'</span></div>';
+    var linha = '<div class="step-row step-row-auto" style="cursor:pointer;" data-abertura-abrir="'+i+'"><span class="step-auto-ic">'+icon('bolt')+'</span><span style="color:var(--slate-800);font-weight:600;">'+st.nome+'</span><span class="badge-auto">Automatizado</span><span style="margin-left:auto;">'+badge('Pendente','neutral')+'</span></div>';
     if (!aberto) return linha;
     var painel = s.execProcessando
       ? '<div class="form-mock-field" style="justify-content:flex-start;gap:10px;">'+sp()+'<span>A solicitação foi enviada. O resultado aparecerá automaticamente.</span></div>'
@@ -1685,7 +1700,7 @@ function renderAberturaProcesso(s){
     return linha + painel;
   }).join('');
 
-  intro += '<div class="card card-pad" style="margin-bottom:14px;"><div class="proc-top" style="margin-bottom:8px;"><span style="font-size:13px;font-weight:600;color:var(--slate-700)">Progresso do processo</span><span style="font-size:12.5px;color:var(--fg-muted)">'+doneTotal+' de '+totalSteps+' etapas</span></div>'
+  var intro = '<div class="card card-pad" style="margin-bottom:14px;"><div class="proc-top" style="margin-bottom:8px;"><span style="font-size:13px;font-weight:600;color:var(--slate-700)">Progresso do processo</span><span style="font-size:12.5px;color:var(--fg-muted)">'+doneTotal+' de '+totalSteps+' etapas</span></div>'
     + '<div style="display:flex;align-items:center;gap:12px;"><div class="progress-track"><div class="progress-fill" style="width:'+pct+'%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">'+pct+'%</span></div></div>'
     + '<div class="card"><div class="card-head"><h2>Checklist de abertura</h2></div><div class="card-pad">'+rows+'</div></div>';
 
@@ -1725,29 +1740,15 @@ function bindAbertura(){
       s.erroForm = 'Informe o nome da empresa.'; render(); return;
     }
     s.erroForm = '';
-    s.fase = 'processo'; s.contratoStatus = 'processando'; render();
-    setTimeout(function(){ s.contratoStatus = 'pronto'; render(); }, 1400);
+    s.fase = 'processo'; render();
   });
 
-  // etapa contrato/pastas
-  var pastasBtn = document.querySelector('[data-abertura-criar-pastas]');
-  if (pastasBtn) pastasBtn.addEventListener('click', function(){
-    s.pastasStatus = 'processando'; render();
-    setTimeout(function(){ s.pastasStatus = 'pronto'; render(); }, 1400);
-  });
-
-  // checklist
+  // checklist único de 9 etapas (ver ABERTURA_CHECKLIST_BASE)
   document.querySelectorAll('[data-abertura-manual]').forEach(function(el){
     el.addEventListener('change', function(){
       s.steps[+el.getAttribute('data-abertura-manual')].status = 'ok';
       render();
     });
-  });
-  var cnpjBtn = document.querySelector('[data-abertura-cnpj-obtido]');
-  if (cnpjBtn) cnpjBtn.addEventListener('click', function(){
-    var st = s.steps.find(function(x){ return x.nome==='Aguardar CNPJ'; });
-    if (st) st.status = 'ok';
-    render();
   });
   document.querySelectorAll('[data-abertura-abrir]').forEach(function(el){
     el.addEventListener('click', function(){
@@ -1763,8 +1764,11 @@ function bindAbertura(){
     if (s.execProcessando) return;
     s.execProcessando = true; render();
     setTimeout(function(){
+      var nome = s.form.nomeEmpresa || 'a empresa';
       s.steps[i].status = 'ok';
-      s.steps[i].arquivo = s.steps[i].acao === 'certificado' ? 'certificado_e-cnpj.pfx' : 'cadastro_folha_confirmacao.pdf';
+      s.steps[i].arquivo = s.steps[i].acao === 'gerar_contrato_social'
+        ? 'arquivo gerado: contrato_social_v1.docx'
+        : '8 subpastas criadas em CLIENTES/'+nome+'/ (Documentos, Contratos, Requerimentos, Comprovantes, Correspondencias, Folha, Notas Fiscais, Declaracoes)';
       s.execProcessando = false; s.execAberto = null;
       render();
     }, 1400);
@@ -2022,7 +2026,7 @@ function renderHonorarios(){
     var r = s.rows[s.painel];
     painel = '<div class="modal-overlay" data-honor-close><div class="modal-box" onclick="event.stopPropagation()">'
       + '<div class="modal-head"><div><div class="modal-title">'+r.cliente+'</div><div class="modal-sub">'+badge(r.statusFinal)+'</div></div><button class="icon-btn" data-honor-close>'+icon('x')+'</button></div>'
-      + '<div class="modal-body"><p style="font-size:13px;color:var(--fg-muted)">Boleto de '+r.comp+' no valor de '+fmtBRL(r.valor)+', vencido em '+r.venc+'.</p>'+(s.reenviado===s.painel?'<div class="note-chip">'+icon('check')+'<span>Boleto reenviado por e-mail e WhatsApp.</span></div>':'')+'</div>'
+      + '<div class="modal-body"><p style="font-size:13px;color:var(--fg-muted)">Boleto de '+r.comp+' no valor de '+fmtBRL(r.valor)+', vencido em '+r.venc+'.</p>'+(s.reenviado===s.painel?'<div class="note-chip">'+icon('check')+'<span>Boleto reenviado por e-mail.</span></div>':'')+'</div>'
       + '<div class="modal-foot"><button class="btn-dark" data-honor-reenviar>Reenviar boleto</button></div></div></div>';
   }
   return '<div class="page">'
@@ -2060,8 +2064,8 @@ function bindHonorarios(){
 /* ---- Cobrança de inadimplentes (a5 tela 2): timeline horizontal por cliente ---- */
 var COBRANCA_TIMELINE_MARKERS = ['D-3 · aviso','D+1 · leve','D+5 · firme','D+10 · escalar'];
 function cobrancaInadState(){ return ex('cobranca-inadimplentes', function(){ return { rows: [
-  { cliente:'Transportes Veloz', pos:1, ultima:'2º lembrete enviado por e-mail em 19/08', notas:[], noteOpen:false, noteVal:'' },
-  { cliente:'Mercado Bom Preço', pos:0, ultima:'Boleto de agosto ainda não confirmado', notas:[], noteOpen:false, noteVal:'' }
+  { cliente:'Transportes Veloz', pos:1, ultima:'2º lembrete enviado por e-mail em 19/08', notas:[], noteOpen:false, noteVal:'Cliente confirmou pagamento até 28/08.' },
+  { cliente:'Mercado Bom Preço', pos:0, ultima:'Boleto de agosto ainda não confirmado', notas:[], noteOpen:false, noteVal:'Cliente pediu prazo até dia 15.' }
 ] }; }); }
 function renderCobrancaInadimplentes(){
   var s = cobrancaInadState();
@@ -2223,8 +2227,8 @@ function bindFolhaInterna(){
 
 /* ---- Cobrança de doc pendente (b6): quadro por cliente, botão por item ---- */
 function cobrancaDocState(){ return ex('cobranca-doc', function(){ return { clientes: [
-  { cliente:'Padaria do João', docs:[ { nome:'Extrato bancário de julho', kind:'warn', nota:'Lembrete enviado (2x)' } ] },
-  { cliente:'Mercado Bom Preço', docs:[ { nome:'Comprovantes de despesas de agosto', kind:'warn', nota:'Lembrete enviado' } ] },
+  { cliente:'Padaria do João', docs:[ { nome:'Extrato bancário de julho', kind:'warn', nota:'Lembrete enviado (2x)', count:2 } ] },
+  { cliente:'Mercado Bom Preço', docs:[ { nome:'Comprovantes de despesas de agosto', kind:'warn', nota:'Lembrete enviado', count:1 } ] },
   { cliente:'Oficina Silva', docs:[ { nome:'Extrato bancário de julho', kind:'ok', nota:'Recebido' } ] }
 ], log: [
   ['19/08','Padaria do João','Lembrete #2 enviado — extrato bancário de julho','info'],
@@ -2232,13 +2236,21 @@ function cobrancaDocState(){ return ex('cobranca-doc', function(){ return { clie
   ['15/08','Oficina Silva','Documento recebido — extrato bancário de julho','sucesso']
 ] }; }); }
 function docKindIcon(k){ return k==='ok' ? icon('check') : (k==='warn' ? icon('clock') : ''); }
+function tickText(ts){
+  var segs = Math.max(0, Math.floor((Date.now()-ts)/1000));
+  if (segs < 60) return 'Lembrete enviado há ' + segs + (segs===1?' segundo':' segundos');
+  var mins = Math.floor(segs/60);
+  return 'Lembrete enviado há ' + mins + (mins===1?' minuto':' minutos');
+}
 function renderCobrancaDoc(){
   var s = cobrancaDocState();
   var cards = s.clientes.map(function(c,ci){
     var items = c.docs.map(function(d,di){
+      var notaTexto = d.enviadoEm ? tickText(d.enviadoEm) : d.nota;
+      var botao = (d.kind !== 'ok' && !d.enviadoEm) ? '<button class="link-btn" data-cobdoc-lembrete="'+ci+':'+di+'">Enviar lembrete agora</button>' : '';
       return '<div class="doc-item"><span class="doc-dot doc-dot-'+d.kind+'">'+docKindIcon(d.kind)+'</span><span class="doc-name">'+d.nome+'</span>'
-        + (d.kind !== 'ok' ? '<button class="link-btn" data-cobdoc-lembrete="'+ci+':'+di+'">Enviar lembrete agora</button>' : '')
-        + '<div class="doc-nota">'+d.nota+'</div></div>';
+        + botao
+        + '<div class="doc-nota">'+notaTexto+'</div></div>';
     }).join('');
     return '<div class="card card-pad doc-client-card"><div class="strong" style="margin-bottom:8px;">'+c.cliente+'</div>'+items+'</div>';
   }).join('');
@@ -2255,8 +2267,15 @@ function bindCobrancaDoc(){
     el.addEventListener('click', function(){
       var parts = el.getAttribute('data-cobdoc-lembrete').split(':'); var ci=+parts[0], di=+parts[1];
       var d = s.clientes[ci].docs[di];
-      d.kind = 'warn'; d.nota = 'Lembrete enviado agora';
-      s.log.unshift(['23/08', s.clientes[ci].cliente, 'Lembrete enviado — '+d.nome, 'info']);
+      d.count = (d.count||0) + 1;
+      d.kind = 'warn'; d.enviadoEm = Date.now();
+      s.log.unshift(['23/08', s.clientes[ci].cliente, 'Lembrete #'+d.count+' enviado — '+d.nome, 'info']);
+      if (!s.tickInterval){
+        s.tickInterval = setInterval(function(){
+          if (currentRoute() !== 'automacao/cobranca-doc'){ clearInterval(s.tickInterval); s.tickInterval = null; return; }
+          render();
+        }, 1000);
+      }
       render();
     });
   });
@@ -2352,7 +2371,7 @@ function renderDashboard(){
       + '<div style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--slate-400);padding:4px 0;">'+icon('clock')+'Mercado Bom Preço — pendente</div>'
     + '</div>'
     + '<div class="card card-pad"><h2 style="margin:0 0 14px;font-size:16px;font-weight:600;">Processos em andamento</h2>'
-      + procMini('Abertura Nova Empresa Ltda','4/10 etapas',40)
+      + procMini('Abertura Nova Empresa Ltda','4/9 etapas',44)
       + procMini('Folha Mercado Bom Preço ago/26','3/10 etapas',30)
     + '</div>'
     + '<div class="card card-pad"><div style="display:flex;justify-content:space-between;"><h2 style="margin:0;font-size:16px;font-weight:600;">Licença ativa</h2>'+badge('Ativa','ok')+'</div>'
@@ -2399,14 +2418,13 @@ function renderObrigacoes(){
 function renderProcessos(){
   var folha = [['Padaria do João',100,'Concluído'],['Oficina Silva',100,'Concluído'],['Clínica Rosa',100,'Concluído'],['Transportes Veloz',100,'Concluído'],['Mercado Bom Preço',30,'Em andamento']];
   var folhaRows = folha.map(function(f){ var col = f[1]===100?'var(--success-600)':'var(--warning-600)'; return '<div class="proc-row"><div class="proc-top"><span class="proc-name">'+f[0]+'</span><span style="font-size:12.5px;color:var(--fg-muted)">'+(f[1]/10)+'/10 etapas</span></div><div class="proc-bar"><div class="progress-track"><div class="progress-fill" style="width:'+f[1]+'%;background:'+col+'"></div></div><span class="proc-pct tnum">'+f[1]+'%</span>'+badge(f[2])+'</div></div>'; }).join('');
-  var aberturaSteps = ['Contrato social','Pastas criadas','Junta Comercial','CNPJ solicitado'];
+  var aberturaSteps = ['Verificar viabilidade do nome empresarial','Registrar na Junta Comercial','Gerar contrato social','Obter CNPJ na Receita Federal'];
   var steps = aberturaSteps.map(function(s){ return '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--slate-700);padding:3px 0;">'+icon('checkcircle')+s+'</div>'; }).join('')
-    + '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--warning-600);font-weight:600;padding:3px 0;">'+icon('clock')+'Aguardando CNPJ</div>'
-    + '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--slate-400);padding:3px 0;"><span class="step-empty"></span>Inscrição Estadual…</div>';
+    + '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--slate-400);padding:3px 0;"><span class="step-empty"></span>Registrar no município (Alvará)…</div>';
   return '<div class="page"><div class="page-head"><h1>Processos</h1></div>'
   + '<div class="card card-pad"><h2 style="margin:0 0 4px;font-size:16px;font-weight:600;">Folha de agosto/2026</h2>'+folhaRows+'</div>'
   + '<div class="card card-pad"><h2 style="margin:0 0 4px;font-size:16px;font-weight:600;">Outros processos</h2>'
-    + '<div class="proc-row"><div class="proc-top"><span class="proc-name">Abertura Nova Empresa Ltda</span>'+badge('4/10 · Em andamento','warn')+'</div><div class="proc-bar" style="margin-bottom:12px;"><div class="progress-track"><div class="progress-fill" style="width:40%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">40%</span></div>'+steps+'</div>'
+    + '<div class="proc-row"><div class="proc-top"><span class="proc-name">Abertura Nova Empresa Ltda</span>'+badge('4/9 · Em andamento','warn')+'</div><div class="proc-bar" style="margin-bottom:12px;"><div class="progress-track"><div class="progress-fill" style="width:44%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">44%</span></div>'+steps+'</div>'
     + '<div class="proc-row"><div class="proc-top"><span class="proc-name">Alteração contratual — Oficina Silva ME</span>'+badge('3/6 · Em andamento','warn')+'</div><div class="proc-bar"><div class="progress-track"><div class="progress-fill" style="width:50%;background:var(--warning-600)"></div></div><span class="proc-pct tnum">50%</span></div><p style="margin:6px 0 0;font-size:12.5px;color:var(--fg-muted);">Mudança de endereço + nova atividade</p></div>'
   + '</div></div>';
 }
@@ -2534,12 +2552,40 @@ function activeNavKey(route){
 function render(){
   var app = document.getElementById('app');
   if (!STATE.user){ app.innerHTML = renderLogin(); bindLogin(); return; }
+
+  /* render() substitui o innerHTML inteiro a cada chamada — sem isso, todo
+     campo de texto perde o foco a cada tecla digitada (o handler de input
+     chama render() pra validar/atualizar a tela em tempo real). Guarda o
+     campo focado (pelos atributos data- e id) e a posição do cursor antes
+     de substituir o DOM, e restaura depois de religar os binds. */
+  var focusInfo = null;
+  var activeEl = document.activeElement;
+  if (activeEl && app.contains(activeEl) && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')){
+    var sel = activeEl.tagName.toLowerCase();
+    if (activeEl.id) sel += '#' + CSS.escape(activeEl.id);
+    for (var i=0;i<activeEl.attributes.length;i++){
+      var attr = activeEl.attributes[i];
+      if (attr.name.indexOf('data-') === 0) sel += '[' + attr.name + '="' + CSS.escape(attr.value) + '"]';
+    }
+    focusInfo = { sel: sel, start: activeEl.selectionStart, end: activeEl.selectionEnd };
+  }
+
   var route = currentRoute();
   app.innerHTML = '<div class="shell">' + renderSidebar(activeNavKey(route)) + '<div class="main">' + renderTopbar(activeNavKey(route)) + '<div class="scroll">' + pageFor(route) + '</div></div></div>';
   bindShell();
   if (route.indexOf('automacao/') === 0){
     var a = AUT_BY_ID[route.slice(10)];
     if (a && BESPOKE_BIND[a.id]) BESPOKE_BIND[a.id]();
+  }
+
+  if (focusInfo){
+    try {
+      var el = document.querySelector(focusInfo.sel);
+      if (el){
+        el.focus();
+        if (typeof focusInfo.start === 'number' && el.setSelectionRange) el.setSelectionRange(focusInfo.start, focusInfo.end);
+      }
+    } catch(e){}
   }
 }
 function bindLogin(){
