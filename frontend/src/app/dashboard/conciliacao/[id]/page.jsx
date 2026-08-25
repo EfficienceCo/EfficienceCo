@@ -342,7 +342,7 @@ function ConciliacaoDetalheContent({ id }) {
       <main className="space-y-6 p-6">
         <header className="space-y-3">
           <nav className="text-sm text-zinc-500">
-            <Link href="/dashboard/conciliacao" className="font-medium text-sky-700 hover:underline">
+            <Link href="/dashboard/contabil/conciliacao" className="font-medium text-sky-700 hover:underline">
               Conciliação
             </Link>
             {extratoLabel || mesAnoLabel ? (
@@ -430,7 +430,7 @@ function ConciliacaoDetalheContent({ id }) {
           <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
             <p className="text-sm font-medium text-rose-800">{erroCarregar}</p>
             <Link
-              href="/dashboard/conciliacao"
+              href="/dashboard/contabil/conciliacao"
               className="mt-2 inline-block text-sm font-medium text-sky-700 hover:underline"
             >
               Voltar para Conciliação Bancária

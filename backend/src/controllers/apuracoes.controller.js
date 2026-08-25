@@ -408,6 +408,12 @@ export async function dispararApuracao(req, res) {
       anexo: resultado.anexo_efetivo,
       fator_r: resultado.fator_r,
       folha12,
+      // Anexo V com folha12 já completa na criação (semDadosFolha: false) não
+      // precisa entrar na fila de polling do agente — só fica "pendente"
+      // quando a folha realmente está faltando (#365, achado do Vinicius no
+      // review do PR #366: sem isso, toda apuração Anexo V aparecia pendente
+      // pro agente mesmo já calculada com dado completo).
+      folha_status: cliente.anexo_simples === "V" && !semDadosFolha ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.PENDENTE,
       aliquota_efetiva: resultado.aliquota_efetiva,
       valor_calculado: resultado.valor_das,
       status: "rascunho",
@@ -752,6 +758,10 @@ export async function recalcularApuracao(req, res) {
       anexo: resultado.anexo_efetivo,
       fator_r: resultado.fator_r,
       folha12,
+      // Mesmo raciocínio do insert em dispararApuracao (#365): se o
+      // recálculo já resolveu a folha (semDadosFolha: false), não faz
+      // sentido deixar/voltar a apuração como pendente pro agente.
+      folha_status: anexoOriginal === "V" && !semDadosFolha ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.PENDENTE,
       aliquota_efetiva: resultado.aliquota_efetiva,
       valor_calculado: resultado.valor_das,
       // Um override manual anterior foi feito em cima do cálculo antigo — com

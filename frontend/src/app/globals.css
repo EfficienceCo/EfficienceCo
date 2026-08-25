@@ -379,6 +379,28 @@ main.space-y-6.p-6 > header p {
     linear-gradient(190deg, #0b1422, #070d18 70%);
 }
 
+.nova-sidebar nav {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.nova-sidebar nav::-webkit-scrollbar {
+  width: 6px;
+}
+
+.nova-sidebar nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.nova-sidebar nav::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+}
+
+.nova-sidebar nav::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(148, 163, 184, 0.55);
+}
+
 .bg-zinc-50 {
   background-color: var(--surface-subtle);
 }
