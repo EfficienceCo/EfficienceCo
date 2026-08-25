@@ -18,6 +18,7 @@ import folhaRoutes from "./routes/folha.routes.js";
 import lancamentosFiscaisRoutes from "./routes/lancamentos-fiscais.routes.js";
 import lancamentosContabeisRoutes from "./routes/lancamentos-contabeis.routes.js";
 import conciliacoesRoutes from "./routes/conciliacoes.routes.js";
+import eficienciaRoutes from "./routes/eficiencia.routes.js";
 import apuracoesRoutes from "./routes/apuracoes.routes.js";
 
 console.log("[app.js] Criando instancia do app...");
@@ -84,6 +85,9 @@ console.log("[app.js] Rota /lancamentos-contabeis registrada");
 
 app.use("/conciliacoes", conciliacoesRoutes);
 console.log("[app.js] Rota /conciliacoes registrada");
+
+app.use("/eficiencia", eficienciaRoutes);
+console.log("[app.js] Rota /eficiencia registrada");
 
 app.use("/apuracoes", apuracoesRoutes);
 console.log("[app.js] Rota /apuracoes registrada");

@@ -81,17 +81,17 @@ function apuracaoDetalhada(overrides = {}) {
   };
 }
 
-test.describe('Apuração Fiscal — página /dashboard/apuracoes (issue #356)', () => {
+test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #356)', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     if (/reabre|traduz os códigos|fluxo completo isolado/.test(testInfo.title)) {
       const token = tokenFrontendDeTeste();
       await page.addInitScript((valorToken) => window.localStorage.setItem('token', valorToken), token);
-      await page.goto('/dashboard/apuracoes');
+      await page.goto('/dashboard/fiscal/apuracao');
       return;
     }
 
     await login(page);
-    await page.goto('/dashboard/apuracoes');
+    await page.goto('/dashboard/fiscal/apuracao');
   });
 
   test('tela carrega com título e filtros', async ({ page }) => {
@@ -360,25 +360,32 @@ test.describe('Apuração Fiscal — página /dashboard/apuracoes (issue #356)',
   });
 });
 
-test.describe('Sidebar — link de Apuração Fiscal (issue #356)', () => {
-  test('link aparece na sidebar e aponta para /dashboard/apuracoes', async ({ page }) => {
+test.describe('Sidebar — Apuração Fiscal nested em Fiscal (issue #356, atualizado pelo #358)', () => {
+  test('link direto de Apuração Fiscal não existe mais — vive sob Fiscal', async ({ page }) => {
     await login(page);
 
     const sidebar = page.locator('aside.nova-sidebar');
-    const link = sidebar.getByRole('link', { name: 'Apuração Fiscal' });
-    await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute('href', '/dashboard/apuracoes');
+    await expect(sidebar.getByRole('link', { name: 'Apuração Fiscal' })).toHaveCount(0);
+    await expect(sidebar.getByRole('link', { name: 'Fiscal', exact: true })).toBeVisible();
   });
 
-  test('highlight ativo em /dashboard/apuracoes', async ({ page }) => {
+  test('URL antiga /dashboard/apuracoes redireciona para /dashboard/fiscal/apuracao', async ({ page }) => {
     await login(page);
     await page.goto('/dashboard/apuracoes');
 
+    await expect(page).toHaveURL(/\/dashboard\/fiscal\/apuracao$/);
+    await expect(page.getByRole('heading', { name: 'Apuração Fiscal' })).toBeVisible();
+  });
+
+  test('highlight ativo em /dashboard/fiscal/apuracao', async ({ page }) => {
+    await login(page);
+    await page.goto('/dashboard/fiscal/apuracao');
+
     const sidebar = page.locator('aside.nova-sidebar');
-    const link = sidebar.getByRole('link', { name: 'Apuração Fiscal' });
+    const link = sidebar.getByRole('link', { name: 'Fiscal', exact: true });
     await expect(link).toHaveClass(/bg-sky-400\/10/);
 
-    const outroLink = sidebar.getByRole('link', { name: 'Conciliação' });
+    const outroLink = sidebar.getByRole('link', { name: 'Contábil' });
     await expect(outroLink).not.toHaveClass(/bg-sky-400\/10/);
   });
 });
