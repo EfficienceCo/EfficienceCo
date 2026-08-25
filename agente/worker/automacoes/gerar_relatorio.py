@@ -21,28 +21,40 @@ def gerar_relatorio():
     nome_arquivo = f"relatorio_{hoje}.csv"
     caminho = os.path.join(pasta, nome_arquivo)
 
+    # /eventos/agente pagina com limit/offset (máximo 100 por página) e nunca
+    # devolve tudo de uma vez — busca ?data=hoje (filtro no servidor, evita
+    # trazer eventos de outros dias) e itera até esgotar o total, senão dias
+    # com mais de 20 eventos (limit default) saem incompletos no CSV sem aviso.
+    eventos = []
+    offset = 0
+    limite_pagina = 100
     try:
-        response = client.get(
-            f"/eventos/agente", 
-            timeout=5,
-            addToHeaders={"x-licenca-token": client.LICENSE_TOKEN}
-        )
-        eventos = response.json()
+        while True:
+            response = client.get(
+                f"/eventos/agente?data={hoje}&limit={limite_pagina}&offset={offset}",
+                timeout=5,
+                addToHeaders={"x-licenca-token": client.LICENSE_TOKEN}
+            )
+            corpo = response.json()
+            pagina = corpo.get("data", [])
+            eventos.extend(pagina)
+
+            total = corpo.get("total", len(eventos))
+            offset += limite_pagina
+            if not pagina or offset >= total:
+                break
     except RuntimeError as e:
         print(f"[relatorio] Falha ao buscar eventos: {e}")
         return
 
-    eventos_hoje = [
-        e for e in eventos
-        if e.get("data_vinculo", "").startswith(hoje)
-    ]
-
     try:
         with open(caminho, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["data_vinculo", "descricao", "sucesso"])
+            writer = csv.DictWriter(
+                f, fieldnames=["criado_em", "descricao", "sucesso"], extrasaction="ignore"
+            )
             writer.writeheader()
-            writer.writerows(eventos_hoje)
-        print(f"[relatorio] Relatório gerado: {nome_arquivo} ({len(eventos_hoje)} evento(s))")
+            writer.writerows(eventos)
+        print(f"[relatorio] Relatório gerado: {nome_arquivo} ({len(eventos)} evento(s))")
     except PermissionError:
         print(f"[relatorio] Sem permissão para escrever: {caminho}")
         return
