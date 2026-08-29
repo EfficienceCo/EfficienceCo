@@ -16,6 +16,7 @@ import obrigacoesRoutes from "./routes/obrigacoes.routes.js";
 import processosRoutes from "./routes/processos.routes.js";
 import notificacoesRoutes from "./routes/notificacoes.routes.js";
 import folhaRoutes from "./routes/folha.routes.js";
+import funcionariosRoutes from "./routes/funcionarios.routes.js";
 import lancamentosFiscaisRoutes from "./routes/lancamentos-fiscais.routes.js";
 import lancamentosContabeisRoutes from "./routes/lancamentos-contabeis.routes.js";
 import conciliacoesRoutes from "./routes/conciliacoes.routes.js";
@@ -80,6 +81,9 @@ console.log("[app.js] Rota /notificacoes registrada");
 
 app.use("/folha", folhaRoutes);
 console.log("[app.js] Rota /folha registrada");
+
+app.use("/funcionarios", funcionariosRoutes);
+console.log("[app.js] Rota /funcionarios registrada");
 
 app.use("/lancamentos-fiscais", lancamentosFiscaisRoutes);
 console.log("[app.js] Rota /lancamentos-fiscais registrada");
