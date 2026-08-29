@@ -25,8 +25,9 @@ const AUTOMACOES = [
   {
     icon: TransmissaoIcon,
     nome: 'eSocial (todos os eventos)',
-    descricao: 'Transmite os eventos obrigatórios do eSocial.',
-    status: 'planejado',
+    descricao: 'Gera, revisa e aprova os eventos obrigatórios do eSocial.',
+    status: 'disponivel',
+    href: '/dashboard/dp/esocial',
   },
   {
     icon: CalendarioIcon,
