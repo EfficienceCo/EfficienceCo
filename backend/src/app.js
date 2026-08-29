@@ -11,6 +11,7 @@ import usuariosRoutes from "./routes/usuarios.routes.js";
 import licencaRoutes from "./routes/licenca.routes.js";
 import regrasRoutes from "./routes/regras.routes.js";
 import eventosRoutes from "./routes/eventos.routes.js";
+import eventosEsocialRoutes from "./routes/eventos-esocial.routes.js";
 import obrigacoesRoutes from "./routes/obrigacoes.routes.js";
 import processosRoutes from "./routes/processos.routes.js";
 import notificacoesRoutes from "./routes/notificacoes.routes.js";
@@ -65,6 +66,9 @@ console.log("[app.js] Rota /regras registrada");
 
 app.use("/eventos", eventosRoutes);
 console.log("[app.js] Rota /eventos registrada");
+
+app.use("/eventos-esocial", eventosEsocialRoutes);
+console.log("[app.js] Rota /eventos-esocial registrada");
 
 app.use("/obrigacoes", obrigacoesRoutes);
 console.log("[app.js] Rota /obrigacoes registrada");
