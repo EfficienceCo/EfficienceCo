@@ -106,7 +106,7 @@ function admissaoCLT() {
     duracao: { tpContr: 1 },
     localTrabalho: { tpInsc: 1, nrInsc: "12.345.678/0001-95" },
     horContratual: {
-      qtdHrsSem: 44, tpJornada: 1, tmpParc: 0,
+      qtdHrsSem: 44, tpJornada: 5, tmpParc: 0,
       horarioNoturno: false, descricaoJornada: "Segunda a sexta, 08h-18h",
     },
     ambiente: "homologacao",

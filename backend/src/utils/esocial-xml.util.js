@@ -70,6 +70,11 @@ export const CATEGORIAS_S2200 = new Set([
 // Categorias de regime estatutário (usam infoEstatutario em vez de
 // infoCeletista). As demais categorias do S-2200 são celetistas.
 const CATEGORIAS_ESTATUTARIAS = new Set([301, 302, 303, 306, 307, 309, 310, 312, 314]);
+const TP_INSC_EMPREGADOR = new Set([1, 2]);
+const TP_INSC_LOCAL_GERAL = new Set([1, 3, 4]);
+const TP_INSC_ESTAB_VINC = new Set([1, 2]);
+const TP_JORNADA = new Set([2, 3, 4, 5, 6, 7, 9]);
+const TMP_PARC = new Set([0, 1, 2, 3]);
 
 // ---------------------------------------------------------------------------
 // Erro de domínio — entrada inválida para geração de XML.
@@ -164,6 +169,7 @@ export function sn(valor) {
  * esquerda (00001..99999).
  */
 export function gerarIdEvento({ tpInsc, nrInsc, dataHora = new Date(), sequencial = 1 }) {
+  validarDominio("tpInsc", tpInsc, TP_INSC_EMPREGADOR, "ideEmpregador");
   const digitos = soDigitos(nrInsc);
   const raiz = Number(tpInsc) === 1 ? digitos.slice(0, 8) : digitos.slice(0, 11);
   const insc = raiz.padEnd(14, "0").slice(0, 14);
@@ -263,6 +269,26 @@ function xmlnsEvento(raiz) {
   return `http://www.esocial.gov.br/schema/evt/${raiz}/${VERSAO_LEIAUTE.replace(/^S_/, "v_S_")}`;
 }
 
+function validarDominio(campo, valor, valoresValidos, contexto) {
+  const numero = Number(valor);
+  if (!Number.isInteger(numero) || !valoresValidos.has(numero)) {
+    throw new ErroXmlESocial(
+      `${contexto}.${campo} deve ser um dos valores: ${[...valoresValidos].join(", ")} (recebido: ${valor})`,
+    );
+  }
+  return numero;
+}
+
+function validarNumeroInscricao(tpInsc, nrInsc, contexto, comprimentos) {
+  const numero = soDigitos(nrInsc);
+  if (!comprimentos[tpInsc]?.includes(numero.length)) {
+    throw new ErroXmlESocial(
+      `${contexto}.nrInsc incompatível com tpInsc=${tpInsc}; esperado ${comprimentos[tpInsc].join(" ou ")} dígitos`,
+    );
+  }
+  return numero;
+}
+
 // ---------------------------------------------------------------------------
 // S-2200 — Cadastramento Inicial do Vínculo e Admissão/Ingresso de Trabalhador
 // ---------------------------------------------------------------------------
@@ -341,8 +367,8 @@ export function gerarXmlS2200(funcionario, dadosAdmissao) {
     );
   }
 
-  const tpRegTrab = Number(dadosAdmissao.tpRegTrab);
-  const tpRegPrev = Number(dadosAdmissao.tpRegPrev);
+  const tpRegTrab = validarDominio("tpRegTrab", dadosAdmissao.tpRegTrab, new Set([1, 2]), "dadosAdmissao");
+  const tpRegPrev = validarDominio("tpRegPrev", dadosAdmissao.tpRegPrev, new Set([1, 2, 3, 4]), "dadosAdmissao");
   const categoriaEstatutaria = CATEGORIAS_ESTATUTARIAS.has(codCateg);
   // tpRegTrab: 1 = CLT/celetista, 2 = estatutário. Tem que casar com a
   // categoria — o XSD amarra infoEstatutario a tpRegTrab=2. Divergência é
@@ -360,8 +386,13 @@ export function gerarXmlS2200(funcionario, dadosAdmissao) {
   const ehEstatutario = tpRegTrab === 2;
 
   const ambiente = dadosAdmissao.ambiente === "producao" ? TP_AMB.PRODUCAO : TP_AMB.HOMOLOGACAO;
-  const tpInsc = Number(dadosAdmissao.empregador.tpInsc);
-  const nrInsc = soDigitos(dadosAdmissao.empregador.nrInsc);
+  const tpInsc = validarDominio("tpInsc", dadosAdmissao.empregador.tpInsc, TP_INSC_EMPREGADOR, "dadosAdmissao.empregador");
+  const nrInsc = validarNumeroInscricao(
+    tpInsc,
+    dadosAdmissao.empregador.nrInsc,
+    "dadosAdmissao.empregador",
+    { 1: [8, 14], 2: [11] },
+  );
 
   const id = gerarIdEvento({
     tpInsc,
@@ -389,8 +420,8 @@ export function gerarXmlS2200(funcionario, dadosAdmissao) {
       cadIni: sn(dadosAdmissao.cadIni),
       infoRegimeTrab: ehEstatutario
         ? { infoEstatutario: montarInfoEstatutario(dadosAdmissao, tpRegPrev) }
-        : { infoCeletista: montarInfoCeletista(dadosAdmissao) },
-      infoContrato: montarInfoContrato(dadosAdmissao, codCateg),
+        : { infoCeletista: montarInfoCeletista(dadosAdmissao, codCateg) },
+      infoContrato: montarInfoContrato(dadosAdmissao, { codCateg, tpRegTrab }),
       afastamento: montarAfastamento(dadosAdmissao.afastamento),
       desligamento: montarDesligamento(dadosAdmissao.desligamento),
     },
@@ -484,42 +515,94 @@ function montarDependente(d) {
   };
 }
 
-function montarInfoCeletista(dados) {
+function montarInfoCeletista(dados, codCateg) {
   exigir(dados, ["dataAdmissao", "tpAdmissao", "tpRegJor", "natAtividade"], "dadosAdmissao (celetista)");
+  if (codCateg === 106) exigir(dados, ["trabalhadorTemporario"], "dadosAdmissao (trabalhador temporario)");
+  const tpRegJor = validarDominio("tpRegJor", dados.tpRegJor, new Set([1, 2, 3, 4]), "dadosAdmissao");
   return {
     dtAdm: formatarData(dados.dataAdmissao),
     tpAdmissao: Number(dados.tpAdmissao),
     // Opcional no XSD (só relevante em transferência/sucessão). Sem default
     // silencioso — se não vier, sai do XML e o eSocial aplica o próprio padrão.
     indAdmissao: dados.indAdmissao != null && dados.indAdmissao !== "" ? Number(dados.indAdmissao) : undefined,
-    tpRegJor: Number(dados.tpRegJor),
+    tpRegJor,
     natAtividade: Number(dados.natAtividade),
     dtBase: dados.dtBase ? Number(dados.dtBase) : undefined,
     cnpjSindCategProf: dados.cnpjSindCategProf ? soDigitos(dados.cnpjSindCategProf) : undefined,
     FGTS: dados.fgts ? { dtOpcFGTS: formatarData(dados.fgts.dataOpcao) } : undefined,
-    trabTemporario: undefined, // extensão futura (categoria 106)
+    trabTemporario: montarTrabTemporario(dados.trabalhadorTemporario),
     aprend: dados.aprendiz
       ? {
           indAprend: Number(dados.aprendiz.indAprend),
           cnpjEntQual: dados.aprendiz.cnpjEntQual ? soDigitos(dados.aprendiz.cnpjEntQual) : undefined,
-          tpInsc: dados.aprendiz.tpInsc,
-          nrInsc: dados.aprendiz.nrInsc ? soDigitos(dados.aprendiz.nrInsc) : undefined,
+          tpInsc: dados.aprendiz.tpInsc == null
+            ? undefined
+            : validarDominio("tpInsc", dados.aprendiz.tpInsc, TP_INSC_ESTAB_VINC, "dadosAdmissao.aprendiz"),
+          nrInsc: dados.aprendiz.nrInsc
+            ? validarNumeroInscricao(
+              Number(dados.aprendiz.tpInsc),
+              dados.aprendiz.nrInsc,
+              "dadosAdmissao.aprendiz",
+              { 1: [14], 2: [11] },
+            )
+            : undefined,
           cnpjPrat: dados.aprendiz.cnpjPrat ? soDigitos(dados.aprendiz.cnpjPrat) : undefined,
         }
       : undefined,
   };
 }
 
+function montarTrabTemporario(t) {
+  if (!t) return undefined;
+  exigir(t, ["hipoteseLegal", "justificativa", "estabelecimentoVinculo.tpInsc", "estabelecimentoVinculo.nrInsc"], "dadosAdmissao.trabalhadorTemporario");
+  const tpInsc = validarDominio(
+    "tpInsc",
+    t.estabelecimentoVinculo.tpInsc,
+    TP_INSC_ESTAB_VINC,
+    "dadosAdmissao.trabalhadorTemporario.estabelecimentoVinculo",
+  );
+  const substituidos = Array.isArray(t.trabalhadoresSubstituidos) ? t.trabalhadoresSubstituidos : [];
+  if (Number(t.hipoteseLegal) === 1 && substituidos.length === 0) {
+    throw new ErroXmlESocial("dadosAdmissao.trabalhadorTemporario.trabalhadoresSubstituidos e obrigatorio quando hipoteseLegal=1");
+  }
+  if (Number(t.hipoteseLegal) === 2 && substituidos.length > 0) {
+    throw new ErroXmlESocial("dadosAdmissao.trabalhadorTemporario.trabalhadoresSubstituidos nao pode ser informado quando hipoteseLegal=2");
+  }
+  if (![1, 2].includes(Number(t.hipoteseLegal))) {
+    throw new ErroXmlESocial(`dadosAdmissao.trabalhadorTemporario.hipoteseLegal invalida: ${t.hipoteseLegal}`);
+  }
+  return {
+    hipLeg: Number(t.hipoteseLegal),
+    justContr: t.justificativa,
+    ideEstabVinc: {
+      tpInsc,
+      nrInsc: validarNumeroInscricao(
+        tpInsc,
+        t.estabelecimentoVinculo.nrInsc,
+        "dadosAdmissao.trabalhadorTemporario.estabelecimentoVinculo",
+        { 1: [14], 2: [11] },
+      ),
+    },
+    ideTrabSubstituido: substituidos.map((cpf) => ({ cpfTrabSubst: soDigitos(cpf) })),
+  };
+}
+
 function montarInfoEstatutario(dados, tpRegPrev) {
   const e = dados.estatutario || {};
   exigir(e, ["tpProv", "dataExercicio"], "dadosAdmissao.estatutario");
-  // indTetoRGPS é obrigatório E exclusivo de tpRegPrev = 1 (RGPS). Para
-  // RPPS/RPPE (2/3) o elemento tem que ficar de fora.
+  if (tpRegPrev === 2) exigir(e, ["tpPlanRP", "indTetoRGPS", "indAbonoPerm"], "dadosAdmissao.estatutario");
+  if (tpRegPrev !== 2 && (e.tpPlanRP != null || e.indTetoRGPS != null || e.indAbonoPerm != null || e.dataInicioAbono != null)) {
+    throw new ErroXmlESocial("Campos de RPPS em dadosAdmissao.estatutario so podem ser informados quando tpRegPrev=2");
+  }
+  if (tpRegPrev === 2 && ![0, 1, 2, 3].includes(Number(e.tpPlanRP))) {
+    throw new ErroXmlESocial(`dadosAdmissao.estatutario.tpPlanRP invalido: ${e.tpPlanRP}`);
+  }
+  // indTetoRGPS é obrigatório e exclusivo de tpRegPrev = 2 (RPPS).
   let indTetoRGPS;
-  if (tpRegPrev === 1) {
+  if (tpRegPrev === 2) {
     if (e.indTetoRGPS === undefined || e.indTetoRGPS === null) {
       throw new ErroXmlESocial(
-        "dadosAdmissao.estatutario.indTetoRGPS é obrigatório quando tpRegPrev=1 (S/N)",
+        "dadosAdmissao.estatutario.indTetoRGPS é obrigatório quando tpRegPrev=2 (S/N)",
         ["estatutario.indTetoRGPS"],
       );
     }
@@ -528,24 +611,33 @@ function montarInfoEstatutario(dados, tpRegPrev) {
   return {
     tpProv: Number(e.tpProv),
     dtExercicio: formatarData(e.dataExercicio),
-    tpPlanRP: e.tpPlanRP != null && e.tpPlanRP !== "" ? Number(e.tpPlanRP) : undefined,
+    tpPlanRP: tpRegPrev === 2 ? Number(e.tpPlanRP) : undefined,
     indTetoRGPS,
-    indAbonoPerm: e.indAbonoPerm != null ? sn(e.indAbonoPerm) : undefined,
-    dtIniAbono: e.dataInicioAbono ? formatarData(e.dataInicioAbono) : undefined,
+    indAbonoPerm: tpRegPrev === 2 ? sn(e.indAbonoPerm) : undefined,
+    dtIniAbono: tpRegPrev === 2 && e.dataInicioAbono ? formatarData(e.dataInicioAbono) : undefined,
   };
 }
 
-function montarInfoContrato(dados, codCateg) {
+function montarInfoContrato(dados, { codCateg, tpRegTrab }) {
+  const ehCeletista = tpRegTrab === 1;
+  const comDesligamento = Boolean(dados.desligamento);
+  const tpRegJor = ehCeletista ? Number(dados.tpRegJor) : undefined;
   // Grupos obrigatórios de infoContrato no XSD do S-2200 (minOccurs=1). Se
   // algum vier ausente, falha aqui — não vaza XML incompleto que só seria
   // pego na submissão ao eSocial.
-  exigir(
-    dados,
-    ["cargo", "remuneracao", "duracao", "localTrabalho", "horContratual"],
-    "dadosAdmissao (infoContrato)",
-  );
+  if (ehCeletista && !comDesligamento) {
+    exigir(dados, ["remuneracao", "duracao", "localTrabalho"], "dadosAdmissao (infoContrato)");
+  } else if (!comDesligamento) {
+    exigir(dados, ["localTrabalho"], "dadosAdmissao (infoContrato)");
+  }
+  if (!ehCeletista && (dados.remuneracao || dados.duracao)) {
+    throw new ErroXmlESocial("remuneracao e duracao nao podem ser informadas para tpRegTrab=2 (estatutario)");
+  }
+  if (ehCeletista && tpRegJor === 1 && !comDesligamento) {
+    exigir(dados, ["horContratual"], "dadosAdmissao (infoContrato)");
+  }
   // nmCargo presente ⇒ CBOCargo obrigatório no S-2200.
-  exigir(dados.cargo, ["nome", "cbo"], "dadosAdmissao.cargo");
+  if (dados.cargo) exigir(dados.cargo, ["nome", "cbo"], "dadosAdmissao.cargo");
 
   return {
     nmCargo: dados.cargo?.nome,
@@ -556,8 +648,8 @@ function montarInfoContrato(dados, codCateg) {
     codCateg,
     remuneracao: montarRemuneracao(dados.remuneracao),
     duracao: montarDuracao(dados.duracao),
-    localTrabalho: montarLocalTrabalho(dados.localTrabalho),
-    horContratual: montarHorContratual(dados.horContratual),
+    localTrabalho: montarLocalTrabalho(dados.localTrabalho, codCateg),
+    horContratual: montarHorContratual(dados.horContratual, codCateg),
     observacoes: Array.isArray(dados.observacoesContrato)
       ? dados.observacoesContrato.map((texto) => ({ observacao: texto }))
       : undefined,
@@ -568,12 +660,17 @@ function montarRemuneracao(r) {
   if (!r) return undefined;
   exigir(r, ["valorSalarioFixo", "unidadeSalarioFixo"], "dadosAdmissao.remuneracao");
   const salario = formatarValor(r.valorSalarioFixo);
-  if (Number(salario) <= 0) {
+  const unidade = validarDominio("unidadeSalarioFixo", r.unidadeSalarioFixo, new Set([1, 2, 3, 4, 5, 6, 7]), "dadosAdmissao.remuneracao");
+  if (unidade === 7 && Number(salario) !== 0) {
+    throw new ErroXmlESocial("vrSalFx deve ser 0 quando undSalFixo=7 (salario exclusivamente variavel)");
+  }
+  if (unidade !== 7 && Number(salario) <= 0) {
     throw new ErroXmlESocial(`vrSalFx (salário fixo) deve ser maior que zero (recebido: ${r.valorSalarioFixo})`);
   }
+  if ([6, 7].includes(unidade)) exigir(r, ["descricaoSalarioVariavel"], "dadosAdmissao.remuneracao");
   return {
     vrSalFx: salario,
-    undSalFixo: Number(r.unidadeSalarioFixo),
+    undSalFixo: unidade,
     dscSalVar: r.descricaoSalarioVariavel,
   };
 }
@@ -581,37 +678,83 @@ function montarRemuneracao(r) {
 function montarDuracao(d) {
   if (!d) return undefined;
   exigir(d, ["tpContr"], "dadosAdmissao.duracao");
+  const tpContr = validarDominio("tpContr", d.tpContr, new Set([1, 2, 3]), "dadosAdmissao.duracao");
+  if (tpContr === 1 && (d.dataTermino || d.clausulaAssecuratoria != null || d.objetoDeterminante)) {
+    throw new ErroXmlESocial("Campos de prazo determinado nao podem ser informados quando tpContr=1");
+  }
+  if (tpContr === 2) exigir(d, ["dataTermino", "clausulaAssecuratoria"], "dadosAdmissao.duracao");
+  if (tpContr === 3) exigir(d, ["clausulaAssecuratoria", "objetoDeterminante"], "dadosAdmissao.duracao");
   return {
-    tpContr: Number(d.tpContr),
+    tpContr,
     dtTerm: d.dataTermino ? formatarData(d.dataTermino) : undefined,
     clauAssec: d.clausulaAssecuratoria !== undefined ? sn(d.clausulaAssecuratoria) : undefined,
     objDet: d.objetoDeterminante,
   };
 }
 
-function montarLocalTrabalho(l) {
+function montarLocalTrabalho(l, codCateg) {
   if (!l) return undefined;
-  exigir(l, ["tpInsc", "nrInsc"], "dadosAdmissao.localTrabalho");
+  const exigeLocalTempDom = [104, 106].includes(codCateg);
+  if (exigeLocalTempDom) exigir(l, ["endereco"], "dadosAdmissao.localTrabalho");
+  if (codCateg !== 104) exigir(l, ["tpInsc", "nrInsc"], "dadosAdmissao.localTrabalho");
+
   return {
-    localTrabGeral: {
-      tpInsc: Number(l.tpInsc),
-      nrInsc: soDigitos(l.nrInsc),
-      descComp: l.descricaoComplementar,
-    },
+    localTrabGeral: codCateg === 104 ? undefined : montarLocalTrabGeral(l),
+    localTempDom: exigeLocalTempDom ? montarEnderecoLocal(l.endereco) : undefined,
   };
 }
 
-function montarHorContratual(h) {
-  if (!h) return undefined;
-  // horarioNoturno é S/N obrigatório — não pode cair no "N" default do sn().
-  exigir(h, ["tpJornada", "tmpParc", "horarioNoturno", "descricaoJornada"], "dadosAdmissao.horContratual");
+function montarLocalTrabGeral(l) {
+  const tpInsc = validarDominio("tpInsc", l.tpInsc, TP_INSC_LOCAL_GERAL, "dadosAdmissao.localTrabalho");
   return {
-    qtdHrsSem: h.qtdHrsSem,
-    tpJornada: Number(h.tpJornada),
-    tmpParc: Number(h.tmpParc),
-    horNoturno: sn(h.horarioNoturno),
+    tpInsc,
+    nrInsc: validarNumeroInscricao(tpInsc, l.nrInsc, "dadosAdmissao.localTrabalho", { 1: [14], 3: [12], 4: [12] }),
+    descComp: l.descricaoComplementar,
+  };
+}
+
+function montarEnderecoLocal(endereco) {
+  exigir(endereco, ["logradouro", "numero", "cep", "codMunicipio", "uf"], "dadosAdmissao.localTrabalho.endereco");
+  return {
+    tpLograd: endereco.tipoLogradouro,
+    dscLograd: endereco.logradouro,
+    nrLograd: String(endereco.numero),
+    complemento: endereco.complemento,
+    bairro: endereco.bairro,
+    cep: soDigitos(endereco.cep),
+    codMunic: Number(endereco.codMunicipio),
+    uf: endereco.uf,
+  };
+}
+
+function montarHorContratual(h, codCateg) {
+  if (!h) return undefined;
+  exigir(h, ["tpJornada", "tmpParc", "descricaoJornada"], "dadosAdmissao.horContratual");
+  if (codCateg !== 111) exigir(h, ["qtdHrsSem", "horarioNoturno"], "dadosAdmissao.horContratual");
+  const tpJornada = validarDominio("tpJornada", h.tpJornada, TP_JORNADA, "dadosAdmissao.horContratual");
+  const tmpParc = validarDominio("tmpParc", h.tmpParc, TMP_PARC, "dadosAdmissao.horContratual");
+  if (tmpParc === 1 && codCateg !== 104) {
+    throw new ErroXmlESocial("dadosAdmissao.horContratual.tmpParc=1 so e valido para codCateg=104");
+  }
+  if ([2, 3].includes(tmpParc) && codCateg === 104) {
+    throw new ErroXmlESocial("dadosAdmissao.horContratual.tmpParc=2 ou 3 nao e valido para codCateg=104");
+  }
+  return {
+    qtdHrsSem: validarQtdHrsSem(h.qtdHrsSem),
+    tpJornada,
+    tmpParc,
+    horNoturno: h.horarioNoturno == null ? undefined : sn(h.horarioNoturno),
     dscJorn: h.descricaoJornada,
   };
+}
+
+function validarQtdHrsSem(valor) {
+  if (valor == null || valor === "") return undefined;
+  const numero = Number(valor);
+  if (!Number.isFinite(numero) || numero <= 0 || numero > 99.99 || !/^\d{1,2}(\.\d{1,2})?$/.test(String(valor))) {
+    throw new ErroXmlESocial(`dadosAdmissao.horContratual.qtdHrsSem invalida: ${valor}`);
+  }
+  return numero.toFixed(2);
 }
 
 /**
