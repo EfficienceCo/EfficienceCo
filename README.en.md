@@ -9,8 +9,8 @@
 ## 📌 About the project
 
 **Efficience Co** builds custom systems for accounting, administrative and
-management offices — automating manual processes, eliminating rework and
-improving operational efficiency end to end.
+management offices. It automates manual processes, eliminates rework and improves
+operational efficiency end to end.
 
 The model is simple: we come into the office, map how everything works, and
 deliver software that solves the real day-to-day bottlenecks. We charge a monthly
@@ -34,7 +34,7 @@ efficience-co/
 │   ├── especificacao-funcional.md
 │   └── decisoes-tecnicas.md
 │
-├── backend/                        # João — API + Payments (Node.js + Express)
+├── backend/                        # João, API + Payments (Node.js + Express)
 │   ├── src/
 │   │   ├── routes/
 │   │   ├── controllers/
@@ -43,7 +43,7 @@ efficience-co/
 │   │   └── config/
 │   └── tests/
 │
-├── frontend/                       # Victor — Interface (React + Next.js)
+├── frontend/                       # Victor, Interface (React + Next.js)
 │   └── src/
 │       ├── app/
 │       ├── components/
@@ -51,13 +51,13 @@ efficience-co/
 │       ├── services/
 │       └── context/
 │
-├── agente/                         # Gabriel — Local agent (Python)
+├── agente/                         # Gabriel, Local agent (Python)
 │   ├── core/
 │   ├── automacoes/
 │   ├── comunicacao/
 │   └── build/
 │
-└── database/                       # Vinícius — Database (PostgreSQL + Supabase)
+└── database/                       # Vinícius, Database (PostgreSQL + Supabase)
     ├── migrations/
     └── seeds/
 ```
@@ -94,23 +94,23 @@ efficience-co/
 The system is hybrid: part runs in the cloud, part runs on the client's machine.
 
 ```
-[Victor — Frontend]
-        ↓ HTTP requests (JWT)
-[João — Backend + API]
-        ↓ SQL queries
-[Vinícius — Database]
+[Victor, Frontend]
+        | HTTP requests (JWT)
+[João, Backend + API]
+        | SQL queries
+[Vinícius, Database]
 
-[Gabriel — Local agent]
-        ↓ validates license + fetches rules + reports events
-[João — Backend + API]
-        ↓ reads/writes
-[Vinícius — Database]
+[Gabriel, Local agent]
+        | validates license + fetches rules + reports events
+[João, Backend + API]
+        | reads/writes
+[Vinícius, Database]
 ```
 
-- **Frontend + Backend** — hosted in the cloud (Vercel + Railway)
-- **Local agent** — installed on the client's machine, runs in the background,
+- **Frontend + Backend**: hosted in the cloud (Vercel + Railway)
+- **Local agent**: installed on the client's machine, runs in the background,
   no interface
-- **Licensing** — the agent validates its token against the API every 24h. If a
+- **Licensing**: the agent validates its token against the API every 24h. If a
   payment fails, the license is deactivated automatically and the agent stops
   working.
 
@@ -149,12 +149,12 @@ python main.py
 
 ## 📋 Workflow
 
-1. **Mapping** — Process discovery with the client
-2. **Functional documentation** — What the system must do
-3. **Prototyping** — Flows and screens in Figma
-4. **Development** — Iterative sprints with partial deliveries
-5. **Homologation** — Validation with the client before deploy
-6. **Deploy & Maintenance** — Ship to production + ongoing support
+1. **Mapping**: process discovery with the client
+2. **Functional documentation**: what the system must do
+3. **Prototyping**: flows and screens in Figma
+4. **Development**: iterative sprints with partial deliveries
+5. **Homologation**: validation with the client before deploy
+6. **Deploy & Maintenance**: ship to production, then ongoing support
 
 ---
 
@@ -177,7 +177,7 @@ python main.py
 - JWT authentication with per-role permission control
 - Automatic backups configured via Supabase
 - Sensitive variables never committed (use `.env`)
-- Row Level Security (RLS) in the database — each client only accesses its own
+- Row Level Security (RLS) in the database, so each client only accesses its own
   data
 
 ---
