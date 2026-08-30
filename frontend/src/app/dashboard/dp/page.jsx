@@ -77,6 +77,13 @@ const AUTOMACOES = [
     descricao: 'Calcula os benefícios de VT e VR por funcionário.',
     status: 'planejado',
   },
+  {
+  icon: TransmissaoIcon,
+  nome: 'eSocial',
+  descricao: 'Geração, revisão, aprovação e download de eventos do eSocial.',
+  status: 'disponivel',
+  href: '/dashboard/dp/esocial',
+  },
 ];
 
 export default function DpAreaPage() {
