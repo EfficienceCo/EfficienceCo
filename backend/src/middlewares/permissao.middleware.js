@@ -5,7 +5,12 @@ export { PERFIS };
 
 export function resolverClienteId(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
-    return req.body.cliente_id || req.query.cliente_id;
+    return (
+      req.body?.clienteId ||
+      req.body?.cliente_id ||
+      req.query?.clienteId ||
+      req.query?.cliente_id
+    );
   }
   return req.usuario?.cliente_id;
 }
