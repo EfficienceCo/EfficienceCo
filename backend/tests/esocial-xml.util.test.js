@@ -60,7 +60,7 @@ function admissaoCLT() {
     localTrabalho: { tpInsc: 1, nrInsc: "12.345.678/0001-95" },
     horContratual: {
       qtdHrsSem: 44,
-      tpJornada: 1,
+      tpJornada: 5,
       tmpParc: 0,
       horarioNoturno: false,
       descricaoJornada: "Segunda a sexta, 08h-18h",
@@ -108,8 +108,9 @@ function admissaoAprendiz() {
     duracao: { tpContr: 2, dataTermino: "2028-08-14" },
     localTrabalho: { tpInsc: 1, nrInsc: "12345678000195" },
     horContratual: {
+      qtdHrsSem: 20,
       tpJornada: 2,
-      tmpParc: 1,
+      tmpParc: 2,
       horarioNoturno: false,
       descricaoJornada: "Meio período",
     },
@@ -126,17 +127,15 @@ function admissaoEstatutario() {
     tpRegTrab: 2,
     tpRegPrev: 2,
     cadIni: false,
-    estatutario: { tpProv: 1, dataExercicio: "2026-08-01", indTetoRGPS: false },
-    cargo: { nome: "Auditor Fiscal", cbo: "2544-05" },
-    remuneracao: { valorSalarioFixo: 12000, unidadeSalarioFixo: 5 },
-    duracao: { tpContr: 1 },
-    localTrabalho: { tpInsc: 1, nrInsc: "12345678000195" },
-    horContratual: {
-      tpJornada: 1,
-      tmpParc: 0,
-      horarioNoturno: false,
-      descricaoJornada: "Segunda a sexta, 08h-17h",
+    estatutario: {
+      tpProv: 1,
+      dataExercicio: "2026-08-01",
+      tpPlanRP: 0,
+      indTetoRGPS: false,
+      indAbonoPerm: false,
     },
+    cargo: { nome: "Auditor Fiscal", cbo: "2544-05" },
+    localTrabalho: { tpInsc: 1, nrInsc: "12345678000195" },
     dataHoraGeracao: new Date(Date.UTC(2026, 7, 27, 9, 0, 0)),
   };
 }
@@ -365,15 +364,17 @@ describe("gerarXmlS2200 — estatutário (categoria 301)", () => {
     assert.match(xml, /<dtExercicio>2026-08-01<\/dtExercicio>/);
   });
 
-  it("tpRegPrev=2 (RPPS): indTetoRGPS NÃO é emitido (exclusivo de tpRegPrev=1)", () => {
-    assert.doesNotMatch(xml, /<indTetoRGPS>/);
+  it("tpRegPrev=2 (RPPS): emite os campos estatutários obrigatórios", () => {
+    assert.match(xml, /<tpPlanRP>0<\/tpPlanRP>/);
+    assert.match(xml, /<indTetoRGPS>N<\/indTetoRGPS>/);
+    assert.match(xml, /<indAbonoPerm>N<\/indAbonoPerm>/);
   });
 
-  it("tpRegPrev=1 (RGPS): indTetoRGPS é obrigatório e emitido", () => {
+  it("tpRegPrev=1 (RGPS): rejeita campos exclusivos do RPPS", () => {
     const semTeto = { ...admissaoEstatutario(), tpRegPrev: 1, estatutario: { tpProv: 1, dataExercicio: "2026-08-01" } };
-    assert.throws(() => gerarXmlS2200(funcionarioCLT(), semTeto), /indTetoRGPS/);
+    assert.doesNotThrow(() => gerarXmlS2200(funcionarioCLT(), semTeto));
     const comTeto = { ...semTeto, estatutario: { ...semTeto.estatutario, indTetoRGPS: true } };
-    assert.match(gerarXmlS2200(funcionarioCLT(), comTeto), /<indTetoRGPS>S<\/indTetoRGPS>/);
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), comTeto), /RPPS/);
   });
 });
 
@@ -481,10 +482,10 @@ describe("gerarXmlS2200 — validação de entrada", () => {
     assert.throws(() => gerarXmlS2200(funcionarioCLT(), dados), /maior que zero/);
   });
 
-  it("estatutário também exige horContratual (minOccurs=1 no XSD)", () => {
+  it("estatutário não exige horContratual", () => {
     const dados = admissaoEstatutario();
     delete dados.horContratual;
-    assert.throws(() => gerarXmlS2200(funcionarioCLT(), dados), /infoContrato/);
+    assert.doesNotThrow(() => gerarXmlS2200(funcionarioCLT(), dados));
   });
 
   it("funcionário nascido no Brasil sem naturalidade (codMunic/uf) falha", () => {
@@ -503,6 +504,111 @@ describe("gerarXmlS2200 — validação de entrada", () => {
     dados.horContratual = { ...dados.horContratual };
     delete dados.horContratual.horarioNoturno;
     assert.throws(() => gerarXmlS2200(funcionarioCLT(), dados), /horContratual/);
+  });
+});
+
+// --- regras condicionais do leiaute S-1.3 ------------------------------
+
+describe("gerarXmlS2200 - regras condicionais", () => {
+  it("aceita estatutario sem remuneracao e sem duracao", () => {
+    const dados = admissaoEstatutario();
+    const xml = gerarXmlS2200(funcionarioCLT(), dados);
+    assert.doesNotMatch(xml, /<remuneracao>/);
+    assert.doesNotMatch(xml, /<duracao>/);
+  });
+
+  it("nao exige horContratual para celetista fora do regime de horario", () => {
+    const dados = admissaoCLT();
+    dados.tpRegJor = 2;
+    delete dados.horContratual;
+    const xml = gerarXmlS2200(funcionarioCLT(), dados);
+    assert.doesNotMatch(xml, /<horContratual>/);
+  });
+
+  it("rejeita tpJornada fora do dominio", () => {
+    const dados = admissaoCLT();
+    dados.horContratual.tpJornada = 1;
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), dados), /tpJornada/);
+  });
+
+  it("rejeita tmpParc fora do dominio e combinacoes invalidas", () => {
+    const invalido = admissaoCLT();
+    invalido.horContratual.tmpParc = 4;
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), invalido), /tmpParc/);
+
+    const categoria104 = admissaoCLT();
+    categoria104.codCateg = 104;
+    categoria104.empregador = { tpInsc: 2, nrInsc: "12345678909" };
+    categoria104.localTrabalho = { endereco: funcionarioCLT().endereco };
+    categoria104.horContratual.tmpParc = 2;
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), categoria104), /tmpParc=2 ou 3/);
+  });
+
+  it("rejeita qtdHrsSem ausente ou invalida quando a categoria exige jornada", () => {
+    const ausente = admissaoCLT();
+    delete ausente.horContratual.qtdHrsSem;
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), ausente), /qtdHrsSem/);
+
+    const invalido = admissaoCLT();
+    invalido.horContratual.qtdHrsSem = 0;
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), invalido), /qtdHrsSem/);
+  });
+
+  it("gera localTempDom para categoria 104 sem localTrabGeral", () => {
+    const dados = admissaoCLT();
+    dados.codCateg = 104;
+    dados.empregador = { tpInsc: 2, nrInsc: "12345678909" };
+    dados.localTrabalho = { endereco: funcionarioCLT().endereco };
+    dados.horContratual.tmpParc = 1;
+    const xml = gerarXmlS2200(funcionarioCLT(), dados);
+    assert.match(xml, /<localTempDom>/);
+    assert.doesNotMatch(xml, /<localTrabGeral>/);
+    assert.match(xml, /<dscLograd>das Ac/);
+  });
+
+  it("gera trabalho temporario e localTempDom para categoria 106", () => {
+    const dados = admissaoCLT();
+    dados.codCateg = 106;
+    dados.localTrabalho = {
+      tpInsc: 1,
+      nrInsc: "12345678000195",
+      endereco: funcionarioCLT().endereco,
+    };
+    dados.trabalhadorTemporario = {
+      hipoteseLegal: 2,
+      justificativa: "Aumento excepcional de demanda",
+      estabelecimentoVinculo: { tpInsc: 1, nrInsc: "22345678000195" },
+    };
+    const xml = gerarXmlS2200(funcionarioCLT(), dados);
+    assert.match(xml, /<trabTemporario>/);
+    assert.match(xml, /<ideEstabVinc>/);
+    assert.match(xml, /<localTrabGeral>/);
+    assert.match(xml, /<localTempDom>/);
+  });
+
+  it("categoria 111 permite omitir qtdHrsSem e horNoturno", () => {
+    const dados = admissaoCLT();
+    dados.codCateg = 111;
+    delete dados.horContratual.qtdHrsSem;
+    delete dados.horContratual.horarioNoturno;
+    const xml = gerarXmlS2200(funcionarioCLT(), dados);
+    assert.match(xml, /<horContratual>/);
+    assert.doesNotMatch(xml, /<qtdHrsSem>/);
+    assert.doesNotMatch(xml, /<horNoturno>/);
+  });
+
+  it("rejeita tpInsc invalido no empregador, local e aprendizagem", () => {
+    const empregador = admissaoCLT();
+    empregador.empregador.tpInsc = 3;
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), empregador), /empregador.tpInsc/);
+
+    const local = admissaoCLT();
+    local.localTrabalho.tpInsc = 2;
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), local), /localTrabalho.tpInsc/);
+
+    const aprendiz = admissaoAprendiz();
+    aprendiz.aprendiz.tpInsc = 3;
+    assert.throws(() => gerarXmlS2200(funcionarioAprendiz(), aprendiz), /aprendiz.tpInsc/);
   });
 });
 
