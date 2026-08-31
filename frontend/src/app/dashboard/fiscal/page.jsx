@@ -25,8 +25,8 @@ const AUTOMACOES = [
     icon: CalculadoraIcon,
     nome: 'Apuração de impostos — Simples Nacional',
     descricao: 'Calcula o DAS a partir dos lançamentos fiscais do período.',
-    status: 'em_desenvolvimento',
-    observacao: 'Sprint atual',
+    status: 'disponivel',
+    href: '/dashboard/fiscal/apuracao',
   },
   {
     icon: CalculadoraIcon,

@@ -1,0 +1,4 @@
+ALTER TABLE regras 
+  ALTER COLUMN versao SET NOT NULL;
+
+COMMIT;

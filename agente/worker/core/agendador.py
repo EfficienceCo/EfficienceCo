@@ -55,6 +55,17 @@ def _monitorar_nfe():
         time.sleep(INTERVALO_POLLING_SEGUNDOS)
 
 
+def _monitorar_folha_fator_r():
+    from automacoes.verificar_folha_fator_r import processar_folha_fator_r
+
+    while True:
+        try:
+            processar_folha_fator_r()
+        except Exception as e:
+            print(f"[agendador] Erro no polling Fator R / folha: {e}")
+        time.sleep(INTERVALO_POLLING_SEGUNDOS)
+
+
 def _agendar_tarefas_diarias():
     def _gerar_relatorio_seguro():
         try:
@@ -100,6 +111,7 @@ def iniciar_agendador():
     threading.Thread(target=_polling_regras, daemon=True).start()
     threading.Thread(target=_polling_etapas, daemon=True).start()
     threading.Thread(target=_monitorar_nfe, daemon=True).start()
+    threading.Thread(target=_monitorar_folha_fator_r, daemon=True).start()
     threading.Thread(target=_loop_schedule, daemon=True).start()
     threading.Thread(target=_retry_fila, daemon=True).start()
 

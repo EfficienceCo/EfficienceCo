@@ -56,14 +56,14 @@ export async function listarEventosAgente(req, res) {
     .from("eventos")
     .select("*", { count: "exact" })
     .eq("cliente_id", clienteId)
-    .order("data_vinculo", { ascending: false })
+    .order("criado_em", { ascending: false })
     .range(offset, offset + limit - 1);
 
   if (req.query.data) {
     const dia = req.query.data;
     query = query
-      .gte("data_vinculo", `${dia}T00:00:00`)
-      .lte("data_vinculo", `${dia}T23:59:59`);
+      .gte("criado_em", `${dia}T00:00:00`)
+      .lte("criado_em", `${dia}T23:59:59`);
   }
 
   const { data, count, error } = await query;

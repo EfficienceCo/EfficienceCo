@@ -25,8 +25,9 @@ const AUTOMACOES = [
   {
     icon: TransmissaoIcon,
     nome: 'eSocial (todos os eventos)',
-    descricao: 'Transmite os eventos obrigatórios do eSocial.',
-    status: 'planejado',
+    descricao: 'Gera, revisa e aprova os eventos obrigatórios do eSocial.',
+    status: 'disponivel',
+    href: '/dashboard/dp/esocial',
   },
   {
     icon: CalendarioIcon,
@@ -75,6 +76,13 @@ const AUTOMACOES = [
     nome: 'Vale-transporte e vale-refeição',
     descricao: 'Calcula os benefícios de VT e VR por funcionário.',
     status: 'planejado',
+  },
+  {
+  icon: TransmissaoIcon,
+  nome: 'eSocial',
+  descricao: 'Geração, revisão, aprovação e download de eventos do eSocial.',
+  status: 'disponivel',
+  href: '/dashboard/dp/esocial',
   },
 ];
 

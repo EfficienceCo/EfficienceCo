@@ -1,8 +1,13 @@
 import api from './api';
 
-export async function buscarMetricas(periodo) {
+export async function buscarMetricas({ periodo, clienteId } = {}) {
+  const params = {
+    ...(periodo !== undefined ? { periodo } : {}),
+    ...(clienteId ? { cliente_id: clienteId } : {}),
+  };
+
   const response = await api.get('/eficiencia', {
-    params: periodo !== undefined ? { periodo } : undefined,
+    params,
   });
 
   return response.data;

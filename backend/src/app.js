@@ -11,14 +11,17 @@ import usuariosRoutes from "./routes/usuarios.routes.js";
 import licencaRoutes from "./routes/licenca.routes.js";
 import regrasRoutes from "./routes/regras.routes.js";
 import eventosRoutes from "./routes/eventos.routes.js";
+import eventosEsocialRoutes from "./routes/eventos-esocial.routes.js";
 import obrigacoesRoutes from "./routes/obrigacoes.routes.js";
 import processosRoutes from "./routes/processos.routes.js";
 import notificacoesRoutes from "./routes/notificacoes.routes.js";
 import folhaRoutes from "./routes/folha.routes.js";
+import funcionariosRoutes from "./routes/funcionarios.routes.js";
 import lancamentosFiscaisRoutes from "./routes/lancamentos-fiscais.routes.js";
 import lancamentosContabeisRoutes from "./routes/lancamentos-contabeis.routes.js";
 import conciliacoesRoutes from "./routes/conciliacoes.routes.js";
 import eficienciaRoutes from "./routes/eficiencia.routes.js";
+import apuracoesRoutes from "./routes/apuracoes.routes.js";
 
 console.log("[app.js] Criando instancia do app...");
 const app = express();
@@ -64,6 +67,9 @@ console.log("[app.js] Rota /regras registrada");
 app.use("/eventos", eventosRoutes);
 console.log("[app.js] Rota /eventos registrada");
 
+app.use("/eventos-esocial", eventosEsocialRoutes);
+console.log("[app.js] Rota /eventos-esocial registrada");
+
 app.use("/obrigacoes", obrigacoesRoutes);
 console.log("[app.js] Rota /obrigacoes registrada");
 
@@ -76,6 +82,9 @@ console.log("[app.js] Rota /notificacoes registrada");
 app.use("/folha", folhaRoutes);
 console.log("[app.js] Rota /folha registrada");
 
+app.use("/funcionarios", funcionariosRoutes);
+console.log("[app.js] Rota /funcionarios registrada");
+
 app.use("/lancamentos-fiscais", lancamentosFiscaisRoutes);
 console.log("[app.js] Rota /lancamentos-fiscais registrada");
 
@@ -87,6 +96,9 @@ console.log("[app.js] Rota /conciliacoes registrada");
 
 app.use("/eficiencia", eficienciaRoutes);
 console.log("[app.js] Rota /eficiencia registrada");
+
+app.use("/apuracoes", apuracoesRoutes);
+console.log("[app.js] Rota /apuracoes registrada");
 
 console.log("[app.js] Exportando app...");
 export default app;
