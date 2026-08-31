@@ -28,3 +28,4 @@ agente/launcher/*.exe
 *.pth
 datasets/
 dataset/
+gravacao-demo/

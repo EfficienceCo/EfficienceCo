@@ -55,6 +55,16 @@ function App() {
     case 'usuarios': content = <UsuariosPage />; break;
     case 'escritorios': content = <EscritoriosPage />; break;
     case 'notificacoes': content = <NotificacoesPage store={notifs} />; break;
+    case 'roi': content = <EfficiencePage />; break;
+    case 'fiscal': content = <FiscalPage onNavigate={setRoute} />; break;
+    case 'fiscal-escrituracao': content = <FiscalEscrituracaoPage />; break;
+    case 'contabil': content = <ContabilPage onNavigate={setRoute} />; break;
+    case 'contabil-conciliacao': content = <ContabilConciliacaoPage />; break;
+    case 'dp': content = <DpPage onNavigate={setRoute} />; break;
+    case 'dp-folha': content = <DpFolhaPage />; break;
+    case 'societario': content = <SocietarioPage onNavigate={setRoute} />; break;
+    case 'financeiro': content = <FinanceiroPage onNavigate={setRoute} />; break;
+    case 'atendimento': content = <AtendimentoPage onNavigate={setRoute} />; break;
     default: content = <DashboardPage onNavigate={setRoute} />;
   }
 
