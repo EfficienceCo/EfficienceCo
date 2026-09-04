@@ -18,6 +18,12 @@ import {
   criarFuncionarioDeS2200,
   desligarFuncionarioDeS2299,
 } from "../services/esocial-funcionario.service.js";
+import {
+  transmitirEventoEsocial as enviarAoGov,
+  ErroTransmissaoESocial,
+} from "../services/esocial-transmissao.service.js";
+import { ErroCertificadoESocial } from "../utils/esocial-certificado.util.js";
+import { sanitizarErroHttp } from "../utils/esocial-resposta.util.js";
 
 // Colunas seguras para listagem/timeline — sem o XML nem o formulário, que só
 // vão no detalhe (GET /:id).
@@ -299,4 +305,79 @@ export async function baixarXml(req, res) {
   res.setHeader("Content-Type", "application/xml; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${nomeArquivo}"`);
   return res.status(200).send(evento.xml_gerado);
+}
+
+// ---------------------------------------------------------------------------
+// POST /eventos-esocial/:id/transmitir — envio ao governo (#ES-8)
+// multipart: certificado (.pfx/.p12) + senha — usados só em memória
+// ---------------------------------------------------------------------------
+export async function transmitirEvento(req, res) {
+  const { evento, erro } = await buscarEventoDoUsuario(req);
+  if (erro) return res.status(erro.status).json(erro.corpo);
+
+  if (evento.status !== "aprovado") {
+    return res.status(409).json({
+      erro: "Evento deve estar aprovado antes da transmissão ao eSocial",
+      codigo: "EVENTO_NAO_APROVADO",
+    });
+  }
+
+  if (!evento.xml_gerado) {
+    return res.status(404).json({ erro: "Evento sem XML gerado" });
+  }
+
+  const arquivo = req.file;
+  const senha = req.body?.senha;
+
+  if (!arquivo?.buffer?.length) {
+    return res.status(400).json({ erro: "Arquivo de certificado (.pfx/.p12) é obrigatório" });
+  }
+  if (!senha) {
+    return res.status(400).json({ erro: "Senha do certificado é obrigatória" });
+  }
+
+  let resultado;
+  try {
+    resultado = await enviarAoGov({
+      tipoEvento: evento.tipo_evento,
+      xmlEvento: evento.xml_gerado,
+      certificadoBuffer: arquivo.buffer,
+      senha,
+    });
+  } catch (err) {
+    if (err instanceof ErroCertificadoESocial) {
+      return res.status(400).json({ erro: err.message, codigo: err.codigo });
+    }
+    if (err instanceof ErroTransmissaoESocial) {
+      return res.status(err.statusHttp).json({ erro: err.message, codigo: err.codigo });
+    }
+    console.error("[eventos-esocial.controller] Erro na transmissão:", sanitizarErroHttp(err));
+    return res.status(502).json({ erro: sanitizarErroHttp(err), codigo: "TRANSMISSAO_FALHOU" });
+  } finally {
+    if (arquivo?.buffer) arquivo.buffer.fill(0);
+  }
+
+  const patch = {
+    status: resultado.status,
+    data_envio: new Date().toISOString(),
+    numero_recibo: resultado.numero_recibo ?? null,
+    erro_rejeicao: resultado.erro_rejeicao ?? null,
+  };
+
+  const { data: atualizado, error } = await supabase
+    .from("eventos_esocial")
+    .update(patch)
+    .eq("id", evento.id)
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error("[eventos-esocial.controller] Erro ao gravar resultado da transmissão:", error.message);
+    return res.status(500).json({ erro: "Transmissão realizada, mas falha ao gravar o resultado" });
+  }
+
+  console.log(
+    `[eventos-esocial.controller] Evento transmitido — ${evento.id} | status: ${resultado.status}`,
+  );
+  return res.status(200).json(atualizado);
 }

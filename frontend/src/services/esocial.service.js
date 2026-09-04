@@ -99,9 +99,14 @@ export async function baixarXmlEventoEsocial(id) {
   }
 }
 
-// POST /eventos-esocial/:id/transmitir — envio ao eSocial (#ES-8). Endpoint
-// ainda pode não estar disponível; a função já fica pronta para a tela wizard.
-export async function transmitirEventoEsocial(id) {
-  const response = await api.post(`/eventos-esocial/${id}/transmitir`);
+// POST /eventos-esocial/:id/transmitir — envio ao eSocial (#ES-8).
+// certificado: File/Blob do .pfx; senha: string. Material só trafega neste request.
+export async function transmitirEventoEsocial(id, { certificado, senha }) {
+  const form = new FormData();
+  form.append('certificado', certificado);
+  form.append('senha', senha);
+  const response = await api.post(`/eventos-esocial/${id}/transmitir`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
   return response.data;
 }

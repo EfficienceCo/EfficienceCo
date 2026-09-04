@@ -7,10 +7,12 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed:dev": "node scripts/seed-dev.js",
-    "test": "node --import ./tests/setup-env.js --experimental-test-module-mocks --test tests/folha-status.test.js tests/regras.test.js tests/folha-pipeline.test.js tests/processos-criacao.test.js tests/processos-execucao.test.js tests/clientes-por-cnpj.test.js tests/clientes-por-cnpj-extra.test.js tests/clientes-por-cnpj-http.test.js tests/folha-numero-parsing.test.js tests/funcionarios.test.js tests/funcionarios-http.test.js tests/lancamentos-fiscais.test.js tests/lancamentos-contabeis.test.js tests/ofx-parser.test.js tests/conciliacoes.test.js tests/conciliacao-matching.test.js tests/conciliacoes-criar.test.js tests/conciliacoes-pares.test.js tests/conciliacoes-listar.test.js tests/conciliacoes-relatorio.test.js tests/eficiencia.test.js tests/simples-nacional.util.test.js tests/apuracoes.test.js tests/apuracoes-folha.test.js tests/periodo-util.test.js tests/esocial-xml.util.test.js tests/eventos-esocial.test.js"
+    "test": "node --import ./tests/setup-env.js --experimental-test-module-mocks --test tests/folha-status.test.js tests/regras.test.js tests/folha-pipeline.test.js tests/processos-criacao.test.js tests/processos-execucao.test.js tests/clientes-por-cnpj.test.js tests/clientes-por-cnpj-extra.test.js tests/clientes-por-cnpj-http.test.js tests/folha-numero-parsing.test.js tests/funcionarios.test.js tests/funcionarios-http.test.js tests/lancamentos-fiscais.test.js tests/lancamentos-contabeis.test.js tests/ofx-parser.test.js tests/conciliacoes.test.js tests/conciliacao-matching.test.js tests/conciliacoes-criar.test.js tests/conciliacoes-pares.test.js tests/conciliacoes-listar.test.js tests/conciliacoes-relatorio.test.js tests/eficiencia.test.js tests/simples-nacional.util.test.js tests/apuracoes.test.js tests/apuracoes-folha.test.js tests/periodo-util.test.js tests/esocial-xml.util.test.js tests/eventos-esocial.test.js tests/esocial-ambiente.config.test.js tests/esocial-certificado.util.test.js tests/esocial-assinatura.util.test.js tests/esocial-lote.util.test.js tests/esocial-resposta.util.test.js tests/esocial-transmissao.service.test.js tests/eventos-esocial-transmitir.test.js",
+    "test:esocial-gov": "node --import ./tests/setup-env.js --experimental-test-module-mocks --test tests/integration/esocial-gov.producao-restrita.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "@xmldom/xmldom": "^0.9.12",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^16.0.3",
@@ -19,7 +21,10 @@
     "jsonwebtoken": "^9.0.0",
     "multer": "^2.2.0",
     "node-cron": "^4.2.1",
+    "node-forge": "^1.4.0",
     "pdfkit": "^0.19.1",
+    "soap": "^1.11.0",
+    "xml-crypto": "^6.1.2",
     "xmlbuilder2": "^4.0.3"
   },
   "devDependencies": {
