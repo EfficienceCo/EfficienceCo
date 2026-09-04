@@ -1,13 +1,66 @@
 import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
+import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 
 const CAMPOS_OBRIGATORIOS_POST = ["cpf", "nome", "data_admissao", "categoria", "salario"];
-const CAMPOS_EDITAVEIS_PATCH = ["nome", "cargo", "cbo", "salario"];
+const CAMPOS_EDITAVEIS_PATCH = ["nome", "endereco", "cargo", "cbo", "salario"];
 
 function camposFaltando(body, campos) {
   return campos.filter(
     (campo) => body[campo] === undefined || body[campo] === null || body[campo] === "",
   );
+}
+
+function dataIsoValida(data) {
+  if (typeof data !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+    return false;
+  }
+
+  const [ano, mes, dia] = data.split("-").map(Number);
+  const dataUtc = new Date(Date.UTC(ano, mes - 1, dia));
+
+  return (
+    dataUtc.getUTCFullYear() === ano &&
+    dataUtc.getUTCMonth() === mes - 1 &&
+    dataUtc.getUTCDate() === dia
+  );
+}
+
+function cpfValido(cpf) {
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) {
+    return false;
+  }
+
+  const calcularDigito = (quantidade) => {
+    const soma = cpf
+      .slice(0, quantidade)
+      .split("")
+      .reduce((total, digito, indice) => total + Number(digito) * (quantidade + 1 - indice), 0);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+
+  return calcularDigito(9) === Number(cpf[9]) && calcularDigito(10) === Number(cpf[10]);
+}
+
+function ehAdminEfficience(req) {
+  return req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE;
+}
+
+function funcionarioPertenceAoCliente(req, funcionario) {
+  return ehAdminEfficience(req) || funcionario.cliente_id === resolverClienteId(req);
+}
+
+function aplicarIsolamentoCliente(query, req) {
+  if (ehAdminEfficience(req)) {
+    return query;
+  }
+
+  return query.eq("cliente_id", resolverClienteId(req));
+}
+
+function enderecoValido(endereco) {
+  return endereco === null || Object.prototype.toString.call(endereco) === "[object Object]";
 }
 
 /**
@@ -16,27 +69,45 @@ function camposFaltando(body, campos) {
  * Usado após aprovação de S-2200 (admissão).
  */
 export async function criarFuncionario(req, res) {
-  const { cpf, nome, data_admissao, cargo, cbo, categoria, salario } = req.body;
+  const body = req.body ?? {};
+  const { cpf, nome, data_admissao, endereco, cargo, cbo, categoria, salario } = body;
 
-  const faltando = camposFaltando(req.body, CAMPOS_OBRIGATORIOS_POST);
+  const faltando = camposFaltando(body, CAMPOS_OBRIGATORIOS_POST);
   if (faltando.length > 0) {
     return res.status(400).json({ erro: "Campos obrigatórios faltando", faltando });
   }
 
   // Validações básicas
-  if (typeof salario !== "number" || salario < 0) {
+  if (!Number.isFinite(salario) || salario < 0) {
     return res.status(400).json({ erro: "salario deve ser um número não negativo" });
   }
 
-  if (!cpf || cpf.trim().length === 0) {
-    return res.status(400).json({ erro: "cpf é obrigatório e não pode ser vazio" });
+  const cpfNormalizado = typeof cpf === "string" ? cpf.replace(/\D/g, "") : "";
+  if (cpfNormalizado.length !== 11) {
+    return res.status(400).json({ erro: "cpf deve conter 11 dígitos" });
   }
 
-  if (!categoria || categoria.trim().length === 0) {
+  if (!cpfValido(cpfNormalizado)) {
+    return res.status(400).json({ erro: "cpf inválido" });
+  }
+
+  if (typeof nome !== "string" || nome.trim().length === 0) {
+    return res.status(400).json({ erro: "nome e obrigatorio e nao pode ser vazio" });
+  }
+
+  if (typeof categoria !== "string" || categoria.trim().length === 0) {
     return res.status(400).json({ erro: "categoria é obrigatória e não pode ser vazia" });
   }
 
-  const clienteId = req.usuario?.cliente_id;
+  if (endereco !== undefined && !enderecoValido(endereco)) {
+    return res.status(400).json({ erro: "endereco deve ser um objeto ou null" });
+  }
+
+  if (!dataIsoValida(data_admissao)) {
+    return res.status(400).json({ erro: "data_admissao deve estar no formato AAAA-MM-DD" });
+  }
+
+  const clienteId = resolverClienteId(req);
 
   if (!clienteId) {
     return res.status(401).json({ erro: "Usuário não autenticado ou sem cliente_id" });
@@ -44,18 +115,17 @@ export async function criarFuncionario(req, res) {
 
   const { data, error } = await supabase
     .from("funcionarios")
-    .insert([
-      {
-        cliente_id: clienteId,
-        cpf,
-        nome,
-        data_admissao,
-        cargo: cargo || null,
-        cbo: cbo || null,
-        categoria,
-        salario,
-      },
-    ])
+    .insert({
+      cliente_id: clienteId,
+      cpf: cpfNormalizado,
+      nome: nome.trim(),
+      data_admissao,
+      endereco: endereco ?? null,
+      cargo: typeof cargo === "string" && cargo.trim() ? cargo.trim() : null,
+      cbo: typeof cbo === "string" && cbo.trim() ? cbo.trim() : null,
+      categoria: categoria.trim(),
+      salario,
+    })
     .select()
     .maybeSingle();
 
@@ -79,12 +149,7 @@ export async function criarFuncionario(req, res) {
  * Query: clienteId (obrigatório para admin, extraído de req.usuario para usuários comuns)
  */
 export async function listarFuncionarios(req, res) {
-  let clienteId = req.usuario?.cliente_id;
-
-  // Admin pode listar funcionários de outro cliente via query
-  if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
-    clienteId = req.query.clienteId || clienteId;
-  }
+  const clienteId = resolverClienteId(req);
 
   if (!clienteId) {
     return res.status(400).json({ erro: "clienteId é obrigatório" });
@@ -112,11 +177,13 @@ export async function listarFuncionarios(req, res) {
 export async function obterFuncionario(req, res) {
   const { id } = req.params;
 
-  const { data: funcionario, error: erroBusca } = await supabase
+  let query = supabase
     .from("funcionarios")
     .select("*")
-    .eq("id", id)
-    .maybeSingle();
+    .eq("id", id);
+  query = aplicarIsolamentoCliente(query, req);
+
+  const { data: funcionario, error: erroBusca } = await query.maybeSingle();
 
   if (erroBusca) {
     console.error("[funcionarios.controller] Erro ao buscar funcionário:", erroBusca.message);
@@ -124,11 +191,7 @@ export async function obterFuncionario(req, res) {
   }
 
   // Isolamento multi-tenant: 404 nunca 403
-  if (
-    !funcionario ||
-    (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-      funcionario.cliente_id !== req.usuario?.cliente_id)
-  ) {
+  if (!funcionario || !funcionarioPertenceAoCliente(req, funcionario)) {
     return res.status(404).json({ erro: "Funcionário não encontrado" });
   }
 
@@ -143,21 +206,50 @@ export async function obterFuncionario(req, res) {
  */
 export async function editarFuncionario(req, res) {
   const { id } = req.params;
+  const body = req.body ?? {};
   const atualizacoes = {};
 
   // Validar quais campos podem ser editados
   for (const campo of CAMPOS_EDITAVEIS_PATCH) {
-    if (req.body[campo] !== undefined) {
-      if (typeof req.body[campo] === "string" && req.body[campo].trim() === "") {
-        atualizacoes[campo] = null; // Permitir null para campos opcionais
-      } else {
-        atualizacoes[campo] = req.body[campo];
-      }
+    if (body[campo] === undefined) {
+      continue;
     }
+
+    const valor = body[campo];
+
+    if (campo === "nome") {
+      if (typeof valor !== "string" || !valor.trim()) {
+        return res.status(400).json({ erro: "nome não pode ser vazio" });
+      }
+      atualizacoes.nome = valor.trim();
+      continue;
+    }
+
+    if (campo === "endereco") {
+      if (!enderecoValido(valor)) {
+        return res.status(400).json({ erro: "endereco deve ser um objeto ou null" });
+      }
+      atualizacoes.endereco = valor;
+      continue;
+    }
+
+    if (campo === "salario") {
+      if (!Number.isFinite(valor) || valor < 0) {
+        return res.status(400).json({ erro: "salario deve ser um número não negativo" });
+      }
+      atualizacoes.salario = valor;
+      continue;
+    }
+
+    if (typeof valor !== "string") {
+      return res.status(400).json({ erro: `${campo} deve ser um texto` });
+    }
+
+    atualizacoes[campo] = valor.trim() || null;
   }
 
   // Rejeitar campos não editáveis
-  const camposNaoEditaveis = Object.keys(req.body).filter(
+  const camposNaoEditaveis = Object.keys(body).filter(
     (campo) => !CAMPOS_EDITAVEIS_PATCH.includes(campo),
   );
   if (camposNaoEditaveis.length > 0) {
@@ -177,11 +269,13 @@ export async function editarFuncionario(req, res) {
   }
 
   // Buscar funcionário primeiro para validar isolamento
-  const { data: funcionario, error: erroBusca } = await supabase
+  let query = supabase
     .from("funcionarios")
     .select("cliente_id")
-    .eq("id", id)
-    .maybeSingle();
+    .eq("id", id);
+  query = aplicarIsolamentoCliente(query, req);
+
+  const { data: funcionario, error: erroBusca } = await query.maybeSingle();
 
   if (erroBusca) {
     console.error("[funcionarios.controller] Erro ao buscar funcionário:", erroBusca.message);
@@ -189,11 +283,7 @@ export async function editarFuncionario(req, res) {
   }
 
   // Isolamento multi-tenant: 404 nunca 403
-  if (
-    !funcionario ||
-    (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-      funcionario.cliente_id !== req.usuario?.cliente_id)
-  ) {
+  if (!funcionario || !funcionarioPertenceAoCliente(req, funcionario)) {
     return res.status(404).json({ erro: "Funcionário não encontrado" });
   }
 
@@ -203,6 +293,7 @@ export async function editarFuncionario(req, res) {
     .from("funcionarios")
     .update(atualizacoes)
     .eq("id", id)
+    .eq("cliente_id", funcionario.cliente_id)
     .select()
     .maybeSingle();
 
@@ -225,18 +316,24 @@ export async function editarFuncionario(req, res) {
  */
 export async function desligarFuncionario(req, res) {
   const { id } = req.params;
-  const { data_desligamento } = req.body;
+  const { data_desligamento } = req.body ?? {};
 
   if (!data_desligamento) {
     return res.status(400).json({ erro: "data_desligamento é obrigatória" });
   }
 
+  if (!dataIsoValida(data_desligamento)) {
+    return res.status(400).json({ erro: "data_desligamento deve estar no formato AAAA-MM-DD" });
+  }
+
   // Buscar funcionário primeiro para validar isolamento
-  const { data: funcionario, error: erroBusca } = await supabase
+  let query = supabase
     .from("funcionarios")
     .select("cliente_id, data_desligamento")
-    .eq("id", id)
-    .maybeSingle();
+    .eq("id", id);
+  query = aplicarIsolamentoCliente(query, req);
+
+  const { data: funcionario, error: erroBusca } = await query.maybeSingle();
 
   if (erroBusca) {
     console.error("[funcionarios.controller] Erro ao buscar funcionário:", erroBusca.message);
@@ -244,11 +341,7 @@ export async function desligarFuncionario(req, res) {
   }
 
   // Isolamento multi-tenant: 404 nunca 403
-  if (
-    !funcionario ||
-    (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-      funcionario.cliente_id !== req.usuario?.cliente_id)
-  ) {
+  if (!funcionario || !funcionarioPertenceAoCliente(req, funcionario)) {
     return res.status(404).json({ erro: "Funcionário não encontrado" });
   }
 
@@ -263,6 +356,7 @@ export async function desligarFuncionario(req, res) {
       atualizado_em: new Date().toISOString(),
     })
     .eq("id", id)
+    .eq("cliente_id", funcionario.cliente_id)
     .select()
     .maybeSingle();
 

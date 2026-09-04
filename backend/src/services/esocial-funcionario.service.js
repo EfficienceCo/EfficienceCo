@@ -1,9 +1,8 @@
 // Ponte entre a aprovação de um evento do eSocial e a tabela `funcionarios`.
 //
-// #ES-5 (endpoints de funcionário) ainda não existe. Enquanto isso, este
-// service escreve direto na tabela. Quando #ES-5 mergear, trocar o corpo das
-// duas funções por chamadas ao controller/service dele — a assinatura e os
-// pontos de chamada (eventos-esocial.controller.js) não mudam.
+// Os endpoints do #ES-5 atendem o frontend. Esta integração interna permanece
+// no service para não fazer uma chamada HTTP ao próprio backend ao aprovar um
+// evento eSocial.
 
 import supabase from "../config/database.js";
 import { formatarData, formatarValor } from "../utils/esocial-xml.util.js";
@@ -34,6 +33,7 @@ function mapearFuncionario(clienteId, dadosFormulario) {
     cpf: String(f.cpf ?? "").replace(/\D+/g, ""),
     nome: f.nome ?? null,
     data_admissao: normalizar(() => formatarData(a.dataAdmissao)), // -> "AAAA-MM-DD"
+    endereco: f.endereco ?? null,
     cargo: a.cargo?.nome ?? null,
     cbo: a.cargo?.cbo != null ? String(a.cargo.cbo).replace(/\D+/g, "") : null,
     categoria: a.codCateg != null ? String(a.codCateg) : null,

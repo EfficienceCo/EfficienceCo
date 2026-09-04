@@ -20,6 +20,8 @@ const FUNCIONARIO_ID = "33333333-3333-3333-3333-333333333333";
 
 const originalFrom = supabase.from;
 const filas = new Map();
+const chamadas = [];
+const insercoes = [];
 function chave(t, m) {
   return `${t}:${m}`;
 }
@@ -40,13 +42,15 @@ supabase.from = function (tabela) {
     select() {
       return builder;
     },
-    insert() {
+    insert(dados) {
+      insercoes.push({ tabela, dados });
       return builder;
     },
     update() {
       return builder;
     },
-    eq() {
+    eq(campo, valor) {
+      chamadas.push({ tabela, metodo: "eq", campo, valor });
       return builder;
     },
     order() {
@@ -69,7 +73,11 @@ after(() => {
   supabase.from = originalFrom;
 });
 
-beforeEach(() => filas.clear());
+beforeEach(() => {
+  filas.clear();
+  chamadas.length = 0;
+  insercoes.length = 0;
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,7 +111,7 @@ function usuarioComCliente(clienteId = CLIENTE_ID, perfil = PERFIS.FUNCIONARIO) 
 
 function payloadValido(overrides = {}) {
   return {
-    cpf: "12345678901",
+    cpf: "123.456.789-09",
     nome: "João Silva",
     data_admissao: "2026-01-15",
     cargo: "Gerente",
@@ -137,6 +145,7 @@ describe("POST /funcionarios", () => {
     assert.ok(res.body.id);
     assert.equal(res.body.nome, "João Silva");
     assert.equal(res.body.cliente_id, CLIENTE_ID);
+    assert.equal(insercoes[0].dados.cpf, "12345678909");
   });
 
   it("400 quando campos obrigatórios faltam", async () => {
@@ -165,6 +174,53 @@ describe("POST /funcionarios", () => {
 
     assert.equal(res.statusCode, 400);
     assert.ok(res.body.faltando.includes("cpf"));
+  });
+
+  it("400 quando CPF não contém 11 dígitos", async () => {
+    const req = { ...usuarioComCliente(), body: payloadValido({ cpf: "123" }) };
+    const res = criarResposta();
+    await criarFuncionario(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /11 dígitos/i);
+  });
+
+  it("400 quando CPF tem 11 dígitos, mas falha nos dígitos verificadores", async () => {
+    const req = { ...usuarioComCliente(), body: payloadValido({ cpf: "12345678901" }) };
+    const res = criarResposta();
+    await criarFuncionario(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /cpf inválido/i);
+  });
+
+  it("400 quando data_admissao não é uma data de calendário válida", async () => {
+    const req = {
+      ...usuarioComCliente(),
+      body: payloadValido({ data_admissao: "2026-02-30" }),
+    };
+    const res = criarResposta();
+    await criarFuncionario(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /data_admissao/i);
+  });
+
+  it("201 para admin no cliente informado", async () => {
+    queue("funcionarios", "maybeSingle", {
+      data: { id: FUNCIONARIO_ID, cliente_id: CLIENTE_ID_OUTRO, ...payloadValido() },
+      error: null,
+    });
+
+    const req = {
+      ...usuarioComCliente(CLIENTE_ID, PERFIS.ADMIN_EFFICIENCE),
+      body: payloadValido({ clienteId: CLIENTE_ID_OUTRO }),
+    };
+    const res = criarResposta();
+    await criarFuncionario(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.cliente_id, CLIENTE_ID_OUTRO);
   });
 
   it("409 quando CPF + data_admissao já existe (UNIQUE violation)", async () => {
@@ -222,6 +278,27 @@ describe("GET /funcionarios", () => {
     assert.deepEqual(res.body, []);
   });
 
+  it("ignora clienteId informado por usuário que não é admin", async () => {
+    queue("funcionarios", "await", { data: [], error: null });
+
+    const req = {
+      ...usuarioComCliente(CLIENTE_ID),
+      query: { clienteId: CLIENTE_ID_OUTRO },
+    };
+    const res = criarResposta();
+    await listarFuncionarios(req, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.ok(
+      chamadas.some(
+        (chamada) =>
+          chamada.tabela === "funcionarios" &&
+          chamada.campo === "cliente_id" &&
+          chamada.valor === CLIENTE_ID,
+      ),
+    );
+  });
+
   it("400 quando clienteId não pode ser resolvido", async () => {
     const req = { usuario: null };
     const res = criarResposta();
@@ -245,6 +322,15 @@ describe("GET /funcionarios", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body[0].cliente_id, CLIENTE_ID_OUTRO);
+  });
+
+  it("400 para admin sem clienteId", async () => {
+    const req = { ...usuarioComCliente(undefined, PERFIS.ADMIN_EFFICIENCE), query: {} };
+    const res = criarResposta();
+    await listarFuncionarios(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /clienteId/i);
   });
 });
 
@@ -294,6 +380,14 @@ describe("GET /funcionarios/:id", () => {
 
     assert.equal(res.statusCode, 404);
     assert.match(res.body.erro, /não encontrado/i);
+    assert.ok(
+      chamadas.some(
+        (chamada) =>
+          chamada.tabela === "funcionarios" &&
+          chamada.campo === "cliente_id" &&
+          chamada.valor === CLIENTE_ID,
+      ),
+    );
   });
 
   it("200 admin pode ver funcionário de outro cliente", async () => {
@@ -348,6 +442,45 @@ describe("PATCH /funcionarios/:id", () => {
     assert.equal(res.body.salario, 6000);
   });
 
+  it("200 edita o endereço cadastral", async () => {
+    const endereco = {
+      tipoLogradouro: "Rua",
+      logradouro: "das Flores",
+      numero: "120",
+      cep: "01311-000",
+      uf: "SP",
+    };
+    queue("funcionarios", "maybeSingle", { data: { cliente_id: CLIENTE_ID }, error: null });
+    queue("funcionarios", "maybeSingle", {
+      data: { id: FUNCIONARIO_ID, cliente_id: CLIENTE_ID, endereco },
+      error: null,
+    });
+
+    const req = {
+      ...usuarioComCliente(),
+      params: { id: FUNCIONARIO_ID },
+      body: { endereco },
+    };
+    const res = criarResposta();
+    await editarFuncionario(req, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.endereco, endereco);
+  });
+
+  it("400 quando endereço não é objeto nem null", async () => {
+    const req = {
+      ...usuarioComCliente(),
+      params: { id: FUNCIONARIO_ID },
+      body: { endereco: "Rua das Flores" },
+    };
+    const res = criarResposta();
+    await editarFuncionario(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /endereco/i);
+  });
+
   it("400 quando tenta editar campo não editável (CPF)", async () => {
     const req = {
       ...usuarioComCliente(),
@@ -400,6 +533,14 @@ describe("PATCH /funcionarios/:id", () => {
     await editarFuncionario(req, res);
 
     assert.equal(res.statusCode, 404);
+    assert.ok(
+      chamadas.some(
+        (chamada) =>
+          chamada.tabela === "funcionarios" &&
+          chamada.campo === "cliente_id" &&
+          chamada.valor === CLIENTE_ID,
+      ),
+    );
   });
 
   it("200 admin pode editar funcionário de outro cliente", async () => {
@@ -467,6 +608,19 @@ describe("PATCH /funcionarios/:id/desligar", () => {
     assert.match(res.body.erro, /data_desligamento/i);
   });
 
+  it("400 quando data_desligamento não é uma data de calendário válida", async () => {
+    const req = {
+      ...usuarioComCliente(),
+      params: { id: FUNCIONARIO_ID },
+      body: { data_desligamento: "2026-02-30" },
+    };
+    const res = criarResposta();
+    await desligarFuncionario(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /data_desligamento/i);
+  });
+
   it("409 quando funcionário já foi desligado", async () => {
     queue("funcionarios", "maybeSingle", {
       data: {
@@ -517,6 +671,14 @@ describe("PATCH /funcionarios/:id/desligar", () => {
     await desligarFuncionario(req, res);
 
     assert.equal(res.statusCode, 404);
+    assert.ok(
+      chamadas.some(
+        (chamada) =>
+          chamada.tabela === "funcionarios" &&
+          chamada.campo === "cliente_id" &&
+          chamada.valor === CLIENTE_ID,
+      ),
+    );
   });
 
   it("200 admin pode desligar funcionário de outro cliente", async () => {
