@@ -1,6 +1,7 @@
 import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
+import { dataIsoValida } from "../utils/data.util.js";
 
 const CAMPOS_OBRIGATORIOS_POST = ["cpf", "nome", "data_admissao", "categoria", "salario"];
 const CAMPOS_EDITAVEIS_PATCH = ["nome", "endereco", "cargo", "cbo", "salario"];
@@ -8,21 +9,6 @@ const CAMPOS_EDITAVEIS_PATCH = ["nome", "endereco", "cargo", "cbo", "salario"];
 function camposFaltando(body, campos) {
   return campos.filter(
     (campo) => body[campo] === undefined || body[campo] === null || body[campo] === "",
-  );
-}
-
-function dataIsoValida(data) {
-  if (typeof data !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(data)) {
-    return false;
-  }
-
-  const [ano, mes, dia] = data.split("-").map(Number);
-  const dataUtc = new Date(Date.UTC(ano, mes - 1, dia));
-
-  return (
-    dataUtc.getUTCFullYear() === ano &&
-    dataUtc.getUTCMonth() === mes - 1 &&
-    dataUtc.getUTCDate() === dia
   );
 }
 
