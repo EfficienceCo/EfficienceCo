@@ -53,7 +53,8 @@ function admissaoCLT() {
     tpAdmissao: 1,
     tpRegJor: 1,
     natAtividade: 1,
-    fgts: { dataOpcao: "2026-08-01" },
+    // fgts omitido de propósito: dtAdm=2026-08-01 é posterior à
+    // obrigatoriedade do FGTS (1988-10-05) — o grupo <FGTS> é PROIBIDO aqui.
     cargo: { nome: "Analista Contábil", cbo: "2522-10" },
     remuneracao: { valorSalarioFixo: 3500.5, unidadeSalarioFixo: 5 },
     duracao: { tpContr: 1 },
@@ -105,7 +106,7 @@ function admissaoAprendiz() {
     aprendiz: { indAprend: 1, cnpjEntQual: "11.111.111/0001-11", tpInsc: 1, nrInsc: "22222222000122" },
     cargo: { nome: "Aprendiz Administrativo", cbo: "4110-05" },
     remuneracao: { valorSalarioFixo: 700, unidadeSalarioFixo: 5 },
-    duracao: { tpContr: 2, dataTermino: "2028-08-14" },
+    duracao: { tpContr: 2, dataTermino: "2028-08-14", clausulaAssecuratoria: false },
     localTrabalho: { tpInsc: 1, nrInsc: "12345678000195" },
     horContratual: {
       qtdHrsSem: 20,
@@ -291,11 +292,12 @@ describe("gerarXmlS2200 — CLT (categoria 101)", () => {
     assert.match(xml, /<uf>SP<\/uf>/);
   });
 
-  it("usa infoCeletista (não infoEstatutario) e traz FGTS", () => {
+  it("usa infoCeletista (não infoEstatutario) e não traz FGTS (admissão moderna)", () => {
     assert.match(xml, /<infoRegimeTrab>\s*<infoCeletista>/);
     assert.doesNotMatch(xml, /infoEstatutario/);
     assert.match(xml, /<dtAdm>2026-08-01<\/dtAdm>/);
-    assert.match(xml, /<FGTS>\s*<dtOpcFGTS>2026-08-01<\/dtOpcFGTS>\s*<\/FGTS>/);
+    // dtAdm 2026-08-01 é posterior a 1988-10-05: o grupo FGTS é proibido pelo XSD.
+    assert.doesNotMatch(xml, /<FGTS>/);
   });
 
   it("infoContrato traz codCateg, CBO sem pontuação e remuneração com 2 casas", () => {
@@ -488,10 +490,11 @@ describe("gerarXmlS2200 — validação de entrada", () => {
     assert.doesNotThrow(() => gerarXmlS2200(funcionarioCLT(), dados));
   });
 
-  it("funcionário nascido no Brasil sem naturalidade (codMunic/uf) falha", () => {
-    const f = { ...funcionarioCLT() };
-    delete f.naturalidade;
-    assert.throws(() => gerarXmlS2200(f, admissaoCLT()), /naturalidade/);
+  it("nascimento não emite codMunic/uf (não existem em T_nascimento no XSD S-1.3)", () => {
+    const xml = gerarXmlS2200(funcionarioCLT(), admissaoCLT());
+    const nascimento = xml.match(/<nascimento>[\s\S]*?<\/nascimento>/)[0];
+    assert.doesNotMatch(nascimento, /<codMunic>/);
+    assert.doesNotMatch(nascimento, /<uf>/);
   });
 
   it("cargo sem CBO falha (CBOCargo obrigatório com nmCargo)", () => {
@@ -508,6 +511,47 @@ describe("gerarXmlS2200 — validação de entrada", () => {
 });
 
 // --- regras condicionais do leiaute S-1.3 ------------------------------
+
+describe("gerarXmlS2200 - regra do grupo FGTS (CONDICAO_GRUPO do XSD)", () => {
+  it("rejeita fgts informado em admissão moderna (dtAdm >= 1988-10-05)", () => {
+    const dados = { ...admissaoCLT(), fgts: { dataOpcao: "2026-08-01" } };
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), dados), /fgts não pode ser informado/);
+  });
+
+  it("rejeita fgts informado com tpAdmissao=6 (mudança de CPF), mesmo com dtAdm antiga", () => {
+    const dados = { ...admissaoCLT(), tpAdmissao: 6, dataAdmissao: "1980-01-01", fgts: { dataOpcao: "1980-01-01" } };
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), dados), /fgts não pode ser informado/);
+  });
+
+  it("exige fgts para admissão anterior a 1988-10-05 (regime de opção)", () => {
+    const dados = { ...admissaoCLT(), dataAdmissao: "1985-01-01" };
+    delete dados.fgts;
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), dados), /fgts\.dataOpcao é obrigatório/);
+  });
+
+  it("aceita e emite fgts para admissão anterior a 1988-10-05", () => {
+    const dados = { ...admissaoCLT(), dataAdmissao: "1985-01-01", fgts: { dataOpcao: "1985-01-01" } };
+    const xml = gerarXmlS2200(funcionarioCLT(), dados);
+    assert.match(xml, /<FGTS>\s*<dtOpcFGTS>1985-01-01<\/dtOpcFGTS>\s*<\/FGTS>/);
+  });
+
+  it("doméstico (codCateg 104): limiar de obrigatoriedade é 2015-10-01, não 1988-10-05", () => {
+    const domestico = () => ({
+      ...admissaoCLT(),
+      codCateg: 104,
+      empregador: { tpInsc: 2, nrInsc: "12345678909" },
+      localTrabalho: { endereco: funcionarioCLT().endereco },
+      dataAdmissao: "2010-01-01",
+    });
+    // Antes de 2015-10-01: fgts ainda obrigatório para doméstico.
+    const semFgts = domestico();
+    delete semFgts.fgts;
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), semFgts), /fgts\.dataOpcao é obrigatório/);
+    // Depois de 2015-10-01: fgts vira proibido.
+    const posLC150 = { ...domestico(), dataAdmissao: "2016-01-01", fgts: { dataOpcao: "2016-01-01" } };
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), posLC150), /fgts não pode ser informado/);
+  });
+});
 
 describe("gerarXmlS2200 - regras condicionais", () => {
   it("aceita estatutario sem remuneracao e sem duracao", () => {
