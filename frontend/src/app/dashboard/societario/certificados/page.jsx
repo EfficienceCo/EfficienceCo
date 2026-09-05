@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../../context/AuthContext';
 import { listarClientes } from '../../../../services/clientes.service';
@@ -85,40 +85,29 @@ function formatarData(iso) {
 }
 
 // Checklist materializado localmente quando o back-end (CD-2) ainda não está no
-// ambiente. Espelha o que o endpoint POST /certificados/:id/iniciar-renovacao
-// devolve — A1 curto (2 passos), A3 com o passo extra de agendamento presencial.
+// ambiente. Espelha exatamente o que POST /certificados/:id/iniciar-renovacao
+// devolve (certificados.controller.js › montarChecklistRenovacao): wrapper
+// { tipo, itens, validade_nova }, itens com `descricao`, e o passo A3
+// `agendar_comparecimento` (com `data`) empurrado para o fim da lista.
 function montarChecklistLocal(tipo) {
   const itens = [
-    {
-      id: 'confirmar_dados',
-      titulo: 'Confirmar dados do titular e do certificado',
-      concluido: false,
-    },
+    { id: 'confirmar_dados', descricao: 'Confirmar dados do titular', concluido: false },
+    { id: 'gerar_novo', descricao: 'Gerar novo certificado', concluido: false },
   ];
 
   if (tipo === 'A3') {
     itens.push({
-      id: 'agendar_presencial',
-      titulo: 'Agendar comparecimento presencial',
+      id: 'agendar_comparecimento',
+      descricao: 'Agendar comparecimento presencial',
       concluido: false,
-      tipo: 'agendamento',
-      dados: { data: '' },
-    });
-    itens.push({
-      id: 'gerar_novo',
-      titulo: 'Emitir o novo certificado no comparecimento e atualizar validade e serial',
-      concluido: false,
-    });
-  } else {
-    itens.push({
-      id: 'gerar_novo',
-      titulo: 'Gerar o novo certificado e atualizar validade e serial',
-      concluido: false,
+      data: null,
     });
   }
 
-  return { itens };
+  return { tipo, itens, validade_nova: null };
 }
+
+const ID_ITEM_AGENDAMENTO = 'agendar_comparecimento';
 
 const FAIXA_META = {
   verde: {
@@ -279,6 +268,7 @@ function ChecklistRenovacao({
   itensSalvando,
   onToggleItem,
   onAlterarDataItem,
+  onConcluirRenovacao,
 }) {
   const total = itens.length;
   const feitos = itens.filter((item) => item.concluido).length;
@@ -297,8 +287,8 @@ function ChecklistRenovacao({
       <ul className="space-y-2">
         {itens.map((item, indice) => {
           const chave = `${certificadoId}::${item.id || indice}`;
-          const isAgendamento = item.tipo === 'agendamento' || item.id === 'agendar_presencial';
-          const dataAgendada = item?.dados?.data || '';
+          const isAgendamento = item.id === ID_ITEM_AGENDAMENTO;
+          const dataAgendada = item?.data || '';
           const bloqueiaConclusao = isAgendamento && !dataAgendada;
           const salvando = Boolean(itensSalvando[chave]);
 
@@ -324,7 +314,7 @@ function ChecklistRenovacao({
                       item.concluido ? 'text-zinc-500 line-through' : 'text-zinc-800'
                     }`}
                   >
-                    {item.titulo}
+                    {item.descricao || item.titulo}
                   </span>
                 </span>
                 <span className="shrink-0 text-xs text-zinc-500">
@@ -344,7 +334,10 @@ function ChecklistRenovacao({
                     id={`${chave}-data`}
                     type="date"
                     value={dataAgendada}
-                    disabled={!podeGerenciar}
+                    // Trava a data depois que o passo é concluído — o back-end
+                    // não aceita limpar/alterar via `data: ''`. Reabre ao
+                    // desmarcar o item.
+                    disabled={!podeGerenciar || salvando || item.concluido}
                     onChange={(evento) => onAlterarDataItem(item, evento.target.value)}
                     className="rounded-md border border-zinc-300 px-2 py-1 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-100"
                   />
@@ -361,11 +354,99 @@ function ChecklistRenovacao({
       </ul>
 
       {total > 0 && feitos === total ? (
-        <p className="text-xs font-medium text-emerald-700">
-          Renovação concluída. Edite o certificado com a nova validade e o novo serial ao emitir.
-        </p>
+        podeGerenciar ? (
+          <ConclusaoRenovacao onConcluir={onConcluirRenovacao} />
+        ) : (
+          <p className="text-xs font-medium text-emerald-700">
+            Checklist concluído — aguardando a emissão do novo certificado.
+          </p>
+        )
       ) : null}
     </div>
+  );
+}
+
+// Passo final: todos os itens marcados. Coleta a nova validade (obrigatória) e,
+// opcionalmente, novo serial / caminho local. Ao enviar, o back-end cria o
+// certificado substituto e marca o antigo como "substituido".
+function ConclusaoRenovacao({ onConcluir }) {
+  const [validadeNova, setValidadeNova] = useState('');
+  const [serialNovo, setSerialNovo] = useState('');
+  const [caminhoNovo, setCaminhoNovo] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState('');
+
+  async function handleSubmit(evento) {
+    evento.preventDefault();
+    if (!validadeNova || salvando) return;
+    setSalvando(true);
+    setErro('');
+    try {
+      await onConcluir({
+        validade_nova: validadeNova,
+        serial_novo: serialNovo.trim() || undefined,
+        caminho_local_novo: caminhoNovo.trim() || undefined,
+      });
+      // Sucesso: a lista recarrega e este card é substituído pelo novo registro.
+    } catch (error) {
+      setErro(
+        obterMensagemErro(error, 'Não foi possível concluir a renovação. Verifique a nova validade.'),
+      );
+    } finally {
+      // Se o card não desmontar (ex.: atraso na lista recarregada), o botão
+      // volta a ficar clicável em vez de travar no spinner.
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3"
+    >
+      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+        Emitir o novo certificado
+      </p>
+      <label className="block space-y-1">
+        <span className="block text-[11px] font-medium text-zinc-600">
+          Nova validade <span aria-hidden="true" className="text-rose-500">*</span>
+        </span>
+        <input
+          type="date"
+          value={validadeNova}
+          onChange={(evento) => setValidadeNova(evento.target.value)}
+          className="w-full rounded-md border border-zinc-300 px-2 py-1 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+        />
+      </label>
+      <label className="block space-y-1">
+        <span className="block text-[11px] font-medium text-zinc-600">Novo serial</span>
+        <input
+          type="text"
+          value={serialNovo}
+          onChange={(evento) => setSerialNovo(evento.target.value)}
+          className="w-full rounded-md border border-zinc-300 px-2 py-1 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+        />
+      </label>
+      <label className="block space-y-1">
+        <span className="block text-[11px] font-medium text-zinc-600">Novo caminho local</span>
+        <input
+          type="text"
+          value={caminhoNovo}
+          onChange={(evento) => setCaminhoNovo(evento.target.value)}
+          placeholder="deixe em branco para manter o atual"
+          className="w-full rounded-md border border-zinc-300 px-2 py-1 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+        />
+      </label>
+      {erro ? <p className="text-[11px] text-rose-700">{erro}</p> : null}
+      <button
+        type="submit"
+        disabled={!validadeNova || salvando}
+        className="inline-flex items-center gap-2 rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {salvando ? <Spinner /> : null}
+        Concluir renovação
+      </button>
+    </form>
   );
 }
 
@@ -378,12 +459,18 @@ function CertificadoCard({
   onIniciarRenovacao,
   onToggleItem,
   onAlterarDataItem,
+  onConcluirRenovacao,
 }) {
   const dias = calcularDias(certificado);
   const faixa = certificado.faixa || calcularFaixa(dias);
   const meta = FAIXA_META[faixa] || FAIXA_META.desconhecida;
   const itens = normalizarItens(certificado.renovacao_checklist);
-  const emRenovacao = certificado.status === 'renovacao_iniciada' || itens.length > 0;
+  const substituido = certificado.status === 'substituido';
+  // 'renovacao_iniciada' é o status do CD-2; o `itens.length` cobre um checklist
+  // já materializado sob outro rótulo de status, menos o certificado já trocado.
+  const emRenovacao =
+    !substituido &&
+    (certificado.status === 'renovacao_iniciada' || itens.length > 0);
 
   return (
     <article
@@ -401,6 +488,11 @@ function CertificadoCard({
               e-CNPJ {certificado.tipo || '—'}
             </span>
             <span className={`rounded-full px-2 py-0.5 ring-1 ${meta.badge}`}>{meta.rotulo}</span>
+            {substituido ? (
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-500 ring-1 ring-zinc-200">
+                Substituído
+              </span>
+            ) : null}
           </div>
           <p className="text-xs text-zinc-500">
             Validade:{' '}
@@ -425,7 +517,12 @@ function CertificadoCard({
           itensSalvando={itensSalvando}
           onToggleItem={(item, concluido) => onToggleItem(certificado, item, concluido)}
           onAlterarDataItem={(item, data) => onAlterarDataItem(certificado, item, data)}
+          onConcluirRenovacao={(dados) => onConcluirRenovacao(certificado, dados)}
         />
+      ) : substituido ? (
+        <p className="text-[11px] text-zinc-400">
+          Certificado substituído por um novo registro nesta lista.
+        </p>
       ) : podeGerenciar ? (
         <button
           type="button"
@@ -621,6 +718,9 @@ export default function CertificadosPage() {
   const [iniciandoId, setIniciandoId] = useState(null);
   const [itensSalvando, setItensSalvando] = useState({});
   const [avisos, setAvisos] = useState({});
+  // Itens de checklist com PATCH em voo, por `${certId}::${itemId}`. Ref (não
+  // estado) para a reconciliação enxergar o valor atual sem closure obsoleta.
+  const pendentesRef = useRef({});
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -687,6 +787,9 @@ export default function CertificadosPage() {
     atualizarCertificadoNoEstado(certId, (cert) => ({
       ...cert,
       renovacao_checklist: {
+        ...(cert.renovacao_checklist && !Array.isArray(cert.renovacao_checklist)
+          ? cert.renovacao_checklist
+          : {}),
         itens: normalizarItens(cert.renovacao_checklist).map((item) =>
           item.id === itemId ? updater(item) : item,
         ),
@@ -730,9 +833,10 @@ export default function CertificadosPage() {
     limparAviso(certificado.id);
     try {
       const atualizado = await iniciarRenovacao(certificado.id);
-      const checklist = atualizado?.renovacao_checklist
-        ? { itens: normalizarItens(atualizado.renovacao_checklist) }
-        : montarChecklistLocal(certificado.tipo);
+      const checklist =
+        atualizado?.renovacao_checklist && normalizarItens(atualizado.renovacao_checklist).length > 0
+          ? atualizado.renovacao_checklist
+          : montarChecklistLocal(certificado.tipo);
       atualizarCertificadoNoEstado(certificado.id, (cert) => ({
         ...cert,
         ...atualizado,
@@ -740,45 +844,98 @@ export default function CertificadosPage() {
         renovacao_checklist: checklist,
       }));
     } catch (error) {
-      // Endpoint CD-2 ainda não disponível no ambiente: materializa localmente
-      // para o fluxo continuar utilizável (padrão do esocial page com ES-5).
-      atualizarCertificadoNoEstado(certificado.id, (cert) => ({
-        ...cert,
-        status: 'renovacao_iniciada',
-        renovacao_checklist: montarChecklistLocal(certificado.tipo),
-      }));
+      // 409 = renovação já iniciada no servidor: o estado real está lá,
+      // recarrega em vez de tentar adivinhar.
+      if (error?.response?.status === 409) {
+        definirAviso(certificado.id, obterMensagemErro(error, 'Renovação já estava iniciada.'));
+        await carregarCertificados();
+        return;
+      }
+
+      // Qualquer outro erro (permissão, 404 cross-tenant, rede, 5xx): só
+      // sinaliza. Não materializa um checklist local — isso mascarava um
+      // certificado que o servidor recusaria em toda PATCH seguinte.
       definirAviso(
         certificado.id,
-        obterMensagemErro(
-          error,
-          'Renovação iniciada localmente — o back-end de certificados ainda não está disponível neste ambiente.',
-        ),
+        obterMensagemErro(error, 'Não foi possível iniciar a renovação. Tente novamente.'),
       );
     } finally {
       setIniciandoId(null);
     }
   }
 
+  // Contador de PATCHes em voo por item (não booleano) — dois handlers podem
+  // mexer no mesmo item ao mesmo tempo e cada um só zera a própria contribuição.
+  function marcarPendente(chave) {
+    pendentesRef.current[chave] = (pendentesRef.current[chave] || 0) + 1;
+  }
+
+  function desmarcarPendente(chave) {
+    const n = (pendentesRef.current[chave] || 0) - 1;
+    if (n > 0) pendentesRef.current[chave] = n;
+    else delete pendentesRef.current[chave];
+  }
+
+  // Adota o checklist devolvido pelo servidor (fonte de verdade), mas preserva
+  // o valor local de qualquer item ainda com PATCH concorrente em voo — a
+  // resposta atual pode ser anterior a essa outra edição.
+  function reconciliarChecklistServidor(certId, checklistServidor) {
+    const itensServidor = normalizarItens(checklistServidor);
+    if (itensServidor.length === 0) return;
+    atualizarCertificadoNoEstado(certId, (cert) => {
+      const locais = new Map(
+        normalizarItens(cert.renovacao_checklist).map((it) => [it.id, it]),
+      );
+      return {
+        ...cert,
+        renovacao_checklist: {
+          ...(checklistServidor && !Array.isArray(checklistServidor) ? checklistServidor : {}),
+          itens: itensServidor.map((item) => {
+            if (!pendentesRef.current[`${certId}::${item.id}`]) return item;
+            const local = locais.get(item.id);
+            return local
+              ? { ...item, concluido: local.concluido, data: local.data ?? item.data }
+              : item;
+          }),
+        },
+      };
+    });
+  }
+
+  // Conclusão que gera o certificado substituto: o back-end devolve
+  // { certificado, novo_certificado } (ver certificados.service.js) e só nesse
+  // caso a lista precisa ser recarregada.
+  function resyncSeSubstituido(atualizado) {
+    if (atualizado?.novo_certificado) carregarCertificados();
+  }
+
   async function handleToggleItem(certificado, item, concluido) {
     const chave = `${certificado.id}::${item.id}`;
+    const concluidoAnterior = Boolean(item.concluido);
+    marcarPendente(chave);
     setItensSalvando((atual) => ({ ...atual, [chave]: true }));
     aplicarItem(certificado.id, item.id, (it) => ({ ...it, concluido }));
     try {
-      const atualizado = await atualizarItemRenovacao(certificado.id, item.id, { concluido });
+      // No passo de agendamento presencial a data precisa ir junto: sem ela o
+      // back-end recusa a conclusão com 400 (data obrigatória).
+      const extra =
+        item.id === ID_ITEM_AGENDAMENTO && item.data ? { dados: { data: item.data } } : {};
+      const atualizado = await atualizarItemRenovacao(certificado.id, item.id, {
+        concluido,
+        ...extra,
+      });
+      desmarcarPendente(chave);
       if (atualizado?.renovacao_checklist) {
-        atualizarCertificadoNoEstado(certificado.id, (cert) => ({
-          ...cert,
-          ...atualizado,
-          renovacao_checklist: { itens: normalizarItens(atualizado.renovacao_checklist) },
-        }));
+        reconciliarChecklistServidor(certificado.id, atualizado.renovacao_checklist);
       }
+      resyncSeSubstituido(atualizado);
     } catch (error) {
+      desmarcarPendente(chave);
+      // Desfaz o check otimista — o servidor não persistiu.
+      aplicarItem(certificado.id, item.id, (it) => ({ ...it, concluido: concluidoAnterior }));
       definirAviso(
         certificado.id,
-        obterMensagemErro(
-          error,
-          'Não foi possível salvar o item no servidor; alteração mantida localmente.',
-        ),
+        obterMensagemErro(error, 'Não foi possível salvar o item. Tente novamente.'),
       );
     } finally {
       setItensSalvando((atual) => {
@@ -789,18 +946,65 @@ export default function CertificadosPage() {
     }
   }
 
-  function handleAlterarDataItem(certificado, item, data) {
-    const novosDados = { ...(item.dados || {}), data };
-    aplicarItem(certificado.id, item.id, (it) => ({ ...it, dados: novosDados }));
-    atualizarItemRenovacao(certificado.id, item.id, { dados: novosDados }).catch((error) => {
+  async function handleAlterarDataItem(certificado, item, data) {
+    const chave = `${certificado.id}::${item.id}`;
+    const dataAnterior = item.data ?? null;
+    aplicarItem(certificado.id, item.id, (it) => ({ ...it, data: data || null }));
+
+    // Campo limpo: só estado local, sem PATCH — o back-end recusa `data: ''`.
+    if (!data) return;
+
+    marcarPendente(chave);
+    setItensSalvando((atual) => ({ ...atual, [chave]: true }));
+    try {
+      // `concluido` inalterado (undefined vira `true` no controller). `dados` é
+      // espalhado no corpo pelo service e vira o campo plano `data`.
+      const atualizado = await atualizarItemRenovacao(certificado.id, item.id, {
+        concluido: Boolean(item.concluido),
+        dados: { data },
+      });
+      desmarcarPendente(chave);
+      if (atualizado?.renovacao_checklist) {
+        reconciliarChecklistServidor(certificado.id, atualizado.renovacao_checklist);
+      }
+      resyncSeSubstituido(atualizado);
+    } catch (error) {
+      desmarcarPendente(chave);
+      aplicarItem(certificado.id, item.id, (it) => ({ ...it, data: dataAnterior }));
       definirAviso(
         certificado.id,
-        obterMensagemErro(
-          error,
-          'Não foi possível salvar a data no servidor; alteração mantida localmente.',
-        ),
+        obterMensagemErro(error, 'Não foi possível salvar a data. Tente novamente.'),
       );
+    } finally {
+      setItensSalvando((atual) => {
+        const proximo = { ...atual };
+        delete proximo[chave];
+        return proximo;
+      });
+    }
+  }
+
+  // Todos os itens concluídos + nova validade → o back-end cria o certificado
+  // substituto (status 'ativo') e marca o antigo 'substituido', devolvendo
+  // { certificado, novo_certificado }. O `validade_nova`/`serial_novo`/
+  // `caminho_local_novo` vai no corpo de um PATCH a um item que NÃO seja o de
+  // agendamento (esse exige `data` junto ao concluir) — `confirmar_dados` sempre
+  // existe e já está concluído aqui.
+  async function handleConcluirRenovacao(certificado, dados) {
+    const itens = normalizarItens(certificado.renovacao_checklist);
+    const alvo = itens.find((it) => it.id !== ID_ITEM_AGENDAMENTO) || itens[itens.length - 1];
+    if (!alvo) throw new Error('Checklist de renovação vazio.');
+
+    const atualizado = await atualizarItemRenovacao(certificado.id, alvo.id, {
+      concluido: true,
+      dados,
     });
+    if (!atualizado?.novo_certificado) {
+      throw new Error('A renovação não pôde ser finalizada. Confira a nova validade.');
+    }
+    limparAviso(certificado.id);
+    await carregarCertificados();
+    return atualizado;
   }
 
   if (isLoading) return <p className="p-6">Carregando...</p>;
@@ -911,6 +1115,7 @@ export default function CertificadosPage() {
                   onIniciarRenovacao={handleIniciarRenovacao}
                   onToggleItem={handleToggleItem}
                   onAlterarDataItem={handleAlterarDataItem}
+                  onConcluirRenovacao={handleConcluirRenovacao}
                 />
               ))}
             </section>
