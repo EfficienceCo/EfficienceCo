@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
 import {
@@ -10,8 +11,20 @@ import {
   deletar as deletarObrigacao,
   listar as listarObrigacoes,
 } from '../../../services/obrigacoes.service';
+import { listarCertificados } from '../../../services/certificados.service';
 
 const PERFIS_AUTORIZADOS = new Set(['admin_cliente', 'admin_efficience']);
+
+// Certificado Digital (b3 / CD-6) é extensão do Calendário Fiscal: os
+// vencimentos de certificado entram na mesma lista de prazos das obrigações,
+// com a mesma fonte visual, e podem ser isolados pelo filtro "Tipo de prazo".
+const CERTIFICADOS_ROTA = '/dashboard/societario/certificados';
+const CERT_STATUS_VISIVEIS = new Set(['ativo', 'renovacao_iniciada', 'vencido']);
+const ORIGEM_OPCOES = [
+  { value: '', label: 'Todos os prazos' },
+  { value: 'obrigacao', label: 'Obrigações' },
+  { value: 'certificado', label: 'Certificado Digital' },
+];
 const TIPO_OPCOES = ['mensal', 'anual', 'eventual'];
 const TIPOS_RECORRENTES = new Set(['mensal', 'anual']);
 const STATUS_OPCOES = [
@@ -55,6 +68,39 @@ function normalizarObrigacoes(payload) {
   }
 
   return [];
+}
+
+function normalizarCertificados(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+
+  if (Array.isArray(payload?.certificados)) {
+    return payload.certificados;
+  }
+
+  return [];
+}
+
+// Converte um certificado (CD-2) para o mesmo formato de prazo consumido pelo
+// calendário e pela tabela. O status é derivado da validade, como nas
+// obrigações sem status explícito.
+function certificadoParaPrazo(certificado) {
+  const titular = certificado?.titular || certificado?.tipo || 'certificado';
+
+  return {
+    id: `certificado:${certificado?.id ?? titular}`,
+    origem: 'certificado',
+    certificadoId: certificado?.id ?? null,
+    titulo: `Certificado digital — ${titular}`,
+    tipo: 'Certificado Digital',
+    data_vencimento: certificado?.validade || '',
+    recorrente: false,
+  };
 }
 
 function obterDataVencimento(obrigacao) {
@@ -293,8 +339,10 @@ export default function ObrigacoesPage() {
 
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroMes, setFiltroMes] = useState(obterMesAtual);
+  const [filtroOrigem, setFiltroOrigem] = useState('');
 
   const [obrigacoes, setObrigacoes] = useState([]);
+  const [certificados, setCertificados] = useState([]);
   const [totalAtrasadas, setTotalAtrasadas] = useState(0);
   const [isLoadingObrigacoes, setIsLoadingObrigacoes] = useState(true);
   const [erroLista, setErroLista] = useState('');
@@ -330,12 +378,16 @@ export default function ObrigacoesPage() {
     setErroLista('');
 
     try {
-      const [listaFiltrada, listaCompletaMes] = await Promise.all([
+      const [listaFiltrada, listaCompletaMes, listaCertificados] = await Promise.all([
         listarObrigacoes({
           ...paramsMes,
           ...(filtroStatus ? { status: filtroStatus } : {}),
         }),
         listarObrigacoes(paramsMes),
+        // Vencimentos de certificado (CD-6). Falha silenciosa: se o CRUD de
+        // certificados ainda não estiver no ambiente, o calendário fiscal
+        // segue mostrando as obrigações normalmente.
+        listarCertificados().catch(() => []),
       ]);
 
       const obrigacoesFiltradas = normalizarObrigacoes(listaFiltrada);
@@ -345,6 +397,7 @@ export default function ObrigacoesPage() {
       ).length;
 
       setObrigacoes(obrigacoesFiltradas);
+      setCertificados(normalizarCertificados(listaCertificados));
       setTotalAtrasadas(atrasadasDoMes);
     } catch (error) {
       setErroLista(obterMensagemErro(error, 'Não foi possível carregar as obrigações.'));
@@ -365,11 +418,55 @@ export default function ObrigacoesPage() {
     }
   }, [carregarObrigacoes, isAuthenticated, isLoading]);
 
+  // Certificados do mês selecionado, já no formato de prazo. A lista do
+  // endpoint não é filtrada por mês, então recorta aqui pela validade.
+  const certificadosDoMes = useMemo(() => {
+    return certificados
+      .filter((certificado) =>
+        CERT_STATUS_VISIVEIS.has(String(certificado?.status || 'ativo')),
+      )
+      .filter((certificado) => {
+        const data = parseDataLocal(certificado?.validade);
+        return (
+          data &&
+          data.getFullYear() === filtroMesAno.ano &&
+          data.getMonth() + 1 === filtroMesAno.mes
+        );
+      })
+      .map(certificadoParaPrazo);
+  }, [certificados, filtroMesAno.ano, filtroMesAno.mes]);
+
+  // Lista única de prazos (obrigações + certificados), ordenada por vencimento
+  // e recortada pelo filtro "Tipo de prazo". As obrigações já vêm filtradas por
+  // status do backend; os certificados são filtrados por status derivado aqui.
+  const prazos = useMemo(() => {
+    const listaObrigacoes =
+      filtroOrigem === 'certificado'
+        ? []
+        : obrigacoes.map((obrigacao) => ({ ...obrigacao, origem: 'obrigacao' }));
+
+    const listaCertificados =
+      filtroOrigem === 'obrigacao'
+        ? []
+        : certificadosDoMes.filter(
+            (prazo) => !filtroStatus || obterStatusObrigacao(prazo) === filtroStatus,
+          );
+
+    return [...listaObrigacoes, ...listaCertificados].sort((a, b) => {
+      const dataA = parseDataLocal(obterDataVencimento(a));
+      const dataB = parseDataLocal(obterDataVencimento(b));
+      if (!dataA && !dataB) return 0;
+      if (!dataA) return 1;
+      if (!dataB) return -1;
+      return dataA.getTime() - dataB.getTime();
+    });
+  }, [obrigacoes, certificadosDoMes, filtroOrigem, filtroStatus]);
+
   const resumoPorDia = useMemo(() => {
     const mapa = {};
 
-    obrigacoes.forEach((obrigacao) => {
-      const data = parseDataLocal(obterDataVencimento(obrigacao));
+    prazos.forEach((prazo) => {
+      const data = parseDataLocal(obterDataVencimento(prazo));
       if (!data) {
         return;
       }
@@ -384,7 +481,7 @@ export default function ObrigacoesPage() {
         };
       }
 
-      const status = obterStatusObrigacao(obrigacao);
+      const status = obterStatusObrigacao(prazo);
       mapa[chave].total += 1;
 
       if (status === 'atrasada') {
@@ -401,7 +498,7 @@ export default function ObrigacoesPage() {
     });
 
     return mapa;
-  }, [obrigacoes]);
+  }, [prazos]);
 
   const diasCalendario = useMemo(
     () => construirDiasCalendario(filtroMesAno.ano, filtroMesAno.mes),
@@ -635,7 +732,7 @@ export default function ObrigacoesPage() {
           <article className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Filtros</p>
 
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <div className="mt-4 grid gap-4 sm:grid-cols-3">
               <label className="space-y-2">
                 <span className="text-sm font-medium text-zinc-700">Status</span>
                 <select
@@ -644,6 +741,21 @@ export default function ObrigacoesPage() {
                   className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
                 >
                   {STATUS_OPCOES.map((opcao) => (
+                    <option key={opcao.value || 'todos'} value={opcao.value}>
+                      {opcao.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-zinc-700">Tipo de prazo</span>
+                <select
+                  value={filtroOrigem}
+                  onChange={(event) => setFiltroOrigem(event.target.value)}
+                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                >
+                  {ORIGEM_OPCOES.map((opcao) => (
                     <option key={opcao.value || 'todos'} value={opcao.value}>
                       {opcao.label}
                     </option>
@@ -748,20 +860,20 @@ export default function ObrigacoesPage() {
           </section>
         ) : null}
 
-        {!erroLista && !isLoadingObrigacoes && obrigacoes.length === 0 ? (
+        {!erroLista && !isLoadingObrigacoes && prazos.length === 0 ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-zinc-600">
-              Nenhuma obrigação encontrada para os filtros ativos.
+              Nenhum prazo encontrado para os filtros ativos.
             </p>
           </section>
         ) : null}
 
-        {!erroLista && !isLoadingObrigacoes && obrigacoes.length > 0 ? (
+        {!erroLista && !isLoadingObrigacoes && prazos.length > 0 ? (
           <section className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
             <table className="min-w-full divide-y divide-zinc-200 text-sm">
               <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
                 <tr>
-                  <th className="px-4 py-3">Obrigação</th>
+                  <th className="px-4 py-3">Prazo</th>
                   <th className="px-4 py-3">Tipo</th>
                   <th className="px-4 py-3">Vencimento</th>
                   <th className="px-4 py-3">Recorrente</th>
@@ -771,26 +883,27 @@ export default function ObrigacoesPage() {
               </thead>
 
               <tbody className="divide-y divide-zinc-100">
-                {obrigacoes.map((obrigacao, index) => {
-                  const status = obterStatusObrigacao(obrigacao);
+                {prazos.map((prazo, index) => {
+                  const status = obterStatusObrigacao(prazo);
                   const linhaAtrasada = status === 'atrasada';
+                  const ehCertificado = prazo?.origem === 'certificado';
 
                   return (
                     <tr
-                      key={obrigacao?.id || `${obterTituloObrigacao(obrigacao, index)}-${index}`}
+                      key={prazo?.id || `${obterTituloObrigacao(prazo, index)}-${index}`}
                       className={linhaAtrasada ? 'bg-rose-50/50' : ''}
                     >
                       <td className="max-w-[260px] break-words px-4 py-3 font-medium text-zinc-900">
-                        {obterTituloObrigacao(obrigacao, index)}
+                        {obterTituloObrigacao(prazo, index)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                        {formatarTipo(obrigacao?.tipo)}
+                        {ehCertificado ? 'Certificado Digital' : formatarTipo(prazo?.tipo)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                        {formatarData(obterDataVencimento(obrigacao))}
+                        {formatarData(obterDataVencimento(prazo))}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                        {obrigacao?.recorrente ? 'Sim' : 'Não'}
+                        {ehCertificado ? '—' : prazo?.recorrente ? 'Sim' : 'Não'}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <span
@@ -802,12 +915,19 @@ export default function ObrigacoesPage() {
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
-                        {podeGerenciarObrigacoes ? (
+                        {ehCertificado ? (
+                          <Link
+                            href={CERTIFICADOS_ROTA}
+                            className="inline-flex rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+                          >
+                            Ver certificado
+                          </Link>
+                        ) : podeGerenciarObrigacoes ? (
                           <div className="flex flex-wrap gap-2">
                             {status !== 'concluida' ? (
                               <button
                                 type="button"
-                                onClick={() => abrirModalConcluir(obrigacao)}
+                                onClick={() => abrirModalConcluir(prazo)}
                                 disabled={isConcluindo}
                                 className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
                               >
@@ -818,7 +938,7 @@ export default function ObrigacoesPage() {
                             {status !== 'concluida' ? (
                               <button
                                 type="button"
-                                onClick={() => abrirModalEdicao(obrigacao)}
+                                onClick={() => abrirModalEdicao(prazo)}
                                 className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
                               >
                                 Editar
@@ -827,7 +947,7 @@ export default function ObrigacoesPage() {
 
                             <button
                               type="button"
-                              onClick={() => abrirModalDelete(obrigacao)}
+                              onClick={() => abrirModalDelete(prazo)}
                               className="rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
                             >
                               Deletar
