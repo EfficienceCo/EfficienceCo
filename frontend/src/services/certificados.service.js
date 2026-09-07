@@ -7,7 +7,7 @@ function montarParams(params = {}) {
   const limpos = {};
 
   for (const [chave, valor] of Object.entries(params)) {
-    if (valor !== undefined) {
+    if (valor !== undefined && valor !== null && valor !== '') {
       limpos[chave] = valor;
     }
   }
@@ -61,9 +61,13 @@ export async function editarCertificado(id, payload) {
 
 // POST /certificados/:id/iniciar-renovacao — status='renovacao_iniciada' e
 // materializa o renovacao_checklist conforme o tipo (A1 = 2 itens; A3 = 3,
-// com "agendar comparecimento presencial"). Sem corpo. Só admin.
-export async function iniciarRenovacao(id) {
-  const response = await api.post(`/certificados/${id}/iniciar-renovacao`);
+// com "agendar comparecimento presencial"). clienteId vai no corpo para o
+// admin_efficience manter o mesmo escopo selecionado na listagem. Só admin.
+export async function iniciarRenovacao(id, { clienteId } = {}) {
+  const response = await api.post(
+    `/certificados/${id}/iniciar-renovacao`,
+    montarParams({ clienteId }),
+  );
   return response.data;
 }
 
@@ -72,11 +76,16 @@ export async function iniciarRenovacao(id) {
 // (agendamento do item A3), `validade_nova`, `serial_novo`, `caminho_local_novo`.
 // Quando todos os itens ficam concluídos e há validade_nova, o backend cria o
 // novo certificado ativo e devolve { certificado, novo_certificado }. Só admin.
-export async function atualizarItemRenovacao(id, itemId, { concluido, dados } = {}) {
+export async function atualizarItemRenovacao(
+  id,
+  itemId,
+  { concluido, dados, clienteId } = {},
+) {
   const response = await api.patch(`/certificados/${id}/renovacao`, {
     itemId,
     concluido,
     ...dados,
+    ...(clienteId ? { clienteId } : {}),
   });
 
   return response.data;

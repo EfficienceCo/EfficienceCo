@@ -58,14 +58,15 @@ function obterNomeCliente(cliente) {
   return cliente?.nome || cliente?.razao_social || cliente?.email || obterIdCliente(cliente);
 }
 
-// validade chega como DATE ISO (YYYY-MM-DD). Meio-dia evita que o fuso empurre
-// a contagem para o dia anterior/seguinte.
+// Compare dias civis, como o backend: a hora do acesso não altera a contagem.
 function calcularDias(certificado) {
   if (Number.isFinite(certificado?.dias_restantes)) return certificado.dias_restantes;
   const iso = String(certificado?.validade || '').slice(0, 10);
-  const ms = Date.parse(`${iso}T12:00:00`);
+  const [ano, mes, dia] = iso.split('-').map(Number);
+  const ms = Date.UTC(ano, mes - 1, dia);
   if (Number.isNaN(ms)) return null;
-  return Math.ceil((ms - Date.now()) / 86400000);
+  const hoje = new Date();
+  return Math.round((ms - Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())) / 86400000);
 }
 
 // Faixas da ficha b3 / CD-2: verde > 60, âmbar 30–60, vermelho < 30, vencido ≤ 0.
@@ -227,24 +228,26 @@ function AnelContagem({ dias, faixa }) {
 
 function CaminhoLocal({ valor }) {
   const [copiado, setCopiado] = useState(false);
+  const [erroCopia, setErroCopia] = useState(false);
 
   if (!valor) {
     return <p className="text-[11px] text-zinc-400">Caminho local do arquivo não informado.</p>;
   }
 
   async function copiar() {
+    setErroCopia(false);
     try {
       await navigator.clipboard.writeText(valor);
       setCopiado(true);
       setTimeout(() => setCopiado(false), 2000);
     } catch (_erro) {
-      // Área de transferência indisponível (permissão / contexto sem HTTPS).
+      setErroCopia(true);
     }
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5">
-      <code className="min-w-0 flex-1 truncate text-[11px] text-zinc-600" title={valor}>
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5">
+      <code className={`min-w-0 flex-1 text-[11px] text-zinc-600 ${erroCopia ? 'break-all select-all' : 'truncate'}`} title={valor}>
         {valor}
       </code>
       <button
@@ -254,6 +257,7 @@ function CaminhoLocal({ valor }) {
       >
         {copiado ? 'Copiado!' : 'Copiar'}
       </button>
+      {erroCopia ? <p role="status" className="w-full text-[11px] text-amber-700">Não foi possível copiar. Selecione o caminho e copie manualmente.</p> : null}
     </div>
   );
 }
@@ -272,6 +276,9 @@ function ChecklistRenovacao({
 }) {
   const total = itens.length;
   const feitos = itens.filter((item) => item.concluido).length;
+  const chavesSalvando = Object.keys(itensSalvando).filter((chave) => chave.startsWith(`${certificadoId}::`));
+  const salvandoCertificado = chavesSalvando.length > 0;
+  const salvandoItem = chavesSalvando.some((chave) => !chave.endsWith('::__conclusao'));
 
   return (
     <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3">
@@ -305,7 +312,7 @@ function ChecklistRenovacao({
                   <input
                     type="checkbox"
                     checked={Boolean(item.concluido)}
-                    disabled={!podeGerenciar || salvando || bloqueiaConclusao}
+                    disabled={!podeGerenciar || salvandoCertificado || bloqueiaConclusao}
                     onChange={(evento) => onToggleItem(item, evento.target.checked)}
                     className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500 disabled:cursor-not-allowed disabled:opacity-60"
                   />
@@ -334,10 +341,8 @@ function ChecklistRenovacao({
                     id={`${chave}-data`}
                     type="date"
                     value={dataAgendada}
-                    // Trava a data depois que o passo é concluído — o back-end
-                    // não aceita limpar/alterar via `data: ''`. Reabre ao
-                    // desmarcar o item.
-                    disabled={!podeGerenciar || salvando || item.concluido}
+                    // Uma edição por certificado; reabre a data ao desmarcar.
+                    disabled={!podeGerenciar || salvandoCertificado || item.concluido}
                     onChange={(evento) => onAlterarDataItem(item, evento.target.value)}
                     className="rounded-md border border-zinc-300 px-2 py-1 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-100"
                   />
@@ -353,7 +358,7 @@ function ChecklistRenovacao({
         })}
       </ul>
 
-      {total > 0 && feitos === total ? (
+      {total > 0 && feitos === total && !salvandoItem ? (
         podeGerenciar ? (
           <ConclusaoRenovacao onConcluir={onConcluirRenovacao} />
         ) : (
@@ -405,7 +410,7 @@ function ConclusaoRenovacao({ onConcluir }) {
       className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3"
     >
       <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-        Emitir o novo certificado
+        Registrar o certificado renovado
       </p>
       <label className="block space-y-1">
         <span className="block text-[11px] font-medium text-zinc-600">
@@ -485,7 +490,7 @@ function CertificadoCard({
           </h2>
           <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium">
             <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-700">
-              e-CNPJ {certificado.tipo || '—'}
+              {certificado.tipo || '—'}
             </span>
             <span className={`rounded-full px-2 py-0.5 ring-1 ${meta.badge}`}>{meta.rotulo}</span>
             {substituido ? (
@@ -706,6 +711,9 @@ export default function CertificadosPage() {
   const [erroClientes, setErroClientes] = useState('');
   const [clienteId, setClienteId] = useState(null);
   const clienteIdEfetivo = isAdminEfficience ? clienteId : user?.cliente_id || null;
+  const clienteAtualRef = useRef(clienteIdEfetivo);
+  clienteAtualRef.current = clienteIdEfetivo;
+  const consultaRef = useRef(0);
 
   const [certificados, setCertificados] = useState([]);
   const [isLoadingCertificados, setIsLoadingCertificados] = useState(false);
@@ -748,27 +756,41 @@ export default function CertificadosPage() {
   }, [carregarClientes, isAdminEfficience, isAuthenticated, isLoading]);
 
   const carregarCertificados = useCallback(async () => {
+    // Uma gravação iniciada no cliente anterior também pode pedir um refresh.
+    if (clienteIdEfetivo !== clienteAtualRef.current) return;
+    const consulta = ++consultaRef.current;
     if (!clienteIdEfetivo) {
       setCertificados([]);
+      setIsLoadingCertificados(false);
+      setErroCertificados('');
       return;
     }
     setIsLoadingCertificados(true);
     setErroCertificados('');
     try {
       const data = await listarCertificados({ clienteId: clienteIdEfetivo });
+      if (consulta !== consultaRef.current || clienteIdEfetivo !== clienteAtualRef.current) return;
       setCertificados(normalizarLista(data));
     } catch (error) {
+      if (consulta !== consultaRef.current || clienteIdEfetivo !== clienteAtualRef.current) return;
       setCertificados([]);
       setErroCertificados(
         obterMensagemErro(error, 'Não foi possível carregar os certificados.'),
       );
     } finally {
-      setIsLoadingCertificados(false);
+      if (consulta === consultaRef.current && clienteIdEfetivo === clienteAtualRef.current) {
+        setIsLoadingCertificados(false);
+      }
     }
   }, [clienteIdEfetivo]);
 
   useEffect(() => {
+    setCertificados([]);
+    setModalAberto(false);
+    setErroCadastro('');
+    setAvisos({});
     carregarCertificados();
+    return () => { consultaRef.current += 1; };
   }, [carregarCertificados]);
 
   const certificadosOrdenados = useMemo(() => {
@@ -819,6 +841,7 @@ export default function CertificadosPage() {
           ? { ...payload, cliente_id: clienteIdEfetivo }
           : payload,
       );
+      if (clienteIdEfetivo !== clienteAtualRef.current) return;
       setModalAberto(false);
       await carregarCertificados();
     } catch (error) {
@@ -832,7 +855,7 @@ export default function CertificadosPage() {
     setIniciandoId(certificado.id);
     limparAviso(certificado.id);
     try {
-      const atualizado = await iniciarRenovacao(certificado.id);
+      const atualizado = await iniciarRenovacao(certificado.id, { clienteId: clienteIdEfetivo });
       const checklist =
         atualizado?.renovacao_checklist && normalizarItens(atualizado.renovacao_checklist).length > 0
           ? atualizado.renovacao_checklist
@@ -868,6 +891,10 @@ export default function CertificadosPage() {
   // mexer no mesmo item ao mesmo tempo e cada um só zera a própria contribuição.
   function marcarPendente(chave) {
     pendentesRef.current[chave] = (pendentesRef.current[chave] || 0) + 1;
+  }
+
+  function certificadoOcupado(certId) {
+    return Object.keys(pendentesRef.current).some((chave) => chave.startsWith(`${certId}::`));
   }
 
   function desmarcarPendente(chave) {
@@ -910,7 +937,9 @@ export default function CertificadosPage() {
   }
 
   async function handleToggleItem(certificado, item, concluido) {
+    if (certificadoOcupado(certificado.id)) return;
     const chave = `${certificado.id}::${item.id}`;
+    limparAviso(certificado.id);
     const concluidoAnterior = Boolean(item.concluido);
     marcarPendente(chave);
     setItensSalvando((atual) => ({ ...atual, [chave]: true }));
@@ -922,6 +951,7 @@ export default function CertificadosPage() {
         item.id === ID_ITEM_AGENDAMENTO && item.data ? { dados: { data: item.data } } : {};
       const atualizado = await atualizarItemRenovacao(certificado.id, item.id, {
         concluido,
+        clienteId: clienteIdEfetivo,
         ...extra,
       });
       desmarcarPendente(chave);
@@ -937,6 +967,7 @@ export default function CertificadosPage() {
         certificado.id,
         obterMensagemErro(error, 'Não foi possível salvar o item. Tente novamente.'),
       );
+      if (error?.response?.status === 409) await carregarCertificados();
     } finally {
       setItensSalvando((atual) => {
         const proximo = { ...atual };
@@ -947,12 +978,11 @@ export default function CertificadosPage() {
   }
 
   async function handleAlterarDataItem(certificado, item, data) {
+    if (certificadoOcupado(certificado.id)) return;
     const chave = `${certificado.id}::${item.id}`;
+    limparAviso(certificado.id);
     const dataAnterior = item.data ?? null;
     aplicarItem(certificado.id, item.id, (it) => ({ ...it, data: data || null }));
-
-    // Campo limpo: só estado local, sem PATCH — o back-end recusa `data: ''`.
-    if (!data) return;
 
     marcarPendente(chave);
     setItensSalvando((atual) => ({ ...atual, [chave]: true }));
@@ -961,7 +991,8 @@ export default function CertificadosPage() {
       // espalhado no corpo pelo service e vira o campo plano `data`.
       const atualizado = await atualizarItemRenovacao(certificado.id, item.id, {
         concluido: Boolean(item.concluido),
-        dados: { data },
+        dados: { data: data || null },
+        clienteId: clienteIdEfetivo,
       });
       desmarcarPendente(chave);
       if (atualizado?.renovacao_checklist) {
@@ -975,6 +1006,7 @@ export default function CertificadosPage() {
         certificado.id,
         obterMensagemErro(error, 'Não foi possível salvar a data. Tente novamente.'),
       );
+      if (error?.response?.status === 409) await carregarCertificados();
     } finally {
       setItensSalvando((atual) => {
         const proximo = { ...atual };
@@ -991,20 +1023,31 @@ export default function CertificadosPage() {
   // agendamento (esse exige `data` junto ao concluir) — `confirmar_dados` sempre
   // existe e já está concluído aqui.
   async function handleConcluirRenovacao(certificado, dados) {
+    if (certificadoOcupado(certificado.id)) throw new Error('Aguarde a gravação do checklist.');
     const itens = normalizarItens(certificado.renovacao_checklist);
     const alvo = itens.find((it) => it.id !== ID_ITEM_AGENDAMENTO) || itens[itens.length - 1];
     if (!alvo) throw new Error('Checklist de renovação vazio.');
 
-    const atualizado = await atualizarItemRenovacao(certificado.id, alvo.id, {
-      concluido: true,
-      dados,
-    });
-    if (!atualizado?.novo_certificado) {
-      throw new Error('A renovação não pôde ser finalizada. Confira a nova validade.');
+    const chave = `${certificado.id}::__conclusao`;
+    marcarPendente(chave);
+    setItensSalvando((atual) => ({ ...atual, [chave]: true }));
+    try {
+      const atualizado = await atualizarItemRenovacao(certificado.id, alvo.id, {
+        concluido: true,
+        dados,
+        clienteId: clienteIdEfetivo,
+      });
+      if (!atualizado?.novo_certificado) {
+        if (atualizado?.renovacao_checklist) reconciliarChecklistServidor(certificado.id, atualizado.renovacao_checklist);
+        throw new Error('A renovação não pôde ser finalizada. Confira o checklist e a nova validade.');
+      }
+      limparAviso(certificado.id);
+      await carregarCertificados();
+      return atualizado;
+    } finally {
+      desmarcarPendente(chave);
+      setItensSalvando((atual) => { const proximo = { ...atual }; delete proximo[chave]; return proximo; });
     }
-    limparAviso(certificado.id);
-    await carregarCertificados();
-    return atualizado;
   }
 
   if (isLoading) return <p className="p-6">Carregando...</p>;
@@ -1044,7 +1087,7 @@ export default function CertificadosPage() {
 
       {isAdminEfficience ? (
         <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <label className="min-w-[240px] max-w-md space-y-2 block">
+          <label className="min-w-0 max-w-md space-y-2 block">
             <span className="text-sm font-medium text-zinc-700">Cliente</span>
             <select
               value={clienteId || ''}

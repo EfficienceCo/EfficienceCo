@@ -4,7 +4,7 @@ import { test, expect, Page } from '@playwright/test';
 // CD-1 (`certificados_digitais`) e o CRUD CD-2 podem não estar aplicados no
 // Supabase de dev, então a tela (CD-5) é exercida contra respostas controladas.
 
-function tokenFrontendDeTeste() {
+function tokenFrontendDeTeste(overrides: Record<string, unknown> = {}) {
   const payload = Buffer.from(
     JSON.stringify({
       sub: 'usuario-playwright',
@@ -13,6 +13,7 @@ function tokenFrontendDeTeste() {
       perfil: 'admin_cliente',
       cliente_id: 'cliente-teste',
       exp: Math.floor(Date.now() / 1000) + 3600,
+      ...overrides,
     }),
   ).toString('base64url');
 
@@ -282,8 +283,8 @@ test.describe('Certificado Digital — /dashboard/societario/certificados (issue
 
     await expect(cardDe(page, 'Padaria do João')).toBeVisible();
     await expect(cardDe(page, 'Clínica Rosa')).toBeVisible();
-    await expect(cardDe(page, 'Padaria do João').getByText('e-CNPJ A1')).toBeVisible();
-    await expect(cardDe(page, 'Clínica Rosa').getByText('e-CNPJ A3')).toBeVisible();
+    await expect(cardDe(page, 'Padaria do João').getByText('A1')).toBeVisible();
+    await expect(cardDe(page, 'Clínica Rosa').getByText('A3')).toBeVisible();
     // caminho_local copiável
     await expect(
       cardDe(page, 'Padaria do João').getByText('C:\\clientes\\padaria-do-joao\\certificado digital\\'),
@@ -373,7 +374,7 @@ test.describe('Certificado Digital — /dashboard/societario/certificados (issue
     await agendamento.getByRole('checkbox').check();
     await expect(card.getByText('3/3')).toBeVisible();
     // Checklist completo → aparece o passo final de emissão do novo certificado.
-    await expect(card.getByText('Emitir o novo certificado')).toBeVisible();
+    await expect(card.getByText('Registrar o certificado renovado')).toBeVisible();
     await expect(card.getByRole('button', { name: 'Concluir renovação' })).toBeVisible();
   });
 
@@ -439,7 +440,7 @@ test.describe('Certificado Digital — /dashboard/societario/certificados (issue
     await expect(card.getByText('2/2')).toBeVisible();
 
     // Passo final: nova validade obrigatória.
-    const emissao = card.locator('form', { hasText: 'Emitir o novo certificado' });
+    const emissao = card.locator('form', { hasText: 'Registrar o certificado renovado' });
     await expect(emissao.getByRole('button', { name: 'Concluir renovação' })).toBeDisabled();
     const novaValidade = emDias(400);
     await emissao.locator('input[type="date"]').fill(novaValidade);
@@ -479,11 +480,86 @@ test.describe('Certificado Digital — /dashboard/societario/certificados (issue
 
     const card = cardDe(page, 'Presencial SA');
     await expect(card.getByText('3/3')).toBeVisible();
-    const emissao = card.locator('form', { hasText: 'Emitir o novo certificado' });
+    const emissao = card.locator('form', { hasText: 'Registrar o certificado renovado' });
     await emissao.locator('input[type="date"]').fill(emDias(1000));
     await emissao.getByRole('button', { name: 'Concluir renovação' }).click();
 
     await expect(page.getByRole('article').filter({ hasText: 'Presencial SA' })).toHaveCount(2);
     await expect(card.getByText(/não pôde ser finalizada/)).toHaveCount(0);
+  });
+});
+
+test.describe('Certificados — regressões da revisão #420', () => {
+  test('resposta atrasada do cliente anterior não substitui os certificados do cliente selecionado', async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), tokenFrontendDeTeste({ perfil: 'admin_efficience' }));
+    await page.route((url) => url.pathname === '/clientes', route => route.fulfill({ json: [
+      { id: 'cliente-a', nome: 'Cliente A' }, { id: 'cliente-b', nome: 'Cliente B' },
+    ] }));
+    let liberarA: () => void = () => {};
+    let avisarInicioA: () => void = () => {};
+    const aguardandoA = new Promise<void>(resolve => { avisarInicioA = resolve; });
+    const esperaA = new Promise<void>(resolve => { liberarA = resolve; });
+    await page.route((url) => url.pathname === '/certificados', async route => {
+      const cliente = new URL(route.request().url()).searchParams.get('clienteId');
+      if (cliente === 'cliente-a') { avisarInicioA(); await esperaA; }
+      await route.fulfill({ json: [comCalculo({ id: cliente, cliente_id: cliente, titular: cliente === 'cliente-a' ? 'Certificado A' : 'Certificado B', tipo: 'A1', validade: emDias(90), status: 'ativo' })] });
+    });
+    await page.goto('/dashboard/societario/certificados');
+    await page.getByRole('combobox', { name: 'Cliente', exact: true }).selectOption('cliente-a');
+    await aguardandoA;
+    await page.getByRole('combobox', { name: 'Cliente', exact: true }).selectOption('cliente-b');
+    await expect(cardDe(page, 'Certificado B')).toBeVisible();
+    const respostaA = page.waitForResponse(r => r.url().includes('/certificados?clienteId=cliente-a'));
+    liberarA();
+    await respostaA;
+    await page.waitForTimeout(100);
+    await expect(page.getByRole('combobox', { name: 'Cliente', exact: true })).toHaveValue('cliente-b');
+    await expect(cardDe(page, 'Certificado A')).toHaveCount(0);
+    await expect(cardDe(page, 'Certificado B')).toBeVisible();
+  });
+
+  test('limpar a data do comparecimento persiste também após recarregar', async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), tokenFrontendDeTeste());
+    const checklist = checklistDe('A3');
+    checklist.itens[2].data = emDias(10);
+    const backend = criarBackendMock([{ titular: 'Agendamento SA', tipo: 'A3', validade: emDias(90), status: 'renovacao_iniciada', renovacao_checklist: checklist }]);
+    await backend.instalar(page);
+    await page.goto('/dashboard/societario/certificados');
+    const data = cardDe(page, 'Agendamento SA').getByLabel('Data do comparecimento presencial');
+    await expect(data).toHaveValue(emDias(10));
+    await data.fill('');
+    await expect(data).toBeEnabled();
+    await expect.poll(() => backend.certificados[0].renovacao_checklist.itens[2].data).toBe(null);
+    await page.reload();
+    await expect(data).toHaveValue('');
+  });
+
+  test('não permite finalizar enquanto há item sendo salvo', async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), tokenFrontendDeTeste());
+    const checklist = checklistDe('A1'); checklist.itens[0].concluido = true;
+    const backend = criarBackendMock([{ titular: 'Gravacao SA', tipo: 'A1', validade: emDias(90), status: 'renovacao_iniciada', renovacao_checklist: checklist }]);
+    await backend.instalar(page);
+    let liberar: () => void = () => {};
+    const espera = new Promise<void>(resolve => { liberar = resolve; });
+    await page.route((url) => /\/certificados\/[^/]+\/renovacao$/.test(url.pathname), async route => {
+      await espera; await route.fallback();
+    });
+    await page.goto('/dashboard/societario/certificados');
+    const card = cardDe(page, 'Gravacao SA');
+    await card.getByRole('checkbox').nth(1).check();
+    try {
+      await expect(card.getByRole('checkbox').nth(0)).toBeDisabled();
+      await expect(card.getByRole('button', { name: 'Concluir renovação' })).toHaveCount(0);
+    } finally { liberar(); }
+    await expect(card.getByRole('button', { name: 'Concluir renovação' })).toBeVisible();
+  });
+
+  test('perfil funcionario pode consultar mas não gerenciar certificados', async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), tokenFrontendDeTeste({ perfil: 'funcionario' }));
+    await criarBackendMock([{ titular: 'Consulta SA', tipo: 'A1', validade: emDias(90) }]).instalar(page);
+    await page.goto('/dashboard/societario/certificados');
+    await expect(cardDe(page, 'Consulta SA')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Novo certificado' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Iniciar Renovação' })).toHaveCount(0);
   });
 });
