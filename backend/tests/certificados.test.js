@@ -200,6 +200,19 @@ describe("POST /certificados (controller)", () => {
 
     assert.equal(res.statusCode, 401);
   });
+
+  it("400 quando admin_efficience não informa o cliente do cadastro", async () => {
+    const req = {
+      ...usuarioComCliente(null, PERFIS.ADMIN_EFFICIENCE),
+      body: payloadValido(),
+      query: {},
+    };
+    const res = criarResposta();
+    await criarCertificado(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /clienteId/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -304,6 +317,42 @@ describe("GET /certificados/:id (controller)", () => {
     assert.ok(
       chamadas.some(
         (c) => c.tabela === "certificados_digitais" && c.campo === "cliente_id" && c.valor === CLIENTE_ID,
+      ),
+    );
+  });
+
+  it("400 para admin_efficience sem selecionar um cliente", async () => {
+    const req = {
+      ...usuarioComCliente(null, PERFIS.ADMIN_EFFICIENCE),
+      params: { id: CERTIFICADO_ID },
+      body: {},
+      query: {},
+    };
+    const res = criarResposta();
+    await obterCertificado(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /clienteId/);
+  });
+
+  it("admin_efficience também filtra o detalhe pelo cliente selecionado", async () => {
+    queue("certificados_digitais", "maybeSingle", { data: null, error: null });
+    const req = {
+      ...usuarioComCliente(null, PERFIS.ADMIN_EFFICIENCE),
+      params: { id: CERTIFICADO_ID },
+      body: {},
+      query: { clienteId: CLIENTE_ID_OUTRO },
+    };
+    const res = criarResposta();
+    await obterCertificado(req, res);
+
+    assert.equal(res.statusCode, 404);
+    assert.ok(
+      chamadas.some(
+        (c) =>
+          c.tabela === "certificados_digitais" &&
+          c.campo === "cliente_id" &&
+          c.valor === CLIENTE_ID_OUTRO,
       ),
     );
   });
@@ -703,6 +752,7 @@ describe("PATCH /certificados/:id/renovacao (controller)", () => {
         serial: "TOKEN-A3",
         titular: "Padaria do João",
         caminho_local: null,
+        validade: dataEmDias(20),
         status: "renovacao_iniciada",
         renovacao_checklist: {
           tipo: "A3",

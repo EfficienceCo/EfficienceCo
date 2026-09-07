@@ -19,8 +19,27 @@ CREATE INDEX IF NOT EXISTS idx_certificados_digitais_cliente_validade
   ON certificados_digitais (cliente_id, validade);
 
 ALTER TABLE certificados_digitais ENABLE ROW LEVEL SECURITY;
-CREATE POLICY certificados_digitais_service_role ON certificados_digitais TO service_role USING (true) WITH CHECK (true);
 
-CREATE TRIGGER trigger_atualizar_certificados_digitais
-  BEFORE UPDATE ON certificados_digitais
-  FOR EACH ROW EXECUTE FUNCTION atualizar_timestamp();
+-- A migration pode ser reaplicada no dev, inclusive após execução parcial.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policy
+    WHERE polrelid = 'certificados_digitais'::regclass
+      AND polname = 'certificados_digitais_service_role'
+  ) THEN
+    CREATE POLICY certificados_digitais_service_role ON certificados_digitais
+      TO service_role USING (true) WITH CHECK (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'certificados_digitais'::regclass
+      AND tgname = 'trigger_atualizar_certificados_digitais'
+  ) THEN
+    CREATE TRIGGER trigger_atualizar_certificados_digitais
+      BEFORE UPDATE ON certificados_digitais
+      FOR EACH ROW EXECUTE FUNCTION atualizar_timestamp();
+  END IF;
+END;
+$$;

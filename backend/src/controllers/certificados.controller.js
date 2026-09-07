@@ -1,11 +1,11 @@
 import supabase from "../config/database.js";
-import { PERFIS } from "../config/perfis.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { dataIsoValida } from "../utils/data.util.js";
 
 const TIPOS_VALIDOS = new Set(["A1", "A3"]);
 const CAMPOS_OBRIGATORIOS_POST = ["tipo", "validade"];
 const CAMPOS_EDITAVEIS_PATCH = ["validade", "serial", "caminho_local"];
+const CAMPOS_CONTEXTO_CLIENTE = ["clienteId", "cliente_id"];
 
 function camposFaltando(body, campos) {
   return campos.filter(
@@ -39,19 +39,12 @@ function comFaixa(certificado) {
   };
 }
 
-function ehAdminEfficience(req) {
-  return req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE;
-}
-
 function certificadoPertenceAoCliente(req, certificado) {
-  return ehAdminEfficience(req) || certificado.cliente_id === resolverClienteId(req);
+  const clienteId = resolverClienteId(req);
+  return Boolean(clienteId) && certificado.cliente_id === clienteId;
 }
 
 function aplicarIsolamentoCliente(query, req) {
-  if (ehAdminEfficience(req)) {
-    return query;
-  }
-
   return query.eq("cliente_id", resolverClienteId(req));
 }
 
@@ -100,9 +93,17 @@ export async function criarCertificado(req, res) {
     return res.status(400).json({ erro: "validade deve estar no formato AAAA-MM-DD" });
   }
 
+  for (const campo of ["serial", "titular", "caminho_local"]) {
+    if (body[campo] != null && typeof body[campo] !== "string") {
+      return res.status(400).json({ erro: `${campo} deve ser um texto` });
+    }
+  }
+
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
-    return res.status(401).json({ erro: "Usuário não autenticado ou sem cliente_id" });
+    return res
+      .status(req.usuario ? 400 : 401)
+      .json({ erro: req.usuario ? "clienteId é obrigatório" : "Usuário não autenticado" });
   }
 
   const { data, error } = await supabase
@@ -119,8 +120,8 @@ export async function criarCertificado(req, res) {
     .select()
     .maybeSingle();
 
-  if (error) {
-    console.error("[certificados.controller] Erro ao criar certificado:", error.message);
+  if (error || !data) {
+    console.error("[certificados.controller] Erro ao criar certificado:", error?.message || "Registro não retornado");
     return res.status(500).json({ erro: "Erro ao criar certificado" });
   }
 
@@ -159,6 +160,10 @@ export async function listarCertificados(req, res) {
 export async function obterCertificado(req, res) {
   const { id } = req.params;
 
+  if (!resolverClienteId(req)) {
+    return res.status(400).json({ erro: "clienteId é obrigatório" });
+  }
+
   const { data: certificado, error } = await buscarCertificadoComIsolamento(req, id);
 
   if (error) {
@@ -182,6 +187,10 @@ export async function editarCertificado(req, res) {
   const body = req.body ?? {};
   const atualizacoes = {};
 
+  if (!resolverClienteId(req)) {
+    return res.status(400).json({ erro: "clienteId é obrigatório" });
+  }
+
   for (const campo of CAMPOS_EDITAVEIS_PATCH) {
     if (body[campo] === undefined) continue;
 
@@ -203,7 +212,8 @@ export async function editarCertificado(req, res) {
   }
 
   const camposNaoEditaveis = Object.keys(body).filter(
-    (campo) => !CAMPOS_EDITAVEIS_PATCH.includes(campo),
+    (campo) =>
+      !CAMPOS_EDITAVEIS_PATCH.includes(campo) && !CAMPOS_CONTEXTO_CLIENTE.includes(campo),
   );
   if (camposNaoEditaveis.length > 0) {
     return res.status(400).json({
@@ -223,7 +233,7 @@ export async function editarCertificado(req, res) {
   const { data: certificado, error: erroBusca } = await buscarCertificadoComIsolamento(
     req,
     id,
-    "cliente_id, status",
+    "cliente_id, status, atualizado_em",
   );
 
   if (erroBusca) {
@@ -244,6 +254,8 @@ export async function editarCertificado(req, res) {
     .update(atualizacoes)
     .eq("id", id)
     .eq("cliente_id", certificado.cliente_id)
+    .eq("status", certificado.status)
+    .eq("atualizado_em", certificado.atualizado_em)
     .select()
     .maybeSingle();
 
@@ -253,7 +265,7 @@ export async function editarCertificado(req, res) {
   }
 
   if (!data) {
-    return res.status(404).json({ erro: "Certificado não encontrado" });
+    return res.status(409).json({ erro: "Certificado alterado por outra solicitação. Recarregue e tente novamente." });
   }
 
   return res.status(200).json(comFaixa(data));
@@ -265,6 +277,10 @@ export async function editarCertificado(req, res) {
  */
 export async function iniciarRenovacaoCertificado(req, res) {
   const { id } = req.params;
+
+  if (!resolverClienteId(req)) {
+    return res.status(400).json({ erro: "clienteId é obrigatório" });
+  }
 
   const { data: certificado, error: erroBusca } = await buscarCertificadoComIsolamento(
     req,
@@ -297,6 +313,7 @@ export async function iniciarRenovacaoCertificado(req, res) {
     })
     .eq("id", id)
     .eq("cliente_id", certificado.cliente_id)
+    .eq("status", certificado.status)
     .select()
     .maybeSingle();
 
@@ -306,7 +323,7 @@ export async function iniciarRenovacaoCertificado(req, res) {
   }
 
   if (!data) {
-    return res.status(404).json({ erro: "Certificado não encontrado" });
+    return res.status(409).json({ erro: "Certificado alterado por outra solicitação. Recarregue e tente novamente." });
   }
 
   return res.status(200).json(comFaixa(data));
@@ -328,8 +345,16 @@ export async function atualizarRenovacaoCertificado(req, res) {
     caminho_local_novo,
   } = req.body ?? {};
 
-  if (!itemId) {
+  if (!resolverClienteId(req)) {
+    return res.status(400).json({ erro: "clienteId é obrigatório" });
+  }
+
+  if (typeof itemId !== "string" || !itemId.trim()) {
     return res.status(400).json({ erro: "itemId é obrigatório" });
+  }
+
+  if (concluido !== undefined && typeof concluido !== "boolean") {
+    return res.status(400).json({ erro: "concluido deve ser um booleano" });
   }
 
   if (validade_nova !== undefined && !dataIsoValida(validade_nova)) {
@@ -372,12 +397,12 @@ export async function atualizarRenovacaoCertificado(req, res) {
 
   const itemAtualizado = {
     ...checklist.itens[indiceItem],
-    concluido: concluido === undefined ? true : Boolean(concluido),
+    concluido: concluido === undefined ? true : concluido,
   };
 
   if (itemAtualizado.id === "agendar_comparecimento") {
     if (dataAgendamento !== undefined) {
-      if (!dataIsoValida(dataAgendamento)) {
+      if (dataAgendamento !== null && !dataIsoValida(dataAgendamento)) {
         return res.status(400).json({ erro: "data deve estar no formato AAAA-MM-DD" });
       }
       itemAtualizado.data = dataAgendamento;
@@ -404,6 +429,13 @@ export async function atualizarRenovacaoCertificado(req, res) {
   const todosConcluidos = itensAtualizados.every((item) => item.concluido === true);
 
   if (todosConcluidos && checklistAtualizado.validade_nova) {
+    // A validade pode ter sido guardada em uma etapa anterior e o cadastro
+    // editado depois. Valide o conjunto que realmente será persistido.
+    if (!dataIsoValida(checklistAtualizado.validade_nova) ||
+        checklistAtualizado.validade_nova <= certificado.validade.slice(0, 10)) {
+      return res.status(400).json({ erro: "validade_nova deve ser posterior à validade atual" });
+    }
+
     const { data: novoCertificado, error: erroNovo } = await supabase
       .from("certificados_digitais")
       .insert({
@@ -418,8 +450,8 @@ export async function atualizarRenovacaoCertificado(req, res) {
       .select()
       .maybeSingle();
 
-    if (erroNovo) {
-      console.error("[certificados.controller] Erro ao criar novo certificado renovado:", erroNovo.message);
+    if (erroNovo || !novoCertificado) {
+      console.error("[certificados.controller] Erro ao criar novo certificado renovado:", erroNovo?.message || "Registro não retornado");
       return res.status(500).json({ erro: "Erro ao concluir renovação" });
     }
 
@@ -428,15 +460,21 @@ export async function atualizarRenovacaoCertificado(req, res) {
       .update({ status: "substituido", renovacao_checklist: checklistAtualizado })
       .eq("id", id)
       .eq("cliente_id", certificado.cliente_id)
+      .eq("status", "renovacao_iniciada")
+      .eq("renovacao_checklist", JSON.stringify(checklist))
+      .eq("validade", certificado.validade)
       .select()
       .maybeSingle();
 
-    if (erroSubstituir) {
-      console.error("[certificados.controller] Erro ao marcar certificado como substituído:", erroSubstituir.message);
+    if (erroSubstituir || !certificadoSubstituido) {
+      if (erroSubstituir) {
+        console.error("[certificados.controller] Erro ao marcar certificado como substituído:", erroSubstituir.message);
+      }
       const { error: erroRollback } = await supabase
         .from("certificados_digitais")
         .delete()
-        .eq("id", novoCertificado.id);
+        .eq("id", novoCertificado.id)
+        .eq("cliente_id", certificado.cliente_id);
       if (erroRollback) {
         console.error(
           "[certificados.controller] Certificado renovado orphan (id=%s) — falha no rollback: %s",
@@ -444,6 +482,9 @@ export async function atualizarRenovacaoCertificado(req, res) {
           erroRollback.message,
         );
         return res.status(500).json({ erro: "Erro ao concluir renovação. Contate o suporte." });
+      }
+      if (!erroSubstituir) {
+        return res.status(409).json({ erro: "Renovação alterada por outra solicitação. Recarregue e tente novamente." });
       }
       return res.status(500).json({ erro: "Erro ao concluir renovação" });
     }
@@ -459,12 +500,18 @@ export async function atualizarRenovacaoCertificado(req, res) {
     .update({ renovacao_checklist: checklistAtualizado })
     .eq("id", id)
     .eq("cliente_id", certificado.cliente_id)
+    .eq("status", "renovacao_iniciada")
+    .eq("renovacao_checklist", JSON.stringify(checklist))
     .select()
     .maybeSingle();
 
   if (error) {
     console.error("[certificados.controller] Erro ao atualizar checklist de renovação:", error.message);
     return res.status(500).json({ erro: "Erro ao atualizar checklist de renovação" });
+  }
+
+  if (!data) {
+    return res.status(409).json({ erro: "Renovação alterada por outra solicitação. Recarregue e tente novamente." });
   }
 
   return res.status(200).json(comFaixa(data));
