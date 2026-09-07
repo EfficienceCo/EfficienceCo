@@ -34,7 +34,7 @@ efficience-co/
 │   ├── especificacao-funcional.md
 │   └── decisoes-tecnicas.md
 │
-├── backend/                        # João, API + Payments (Node.js + Express)
+├── backend/                        # João: API + Payments (Node.js + Express)
 │   ├── src/
 │   │   ├── routes/
 │   │   ├── controllers/
@@ -43,7 +43,7 @@ efficience-co/
 │   │   └── config/
 │   └── tests/
 │
-├── frontend/                       # Victor, Interface (React + Next.js)
+├── frontend/                       # Victor: Interface (React + Next.js)
 │   └── src/
 │       ├── app/
 │       ├── components/
@@ -51,13 +51,13 @@ efficience-co/
 │       ├── services/
 │       └── context/
 │
-├── agente/                         # Gabriel, Local agent (Python)
+├── agente/                         # Gabriel: Local agent (Python)
 │   ├── core/
 │   ├── automacoes/
 │   ├── comunicacao/
 │   └── build/
 │
-└── database/                       # Vinícius, Database (PostgreSQL + Supabase)
+└── database/                       # Vinícius: Database (PostgreSQL + Supabase)
     ├── migrations/
     └── seeds/
 ```
@@ -94,17 +94,17 @@ efficience-co/
 The system is hybrid: part runs in the cloud, part runs on the client's machine.
 
 ```
-[Victor, Frontend]
-        | HTTP requests (JWT)
-[João, Backend + API]
-        | SQL queries
-[Vinícius, Database]
+[Victor: Frontend]
+        ↓ HTTP requests (JWT)
+[João: Backend + API]
+        ↓ SQL queries
+[Vinícius: Database]
 
-[Gabriel, Local agent]
-        | validates license + fetches rules + reports events
-[João, Backend + API]
-        | reads/writes
-[Vinícius, Database]
+[Gabriel: Local agent]
+        ↓ validates license + fetches rules + reports events
+[João: Backend + API]
+        ↓ reads/writes
+[Vinícius: Database]
 ```
 
 - **Frontend + Backend**: hosted in the cloud (Vercel + Railway)
