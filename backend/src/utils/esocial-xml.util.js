@@ -33,13 +33,23 @@
 // (tests/esocial-xml.util.test.js) cobrem estrutura, ordem de tags, campos
 // obrigatórios e a variação por categoria — não substituem o XSD.
 //
-// PONTOS A CONFIRMAR CONTRA O XSD S-1.3 na validação manual (não deu pra
-// fechar sem o schema oficial em mãos):
-//   - ordem de <codMunic>/<uf> dentro de <nascimento> (aqui: após paisNac);
-//   - ordem <nmFuncao> vs <CBOFuncao> em infoContrato;
-//   - forma do grupo <FGTS> (aqui só <dtOpcFGTS>; layouts antigos tinham
-//     <opcFGTS>) e se o grupo é obrigatório p/ celetista;
-//   - se <horContratual> é mesmo minOccurs=1 também p/ estatutário.
+// VALIDADO CONTRA O XSD OFICIAL S-1.3 (evtAdmissao.xsd / tipos.xsd,
+// v_S_01_03_00) em 2026-09-04 — ES-6 / QA-cleanup-4 (#406):
+//   - <nascimento> no XSD só tem dtNascto/paisNascto/paisNac — NÃO existe
+//     <codMunic>/<uf> (naturalidade) dentro do grupo. Corrigido: o código
+//     emitia esses campos indevidamente (elemento fora do xs:sequence
+//     rejeitado pela validação); removidos.
+//   - <nmFuncao> vem antes de <CBOFuncao> em infoContrato — já estava certo.
+//   - grupo <FGTS> só tem <dtOpcFGTS> (sem <opcFGTS> legado) — já estava
+//     certo. Mas o CONDICAO_GRUPO do XSD mostrou que o grupo é PROIBIDO
+//     (tpAdmissao=6, ou dtAdm >= 1988-10-05 [>= 2015-10-01 p/ doméstico,
+//     codCateg 104]) e só OBRIGATÓRIO fora disso (admissão anterior à
+//     obrigatoriedade do FGTS). Corrigido: código antes aceitava <FGTS>
+//     sempre que informado, mesmo quando o XSD proíbe (praticamente toda
+//     admissão atual cai nessa proibição).
+//   - <horContratual> é minOccurs=0 (opcional) no XSD para os dois regimes;
+//     a regra de negócio (obrigatório quando tpRegJor=1/celetista sem
+//     desligamento) já estava implementada corretamente.
 // ---------------------------------------------------------------------------
 
 import { create } from "xmlbuilder2";
@@ -301,7 +311,6 @@ const RAIZ_S2200 = "evtAdmissao";
  * @param {object} funcionario   Dados cadastrais da PESSOA (já validados por ES-5/ES-7):
  *   { cpf, nome, sexo:'M'|'F', racaCor, grauInstr, dataNascimento,
  *     paisNascimento='105', paisNacionalidade='105', nomeSocial?, estadoCivil?,
- *     naturalidade: { codMunicipio, uf }  // obrigatório se nascido no Brasil,
  *     endereco (obrigatório): { tipoLogradouro?, logradouro, numero,
  *                  complemento?, bairro?, cep, codMunicipio, uf },
  *     dependentes?: [{ tipo, nome, dataNascimento, cpf?, sexo?,
@@ -314,6 +323,9 @@ const RAIZ_S2200 = "evtAdmissao";
  *     tpRegTrab:1|2, tpRegPrev:1|2|3, cadIni:boolean,
  *     // celetista (tpRegTrab=1):
  *     tpAdmissao, tpRegJor, natAtividade, dtBase?, cnpjSindCategProf?,
+ *     // fgts: PROIBIDO se tpAdmissao=6 ou dataAdmissao >= 1988-10-05 (>=
+ *     // 2015-10-01 p/ codCateg 104/doméstico) — praticamente toda admissão
+ *     // atual; OBRIGATÓRIO fora dessas condições (vínculo pré-FGTS).
  *     fgts?: { dataOpcao }, aprendiz?: { indAprend, cnpjEntQual?, tpInsc?, nrInsc?, cnpjPrat? },
  *     // estatutário (tpRegTrab=2):
  *     estatutario?: { tpProv, dataExercicio, indTetoRGPS:boolean, tpPlanRP?,
@@ -464,23 +476,14 @@ function montarTrabalhador(f) {
   };
 }
 
+// Grupo {nascimento} do XSD S-1.3 (T_nascimento) é só dtNascto/paisNascto/
+// paisNac — não existe naturalidade (codMunic/uf) aqui.
 function montarNascimento(f) {
-  const paisNascto = f.paisNascimento || "105";
-  const nascimento = {
+  return {
     dtNascto: formatarData(f.dataNascimento),
-    paisNascto,
+    paisNascto: f.paisNascimento || "105",
     paisNac: f.paisNacionalidade || "105",
   };
-  // codMunic + uf (naturalidade) são obrigatórios quando paisNascto = 105.
-  if (paisNascto === "105") {
-    exigir(f, ["naturalidade.codMunicipio", "naturalidade.uf"], "funcionario.naturalidade");
-    nascimento.codMunic = Number(f.naturalidade.codMunicipio);
-    nascimento.uf = f.naturalidade.uf;
-  } else if (f.naturalidade) {
-    nascimento.codMunic = f.naturalidade.codMunicipio ? Number(f.naturalidade.codMunicipio) : undefined;
-    nascimento.uf = f.naturalidade.uf;
-  }
-  return nascimento;
 }
 
 function montarEndereco(e) {
@@ -515,12 +518,37 @@ function montarDependente(d) {
   };
 }
 
+// FGTS passou a ser obrigatório para todo celetista com a Constituição de
+// 1988 (doméstico só em 2015, LC 150/2015). O grupo <FGTS> do XSD é o
+// resquício do regime de opção ANTERIOR a essas datas — por isso o
+// CONDICAO_GRUPO do XSD PROÍBE o grupo em admissões modernas (praticamente
+// todas) e só o exige fora dessas condições.
+const FGTS_OBRIGATORIO_DESDE_GERAL = "1988-10-05";
+const FGTS_OBRIGATORIO_DESDE_DOMESTICO = "2015-10-01"; // codCateg 104
+
+function fgtsProibidoNoXsd({ dtAdm, tpAdmissao, codCateg }) {
+  if (Number(tpAdmissao) === 6) return true; // mudança de CPF
+  const limiar = codCateg === 104 ? FGTS_OBRIGATORIO_DESDE_DOMESTICO : FGTS_OBRIGATORIO_DESDE_GERAL;
+  return dtAdm >= limiar;
+}
+
 function montarInfoCeletista(dados, codCateg) {
   exigir(dados, ["dataAdmissao", "tpAdmissao", "tpRegJor", "natAtividade"], "dadosAdmissao (celetista)");
   if (codCateg === 106) exigir(dados, ["trabalhadorTemporario"], "dadosAdmissao (trabalhador temporario)");
   const tpRegJor = validarDominio("tpRegJor", dados.tpRegJor, new Set([1, 2, 3, 4]), "dadosAdmissao");
+  const dtAdm = formatarData(dados.dataAdmissao);
+  const proibidoFGTS = fgtsProibidoNoXsd({ dtAdm, tpAdmissao: dados.tpAdmissao, codCateg });
+  if (proibidoFGTS && dados.fgts) {
+    throw new ErroXmlESocial(
+      "dadosAdmissao.fgts não pode ser informado: o grupo FGTS do XSD só existe para admissões " +
+        `anteriores à obrigatoriedade do FGTS (${codCateg === 104 ? FGTS_OBRIGATORIO_DESDE_DOMESTICO : FGTS_OBRIGATORIO_DESDE_GERAL}) ou tpAdmissao=6`,
+    );
+  }
+  if (!proibidoFGTS && !dados.fgts) {
+    throw new ErroXmlESocial("dadosAdmissao.fgts.dataOpcao é obrigatório para esta admissão (anterior à obrigatoriedade do FGTS)");
+  }
   return {
-    dtAdm: formatarData(dados.dataAdmissao),
+    dtAdm,
     tpAdmissao: Number(dados.tpAdmissao),
     // Opcional no XSD (só relevante em transferência/sucessão). Sem default
     // silencioso — se não vier, sai do XML e o eSocial aplica o próprio padrão.
@@ -529,7 +557,7 @@ function montarInfoCeletista(dados, codCateg) {
     natAtividade: Number(dados.natAtividade),
     dtBase: dados.dtBase ? Number(dados.dtBase) : undefined,
     cnpjSindCategProf: dados.cnpjSindCategProf ? soDigitos(dados.cnpjSindCategProf) : undefined,
-    FGTS: dados.fgts ? { dtOpcFGTS: formatarData(dados.fgts.dataOpcao) } : undefined,
+    FGTS: proibidoFGTS ? undefined : { dtOpcFGTS: formatarData(dados.fgts.dataOpcao) },
     trabTemporario: montarTrabTemporario(dados.trabalhadorTemporario),
     aprend: dados.aprendiz
       ? {
