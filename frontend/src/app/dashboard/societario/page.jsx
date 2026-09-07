@@ -40,7 +40,8 @@ const AUTOMACOES = [
     icon: EscudoIcon,
     nome: 'Certificado digital',
     descricao: 'Alerta e conduz a renovação do certificado digital.',
-    status: 'planejado',
+    status: 'disponivel',
+    href: '/dashboard/societario/certificados',
   },
   {
     icon: PredioIcon,
