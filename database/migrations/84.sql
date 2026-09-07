@@ -1,0 +1,22 @@
+-- Reverte a trigger de 81.sql (trg_set_esocial_fechado_em /
+-- trigger_atualiza_esocial_fechado). Ela referencia colunas que nunca
+-- existiram: `eventos_esocial.eventos_esocial_status` (a coluna real é
+-- `status`, com valores rascunho/aprovado/transmitido/aceito/rejeitado, nunca
+-- 'FECHADO') e `eventos_esocial.processamento_folha_id` (não há, e nunca
+-- houve, vínculo entre eventos_esocial e processamentos_folha).
+--
+-- Em PL/pgSQL, acesso a campo inexistente de NEW/OLD só falha em tempo de
+-- execução — ou seja, todo UPDATE em eventos_esocial (inclusive aprovar um
+-- evento) dispara essa trigger e deve lançar
+-- `record "new" has no field "eventos_esocial_status"`.
+--
+-- A trigger foi escrita para o fechamento mensal de folha no eSocial (Grupo
+-- 4 — S-1200/S-1210), que ainda não foi implementado: nenhum código hoje lê
+-- ou escreve `processamentos_folha.esocial_status` /
+-- `processamentos_folha.esocial_fechado_em` (colunas de 79.sql/80.sql
+-- seguem paradas). Quando essa automação for construída de verdade, o
+-- vínculo entre as duas tabelas (provavelmente uma coluna
+-- `processamento_folha_id` em `eventos_esocial`) precisa ser desenhado junto
+-- — não faz sentido manter um stub quebrado até lá.
+DROP TRIGGER IF EXISTS trigger_atualiza_esocial_fechado ON eventos_esocial;
+DROP FUNCTION IF EXISTS trg_set_esocial_fechado_em();
