@@ -98,6 +98,8 @@ function admissaoCLT() {
     tpRegPrev: 1,
     cadIni: false,
     tpAdmissao: 1,
+    indAdmissao: 1,
+    cnpjSindCategProf: "12345678000195",
     tpRegJor: 1,
     natAtividade: 1,
     // fgts omitido: dtAdm=2026-08-01 é posterior a 1988-10-05, grupo proibido no XSD S-1.3.

@@ -33,8 +33,11 @@
 // (tests/esocial-xml.util.test.js) cobrem estrutura, ordem de tags, campos
 // obrigatórios e a variação por categoria — não substituem o XSD.
 //
-// VALIDADO CONTRA O XSD OFICIAL S-1.3 (evtAdmissao.xsd / tipos.xsd,
-// v_S_01_03_00) em 2026-09-04 — ES-6 / QA-cleanup-4 (#406):
+// CONFERIDO CONTRA O XSD OFICIAL S-1.3 (evtAdmissao.xsd / tipos.xsd,
+// v_S_01_03_00), pacotes de 27/04 e 01/07/2026 do portal eSocial.
+// Validação offline reproduzida em 2026-09-06 — ver
+// docs/validacao-s2200-xsd.md (estrutura de XML, sem transmissão/assinatura real).
+// ES-6 / QA-cleanup-4 (#406):
 //   - <nascimento> no XSD só tem dtNascto/paisNascto/paisNac — NÃO existe
 //     <codMunic>/<uf> (naturalidade) dentro do grupo. Corrigido: o código
 //     emitia esses campos indevidamente (elemento fora do xs:sequence
@@ -50,6 +53,8 @@
 //   - <horContratual> é minOccurs=0 (opcional) no XSD para os dois regimes;
 //     a regra de negócio (obrigatório quando tpRegJor=1/celetista sem
 //     desligamento) já estava implementada corretamente.
+//   - a validação do documento completo também identificou indAdmissao e
+//     cnpjSindCategProf obrigatórios em infoCeletista; agora são exigidos.
 // ---------------------------------------------------------------------------
 
 import { create } from "xmlbuilder2";
@@ -322,7 +327,8 @@ const RAIZ_S2200 = "evtAdmissao";
  *     matricula, codCateg, dataAdmissao,
  *     tpRegTrab:1|2, tpRegPrev:1|2|3, cadIni:boolean,
  *     // celetista (tpRegTrab=1):
- *     tpAdmissao, tpRegJor, natAtividade, dtBase?, cnpjSindCategProf?,
+ *     tpAdmissao, indAdmissao, nrProcTrab?, tpRegJor, natAtividade,
+ *     cnpjSindCategProf, dtBase?,
  *     // fgts: PROIBIDO se tpAdmissao=6 ou dataAdmissao >= 1988-10-05 (>=
  *     // 2015-10-01 p/ codCateg 104/doméstico) — praticamente toda admissão
  *     // atual; OBRIGATÓRIO fora dessas condições (vínculo pré-FGTS).
@@ -533,15 +539,31 @@ function fgtsProibidoNoXsd({ dtAdm, tpAdmissao, codCateg }) {
 }
 
 function montarInfoCeletista(dados, codCateg) {
-  exigir(dados, ["dataAdmissao", "tpAdmissao", "tpRegJor", "natAtividade"], "dadosAdmissao (celetista)");
+  exigir(dados, ["dataAdmissao", "tpAdmissao", "indAdmissao", "tpRegJor", "natAtividade", "cnpjSindCategProf"], "dadosAdmissao (celetista)");
   if (codCateg === 106) exigir(dados, ["trabalhadorTemporario"], "dadosAdmissao (trabalhador temporario)");
   const tpRegJor = validarDominio("tpRegJor", dados.tpRegJor, new Set([1, 2, 3, 4]), "dadosAdmissao");
+  const indAdmissao = validarDominio("indAdmissao", dados.indAdmissao, new Set([1, 2, 3]), "dadosAdmissao");
+  const nrProcTrab = dados.nrProcTrab ? soDigitos(dados.nrProcTrab) : undefined;
+  if (indAdmissao === 3 && nrProcTrab?.length !== 20) {
+    throw new ErroXmlESocial(
+      "dadosAdmissao.nrProcTrab deve conter 20 dígitos quando indAdmissao=3",
+    );
+  }
+  if (indAdmissao !== 3 && nrProcTrab) {
+    throw new ErroXmlESocial(
+      "dadosAdmissao.nrProcTrab só pode ser informado quando indAdmissao=3",
+    );
+  }
+  const cnpjSindCategProf = soDigitos(dados.cnpjSindCategProf);
+  if (cnpjSindCategProf.length !== 14) {
+    throw new ErroXmlESocial("dadosAdmissao.cnpjSindCategProf deve conter 14 dígitos");
+  }
   const dtAdm = formatarData(dados.dataAdmissao);
   const proibidoFGTS = fgtsProibidoNoXsd({ dtAdm, tpAdmissao: dados.tpAdmissao, codCateg });
   if (proibidoFGTS && dados.fgts) {
     throw new ErroXmlESocial(
       "dadosAdmissao.fgts não pode ser informado: o grupo FGTS do XSD só existe para admissões " +
-        `anteriores à obrigatoriedade do FGTS (${codCateg === 104 ? FGTS_OBRIGATORIO_DESDE_DOMESTICO : FGTS_OBRIGATORIO_DESDE_GERAL}) ou tpAdmissao=6`,
+        `anteriores à obrigatoriedade do FGTS (${codCateg === 104 ? FGTS_OBRIGATORIO_DESDE_DOMESTICO : FGTS_OBRIGATORIO_DESDE_GERAL}); também é proibido quando tpAdmissao=6`,
     );
   }
   if (!proibidoFGTS && !dados.fgts) {
@@ -550,13 +572,12 @@ function montarInfoCeletista(dados, codCateg) {
   return {
     dtAdm,
     tpAdmissao: Number(dados.tpAdmissao),
-    // Opcional no XSD (só relevante em transferência/sucessão). Sem default
-    // silencioso — se não vier, sai do XML e o eSocial aplica o próprio padrão.
-    indAdmissao: dados.indAdmissao != null && dados.indAdmissao !== "" ? Number(dados.indAdmissao) : undefined,
+    indAdmissao,
+    nrProcTrab,
     tpRegJor,
     natAtividade: Number(dados.natAtividade),
     dtBase: dados.dtBase ? Number(dados.dtBase) : undefined,
-    cnpjSindCategProf: dados.cnpjSindCategProf ? soDigitos(dados.cnpjSindCategProf) : undefined,
+    cnpjSindCategProf,
     FGTS: proibidoFGTS ? undefined : { dtOpcFGTS: formatarData(dados.fgts.dataOpcao) },
     trabTemporario: montarTrabTemporario(dados.trabalhadorTemporario),
     aprend: dados.aprendiz

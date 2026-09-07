@@ -137,8 +137,7 @@ async function preencherFormularioS2200(page: Page) {
   await trab.getByLabel('Raça/cor').selectOption('1');
   await trab.getByLabel('Grau de instrução').selectOption('07');
   await trab.getByLabel('Data de nascimento').fill('15/03/1992');
-  await trab.getByLabel('Naturalidade — código do município (IBGE)').fill('3550308');
-  await trab.getByLabel('Naturalidade — UF').selectOption('SP');
+  await expect(trab.getByLabel(/Naturalidade/)).toHaveCount(0);
 
   const end = g('Endereço');
   await end.getByLabel(/^Logradouro/).fill('Avenida Paulista');
@@ -154,6 +153,8 @@ async function preencherFormularioS2200(page: Page) {
   await vinc.getByLabel('Data de admissão').fill('02/02/2026');
 
   const clt = g('Regime CLT (infoCeletista)');
+  await clt.getByLabel('Indicativo de admissão').selectOption('1');
+  await clt.getByLabel('CNPJ do sindicato da categoria').fill('12345678000195');
   await clt.getByLabel('Regime de jornada').selectOption('1');
   await clt.getByLabel('Natureza da atividade').selectOption('1');
 

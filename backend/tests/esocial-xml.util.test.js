@@ -51,6 +51,8 @@ function admissaoCLT() {
     tpRegPrev: 1,
     cadIni: false,
     tpAdmissao: 1,
+    indAdmissao: 1,
+    cnpjSindCategProf: "12345678000195",
     tpRegJor: 1,
     natAtividade: 1,
     // fgts omitido de propósito: dtAdm=2026-08-01 é posterior à
@@ -101,6 +103,8 @@ function admissaoAprendiz() {
     tpRegPrev: 1,
     cadIni: false,
     tpAdmissao: 1,
+    indAdmissao: 1,
+    cnpjSindCategProf: "12345678000195",
     tpRegJor: 1,
     natAtividade: 1,
     aprendiz: { indAprend: 1, cnpjEntQual: "11.111.111/0001-11", tpInsc: 1, nrInsc: "22222222000122" },
@@ -513,6 +517,41 @@ describe("gerarXmlS2200 — validação de entrada", () => {
 // --- regras condicionais do leiaute S-1.3 ------------------------------
 
 describe("gerarXmlS2200 - regra do grupo FGTS (CONDICAO_GRUPO do XSD)", () => {
+  it("exige os campos obrigatórios indAdmissao e cnpjSindCategProf, sem inferir dados do usuário", () => {
+    for (const campo of ["indAdmissao", "cnpjSindCategProf"]) {
+      const dados = admissaoCLT();
+      delete dados[campo];
+      assert.throws(() => gerarXmlS2200(funcionarioCLT(), dados), new RegExp(campo));
+    }
+  });
+
+  it("serializa indAdmissao e cnpjSindCategProf na ordem exigida pelo XSD", () => {
+    const xml = gerarXmlS2200(funcionarioCLT(), admissaoCLT());
+    assert.match(xml, /<tpAdmissao>1<\/tpAdmissao>\s*<indAdmissao>1<\/indAdmissao>\s*<tpRegJor>1<\/tpRegJor>\s*<natAtividade>1<\/natAtividade>\s*<cnpjSindCategProf>12345678000195<\/cnpjSindCategProf>/);
+  });
+
+  it("rejeita indicativo fora do domínio e CNPJ do sindicato truncado", () => {
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), { ...admissaoCLT(), indAdmissao: 4 }), /indAdmissao/);
+    assert.throws(() => gerarXmlS2200(funcionarioCLT(), { ...admissaoCLT(), cnpjSindCategProf: "123" }), /cnpjSindCategProf/);
+  });
+
+  it("exige processo trabalhista com 20 dígitos somente na admissão judicial", () => {
+    assert.throws(
+      () => gerarXmlS2200(funcionarioCLT(), { ...admissaoCLT(), indAdmissao: 3 }),
+      /nrProcTrab.*20 dígitos/,
+    );
+    assert.throws(
+      () => gerarXmlS2200(funcionarioCLT(), { ...admissaoCLT(), nrProcTrab: "12345678901234567890" }),
+      /só pode ser informado.*indAdmissao=3/,
+    );
+
+    const xml = gerarXmlS2200(funcionarioCLT(), {
+      ...admissaoCLT(),
+      indAdmissao: 3,
+      nrProcTrab: "1234567-89.2026.5.02.0001",
+    });
+    assert.match(xml, /<indAdmissao>3<\/indAdmissao>\s*<nrProcTrab>12345678920265020001<\/nrProcTrab>/);
+  });
   it("rejeita fgts informado em admissão moderna (dtAdm >= 1988-10-05)", () => {
     const dados = { ...admissaoCLT(), fgts: { dataOpcao: "2026-08-01" } };
     assert.throws(() => gerarXmlS2200(funcionarioCLT(), dados), /fgts não pode ser informado/);
