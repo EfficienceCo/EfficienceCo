@@ -11,6 +11,7 @@
     "test:esocial-gov": "node --import ./tests/setup-env.js --experimental-test-module-mocks --test tests/integration/esocial-gov.producao-restrita.test.js"
   },
   "dependencies": {
+    "@supabase/server": "^1.5.3",
     "@supabase/supabase-js": "^2.45.0",
     "@xmldom/xmldom": "^0.9.12",
     "bcryptjs": "^3.0.3",
