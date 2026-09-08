@@ -43,9 +43,10 @@ function admissaoCLT() {
     tpRegPrev: 1,
     cadIni: false,
     tpAdmissao: 1,
+    indAdmissao: 1,
+    cnpjSindCategProf: "12345678000195",
     tpRegJor: 1,
     natAtividade: 1,
-    fgts: { dataOpcao: "2026-08-01" },
     cargo: { nome: "Analista Contábil", cbo: "2522-10" },
     remuneracao: { valorSalarioFixo: 3500.5, unidadeSalarioFixo: 5 },
     duracao: { tpContr: 1 },
@@ -140,5 +141,34 @@ describe("esocial-transmissao.service (mock SOAP)", () => {
 
     assert.equal(resultado.status, "transmitido");
     assert.ok(mockClient.ConsultarLoteEventosAsync.mock.calls.length >= 2);
+  });
+
+  it("A6.3 poll esgotado com gov ainda processando → processando + protocolo (não erro)", async () => {
+    mockClient.ConsultarLoteEventosAsync.mock.mockImplementation(async () => [
+      fixture("retorno-processamento-aguardando.xml"),
+    ]);
+
+    const { buffer, senha } = gerarPfxTeste();
+    const xml = gerarXmlS2200(funcionarioCLT(), admissaoCLT());
+
+    const resultado = await transmitirEventoEsocial({
+      tipoEvento: "S-2200",
+      xmlEvento: xml,
+      certificadoBuffer: buffer,
+      senha,
+      config: {
+        ambiente: "homologacao",
+        tpAmbEsperado: 2,
+        urlEnvio:
+          "https://webservices.producaorestrita.esocial.gov.br/servicos/empregador/enviarloteeventos/WsEnviarLoteEventos.svc",
+        urlConsulta:
+          "https://webservices.producaorestrita.esocial.gov.br/servicos/empregador/consultarloteeventos/WsConsultarLoteEventos.svc",
+        allowlist: new Set(["webservices.producaorestrita.esocial.gov.br"]),
+        poll: { tentativas: 2, intervaloMs: 1 },
+      },
+    });
+
+    assert.equal(resultado.status, "processando");
+    assert.equal(resultado.protocoloEnvio, "1.2.202608.000000012345678");
   });
 });

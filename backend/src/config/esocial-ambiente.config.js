@@ -49,6 +49,12 @@ function validarParUrls({ ambiente, urlEnvio, urlConsulta, nodeEnv }) {
 
   if (!emProducao) {
     if (HOSTS_PRODUCAO.has(hostEnvio) || HOSTS_PRODUCAO.has(hostConsulta)) {
+      if (ambiente === "producao" && nodeEnv !== "production") {
+        throw new ErroConfigESocial(
+          `ESOCIAL_AMBIENTE=producao exige NODE_ENV=production (atual: ${nodeEnv || "(não definido)"}). ` +
+            "Sem isso o servidor falha fechado e rejeita URLs de produção do eSocial.",
+        );
+      }
       throw new ErroConfigESocial(
         "Ambiente não-produção não pode apontar para webservices de produção do eSocial",
       );
@@ -98,8 +104,10 @@ export function carregarConfigESocial(env = process.env) {
     urlConsulta,
     allowlist,
     poll: {
-      tentativas: Number(env.ESOCIAL_POLL_TENTATIVAS ?? 8),
-      intervaloMs: Number(env.ESOCIAL_POLL_INTERVALO_MS ?? 3000),
+      // Defaults curtos no path HTTP (4 × 2s ≈ 6s de espera + SOAP) — margem
+      // sob timeouts de proxy/LB (~30s). Override via env se necessário.
+      tentativas: Number(env.ESOCIAL_POLL_TENTATIVAS ?? 4),
+      intervaloMs: Number(env.ESOCIAL_POLL_INTERVALO_MS ?? 2000),
     },
   };
 }

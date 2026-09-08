@@ -189,4 +189,33 @@ describe("eventos-esocial transmitir", () => {
     assert.equal(res.statusCode, 502);
     assert.equal(mockEnviar.mock.calls.length, 1);
   });
+
+  it("A7.6 202 quando gov ainda processa — mantém transmitindo + protocoloEnvio", async () => {
+    mockEnviar.mock.mockImplementation(async () => ({
+      status: "processando",
+      protocoloEnvio: "1.2.202608.000000012345678",
+    }));
+
+    queue("eventos_esocial", "maybeSingle", { data: eventoAprovado, error: null });
+    queue("eventos_esocial", "maybeSingle", { data: eventoTransmitindo, error: null });
+    queue("eventos_esocial", "maybeSingle", {
+      data: { ...eventoTransmitindo, data_envio: "2026-09-07T22:00:00.000Z" },
+      error: null,
+    });
+
+    const { buffer, senha } = gerarPfxTeste();
+    const req = {
+      params: { id: EVENTO_ID },
+      usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
+      file: { buffer, originalname: "cert.pfx" },
+      body: { senha },
+    };
+    const res = criarResposta();
+    await transmitirHandler(req, res);
+
+    assert.equal(res.statusCode, 202);
+    assert.equal(res.body.status, "transmitindo");
+    assert.equal(res.body.protocoloEnvio, "1.2.202608.000000012345678");
+    assert.equal(res.body.codigo, "PROCESSAMENTO_PENDENTE");
+  });
 });

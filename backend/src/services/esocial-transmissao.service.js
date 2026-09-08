@@ -42,7 +42,7 @@ async function criarClienteSoap(url, { certificatePem, privateKeyPem }) {
     },
   });
 
-  client.setSecurity(new soap.ClientSSLSecurity(certificatePem, privateKeyPem));
+  client.setSecurity(new soap.ClientSSLSecurity(privateKeyPem, certificatePem));
   return client;
 }
 
@@ -105,6 +105,9 @@ export async function transmitirEventoEsocial({
   const clientConsulta = await criarClienteSoap(config.urlConsulta, credencial);
   const xmlConsulta = montarConsultaLote(envio.protocoloEnvio);
 
+  // Poll curto no request HTTP — evita estourar timeout de proxy/LB (~30s).
+  // Se o gov ainda estiver processando, devolve processando + protocolo (202 no
+  // controller) em vez de 502; job/consulta assíncrona fica para evolução.
   let processamento = null;
   for (let i = 0; i < config.poll.tentativas; i += 1) {
     const respostaConsultaBruta = await chamarSoap(clientConsulta, "ConsultarLoteEventos", {
@@ -112,11 +115,10 @@ export async function transmitirEventoEsocial({
     });
     processamento = parseRetornoProcessamento(respostaConsultaBruta);
 
-    if (processamento.aguardando) {
+    if (!processamento.aguardando) break;
+    if (i < config.poll.tentativas - 1) {
       await sleep(config.poll.intervaloMs);
-      continue;
     }
-    break;
   }
 
   if (!processamento) {
@@ -124,11 +126,10 @@ export async function transmitirEventoEsocial({
   }
 
   if (processamento.aguardando) {
-    throw new ErroTransmissaoESocial(
-      "Processamento do lote ainda em andamento — tente novamente em instantes",
-      "PROCESSAMENTO_PENDENTE",
-      502,
-    );
+    return {
+      status: "processando",
+      protocoloEnvio: envio.protocoloEnvio,
+    };
   }
 
   if (processamento.sucesso) {

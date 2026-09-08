@@ -48,4 +48,22 @@ describe("esocial-ambiente.config", () => {
       ErroConfigESocial,
     );
   });
+
+  it("mensagem cita NODE_ENV quando producao sem NODE_ENV=production", () => {
+    assert.throws(
+      () =>
+        carregarConfigESocial({
+          ESOCIAL_AMBIENTE: "producao",
+          // NODE_ENV omitido → carregarConfigESocial usa "development"
+          ESOCIAL_SOAP_URL_ENVIO:
+            "https://webservices.envio.esocial.gov.br/servicos/empregador/enviarloteeventos/WsEnviarLoteEventos.svc",
+          ESOCIAL_SOAP_URL_CONSULTA:
+            "https://webservices.consulta.esocial.gov.br/servicos/empregador/consultarloteeventos/WsConsultarLoteEventos.svc",
+        }),
+      (err) =>
+        err instanceof ErroConfigESocial &&
+        /NODE_ENV=production/.test(err.message) &&
+        /development/.test(err.message),
+    );
+  });
 });

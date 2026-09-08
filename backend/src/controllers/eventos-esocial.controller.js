@@ -401,7 +401,7 @@ export async function transmitirEvento(req, res) {
   }
 
   const patch = {
-    status: resultado.status,
+    status: resultado.status === "processando" ? "transmitindo" : resultado.status,
     data_envio: new Date().toISOString(),
     numero_recibo: resultado.numero_recibo ?? null,
     erro_rejeicao: resultado.erro_rejeicao ?? null,
@@ -424,6 +424,19 @@ export async function transmitirEvento(req, res) {
       `[eventos-esocial.controller] Resultado gov perdido — evento ${evento.id} saiu de transmitindo`,
     );
     return res.status(500).json({ erro: "Transmissão realizada, mas falha ao gravar o resultado" });
+  }
+
+  // Lote já aceito pelo gov, mas processamento ainda não concluiu no poll curto.
+  // 202 + protocolo — não é erro; o front pode acompanhar depois (job async futuro).
+  if (resultado.status === "processando") {
+    console.log(
+      `[eventos-esocial.controller] Evento em processamento — ${evento.id} | protocolo: ${resultado.protocoloEnvio}`,
+    );
+    return res.status(202).json({
+      ...atualizado,
+      protocoloEnvio: resultado.protocoloEnvio,
+      codigo: "PROCESSAMENTO_PENDENTE",
+    });
   }
 
   console.log(
