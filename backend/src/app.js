@@ -22,6 +22,7 @@ import lancamentosContabeisRoutes from "./routes/lancamentos-contabeis.routes.js
 import conciliacoesRoutes from "./routes/conciliacoes.routes.js";
 import eficienciaRoutes from "./routes/eficiencia.routes.js";
 import apuracoesRoutes from "./routes/apuracoes.routes.js";
+import certificadosRoutes from "./routes/certificados.routes.js";
 
 console.log("[app.js] Criando instancia do app...");
 const app = express();
@@ -99,6 +100,9 @@ console.log("[app.js] Rota /eficiencia registrada");
 
 app.use("/apuracoes", apuracoesRoutes);
 console.log("[app.js] Rota /apuracoes registrada");
+
+app.use("/certificados", certificadosRoutes);
+console.log("[app.js] Rota /certificados registrada");
 
 console.log("[app.js] Exportando app...");
 export default app;

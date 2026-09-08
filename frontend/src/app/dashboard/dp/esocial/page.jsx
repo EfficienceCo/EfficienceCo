@@ -117,7 +117,6 @@ function formInicial() {
       estadoCivil: '',
       paisNascimento: '105',
       paisNacionalidade: '105',
-      naturalidade: { codMunicipio: '', uf: '' },
       endereco: {
         tipoLogradouro: '',
         logradouro: '',
@@ -142,6 +141,7 @@ function formInicial() {
       // celetista
       tpAdmissao: '1',
       indAdmissao: '',
+      nrProcTrab: '',
       tpRegJor: '',
       natAtividade: '',
       dtBase: '',
@@ -212,7 +212,6 @@ function montarPayload(form) {
     estadoCivil: f.estadoCivil || undefined,
     paisNascimento: f.paisNascimento || '105',
     paisNacionalidade: f.paisNacionalidade || '105',
-    naturalidade: limparVazios(f.naturalidade),
     endereco: limparVazios(f.endereco),
   };
 
@@ -255,6 +254,7 @@ function montarPayload(form) {
   } else {
     dadosAdmissao.tpAdmissao = a.tpAdmissao;
     dadosAdmissao.indAdmissao = a.indAdmissao || undefined;
+    dadosAdmissao.nrProcTrab = a.indAdmissao === '3' ? a.nrProcTrab || undefined : undefined;
     dadosAdmissao.tpRegJor = a.tpRegJor;
     dadosAdmissao.natAtividade = a.natAtividade;
     dadosAdmissao.dtBase = a.dtBase || undefined;
@@ -310,10 +310,6 @@ function validarFormulario(form) {
     erros['País de nascimento'] =
       'Admissão de trabalhador nascido no exterior ainda não é suportada nesta versão.';
   }
-  if (!/^\d{7}$/.test(String(f.naturalidade.codMunicipio || ''))) {
-    erros['Naturalidade — código do município'] = 'Informe o código IBGE de 7 dígitos.';
-  }
-  exigir(f.naturalidade.uf, 'Naturalidade — UF');
 
   // Endereço
   exigir(f.endereco.logradouro, 'Endereço — logradouro');
@@ -399,6 +395,13 @@ function validarFormulario(form) {
     if (a.tpRegPrev === '1') exigir(a.estatutario.indTetoRGPS, 'Estatutário — indicador de teto do RGPS');
   } else {
     exigir(a.tpAdmissao, 'Celetista — tipo de admissão');
+    exigir(a.indAdmissao, 'Celetista — indicativo de admissão');
+    if (a.indAdmissao === '3' && !/^\d{20}$/.test(String(a.nrProcTrab || '').replace(/\D/g, ''))) {
+      erros['Celetista — processo trabalhista'] = 'Informe os 20 dígitos do processo judicial.';
+    }
+    if (!/^\d{14}$/.test(String(a.cnpjSindCategProf || '').replace(/\D/g, ''))) {
+      erros['Celetista — CNPJ do sindicato da categoria'] = 'Informe o CNPJ do sindicato com 14 dígitos.';
+    }
     exigir(a.tpRegJor, 'Celetista — regime de jornada');
     exigir(a.natAtividade, 'Celetista — natureza da atividade');
     if (a.dtBase && !(/^\d{1,2}$/.test(String(a.dtBase)) && Number(a.dtBase) >= 1 && Number(a.dtBase) <= 31)) {
@@ -1164,20 +1167,6 @@ function PassoFormulario({
           ajuda="Nesta versão só é possível admitir trabalhador nascido no Brasil."
         />
         <CampoSelect label="País de nacionalidade" opcoes={PAISES} value={f.paisNacionalidade} onChange={(v) => atualizarFuncionario('paisNacionalidade', v)} placeholder="105 — Brasil" />
-        <Campo
-          label="Naturalidade — código do município (IBGE)"
-          obrigatorio
-          placeholder="7 dígitos"
-          value={f.naturalidade.codMunicipio}
-          onChange={(v) => atualizarFuncionarioAninhado('naturalidade', 'codMunicipio', v)}
-        />
-        <CampoSelect
-          label="Naturalidade — UF"
-          obrigatorio
-          opcoes={UFS}
-          value={f.naturalidade.uf}
-          onChange={(v) => atualizarFuncionarioAninhado('naturalidade', 'uf', v)}
-        />
       </Fieldset>
 
       {/* Endereço */}
@@ -1273,11 +1262,14 @@ function PassoFormulario({
       {!estatutaria ? (
         <Fieldset titulo="Regime CLT (infoCeletista)">
           <CampoSelect label="Tipo de admissão" obrigatorio opcoes={TP_ADMISSAO} value={a.tpAdmissao} onChange={(v) => atualizarAdmissao('tpAdmissao', v)} />
-          <CampoSelect label="Indicativo de admissão" opcoes={IND_ADMISSAO} value={a.indAdmissao} onChange={(v) => atualizarAdmissao('indAdmissao', v)} />
+          <CampoSelect label="Indicativo de admissão" obrigatorio opcoes={IND_ADMISSAO} value={a.indAdmissao} onChange={(v) => atualizarAdmissao('indAdmissao', v)} />
+          {a.indAdmissao === '3' ? (
+            <Campo label="Processo trabalhista" obrigatorio placeholder="20 dígitos" value={a.nrProcTrab} onChange={(v) => atualizarAdmissao('nrProcTrab', v)} />
+          ) : null}
           <CampoSelect label="Regime de jornada" obrigatorio opcoes={TP_REG_JOR} value={a.tpRegJor} onChange={(v) => atualizarAdmissao('tpRegJor', v)} />
           <CampoSelect label="Natureza da atividade" obrigatorio opcoes={NAT_ATIVIDADE} value={a.natAtividade} onChange={(v) => atualizarAdmissao('natAtividade', v)} />
           <Campo label="Dia base (dtBase)" placeholder="Dia do mês (1-31)" value={a.dtBase} onChange={(v) => atualizarAdmissao('dtBase', v)} />
-          <Campo label="CNPJ do sindicato da categoria" value={a.cnpjSindCategProf} onChange={(v) => atualizarAdmissao('cnpjSindCategProf', v)} />
+          <Campo label="CNPJ do sindicato da categoria" obrigatorio value={a.cnpjSindCategProf} onChange={(v) => atualizarAdmissao('cnpjSindCategProf', v)} />
         </Fieldset>
       ) : (
         <Fieldset titulo="Regime estatutário (infoEstatutario)">

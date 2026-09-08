@@ -307,9 +307,30 @@ export async function baixarXml(req, res) {
   return res.status(200).send(evento.xml_gerado);
 }
 
+// Libera o lock `transmitindo` de volta para `aprovado` quando o SOAP falha
+// antes de um resultado definitivo — permite retry sem reenvio fantasma.
+async function liberarClaimTransmissao(eventoId) {
+  const { error } = await supabase
+    .from("eventos_esocial")
+    .update({ status: "aprovado" })
+    .eq("id", eventoId)
+    .eq("status", "transmitindo");
+
+  if (error) {
+    console.error(
+      "[eventos-esocial.controller] Falha ao liberar claim de transmissão:",
+      error.message,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // POST /eventos-esocial/:id/transmitir — envio ao governo (#ES-8)
 // multipart: certificado (.pfx/.p12) + senha — usados só em memória
+//
+// Idempotência: reivindica o evento (aprovado → transmitindo) ANTES do SOAP,
+// no mesmo padrão de aprovarEvento (.eq("status", "rascunho")). Dois POSTs
+// concorrentes: só um ganha o claim; o outro recebe 409.
 // ---------------------------------------------------------------------------
 export async function transmitirEvento(req, res) {
   const { evento, erro } = await buscarEventoDoUsuario(req);
@@ -336,15 +357,37 @@ export async function transmitirEvento(req, res) {
     return res.status(400).json({ erro: "Senha do certificado é obrigatória" });
   }
 
+  // Claim atômico: só um request passa. Sem isso, dois POSTs concorrentes
+  // enviariam o mesmo S-2200 duas vezes ao eSocial.
+  const { data: claimed, error: erroClaim } = await supabase
+    .from("eventos_esocial")
+    .update({ status: "transmitindo" })
+    .eq("id", evento.id)
+    .eq("status", "aprovado")
+    .select()
+    .maybeSingle();
+
+  if (erroClaim) {
+    console.error("[eventos-esocial.controller] Erro ao reivindicar evento:", erroClaim.message);
+    return res.status(500).json({ erro: "Erro ao iniciar a transmissão" });
+  }
+  if (!claimed) {
+    return res.status(409).json({
+      erro: "Evento não está aprovado ou já está em transmissão",
+      codigo: "EVENTO_NAO_APROVADO",
+    });
+  }
+
   let resultado;
   try {
     resultado = await enviarAoGov({
-      tipoEvento: evento.tipo_evento,
-      xmlEvento: evento.xml_gerado,
+      tipoEvento: claimed.tipo_evento,
+      xmlEvento: claimed.xml_gerado,
       certificadoBuffer: arquivo.buffer,
       senha,
     });
   } catch (err) {
+    await liberarClaimTransmissao(evento.id);
     if (err instanceof ErroCertificadoESocial) {
       return res.status(400).json({ erro: err.message, codigo: err.codigo });
     }
@@ -368,11 +411,18 @@ export async function transmitirEvento(req, res) {
     .from("eventos_esocial")
     .update(patch)
     .eq("id", evento.id)
+    .eq("status", "transmitindo")
     .select()
     .maybeSingle();
 
   if (error) {
     console.error("[eventos-esocial.controller] Erro ao gravar resultado da transmissão:", error.message);
+    return res.status(500).json({ erro: "Transmissão realizada, mas falha ao gravar o resultado" });
+  }
+  if (!atualizado) {
+    console.error(
+      `[eventos-esocial.controller] Resultado gov perdido — evento ${evento.id} saiu de transmitindo`,
+    );
     return res.status(500).json({ erro: "Transmissão realizada, mas falha ao gravar o resultado" });
   }
 

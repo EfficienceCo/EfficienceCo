@@ -38,16 +38,18 @@ const mockEnviar = mock.fn(async () => ({
   numero_recibo: "1.2.0001234567890123",
 }));
 
+class ErroTransmissaoMock extends Error {
+  constructor(m, c, s = 502) {
+    super(m);
+    this.codigo = c;
+    this.statusHttp = s;
+  }
+}
+
 mock.module("../src/services/esocial-transmissao.service.js", {
   namedExports: {
     transmitirEventoEsocial: mockEnviar,
-    ErroTransmissaoESocial: class extends Error {
-      constructor(m, c, s = 502) {
-        super(m);
-        this.codigo = c;
-        this.statusHttp = s;
-      }
-    },
+    ErroTransmissaoESocial: ErroTransmissaoMock,
   },
 });
 
@@ -60,6 +62,10 @@ after(() => {
 beforeEach(() => {
   filas.clear();
   mockEnviar.mock.resetCalls();
+  mockEnviar.mock.mockImplementation(async () => ({
+    status: "transmitido",
+    numero_recibo: "1.2.0001234567890123",
+  }));
 });
 
 function criarResposta() {
@@ -79,6 +85,11 @@ const eventoAprovado = {
   status: "aprovado",
 };
 
+const eventoTransmitindo = {
+  ...eventoAprovado,
+  status: "transmitindo",
+};
+
 describe("eventos-esocial transmitir", () => {
   it("A7.1 409 se evento não está aprovado", async () => {
     queue("eventos_esocial", "maybeSingle", {
@@ -96,7 +107,7 @@ describe("eventos-esocial transmitir", () => {
     assert.equal(mockEnviar.mock.calls.length, 0);
   });
 
-  it("A7.2 400 sem certificado", async () => {
+  it("A7.2 400 sem certificado (antes do claim)", async () => {
     queue("eventos_esocial", "maybeSingle", { data: eventoAprovado, error: null });
     const req = {
       params: { id: EVENTO_ID },
@@ -106,10 +117,12 @@ describe("eventos-esocial transmitir", () => {
     const res = criarResposta();
     await transmitirHandler(req, res);
     assert.equal(res.statusCode, 400);
+    assert.equal(mockEnviar.mock.calls.length, 0);
   });
 
-  it("A7.3 200 transmitido persiste numero_recibo", async () => {
+  it("A7.3 200 transmitido: claim → SOAP → persiste numero_recibo", async () => {
     queue("eventos_esocial", "maybeSingle", { data: eventoAprovado, error: null });
+    queue("eventos_esocial", "maybeSingle", { data: eventoTransmitindo, error: null });
     queue("eventos_esocial", "maybeSingle", {
       data: {
         ...eventoAprovado,
@@ -132,6 +145,48 @@ describe("eventos-esocial transmitir", () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.status, "transmitido");
     assert.equal(res.body.numero_recibo, "1.2.0001234567890123");
+    assert.equal(mockEnviar.mock.calls.length, 1);
+  });
+
+  it("A7.4 409 se claim falha (já em transmissão / corrida)", async () => {
+    queue("eventos_esocial", "maybeSingle", { data: eventoAprovado, error: null });
+    queue("eventos_esocial", "maybeSingle", { data: null, error: null });
+
+    const { buffer, senha } = gerarPfxTeste();
+    const req = {
+      params: { id: EVENTO_ID },
+      usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
+      file: { buffer, originalname: "cert.pfx" },
+      body: { senha },
+    };
+    const res = criarResposta();
+    await transmitirHandler(req, res);
+
+    assert.equal(res.statusCode, 409);
+    assert.match(res.body.erro, /já está em transmissão|não está aprovado/i);
+    assert.equal(mockEnviar.mock.calls.length, 0);
+  });
+
+  it("A7.5 falha SOAP libera claim de volta para aprovado", async () => {
+    mockEnviar.mock.mockImplementation(async () => {
+      throw new ErroTransmissaoMock("Falha SOAP", "TRANSMISSAO_FALHOU", 502);
+    });
+
+    queue("eventos_esocial", "maybeSingle", { data: eventoAprovado, error: null });
+    queue("eventos_esocial", "maybeSingle", { data: eventoTransmitindo, error: null });
+    queue("eventos_esocial", "await", { data: { status: "aprovado" }, error: null });
+
+    const { buffer, senha } = gerarPfxTeste();
+    const req = {
+      params: { id: EVENTO_ID },
+      usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
+      file: { buffer, originalname: "cert.pfx" },
+      body: { senha },
+    };
+    const res = criarResposta();
+    await transmitirHandler(req, res);
+
+    assert.equal(res.statusCode, 502);
     assert.equal(mockEnviar.mock.calls.length, 1);
   });
 });

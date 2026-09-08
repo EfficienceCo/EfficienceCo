@@ -41,6 +41,7 @@ export const EVENTOS_POR_GRUPO = [2, 3, 4].map((grupo) => ({
 export const STATUS_EVENTO_META = {
   rascunho: { label: 'Rascunho', classes: 'bg-zinc-100 text-zinc-600 ring-zinc-200' },
   aprovado: { label: 'Aprovado', classes: 'bg-emerald-100 text-emerald-800 ring-emerald-200' },
+  transmitindo: { label: 'Transmitindo', classes: 'bg-amber-100 text-amber-800 ring-amber-200' },
   transmitido: { label: 'Transmitido', classes: 'bg-sky-100 text-sky-800 ring-sky-200' },
   aceito: { label: 'Aceito', classes: 'bg-emerald-100 text-emerald-800 ring-emerald-200' },
   rejeitado: { label: 'Rejeitado', classes: 'bg-rose-100 text-rose-800 ring-rose-200' },
