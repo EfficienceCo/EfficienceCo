@@ -25,6 +25,16 @@ function arredondar(valor) {
   return Math.round(valor * 100) / 100;
 }
 
+function soDigitosCnpj(valor) {
+  return String(valor || "").replace(/\D/g, "");
+}
+
+function cnpjEsperadoParaTipo(tipo, cnpj_emitente, cnpj_destinatario) {
+  if (tipo === "entrada") return soDigitosCnpj(cnpj_destinatario);
+  if (tipo === "saida") return soDigitosCnpj(cnpj_emitente);
+  return "";
+}
+
 // GET /lancamentos-fiscais e /lancamentos-fiscais/resumo aceitam tanto clienteId
 // (camelCase, usado pelo fiscal.service.js do frontend) quanto cliente_id
 // (snake_case, convenção do resto da API — obrigacoes/folha/permissao.middleware)
@@ -38,6 +48,9 @@ function resolverClienteIdQuery(req) {
 
 // Agente local envia o payload do XML da NFe já parseado, autenticado via
 // x-licenca-token (mesmo padrão de uploadFolhaAgente em folha.controller.js).
+// Auth multi-cliente (escritório): token válido + cliente_id existente cujo CNPJ
+// bate com destinatário (entrada) ou emitente (saida) — não exige igualdade com
+// licenca.cliente_id.
 export async function criarLancamentoFiscal(req, res) {
   const token = req.headers["x-licenca-token"];
   const licenca = await validarTokenLicenca(token);
@@ -70,13 +83,36 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(400).json({ erro: "tipo deve ser 'entrada' ou 'saida'" });
   }
 
-  if (cliente_id !== licenca.cliente_id) {
-    return res.status(403).json({ erro: "cliente_id não corresponde ao token de licença" });
+  const { data: cliente, error: erroCliente } = await supabase
+    .from("clientes")
+    .select("id, cnpj")
+    .eq("id", cliente_id)
+    .maybeSingle();
+
+  if (erroCliente) {
+    console.error(
+      "[lancamentos-fiscais.controller] Erro ao validar cliente_id:",
+      erroCliente.message,
+    );
+    return res.status(500).json({ erro: "Erro ao validar cliente do lançamento" });
+  }
+
+  if (!cliente) {
+    return res.status(403).json({ erro: "cliente_id não encontrado" });
+  }
+
+  const cnpjCliente = soDigitosCnpj(cliente.cnpj);
+  const cnpjEsperado = cnpjEsperadoParaTipo(tipo, cnpj_emitente, cnpj_destinatario);
+  if (!cnpjCliente || cnpjCliente !== cnpjEsperado) {
+    return res.status(403).json({
+      erro: "CNPJ do cliente_id não corresponde ao emitente/destinatário do tipo informado",
+    });
   }
 
   const { data: existente, error: erroExistente } = await supabase
     .from("lancamentos_fiscais")
     .select("id")
+    .eq("cliente_id", cliente_id)
     .eq("chave_nfe", chave_nfe)
     .maybeSingle();
 
@@ -112,8 +148,8 @@ export async function criarLancamentoFiscal(req, res) {
     .single();
 
   if (error) {
-    // unique_violation — corrida entre duas chamadas concorrentes pra mesma chave_nfe
-    // depois da checagem acima já ter passado.
+    // unique_violation — corrida entre duas chamadas concorrentes pra mesmo
+    // (cliente_id, chave_nfe) depois da checagem acima já ter passado.
     if (error.code === "23505") {
       return res.status(409).json({ erro: "Já existe um lançamento fiscal para esta chave de NFe" });
     }

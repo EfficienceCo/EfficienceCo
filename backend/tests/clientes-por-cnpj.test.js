@@ -74,10 +74,10 @@ describe("buscarClientePorCnpj", () => {
     filas.clear();
   });
 
-  it("retorna nome quando CNPJ existe (aceita máscara na query)", async () => {
+  it("retorna id e nome quando CNPJ existe (aceita máscara na query)", async () => {
     tokenLicencaValido();
     queue("clientes", "maybeSingle", {
-      data: { nome: "Padaria do João" },
+      data: { id: CLIENTE_ID, nome: "Padaria do João" },
       error: null,
     });
 
@@ -91,7 +91,7 @@ describe("buscarClientePorCnpj", () => {
     );
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.body, { nome: "Padaria do João" });
+    assert.deepEqual(res.body, { id: CLIENTE_ID, nome: "Padaria do João" });
   });
 
   it("404 quando CNPJ não está cadastrado", async () => {
