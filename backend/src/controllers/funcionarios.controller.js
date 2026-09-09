@@ -1,6 +1,7 @@
 import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
+import { cpfValido, normalizarCpf } from "../utils/cpf.util.js";
 import { dataIsoValida } from "../utils/data.util.js";
 
 const CAMPOS_OBRIGATORIOS_POST = ["cpf", "nome", "data_admissao", "categoria", "salario"];
@@ -10,23 +11,6 @@ function camposFaltando(body, campos) {
   return campos.filter(
     (campo) => body[campo] === undefined || body[campo] === null || body[campo] === "",
   );
-}
-
-function cpfValido(cpf) {
-  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) {
-    return false;
-  }
-
-  const calcularDigito = (quantidade) => {
-    const soma = cpf
-      .slice(0, quantidade)
-      .split("")
-      .reduce((total, digito, indice) => total + Number(digito) * (quantidade + 1 - indice), 0);
-    const resto = (soma * 10) % 11;
-    return resto === 10 ? 0 : resto;
-  };
-
-  return calcularDigito(9) === Number(cpf[9]) && calcularDigito(10) === Number(cpf[10]);
 }
 
 function ehAdminEfficience(req) {
@@ -68,7 +52,7 @@ export async function criarFuncionario(req, res) {
     return res.status(400).json({ erro: "salario deve ser um número não negativo" });
   }
 
-  const cpfNormalizado = typeof cpf === "string" ? cpf.replace(/\D/g, "") : "";
+  const cpfNormalizado = normalizarCpf(cpf);
   if (cpfNormalizado.length !== 11) {
     return res.status(400).json({ erro: "cpf deve conter 11 dígitos" });
   }

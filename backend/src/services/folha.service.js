@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
+import { cpfValido, normalizarCpf } from "../utils/cpf.util.js";
 
 // Spec de colunas da planilha de folha de pagamento — contrato entre
 // BK-FOLHA-TEMPLATE (gera) e BK-FOLHA-UPLOAD (valida). Ordem e nomes fixos.
@@ -133,7 +134,12 @@ const CAMPOS_NUMERICOS = [
   "adiantamento",
   "num_dependentes",
 ];
-const CAMPOS_TEXTO = ["empresa", "funcionario", "cpf", "cargo"];
+const CAMPOS_TEXTO = ["empresa", "funcionario", "cargo"];
+
+const VALORES_VT_ACEITOS =
+  "SIM, NAO, TRUE, FALSE, VERDADEIRO, FALSO, 1, 0 (também boolean nativo e fórmula com esses resultados)";
+const VT_TRUE = new Set(["true", "verdadeiro", "sim", "1"]);
+const VT_FALSE = new Set(["false", "falso", "nao", "não", "0"]);
 
 // ExcelJS entrega célula de fórmula como { formula, result } e célula de texto formatado
 // como { richText: [...] } — nenhum dos dois é boolean/number/string direto. Sem isso,
@@ -170,19 +176,35 @@ function paraNumero(valorBruto) {
   return NaN;
 }
 
+// Domínio explícito: valor não reconhecido não vira false silencioso.
 function paraBooleano(valorBruto) {
   const valor = desembrulharValorCelula(valorBruto);
-  if (typeof valor === "boolean") return valor;
-  if (typeof valor === "number") return valor === 1;
+  if (typeof valor === "boolean") return { ok: true, valor };
+  if (typeof valor === "number") {
+    if (valor === 1) return { ok: true, valor: true };
+    if (valor === 0) return { ok: true, valor: false };
+    return { ok: false };
+  }
   if (typeof valor === "string") {
     const normalizado = valor.trim().toLowerCase();
-    return normalizado === "true" || normalizado === "verdadeiro" || normalizado === "1" || normalizado === "sim";
+    if (VT_TRUE.has(normalizado)) return { ok: true, valor: true };
+    if (VT_FALSE.has(normalizado)) return { ok: true, valor: false };
+    return { ok: false };
   }
-  return false;
+  return { ok: false };
+}
+
+function valorCelulaParaTextoCpf(valorBruto) {
+  const valor = desembrulharValorCelula(valorBruto);
+  if (valor === null || valor === undefined || valor === "") return "";
+  if (typeof valor === "number" && Number.isFinite(valor)) return String(Math.trunc(valor));
+  if (typeof valor === "string") return valor.trim();
+  return "";
 }
 
 // Lê as linhas de dado da planilha (a partir da linha 2) e valida cada campo.
 // Retorna { linhas, erros } — erros referenciam o número da linha no Excel (1-based).
+// Se houver qualquer erro, linhas fica vazia (sem persistência parcial).
 export async function lerLinhasPlanilha(buffer) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
@@ -211,6 +233,7 @@ export async function lerLinhasPlanilha(buffer) {
   }
 
   const totalLinhas = sheetInicial.rowCount;
+  const cpfPorLinha = new Map();
 
   for (let numeroLinha = 2; numeroLinha <= totalLinhas; numeroLinha++) {
     const linhaExcel = sheetInicial.getRow(numeroLinha);
@@ -239,6 +262,18 @@ export async function lerLinhasPlanilha(buffer) {
       linhaConvertida[campo] = typeof bruta[campo] === "string" ? bruta[campo].trim() : bruta[campo];
     });
 
+    const cpfTexto = valorCelulaParaTextoCpf(bruta.cpf);
+    const cpfDigitos = normalizarCpf(cpfTexto || bruta.cpf);
+    if (!cpfTexto && cpfDigitos.length === 0) {
+      errosDaLinha.push("cpf vazio ou inválido");
+      linhaConvertida.cpf = "";
+    } else if (!cpfValido(cpfDigitos)) {
+      errosDaLinha.push("cpf inválido");
+      linhaConvertida.cpf = cpfDigitos;
+    } else {
+      linhaConvertida.cpf = cpfDigitos;
+    }
+
     CAMPOS_NUMERICOS.forEach((campo) => {
       const numero = paraNumero(bruta[campo]);
       if (Number.isNaN(numero) || numero < 0) {
@@ -252,17 +287,44 @@ export async function lerLinhasPlanilha(buffer) {
     }
 
     linhaConvertida.num_dependentes = Math.round(linhaConvertida.num_dependentes) || 0;
-    linhaConvertida.vale_transporte = paraBooleano(bruta.vale_transporte);
+
+    const vt = paraBooleano(bruta.vale_transporte);
+    if (!vt.ok) {
+      errosDaLinha.push(
+        `vale_transporte inválido; valores aceitos: ${VALORES_VT_ACEITOS}`,
+      );
+      linhaConvertida.vale_transporte = false;
+    } else {
+      linhaConvertida.vale_transporte = vt.valor;
+    }
 
     if (errosDaLinha.length > 0) {
       erros.push({ linha: numeroLinha, motivos: errosDaLinha });
     } else {
       linhas.push(linhaConvertida);
+      if (linhaConvertida.cpf) {
+        const ocorrencias = cpfPorLinha.get(linhaConvertida.cpf) ?? [];
+        ocorrencias.push(numeroLinha);
+        cpfPorLinha.set(linhaConvertida.cpf, ocorrencias);
+      }
+    }
+  }
+
+  for (const [, numerosLinha] of cpfPorLinha) {
+    if (numerosLinha.length < 2) continue;
+    const listaLinhas = numerosLinha.join(", ");
+    const motivo = `cpf duplicado nas linhas ${listaLinhas}`;
+    for (const numeroLinha of numerosLinha) {
+      erros.push({ linha: numeroLinha, motivos: [motivo] });
     }
   }
 
   if (linhas.length === 0 && erros.length === 0) {
     erros.push({ linha: null, motivos: ["Planilha não tem nenhuma linha de dado preenchida"] });
+  }
+
+  if (erros.length > 0) {
+    return { linhas: [], erros };
   }
 
   return { linhas, erros };
@@ -287,6 +349,16 @@ export async function gerarTemplateFolha() {
     COLUNAS_FOLHA.forEach((_, indice) => {
       linha.getCell(indice + 1).protection = { locked: false };
     });
+
+    const celulaVt = linha.getCell(COLUNAS_FOLHA.findIndex((c) => c.key === "vale_transporte") + 1);
+    celulaVt.dataValidation = {
+      type: "list",
+      allowBlank: true,
+      formulae: ['"SIM,NAO"'],
+      showErrorMessage: true,
+      errorTitle: "Vale-transporte",
+      error: "Use SIM ou NAO (também TRUE/FALSE, 1/0 ou boolean nativo).",
+    };
   }
 
   await sheet.protect("", {
