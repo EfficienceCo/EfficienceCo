@@ -172,6 +172,9 @@ function obterIdentificadorArquivo(item) {
   }
 
   return (
+    // Identificador opaco vindo do backend (id da linha de folha_calculos / folha_relatorios).
+    // Precede o nome do arquivo — o nome não vai mais pra URL de download (LGPD, não expõe CPF).
+    item?.id ||
     item?.nome ||
     item?.arquivo ||
     item?.arquivo_id ||
@@ -193,7 +196,6 @@ function obterIdentificadorArquivo(item) {
     item?.relatorioPath ||
     item?.holerite_path ||
     item?.holeritePath ||
-    item?.id ||
     ''
   );
 }

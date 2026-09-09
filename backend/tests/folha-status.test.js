@@ -4,10 +4,14 @@ import {
   nomeArquivoDePath,
   montarListaArquivos,
   arquivosParaResposta,
-  resolverPathDownload,
+  resolverArquivoDownload,
+  nomeExibicaoHolerite,
   montarDescricaoConclusao,
   calcularTotaisProcessamento,
 } from "../src/services/folha-status.helpers.js";
+
+const CPF_EXEMPLO = "529.982.247-25";
+const REGEX_CPF = /\d{3}[.\s]?\d{3}[.\s]?\d{3}[-\s]?\d{2}|\d{11}/;
 import { PERFIS } from "../src/config/perfis.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
@@ -120,31 +124,61 @@ describe("folha-status helpers", () => {
     assert.equal(nomeArquivoDePath(null), null);
   });
 
-  it("monta lista de arquivos e omite path na resposta pública", () => {
-    const arquivos = montarListaArquivos(
-      [
-        { holerite_path: "a/holerites/h1.pdf" },
-        { holerite_path: null },
-      ],
-      [{ arquivo_path: "a/relatorios/r1.pdf" }],
-    );
+  it("nome de exibição do holerite não carrega CPF (LGPD)", () => {
+    const nome = nomeExibicaoHolerite({
+      empresa: "Padaria do Zé",
+      funcionario: "João da Silva",
+      cpf: CPF_EXEMPLO,
+    });
 
-    assert.deepEqual(arquivosParaResposta(arquivos), [
-      { nome: "h1.pdf", tipo: "holerite" },
-      { nome: "r1.pdf", tipo: "relatorio" },
-    ]);
+    assert.equal(nome, "holerite_padaria_do_ze_joao_da_silva.pdf");
+    assert.doesNotMatch(nome, REGEX_CPF);
   });
 
-  it("resolve download só por nome exato e rejeita path traversal", () => {
+  it("monta lista com id opaco + nome sem CPF e omite path na resposta pública", () => {
     const arquivos = montarListaArquivos(
-      [{ holerite_path: "clientes/c/p/holerites/h1.pdf" }],
+      [
+        {
+          id: "calc-1",
+          empresa: "Padaria",
+          funcionario: "João",
+          holerite_path: `a/holerites/holerite_padaria_joao_${CPF_EXEMPLO}_2026-07.pdf`,
+        },
+        { id: "calc-2", holerite_path: null },
+      ],
+      [{ id: "rel-1", arquivo_path: "a/relatorios/relatorio_fechamento_padaria_2026-07.pdf" }],
+    );
+
+    const resposta = arquivosParaResposta(arquivos);
+
+    assert.deepEqual(resposta, [
+      { id: "calc-1", nome: "holerite_padaria_joao.pdf", tipo: "holerite" },
+      { id: "rel-1", nome: "relatorio_fechamento_padaria_2026-07.pdf", tipo: "relatorio" },
+    ]);
+    // Nada na resposta pública pode conter CPF nem o path de storage.
+    assert.doesNotMatch(JSON.stringify(resposta), REGEX_CPF);
+    assert.ok(resposta.every((a) => a.path === undefined));
+  });
+
+  it("resolve download só pelo id opaco, escopo do processamento, e rejeita traversal/CPF", () => {
+    const path = `clientes/c/p/holerites/holerite_padaria_joao_${CPF_EXEMPLO}_2026-07.pdf`;
+    const arquivos = montarListaArquivos(
+      [{ id: "calc-1", empresa: "Padaria", funcionario: "João", holerite_path: path }],
       [],
     );
 
-    assert.equal(resolverPathDownload("h1.pdf", arquivos), "clientes/c/p/holerites/h1.pdf");
-    assert.equal(resolverPathDownload("../h1.pdf", arquivos), null);
-    assert.equal(resolverPathDownload("holerites/h1.pdf", arquivos), null);
-    assert.equal(resolverPathDownload("outro.pdf", arquivos), null);
+    assert.deepEqual(resolverArquivoDownload("calc-1", arquivos), {
+      id: "calc-1",
+      nome: "holerite_padaria_joao.pdf",
+      tipo: "holerite",
+      path,
+    });
+    // O nome do arquivo / CPF não são mais aceitos como identificador.
+    assert.equal(resolverArquivoDownload("holerite_padaria_joao.pdf", arquivos), null);
+    assert.equal(resolverArquivoDownload(CPF_EXEMPLO, arquivos), null);
+    assert.equal(resolverArquivoDownload("../calc-1", arquivos), null);
+    assert.equal(resolverArquivoDownload("holerites/calc-1", arquivos), null);
+    assert.equal(resolverArquivoDownload("calc-2", arquivos), null);
   });
 
   it("monta descrição e totais de funcionários/empresas", () => {
@@ -330,12 +364,16 @@ describe("GET status e download (controllers)", () => {
     mockDb.queue("folha_calculos", "await", {
       data: [
         {
+          id: "calc-joao",
           empresa: "Padaria",
-          holerite_path: `clientes/${CLIENTE_A}/2026-07/${PROC_ID}/holerites/holerite_padaria_joao.pdf`,
+          funcionario: "João",
+          holerite_path: `clientes/${CLIENTE_A}/2026-07/${PROC_ID}/holerites/holerite_padaria_joao_${CPF_EXEMPLO}_2026-07.pdf`,
         },
         {
+          id: "calc-maria",
           empresa: "Padaria",
-          holerite_path: `clientes/${CLIENTE_A}/2026-07/${PROC_ID}/holerites/holerite_padaria_maria.pdf`,
+          funcionario: "Maria",
+          holerite_path: `clientes/${CLIENTE_A}/2026-07/${PROC_ID}/holerites/holerite_padaria_maria_111.222.333-44_2026-07.pdf`,
         },
       ],
       error: null,
@@ -343,7 +381,8 @@ describe("GET status e download (controllers)", () => {
     mockDb.queue("folha_relatorios", "await", {
       data: [
         {
-          arquivo_path: `clientes/${CLIENTE_A}/2026-07/${PROC_ID}/relatorios/relatorio_fechamento_padaria.pdf`,
+          id: "rel-padaria",
+          arquivo_path: `clientes/${CLIENTE_A}/2026-07/${PROC_ID}/relatorios/relatorio_fechamento_padaria_2026-07.pdf`,
         },
       ],
       error: null,
@@ -357,7 +396,13 @@ describe("GET status e download (controllers)", () => {
     assert.equal(res.body.total_funcionarios, 2);
     assert.equal(res.body.total_empresas, 1);
     assert.equal(res.body.arquivos.length, 3);
-    assert.ok(res.body.arquivos.every((a) => a.nome && a.tipo && !a.path));
+    assert.ok(res.body.arquivos.every((a) => a.id && a.nome && a.tipo && !a.path));
+    // LGPD: nenhum CPF (nem path de storage) vaza na resposta do status.
+    assert.doesNotMatch(JSON.stringify(res.body.arquivos), REGEX_CPF);
+    assert.equal(
+      res.body.arquivos.find((a) => a.id === "calc-joao").nome,
+      "holerite_padaria_joao.pdf",
+    );
   });
 
   it("retorna arquivos vazios quando concluido sem gerar-saida", async () => {
@@ -453,8 +498,8 @@ describe("GET status e download (controllers)", () => {
     assert.equal(res.statusCode, 409);
   });
 
-  it("faz download do PDF quando concluido e arquivo existe", async () => {
-    const path = `clientes/${CLIENTE_A}/2026-07/${PROC_ID}/holerites/holerite_a.pdf`;
+  it("faz download por id opaco e responde com nome de exibição sem CPF", async () => {
+    const path = `clientes/${CLIENTE_A}/2026-07/${PROC_ID}/holerites/holerite_padaria_joao_${CPF_EXEMPLO}_2026-07.pdf`;
 
     mockDb.queue("processamentos_folha", "maybeSingle", {
       data: {
@@ -465,7 +510,7 @@ describe("GET status e download (controllers)", () => {
       error: null,
     });
     mockDb.queue("folha_calculos", "await", {
-      data: [{ holerite_path: path }],
+      data: [{ id: "calc-joao", empresa: "Padaria", funcionario: "João", holerite_path: path }],
       error: null,
     });
     mockDb.queue("folha_relatorios", "await", { data: [], error: null });
@@ -479,41 +524,49 @@ describe("GET status e download (controllers)", () => {
     const res = criarRes();
     await baixarArquivoFolha(
       reqBase({
-        params: { processamento_id: PROC_ID, arquivo: "holerite_a.pdf" },
+        params: { processamento_id: PROC_ID, arquivo: "calc-joao" },
       }),
       res,
     );
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.headers["Content-Type"], "application/pdf");
-    assert.match(res.headers["Content-Disposition"], /holerite_a\.pdf/);
+    assert.match(res.headers["Content-Disposition"], /filename="holerite_padaria_joao\.pdf"/);
+    assert.doesNotMatch(res.headers["Content-Disposition"], REGEX_CPF);
     assert.ok(Buffer.isBuffer(res.body));
   });
 
-  it("retorna 404 no download de arquivo inexistente ou com traversal", async () => {
-    mockDb.queue("processamentos_folha", "maybeSingle", {
-      data: {
-        id: PROC_ID,
-        cliente_id: CLIENTE_A,
-        status: "concluido",
-      },
-      error: null,
-    });
-    mockDb.queue("folha_calculos", "await", {
-      data: [{ holerite_path: "a/holerites/ok.pdf" }],
-      error: null,
-    });
-    mockDb.queue("folha_relatorios", "await", { data: [], error: null });
+  it("rejeita download por nome de arquivo / CPF / traversal — só id opaco vale", async () => {
+    async function tentar(arquivo) {
+      mockDb.queue("processamentos_folha", "maybeSingle", {
+        data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "concluido" },
+        error: null,
+      });
+      mockDb.queue("folha_calculos", "await", {
+        data: [
+          {
+            id: "calc-ok",
+            empresa: "Padaria",
+            funcionario: "João",
+            holerite_path: `a/holerites/holerite_padaria_joao_${CPF_EXEMPLO}_2026-07.pdf`,
+          },
+        ],
+        error: null,
+      });
+      mockDb.queue("folha_relatorios", "await", { data: [], error: null });
 
-    const res = criarRes();
-    await baixarArquivoFolha(
-      reqBase({
-        params: { processamento_id: PROC_ID, arquivo: "../ok.pdf" },
-      }),
-      res,
-    );
+      const res = criarRes();
+      await baixarArquivoFolha(
+        reqBase({ params: { processamento_id: PROC_ID, arquivo } }),
+        res,
+      );
+      return res.statusCode;
+    }
 
-    assert.equal(res.statusCode, 404);
+    assert.equal(await tentar("holerite_padaria_joao.pdf"), 404);
+    assert.equal(await tentar(CPF_EXEMPLO), 404);
+    assert.equal(await tentar("../calc-ok"), 404);
+    assert.equal(await tentar("holerites/calc-ok"), 404);
   });
 });
 
