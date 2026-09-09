@@ -61,12 +61,16 @@ export async function buscarClientePorCnpj(req, res) {
   }
 
   console.log(
-    `[clientes.controller] buscarClientePorCnpj — cnpj: ${digitos}`,
+    `[clientes.controller] buscarClientePorCnpj — cnpj: ${digitos} | licenca cliente: ${licenca.cliente_id}`,
   );
 
+  // Escopo por licença: o token só resolve o CNPJ do próprio cliente vinculado.
+  // CNPJ de outro cliente cai no mesmo 404 de "não cadastrado" — não vaza
+  // existência nem razão social fora do escopo do licenciado (LGPD, #449).
   const { data, error } = await supabase
     .from("clientes")
     .select("nome")
+    .eq("id", licenca.cliente_id)
     .eq("cnpj", digitos)
     .maybeSingle();
 
