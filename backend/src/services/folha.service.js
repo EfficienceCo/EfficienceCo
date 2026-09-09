@@ -19,26 +19,120 @@ export const COLUNAS_FOLHA = [
 
 const LINHAS_DE_DADOS = 500;
 
-// Tabela progressiva de INSS vigente (2024, contribuinte empregado) — faixas marginais.
-// Fonte: Portaria Interministerial MPS/MF. Teto de contribuição: R$ 908,85.
-const FAIXAS_INSS = [
-  { limite: 1412.00, aliquota: 0.075 },
-  { limite: 2666.68, aliquota: 0.09 },
-  { limite: 4000.03, aliquota: 0.12 },
-  { limite: 7786.02, aliquota: 0.14 },
-];
-const TETO_INSS = 908.85;
+// ---------------------------------------------------------------------------
+// Tabelas fiscais versionadas por competência (BUG-FOLHA-01 / #437).
+//
+// O motor seleciona o conjunto vigente pela competência do processamento, então
+// recalcular uma folha antiga continua usando a tabela da época — nada de
+// reescrever holerite histórico com número de outro ano.
+//
+// `inss.faixas`         faixas marginais (cada parcela da base paga a alíquota
+//                       da sua própria faixa).
+// `inss.tetoContribuicao` contribuição fixa acima do teto salarial (o VALOR
+//                       PUBLICADO, que não é exatamente o somatório marginal).
+//                       `null` = usar o somatório marginal até o teto.
+// `irrf.faixas`         tabela progressiva mensal (alíquota + parcela a deduzir).
+// `irrf.descontoSimplificado` dedução única alternativa; `null` = motor sem a
+//                       regra da dedução mais vantajosa (comportamento legado).
+// `irrf.reducaoMensal`  redução do IRRF na fonte da Lei 15.270/2025; `null` =
+//                       sem redução.
+// ---------------------------------------------------------------------------
 
-// Tabela progressiva de IRRF vigente (2024, mensal) — alíquota + parcela a deduzir.
-// Fonte: Instrução Normativa RFB, vigente desde fev/2024.
-const FAIXAS_IR = [
-  { limite: 2259.20, aliquota: 0, deducao: 0 },
-  { limite: 2826.65, aliquota: 0.075, deducao: 169.44 },
-  { limite: 3751.05, aliquota: 0.15, deducao: 381.44 },
-  { limite: 4664.68, aliquota: 0.225, deducao: 662.77 },
-  { limite: Infinity, aliquota: 0.275, deducao: 896.00 },
-];
-const DEDUCAO_POR_DEPENDENTE_IR = 189.59;
+// Conjunto "legado": INSS/IRRF de 2024, exatamente o que o motor usava fixo
+// antes do #437. Cobre toda competência anterior a 2026-01 — 2025 não é modelado
+// à parte de propósito: não foi objeto do #437 e manter o legado aqui não
+// introduz regressão (é o que já rodava em produção).
+// Fontes: Portaria Interministerial MPS/MF 2024; Instrução Normativa RFB (fev/2024).
+const TABELA_FOLHA_2024 = {
+  vigenciaInicio: "2024-01",
+  inss: {
+    faixas: [
+      { limite: 1412.00, aliquota: 0.075 },
+      { limite: 2666.68, aliquota: 0.09 },
+      { limite: 4000.03, aliquota: 0.12 },
+      { limite: 7786.02, aliquota: 0.14 },
+    ],
+    tetoContribuicao: 908.85,
+  },
+  irrf: {
+    faixas: [
+      { limite: 2259.20, aliquota: 0, deducao: 0 },
+      { limite: 2826.65, aliquota: 0.075, deducao: 169.44 },
+      { limite: 3751.05, aliquota: 0.15, deducao: 381.44 },
+      { limite: 4664.68, aliquota: 0.225, deducao: 662.77 },
+      { limite: Infinity, aliquota: 0.275, deducao: 896.00 },
+    ],
+    deducaoPorDependente: 189.59,
+    descontoSimplificado: null,
+    reducaoMensal: null,
+  },
+};
+
+// INSS e IRRF de 2026. Fontes oficiais:
+//  - INSS 2026 (reajuste INPC 3,90%, salário mínimo R$ 1.621,00, teto R$ 8.475,55):
+//    gov.br/inss › inscricao-e-contribuicao › tabela-de-contribuicao-mensal
+//  - IRRF 2026 + redução mensal (Lei 15.270/2025):
+//    gov.br/receitafederal › meu-imposto-de-renda › tabelas/2026
+//    gov.br/receitafederal › ... › exemplos-de-aplicacao-da-lei-15-270-2025
+const TABELA_FOLHA_2026 = {
+  vigenciaInicio: "2026-01",
+  inss: {
+    faixas: [
+      { limite: 1621.00, aliquota: 0.075 },
+      { limite: 2902.84, aliquota: 0.09 },
+      { limite: 4354.27, aliquota: 0.12 },
+      { limite: 8475.55, aliquota: 0.14 },
+    ],
+    // Acima do teto salarial a contribuição é o somatório marginal até 8.475,55
+    // (~R$ 988,09), usado com precisão cheia na base do IRRF — ver calcularINSS.
+    tetoContribuicao: null,
+  },
+  irrf: {
+    faixas: [
+      { limite: 2428.80, aliquota: 0, deducao: 0 },
+      { limite: 2826.65, aliquota: 0.075, deducao: 182.16 },
+      { limite: 3751.05, aliquota: 0.15, deducao: 394.16 },
+      { limite: 4664.68, aliquota: 0.225, deducao: 675.49 },
+      { limite: Infinity, aliquota: 0.275, deducao: 908.73 },
+    ],
+    deducaoPorDependente: 189.59,
+    descontoSimplificado: 607.20,
+    // Redução do IRRF na fonte (Lei 15.270/2025), vigente desde jan/2026, sobre o
+    // rendimento tributável do mês (NÃO sobre a base após INSS):
+    //   rendimento <= 5.000,00           -> imposto integralmente zerado
+    //   5.000,01 <= rendimento <= 7.350,00 -> redutor = parcela - fator * rendimento
+    //   rendimento > 7.350,00            -> sem redução
+    reducaoMensal: {
+      isencaoAte: 5000.00,
+      faseOutAte: 7350.00,
+      parcela: 978.62,
+      fator: 0.133145,
+    },
+  },
+};
+
+// Ordem crescente por vigência — resolverTabelaFolha depende disso.
+const TABELAS_FOLHA = [TABELA_FOLHA_2024, TABELA_FOLHA_2026];
+
+// Resolve o conjunto de tabelas vigente para a competência (aceita "YYYY-MM" ou
+// "YYYY-MM-DD"). Lança se a competência for anterior à tabela mais antiga — falhar
+// explícito é melhor do que aplicar a tabela errada em silêncio.
+export function resolverTabelaFolha(competencia) {
+  const chave = String(competencia ?? "").slice(0, 7);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(chave)) {
+    throw new Error(`Competência inválida para resolução da tabela de folha: ${competencia}`);
+  }
+
+  const vigente = TABELAS_FOLHA
+    .filter((tabela) => tabela.vigenciaInicio <= chave)
+    .at(-1);
+
+  if (!vigente) {
+    throw new Error(`Nenhuma tabela de folha vigente para a competência ${chave}`);
+  }
+
+  return vigente;
+}
 
 const ALIQUOTA_FGTS = 0.08;
 const ALIQUOTA_DESCONTO_VT = 0.06;
@@ -46,46 +140,86 @@ const DIVISOR_HORA_EXTRA = 220;
 const ADICIONAL_HORA_EXTRA = 1.5;
 
 function arredondar(valor) {
-  return Math.round(valor * 100) / 100;
+  // Math.round(x * 100) / 100 sozinho erra a meia-unidade exata: o produto x * 100
+  // "cai para baixo" por erro de representação binária (ex.: 1621 * 0,075 chega como
+  // 121.57499999999999 e arredondaria para 121,57 em vez de 121,58 — que é o valor
+  // que INSS/RFB e o lote de reconciliação do #437 esperam). O nudge de 1 epsilon
+  // relativo, afastando de zero, corrige a fronteira .xx5 sem mexer em nenhum outro valor.
+  const cents = valor * 100;
+  return Math.round(cents + Math.sign(cents) * Number.EPSILON * Math.abs(cents)) / 100;
 }
 
 // INSS é calculado por faixas marginais: cada pedaço da base paga a alíquota da sua
-// própria faixa, não a alíquota da faixa final sobre o total. Acima do teto, contribuição
-// é fixa (TETO_INSS), a base não é mais reduzida.
-export function calcularINSS(baseCalculo) {
+// própria faixa, não a alíquota da faixa final sobre o total. Acima do teto salarial,
+// a contribuição é fixa.
+//
+// Retorna o valor SEM arredondar. Quem exibe/persiste arredonda (ver
+// calcularFolhaFuncionario), mas a base do IRRF usa a precisão cheia: no topo da
+// tabela, arredondar o INSS antes de compor a base do IR desloca o líquido do lote
+// de reconciliação do #437 em 1 centavo.
+export function calcularINSS(baseCalculo, tabelaInss) {
   if (baseCalculo <= 0) return 0;
+
+  const { faixas, tetoContribuicao } = tabelaInss;
 
   let inss = 0;
   let limiteAnterior = 0;
 
-  for (const { limite, aliquota } of FAIXAS_INSS) {
+  for (const { limite, aliquota } of faixas) {
     if (baseCalculo <= limiteAnterior) break;
     const valorNaFaixa = Math.min(baseCalculo, limite) - limiteAnterior;
     inss += valorNaFaixa * aliquota;
     limiteAnterior = limite;
   }
 
-  if (baseCalculo > FAIXAS_INSS[FAIXAS_INSS.length - 1].limite) {
-    inss = TETO_INSS;
+  const tetoSalarial = faixas[faixas.length - 1].limite;
+  if (baseCalculo > tetoSalarial && tetoContribuicao != null) {
+    return tetoContribuicao;
   }
 
-  return arredondar(inss);
+  return inss;
 }
 
-// IRRF usa a tabela progressiva simplificada (alíquota da faixa em que a base cai,
-// menos a parcela a deduzir da própria faixa) — não é cálculo marginal como o INSS.
-export function calcularIR(baseCalculo) {
+// IRRF mensal: tabela progressiva (alíquota da faixa onde a base cai, menos a
+// parcela a deduzir dela própria) — não é cálculo marginal como o INSS. Aplica a
+// dedução mais vantajosa (simplificada × legal) e a redução mensal da Lei
+// 15.270/2025 quando a tabela vigente as define (o motor legado de 2024 não tinha
+// nenhuma das duas). Recebe o INSS SEM arredondar. Retorna o IRRF final arredondado.
+export function calcularIR({ baseCalculo, inss, numDependentes }, tabelaIrrf) {
   if (baseCalculo <= 0) return 0;
 
-  const faixa = FAIXAS_IR.find(({ limite }) => baseCalculo <= limite);
-  const ir = baseCalculo * faixa.aliquota - faixa.deducao;
+  const { faixas, deducaoPorDependente, descontoSimplificado, reducaoMensal } = tabelaIrrf;
 
-  return arredondar(Math.max(0, ir));
+  // Redução mensal: até o piso de isenção o imposto é integralmente zerado,
+  // independentemente do que a tabela progressiva apuraria.
+  if (reducaoMensal && baseCalculo <= reducaoMensal.isencaoAte) return 0;
+
+  const deducaoLegal = inss + numDependentes * deducaoPorDependente;
+  const deducao = descontoSimplificado != null
+    ? Math.max(deducaoLegal, descontoSimplificado)
+    : deducaoLegal;
+
+  const baseIr = baseCalculo - deducao;
+  if (baseIr <= 0) return 0;
+
+  const faixa = faixas.find(({ limite }) => baseIr <= limite);
+  const impostoTabela = Math.max(0, baseIr * faixa.aliquota - faixa.deducao);
+
+  // Fase de saída da redução: o redutor decresce linearmente até zerar no teto.
+  const redutor = reducaoMensal && baseCalculo <= reducaoMensal.faseOutAte
+    ? Math.max(0, reducaoMensal.parcela - reducaoMensal.fator * baseCalculo)
+    : 0;
+
+  return arredondar(Math.max(0, impostoTabela - redutor));
 }
 
-// Calcula todos os valores de folha de um funcionário a partir da linha lida da planilha.
+// Calcula todos os valores de folha de um funcionário a partir da linha lida da
+// planilha. `competencia` ("YYYY-MM" ou "YYYY-MM-DD") seleciona a tabela fiscal
+// vigente — obrigatória, o cálculo não tem default de ano.
 // Fórmula do líquido: bruto − faltas + horas_extras − INSS − IR − adiantamento − desconto_vt.
-export function calcularFolhaFuncionario(linha) {
+export function calcularFolhaFuncionario(linha, competencia) {
+  const { inss: tabelaInss, irrf: tabelaIrrf } = resolverTabelaFolha(competencia);
+
   const salarioBruto = linha.salario_bruto;
   const valorHoraExtra = (salarioBruto / DIVISOR_HORA_EXTRA) * ADICIONAL_HORA_EXTRA * linha.horas_extras;
   const valorDia = salarioBruto / 30;
@@ -94,11 +228,14 @@ export function calcularFolhaFuncionario(linha) {
 
   const baseCalculo = arredondar(salarioBruto - valorFaltas + valorHoraExtra);
 
-  const inss = calcularINSS(baseCalculo);
+  const inssPreciso = calcularINSS(baseCalculo, tabelaInss);
+  const inss = arredondar(inssPreciso);
   const fgts = arredondar(baseCalculo * ALIQUOTA_FGTS);
 
-  const baseIr = arredondar(baseCalculo - inss - linha.num_dependentes * DEDUCAO_POR_DEPENDENTE_IR);
-  const ir = calcularIR(baseIr);
+  const ir = calcularIR(
+    { baseCalculo, inss: inssPreciso, numDependentes: linha.num_dependentes },
+    tabelaIrrf,
+  );
 
   const liquido = arredondar(baseCalculo - inss - ir - linha.adiantamento - descontoVt);
 
