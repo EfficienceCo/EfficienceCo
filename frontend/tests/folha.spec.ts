@@ -123,6 +123,72 @@ test.describe('Folha de Pagamento', () => {
     });
   });
 
+  test.describe('Download de holerite — LGPD: sem CPF na URL nem no nome (#443)', () => {
+    const PROC_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const HOLERITE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const CPF = '52998224725';
+    const CPF_MASCARADO = '529.982.247-25';
+    const NOME_SEM_CPF = 'holerite_padaria_do_ze_joao_da_silva.pdf';
+    const REGEX_CPF = /\d{3}\.?\s?\d{3}\.?\s?\d{3}-?\s?\d{2}/;
+
+    test('nome exibido não tem CPF e o download usa identificador opaco', async ({ page }) => {
+      // Backend novo: status devolve id opaco + nome de exibição sem CPF, sem path de storage.
+      await page.route(`**/folha/${PROC_ID}`, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            processamento_id: PROC_ID,
+            status: 'concluido',
+            mes_referencia: '2026-07-01',
+            motivo_erro: null,
+            total_funcionarios: 1,
+            total_empresas: 1,
+            arquivos: [{ id: HOLERITE_ID, nome: NOME_SEM_CPF, tipo: 'holerite' }],
+          }),
+        }),
+      );
+
+      let urlDownload = '';
+      await page.route(`**/folha/${PROC_ID}/download/**`, (route) => {
+        urlDownload = route.request().url();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/pdf',
+          headers: { 'content-disposition': `attachment; filename="${NOME_SEM_CPF}"` },
+          body: Buffer.from('%PDF-1.4 fake'),
+        });
+      });
+
+      await page.goto(
+        `/dashboard/folha/status?processamento_id=${PROC_ID}&cliente_nome=Padaria%20do%20Ze`,
+      );
+
+      const linhaArquivo = page.getByText(NOME_SEM_CPF, { exact: true });
+      await expect(linhaArquivo).toBeVisible({ timeout: 10000 });
+
+      // Nada renderizado na tela pode conter o CPF (mascarado ou não).
+      const corpo = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+      expect(corpo).not.toContain(CPF);
+      expect(corpo).not.toContain(CPF_MASCARADO);
+      expect(corpo).not.toMatch(REGEX_CPF);
+
+      const [download] = await Promise.all([
+        page.waitForEvent('download'),
+        page.getByRole('button', { name: 'Baixar' }).first().click(),
+      ]);
+
+      // A URL chamada carrega o id opaco, nunca o CPF.
+      expect(urlDownload).toContain(`/download/${HOLERITE_ID}`);
+      expect(urlDownload).not.toContain(CPF);
+      expect(urlDownload).not.toMatch(REGEX_CPF);
+
+      // E o nome sugerido pro arquivo salvo também não tem CPF.
+      expect(download.suggestedFilename()).toBe(NOME_SEM_CPF);
+      expect(download.suggestedFilename()).not.toMatch(REGEX_CPF);
+    });
+  });
+
   test.describe('Upload ponta a ponta (requer backend + DB)', () => {
     test.skip(!fs.existsSync(path.join(__dirname, 'fixtures/folha_teste.xlsx')),
       'Fixture folha_teste.xlsx não encontrada — coloque uma planilha real em tests/fixtures/');
