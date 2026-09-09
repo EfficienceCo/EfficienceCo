@@ -4,6 +4,10 @@ console.log("[server.js] Carregando dotenv...");
 import "dotenv/config";
 console.log("[server.js] dotenv carregado com sucesso");
 
+console.log("[server.js] Validando config eSocial...");
+import "./config/esocial-ambiente.config.js";
+console.log("[server.js] Config eSocial OK");
+
 console.log("[server.js] Importando app.js...");
 import app from "./app.js";
 console.log("[server.js] app.js importado com sucesso");

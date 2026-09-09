@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<eSocial xmlns="http://www.esocial.gov.br/schema/lote/eventos/envio/retornoProcessamento/v1_3_0">
+  <retornoProcessamentoLoteEventos>
+    <status>
+      <cdResposta>201</cdResposta>
+      <descResposta>Lote Processado com Sucesso.</descResposta>
+    </status>
+    <retornoEventos>
+      <evento Id="ID112345678000000000000000001">
+        <retornoEvento>
+          <eSocial xmlns="http://www.esocial.gov.br/schema/evt/retornoEvento/v1_3_0">
+            <retornoEvento Id="ID112345678000000000000000001">
+              <processamento>
+                <cdResposta>401</cdResposta>
+                <descResposta>Erro no conteúdo do evento.</descResposta>
+              </processamento>
+              <ocorrencias>
+                <ocorrencia>
+                  <codigo>123</codigo>
+                  <descricao>Campo inválido</descricao>
+                  <tipo>1</tipo>
+                </ocorrencia>
+              </ocorrencias>
+            </retornoEvento>
+          </eSocial>
+        </retornoEvento>
+      </evento>
+    </retornoEventos>
+  </retornoProcessamentoLoteEventos>
+</eSocial>
