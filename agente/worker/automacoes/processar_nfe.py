@@ -314,7 +314,7 @@ def processar_pasta_nfe(pasta: str) -> None:
         try:
             dados = parsear_nfe(str(xml_path))
         except ValueError as e:
-            print(f"[processar_nfe] XML inválido ({nome}): {e}")
+            _mover_nao_identificado(xml_path, pasta_path, str(e))
             continue
 
         try:
