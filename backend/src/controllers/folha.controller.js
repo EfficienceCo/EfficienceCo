@@ -161,7 +161,7 @@ export async function calcularFolha(req, res) {
 
   const { data: processamento, error: erroBusca } = await supabase
     .from("processamentos_folha")
-    .select("id, cliente_id, status, arquivo_origem_path")
+    .select("id, cliente_id, status, arquivo_origem_path, mes_referencia")
     .eq("id", processamentoId)
     .maybeSingle();
 
@@ -218,9 +218,11 @@ export async function calcularFolha(req, res) {
       return res.status(422).json({ erro: "Planilha com linhas inválidas", detalhes: erros });
     }
 
+    // mes_referencia do processamento seleciona a tabela fiscal (INSS/IRRF) da
+    // competência — recálculo de folha antiga usa a tabela da época (#437).
     const calculos = linhas.map((linha) => ({
       processamento_id: processamentoId,
-      ...calcularFolhaFuncionario(linha),
+      ...calcularFolhaFuncionario(linha, processamento.mes_referencia),
     }));
 
     const { error: erroInsert } = await supabase.from("folha_calculos").insert(calculos);
