@@ -41,9 +41,12 @@ function admissaoCLT() {
     tpRegPrev: 1,
     cadIni: false,
     tpAdmissao: 1,
+    indAdmissao: 1,
     tpRegJor: 1,
     natAtividade: 1,
-    fgts: { dataOpcao: "2026-08-01" },
+    cnpjSindCategProf: "12345678000195",
+    // fgts omitido: dtAdm 2026-08-01 é posterior à obrigatoriedade do FGTS
+    // (1988-10-05) — o grupo <FGTS> do XSD é proibido nesse caso.
     cargo: { nome: "Analista Contábil", cbo: "2522-10" },
     remuneracao: { valorSalarioFixo: 3500.5, unidadeSalarioFixo: 5 },
     duracao: { tpContr: 1 },
