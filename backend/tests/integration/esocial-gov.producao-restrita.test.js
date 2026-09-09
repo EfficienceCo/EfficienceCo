@@ -73,9 +73,11 @@ if (!habilitado) {
         tpRegPrev: 1,
         cadIni: false,
         tpAdmissao: 1,
+        indAdmissao: 1,
+        cnpjSindCategProf: process.env.ESOCIAL_TEST_CNPJ_SIND ?? "12345678000195",
         tpRegJor: 1,
         natAtividade: 1,
-        fgts: { dataOpcao: "2026-08-01" },
+        // fgts omitido: dtAdm posterior a 1988-10-05 — grupo <FGTS> proibido.
         cargo: { nome: "Analista Teste", cbo: "2522-10" },
         remuneracao: { valorSalarioFixo: 3000, unidadeSalarioFixo: 5 },
         duracao: { tpContr: 1 },

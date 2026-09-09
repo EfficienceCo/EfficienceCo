@@ -105,8 +105,9 @@ export async function transmitirEventoEsocial(id, { certificado, senha }) {
   const form = new FormData();
   form.append('certificado', certificado);
   form.append('senha', senha);
-  const response = await api.post(`/eventos-esocial/${id}/transmitir`, form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
+  // Sem header Content-Type manual: o browser precisa gerar o boundary do
+  // multipart. Fixá-lo em 'multipart/form-data' sem boundary quebra o parse
+  // no multer (mesmo padrão dos outros uploads: folha/conciliacao/obrigacoes).
+  const response = await api.post(`/eventos-esocial/${id}/transmitir`, form);
   return response.data;
 }

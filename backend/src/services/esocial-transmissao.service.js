@@ -34,15 +34,22 @@ async function criarClienteSoap(url, { certificatePem, privateKeyPem }) {
   assertUrlPermitida(url, configESocial);
   const wsdl = `${url}?singleWsdl`;
 
+  // soap@1.11 ClientSSLSecurity(key, cert): trata String como caminho de arquivo
+  // (fs.readFileSync) — só Buffer é usado como conteúdo PEM direto. Sem o
+  // Buffer.from aqui o mTLS quebra com ENOENT na Produção Restrita (os testes
+  // mockam `soap` e não pegam isso).
+  const keyBuf = Buffer.from(privateKeyPem);
+  const certBuf = Buffer.from(certificatePem);
+
   const client = await soap.createClientAsync(wsdl, {
     wsdl_options: {
-      cert: certificatePem,
-      key: privateKeyPem,
+      cert: certBuf,
+      key: keyBuf,
       rejectUnauthorized: true,
     },
   });
 
-  client.setSecurity(new soap.ClientSSLSecurity(privateKeyPem, certificatePem));
+  client.setSecurity(new soap.ClientSSLSecurity(keyBuf, certBuf));
   return client;
 }
 
