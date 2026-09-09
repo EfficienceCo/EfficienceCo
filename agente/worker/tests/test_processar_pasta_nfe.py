@@ -77,8 +77,9 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
     assert payload["cliente_id"] == CLIENTE_ID
     assert payload["valor_total"] == "1500.00"
     assert payload["data_emissao"] == "2026-07-15"
-    assert NOME_EMPRESA in payload["arquivo_xml"]
-    assert "Notas Fiscais" in payload["arquivo_xml"]
+    assert payload["arquivo_xml"] == f"{NOME_EMPRESA}/Notas Fiscais/2026-07/entrada.xml"
+    assert not Path(payload["arquivo_xml"]).is_absolute()
+    assert str(base) not in payload["arquivo_xml"]
 
     assert not (inbox / "entrada.xml").exists()
     arquivado = _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml")
@@ -98,7 +99,11 @@ def test_processar_pasta_saida(pasta_nfe):
         mock_post.return_value = MagicMock()
         processar_pasta_nfe(str(inbox))
 
-    assert mock_post.call_args.args[1]["tipo"] == "saida"
+    payload = mock_post.call_args.args[1]
+    assert payload["tipo"] == "saida"
+    assert payload["arquivo_xml"] == f"{NOME_EMPRESA}/Notas Fiscais/2026-07/saida.xml"
+    assert not Path(payload["arquivo_xml"]).is_absolute()
+    assert str(base) not in payload["arquivo_xml"]
     assert _arquivo_nfe(base, NOME_EMPRESA, "saida.xml").is_file()
 
 

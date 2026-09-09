@@ -351,9 +351,15 @@ def processar_pasta_nfe(pasta: str) -> None:
         caminhos_reais = [_caminho_livre(d) for _, d in alvos]
 
         falhou_post = False
+        pasta_base_resolvida = Path(pasta_base).resolve()
         for (empresa, _destino), caminho_real in zip(alvos, caminhos_reais):
             try:
-                payload = _payload_lancamento(dados, empresa["tipo"], str(caminho_real))
+                relativo = (
+                    Path(caminho_real).resolve()
+                    .relative_to(pasta_base_resolvida)
+                    .as_posix()
+                )
+                payload = _payload_lancamento(dados, empresa["tipo"], relativo)
                 resultado = _postar_lancamento(payload)
                 print(
                     f"[processar_nfe] {resultado} {empresa['tipo']} "
