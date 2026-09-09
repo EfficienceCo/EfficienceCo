@@ -120,6 +120,7 @@ export function calcularFolhaFuncionario(linha) {
     base_calculo: baseCalculo,
     inss,
     fgts,
+    base_ir: baseIr,
     ir,
     liquido,
   };
@@ -486,6 +487,32 @@ function montarLinhasVerbas(calculo) {
   return linhas;
 }
 
+// Linha de bases/totais do rodapé do holerite. BASE FGTS reaproveita base_calculo
+// (não existe base de FGTS isolada persistida). BASE IRRF usa a base_ir realmente
+// calculada e persistida em folha_calculos; só cai para "-" quando não há imposto
+// retido (IRRF genuinamente 0) ou quando a base não foi persistida — caso de
+// linhas anteriores à migration 86.sql, onde exibir "0,00" seria um número falso.
+export function montarCelulasBases(calculo) {
+  const totalProventos = Number(calculo.salario_bruto) + Number(calculo.valor_horas_extras);
+  const totalDescontos =
+    Number(calculo.inss) + Number(calculo.ir) + Number(calculo.valor_faltas) +
+    Number(calculo.adiantamento) + Number(calculo.desconto_vt);
+
+  const temIrrf = Number(calculo.ir) > 0;
+  const baseIrDisponivel = calculo.base_ir !== null && calculo.base_ir !== undefined;
+
+  return [
+    { rotulo: "SALAR. BASE", texto: formatarMoeda(calculo.salario_bruto) },
+    { rotulo: "SAL. CONTR.", texto: formatarMoeda(calculo.base_calculo) },
+    { rotulo: "BASE FGTS", texto: formatarMoeda(calculo.base_calculo) },
+    { rotulo: "FGTS MES", texto: formatarMoeda(calculo.fgts) },
+    { rotulo: "BASE IRRF", texto: temIrrf && baseIrDisponivel ? formatarMoeda(calculo.base_ir) : "-" },
+    { rotulo: "DEP IR", texto: String(calculo.num_dependentes) },
+    { rotulo: "TOT. PROVENTOS", texto: formatarMoeda(totalProventos) },
+    { rotulo: "TOT. DESCONTOS", texto: formatarMoeda(totalDescontos) },
+  ];
+}
+
 const COLUNAS_TABELA_VERBAS = (larguraUtil) => [
   { chave: "verba", largura: larguraUtil * 0.1, rotulo: "VERBA" },
   { chave: "descricao", largura: larguraUtil * 0.44, rotulo: "DESCRIÇÃO DA VERBA" },
@@ -561,23 +588,7 @@ export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
       y = doc.page.margins.top;
     }
 
-    // BASE FGTS reaproveita base_calculo (não existe base de FGTS isolada persistida) e
-    // BASE IRRF fica em branco (idem para base de IR) — não fabricamos valor sem dado real.
-    const totalProventos = Number(calculo.salario_bruto) + Number(calculo.valor_horas_extras);
-    const totalDescontos =
-      Number(calculo.inss) + Number(calculo.ir) + Number(calculo.valor_faltas) +
-      Number(calculo.adiantamento) + Number(calculo.desconto_vt);
-
-    const celulasBases = [
-      { rotulo: "SALAR. BASE", texto: formatarMoeda(calculo.salario_bruto) },
-      { rotulo: "SAL. CONTR.", texto: formatarMoeda(calculo.base_calculo) },
-      { rotulo: "BASE FGTS", texto: formatarMoeda(calculo.base_calculo) },
-      { rotulo: "FGTS MES", texto: formatarMoeda(calculo.fgts) },
-      { rotulo: "BASE IRRF", texto: "-" },
-      { rotulo: "DEP IR", texto: String(calculo.num_dependentes) },
-      { rotulo: "TOT. PROVENTOS", texto: formatarMoeda(totalProventos) },
-      { rotulo: "TOT. DESCONTOS", texto: formatarMoeda(totalDescontos) },
-    ];
+    const celulasBases = montarCelulasBases(calculo);
     const larguraCelulaBase = larguraUtil / celulasBases.length;
     desenharLinhaCelulas(
       doc,
