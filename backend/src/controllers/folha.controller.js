@@ -21,6 +21,25 @@ import { PERFIS } from "../config/perfis.js";
 
 const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/;
 
+// Isolamento multi-tenant (#441 / BUG-FOLHA-05): a query já filtra por cliente_id para
+// não-admin e o handler responde 404 — nunca 403 — quando o processamento é de outro
+// tenant. 403 revelava a existência de UUIDs de outros clientes (enumeração). Mesmo
+// padrão de funcionarios.controller.js ("404 indistinguível de inexistente").
+function ehAdminEfficience(req) {
+  return req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE;
+}
+
+function processamentoPertenceAoCliente(req, processamento) {
+  return ehAdminEfficience(req) || processamento.cliente_id === resolverClienteId(req);
+}
+
+function aplicarIsolamentoCliente(query, req) {
+  if (ehAdminEfficience(req)) {
+    return query;
+  }
+  return query.eq("cliente_id", resolverClienteId(req));
+}
+
 function sanitizarNomeArquivo(nome) {
   return nome
     .normalize("NFD")
@@ -159,23 +178,22 @@ export async function uploadFolhaAgente(req, res) {
 export async function calcularFolha(req, res) {
   const { processamento_id: processamentoId } = req.params;
 
-  const { data: processamento, error: erroBusca } = await supabase
+  let queryBusca = supabase
     .from("processamentos_folha")
     .select("id, cliente_id, status, arquivo_origem_path")
-    .eq("id", processamentoId)
-    .maybeSingle();
+    .eq("id", processamentoId);
+  queryBusca = aplicarIsolamentoCliente(queryBusca, req);
+
+  const { data: processamento, error: erroBusca } = await queryBusca.maybeSingle();
 
   if (erroBusca) {
     console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
     return res.status(500).json({ erro: "Erro ao buscar processamento" });
   }
 
-  if (!processamento) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!processamento || !processamentoPertenceAoCliente(req, processamento)) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
-  }
-
-  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
-    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
   }
 
   // Reivindica o processamento de forma atômica: o UPDATE só afeta a linha se o status
@@ -269,23 +287,22 @@ function formatarMesReferencia(mesReferencia) {
 export async function gerarSaidaFolha(req, res) {
   const { processamento_id: processamentoId } = req.params;
 
-  const { data: processamento, error: erroBusca } = await supabase
+  let queryBusca = supabase
     .from("processamentos_folha")
     .select("id, cliente_id, status, mes_referencia")
-    .eq("id", processamentoId)
-    .maybeSingle();
+    .eq("id", processamentoId);
+  queryBusca = aplicarIsolamentoCliente(queryBusca, req);
+
+  const { data: processamento, error: erroBusca } = await queryBusca.maybeSingle();
 
   if (erroBusca) {
     console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
     return res.status(500).json({ erro: "Erro ao buscar processamento" });
   }
 
-  if (!processamento) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!processamento || !processamentoPertenceAoCliente(req, processamento)) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
-  }
-
-  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
-    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
   }
 
   if (processamento.status !== "concluido") {
@@ -529,23 +546,22 @@ export async function dispararPipelineAutomatico(processamentoId) {
 export async function consultarStatusFolha(req, res) {
   const { processamento_id: processamentoId } = req.params;
 
-  const { data: processamento, error: erroBusca } = await supabase
+  let queryBusca = supabase
     .from("processamentos_folha")
     .select("id, cliente_id, status, mes_referencia, motivo_erro")
-    .eq("id", processamentoId)
-    .maybeSingle();
+    .eq("id", processamentoId);
+  queryBusca = aplicarIsolamentoCliente(queryBusca, req);
+
+  const { data: processamento, error: erroBusca } = await queryBusca.maybeSingle();
 
   if (erroBusca) {
     console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
     return res.status(500).json({ erro: "Erro ao buscar processamento" });
   }
 
-  if (!processamento) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!processamento || !processamentoPertenceAoCliente(req, processamento)) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
-  }
-
-  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
-    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
   }
 
   const { data: calculos, error: erroCalculos } = await supabase
@@ -586,23 +602,22 @@ export async function consultarStatusFolha(req, res) {
 export async function baixarArquivoFolha(req, res) {
   const { processamento_id: processamentoId, arquivo: nomeArquivo } = req.params;
 
-  const { data: processamento, error: erroBusca } = await supabase
+  let queryBusca = supabase
     .from("processamentos_folha")
     .select("id, cliente_id, status")
-    .eq("id", processamentoId)
-    .maybeSingle();
+    .eq("id", processamentoId);
+  queryBusca = aplicarIsolamentoCliente(queryBusca, req);
+
+  const { data: processamento, error: erroBusca } = await queryBusca.maybeSingle();
 
   if (erroBusca) {
     console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
     return res.status(500).json({ erro: "Erro ao buscar processamento" });
   }
 
-  if (!processamento) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!processamento || !processamentoPertenceAoCliente(req, processamento)) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
-  }
-
-  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
-    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
   }
 
   if (processamento.status !== "concluido") {
