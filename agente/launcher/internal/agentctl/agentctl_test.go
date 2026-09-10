@@ -3,6 +3,7 @@ package agentctl
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -63,6 +64,29 @@ func TestImagesMatch(t *testing.T) {
 	}
 	if imagesMatch(`C:\Other\notepad.exe`, `C:\App\efficience-agente.exe`) {
 		t.Fatal("unrelated image must not match")
+	}
+}
+
+func TestAgentEnv_InjetaPythonUTF8(t *testing.T) {
+	env := agentEnv("http://localhost:3000", "tok", "cli", `C:\base`)
+	want := map[string]string{
+		"API_URL":           "http://localhost:3000",
+		"LICENSE_TOKEN":     "tok",
+		"CLIENTE_ID":        "cli",
+		"PASTA_BASE":        `C:\base`,
+		"PYTHONUTF8":        "1",
+		"PYTHONIOENCODING":  "utf-8",
+	}
+	got := map[string]string{}
+	for _, entry := range env {
+		if k, v, ok := strings.Cut(entry, "="); ok {
+			got[k] = v
+		}
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("%s: got %q want %q", k, got[k], v)
+		}
 	}
 }
 

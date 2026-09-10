@@ -375,6 +375,9 @@ def processar_pasta_nfe(pasta: str) -> None:
 
 
 if __name__ == "__main__":
+    from core.encoding_console import garantir_stdout_utf8
+
+    garantir_stdout_utf8()
     if len(sys.argv) >= 2 and sys.argv[1] == "pasta":
         pasta_arg = sys.argv[2] if len(sys.argv) > 2 else (obter_pasta_nfe() or "")
         if not pasta_arg:
