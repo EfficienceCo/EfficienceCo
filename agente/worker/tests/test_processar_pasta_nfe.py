@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from comunicacao.api_client import ApiError
-from automacoes.processar_nfe import processar_pasta_nfe
+from automacoes.processar_nfe import _caminho_xml_relativo, processar_pasta_nfe
 from core.estrutura_pastas import SUBPASTAS
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
@@ -57,6 +57,28 @@ def _lookup_ambas(cnpj):
 
 def _arquivo_nfe(base: Path, empresa: str, nome: str) -> Path:
     return base / empresa / "Notas Fiscais" / "2026-07" / nome
+
+
+def test_caminho_xml_relativo_sob_pasta_base(tmp_path):
+    base = tmp_path / "escritorio"
+    real = base / NOME_EMPRESA / "Notas Fiscais" / "2026-07" / "entrada.xml"
+    real.parent.mkdir(parents=True)
+    real.touch()
+    assert _caminho_xml_relativo(real, base) == (
+        f"{NOME_EMPRESA}/Notas Fiscais/2026-07/entrada.xml"
+    )
+
+
+def test_caminho_xml_relativo_fora_da_base_usa_sufixo(tmp_path):
+    base = tmp_path / "escritorio"
+    base.mkdir()
+    fora = tmp_path / "outro" / NOME_EMPRESA / "Notas Fiscais" / "2026-07" / "x.xml"
+    fora.parent.mkdir(parents=True)
+    fora.touch()
+    with patch.object(Path, "relative_to", side_effect=ValueError("fora da base")):
+        assert _caminho_xml_relativo(fora, base) == (
+            f"{NOME_EMPRESA}/Notas Fiscais/2026-07/x.xml"
+        )
 
 
 def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
