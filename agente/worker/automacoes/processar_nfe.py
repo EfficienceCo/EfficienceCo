@@ -219,6 +219,21 @@ def _caminho_livre(destino: Path) -> Path:
         n += 1
 
 
+def _caminho_xml_relativo(caminho_real: Path, pasta_base: Path) -> str:
+    """Relativo à PASTA_BASE; se resolve() sair da base, usa sufixo canônico."""
+    try:
+        return caminho_real.resolve().relative_to(pasta_base.resolve()).as_posix()
+    except ValueError:
+        partes = caminho_real.parts
+        try:
+            idx = next(i for i, p in enumerate(partes) if p == "Notas Fiscais")
+            if idx == 0:
+                raise ValueError("sem empresa antes de Notas Fiscais")
+            return "/".join(partes[idx - 1 :])
+        except (StopIteration, ValueError):
+            return caminho_real.name
+
+
 def _copiar_xml(origem: Path, destino: Path) -> Path:
     validar_caminho(str(origem))
     validar_caminho(str(destino))
@@ -351,9 +366,11 @@ def processar_pasta_nfe(pasta: str) -> None:
         caminhos_reais = [_caminho_livre(d) for _, d in alvos]
 
         falhou_post = False
+        pasta_base_path = Path(pasta_base)
         for (empresa, _destino), caminho_real in zip(alvos, caminhos_reais):
+            relativo = _caminho_xml_relativo(Path(caminho_real), pasta_base_path)
             try:
-                payload = _payload_lancamento(dados, empresa["tipo"], str(caminho_real))
+                payload = _payload_lancamento(dados, empresa["tipo"], relativo)
                 resultado = _postar_lancamento(payload)
                 print(
                     f"[processar_nfe] {resultado} {empresa['tipo']} "

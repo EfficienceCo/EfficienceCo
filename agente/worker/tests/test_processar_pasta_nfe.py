@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from comunicacao.api_client import ApiError
-from automacoes.processar_nfe import processar_pasta_nfe
+from automacoes.processar_nfe import _caminho_xml_relativo, processar_pasta_nfe
 from core.estrutura_pastas import SUBPASTAS
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
@@ -59,6 +59,28 @@ def _arquivo_nfe(base: Path, empresa: str, nome: str) -> Path:
     return base / empresa / "Notas Fiscais" / "2026-07" / nome
 
 
+def test_caminho_xml_relativo_sob_pasta_base(tmp_path):
+    base = tmp_path / "escritorio"
+    real = base / NOME_EMPRESA / "Notas Fiscais" / "2026-07" / "entrada.xml"
+    real.parent.mkdir(parents=True)
+    real.touch()
+    assert _caminho_xml_relativo(real, base) == (
+        f"{NOME_EMPRESA}/Notas Fiscais/2026-07/entrada.xml"
+    )
+
+
+def test_caminho_xml_relativo_fora_da_base_usa_sufixo(tmp_path):
+    base = tmp_path / "escritorio"
+    base.mkdir()
+    fora = tmp_path / "outro" / NOME_EMPRESA / "Notas Fiscais" / "2026-07" / "x.xml"
+    fora.parent.mkdir(parents=True)
+    fora.touch()
+    with patch.object(Path, "relative_to", side_effect=ValueError("fora da base")):
+        assert _caminho_xml_relativo(fora, base) == (
+            f"{NOME_EMPRESA}/Notas Fiscais/2026-07/x.xml"
+        )
+
+
 def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
     inbox, base = pasta_nfe
     _copiar_fixture("entrada.xml", inbox)
@@ -77,8 +99,9 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
     assert payload["cliente_id"] == CLIENTE_ID
     assert payload["valor_total"] == "1500.00"
     assert payload["data_emissao"] == "2026-07-15"
-    assert NOME_EMPRESA in payload["arquivo_xml"]
-    assert "Notas Fiscais" in payload["arquivo_xml"]
+    assert payload["arquivo_xml"] == f"{NOME_EMPRESA}/Notas Fiscais/2026-07/entrada.xml"
+    assert not Path(payload["arquivo_xml"]).is_absolute()
+    assert str(base) not in payload["arquivo_xml"]
 
     assert not (inbox / "entrada.xml").exists()
     arquivado = _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml")
@@ -98,7 +121,11 @@ def test_processar_pasta_saida(pasta_nfe):
         mock_post.return_value = MagicMock()
         processar_pasta_nfe(str(inbox))
 
-    assert mock_post.call_args.args[1]["tipo"] == "saida"
+    payload = mock_post.call_args.args[1]
+    assert payload["tipo"] == "saida"
+    assert payload["arquivo_xml"] == f"{NOME_EMPRESA}/Notas Fiscais/2026-07/saida.xml"
+    assert not Path(payload["arquivo_xml"]).is_absolute()
+    assert str(base) not in payload["arquivo_xml"]
     assert _arquivo_nfe(base, NOME_EMPRESA, "saida.xml").is_file()
 
 
