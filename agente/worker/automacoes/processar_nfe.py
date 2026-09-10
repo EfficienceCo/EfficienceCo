@@ -148,26 +148,48 @@ def resolver_empresas_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> list[di
     """Empresas do escritório presentes na nota (GET /clientes/por-cnpj).
 
     Destinatário cadastrado → entrada; emitente cadastrado → saida.
-    Se os dois forem clientes (e CNPJs distintos), retorna os dois lançamentos.
+    Com por-cnpj tenant-scoped (#462), no máximo o cliente da licença resolve.
     Se emitente == destinatário, só entrada (mesma regra de identificar_tipo_operacao).
+    Cada item traz cliente_id (UUID) e nome vindos do lookup.
     """
     emit = _somente_digitos(cnpj_emitente)
     dest = _somente_digitos(cnpj_destinatario)
 
     empresas: list[dict] = []
 
-    nome_dest = buscar_empresa_por_cnpj(dest)
-    if nome_dest:
-        empresas.append({"cnpj": dest, "nome": nome_dest.strip(), "tipo": "entrada"})
+    dest_info = buscar_empresa_por_cnpj(dest)
+    if dest_info and dest_info.get("id") and dest_info.get("nome"):
+        empresas.append(
+            {
+                "cnpj": dest,
+                "nome": dest_info["nome"].strip(),
+                "cliente_id": dest_info["id"].strip(),
+                "tipo": "entrada",
+            }
+        )
 
     if emit != dest:
-        nome_emit = buscar_empresa_por_cnpj(emit)
-        if nome_emit:
-            empresas.append({"cnpj": emit, "nome": nome_emit.strip(), "tipo": "saida"})
+        emit_info = buscar_empresa_por_cnpj(emit)
+        if emit_info and emit_info.get("id") and emit_info.get("nome"):
+            empresas.append(
+                {
+                    "cnpj": emit,
+                    "nome": emit_info["nome"].strip(),
+                    "cliente_id": emit_info["id"].strip(),
+                    "tipo": "saida",
+                }
+            )
     elif not empresas:
-        nome_emit = buscar_empresa_por_cnpj(emit)
-        if nome_emit:
-            empresas.append({"cnpj": emit, "nome": nome_emit.strip(), "tipo": "entrada"})
+        emit_info = buscar_empresa_por_cnpj(emit)
+        if emit_info and emit_info.get("id") and emit_info.get("nome"):
+            empresas.append(
+                {
+                    "cnpj": emit,
+                    "nome": emit_info["nome"].strip(),
+                    "cliente_id": emit_info["id"].strip(),
+                    "tipo": "entrada",
+                }
+            )
 
     if not empresas:
         raise ValueError(
@@ -175,6 +197,14 @@ def resolver_empresas_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> list[di
             f"(emit={emit}, dest={dest})"
         )
     return empresas
+
+
+def _empresas_no_escopo_licenca(empresas: list[dict]) -> list[dict]:
+    """Mantém só empresas cujo cliente_id é o da licença do agente (CLIENTE_ID)."""
+    licenca_id = (client.CLIENTE_ID or "").strip()
+    if not licenca_id:
+        return []
+    return [e for e in empresas if (e.get("cliente_id") or "").strip() == licenca_id]
 
 
 def resolver_empresa_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> dict:
@@ -246,10 +276,12 @@ def _arquivar_nas_empresas(origem: Path, destinos: list[Path]) -> list[Path]:
     return arquivados
 
 
-def _payload_lancamento(dados: dict, tipo: str, caminho_destino: str) -> dict:
-    cliente_id = (client.CLIENTE_ID or "").strip()
-    if not cliente_id:
-        raise ValueError("CLIENTE_ID não configurado — necessário para POST /lancamentos-fiscais")
+def _payload_lancamento(
+    dados: dict, tipo: str, caminho_destino: str, cliente_id: str
+) -> dict:
+    cliente = (cliente_id or "").strip()
+    if not cliente:
+        raise ValueError("cliente_id ausente — necessário para POST /lancamentos-fiscais")
 
     return {
         "chave_nfe": dados["chave_nfe"],
@@ -263,7 +295,7 @@ def _payload_lancamento(dados: dict, tipo: str, caminho_destino: str) -> dict:
         "ipi": str(dados["ipi"]),
         "data_emissao": dados["data_emissao"].isoformat(),
         "arquivo_xml": caminho_destino,
-        "cliente_id": cliente_id,
+        "cliente_id": cliente,
     }
 
 
@@ -326,6 +358,15 @@ def processar_pasta_nfe(pasta: str) -> None:
             _mover_nao_identificado(xml_path, pasta_path, str(e))
             continue
 
+        empresas = _empresas_no_escopo_licenca(empresas)
+        if not empresas:
+            _mover_nao_identificado(
+                xml_path,
+                pasta_path,
+                "nenhuma empresa no escopo da licença do agente",
+            )
+            continue
+
         alvos: list[tuple[dict, Path]] = []
         nomes_invalidos = []
         for empresa in empresas:
@@ -353,7 +394,12 @@ def processar_pasta_nfe(pasta: str) -> None:
         falhou_post = False
         for (empresa, _destino), caminho_real in zip(alvos, caminhos_reais):
             try:
-                payload = _payload_lancamento(dados, empresa["tipo"], str(caminho_real))
+                payload = _payload_lancamento(
+                    dados,
+                    empresa["tipo"],
+                    str(caminho_real),
+                    empresa["cliente_id"],
+                )
                 resultado = _postar_lancamento(payload)
                 print(
                     f"[processar_nfe] {resultado} {empresa['tipo']} "

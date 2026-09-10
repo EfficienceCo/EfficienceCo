@@ -44,7 +44,10 @@ def test_fallback_cnpj_via_api(tmp_path):
         patch("core.identificar_empresa.extrair_texto", return_value="CNPJ 12.345.678/0001-90"),
         patch(
             "core.identificar_empresa.buscar_empresa_por_cnpj",
-            return_value="Padaria do João",
+            return_value={
+                "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "nome": "Padaria do João",
+            },
         ) as mock_api,
     ):
         nome = identificar_empresa(str(arquivo), str(tmp_path))

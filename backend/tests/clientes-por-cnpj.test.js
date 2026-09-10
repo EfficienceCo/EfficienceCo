@@ -74,10 +74,10 @@ describe("buscarClientePorCnpj", () => {
     filas.clear();
   });
 
-  it("retorna nome quando CNPJ existe (aceita máscara na query)", async () => {
+  it("retorna id e nome quando CNPJ existe (aceita máscara na query)", async () => {
     tokenLicencaValido();
     queue("clientes", "maybeSingle", {
-      data: { nome: "Padaria do João" },
+      data: { id: CLIENTE_ID, nome: "Padaria do João" },
       error: null,
     });
 
@@ -91,7 +91,7 @@ describe("buscarClientePorCnpj", () => {
     );
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.body, { nome: "Padaria do João" });
+    assert.deepEqual(res.body, { id: CLIENTE_ID, nome: "Padaria do João" });
   });
 
   it("404 quando CNPJ não está cadastrado", async () => {
@@ -112,6 +112,23 @@ describe("buscarClientePorCnpj", () => {
 
     assert.equal(res.statusCode, 404);
     assert.equal(res.body.erro, "não encontrado");
+  });
+
+  it("404 quando CNPJ existe mas não é o cliente da licença (isolamento #462)", async () => {
+    tokenLicencaValido();
+    // Query com .eq("id", licenca.cliente_id) não encontra linha → maybeSingle null.
+    queue("clientes", "maybeSingle", { data: null, error: null });
+
+    const res = criarRes();
+    await buscarClientePorCnpj(
+      {
+        query: { cnpj: "98.765.432/0001-10" },
+        headers: { "x-licenca-token": "token-valido" },
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 404);
   });
 
   it("400 quando CNPJ tem tamanho inválido", async () => {
