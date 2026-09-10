@@ -136,6 +136,26 @@ def test_nao_identificado_move_sem_post(pasta_nfe):
     assert (inbox / "nao_identificado" / "entrada.xml").is_file()
 
 
+def test_falha_mover_nao_identificado_propaga(pasta_nfe):
+    """Falha de move não pode ser engolida — senão o XML fica em loop no inbox."""
+    inbox, _base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", return_value=None),
+        patch(
+            "automacoes.processar_nfe._mover_xml",
+            side_effect=OSError("disco cheio"),
+        ),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        with pytest.raises(OSError, match="disco cheio"):
+            processar_pasta_nfe(str(inbox))
+
+    mock_post.assert_not_called()
+    assert (inbox / "entrada.xml").is_file()
+
+
 def test_nome_empresa_invalido_nao_posta(pasta_nfe):
     inbox, _base = pasta_nfe
     _copiar_fixture("entrada.xml", inbox)
