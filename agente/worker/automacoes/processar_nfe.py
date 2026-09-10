@@ -148,7 +148,7 @@ def resolver_empresas_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> list[di
     """Empresas do escritório presentes na nota (GET /clientes/por-cnpj).
 
     Destinatário cadastrado → entrada; emitente cadastrado → saida.
-    Se os dois forem clientes (e CNPJs distintos), retorna os dois lançamentos.
+    Com por-cnpj tenant-scoped (#462), no máximo o cliente da licença resolve.
     Se emitente == destinatário, só entrada (mesma regra de identificar_tipo_operacao).
     Cada item traz cliente_id (UUID) e nome vindos do lookup.
     """
@@ -197,6 +197,14 @@ def resolver_empresas_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> list[di
             f"(emit={emit}, dest={dest})"
         )
     return empresas
+
+
+def _empresas_no_escopo_licenca(empresas: list[dict]) -> list[dict]:
+    """Mantém só empresas cujo cliente_id é o da licença do agente (CLIENTE_ID)."""
+    licenca_id = (client.CLIENTE_ID or "").strip()
+    if not licenca_id:
+        return []
+    return [e for e in empresas if (e.get("cliente_id") or "").strip() == licenca_id]
 
 
 def resolver_empresa_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> dict:
@@ -348,6 +356,15 @@ def processar_pasta_nfe(pasta: str) -> None:
             )
         except ValueError as e:
             _mover_nao_identificado(xml_path, pasta_path, str(e))
+            continue
+
+        empresas = _empresas_no_escopo_licenca(empresas)
+        if not empresas:
+            _mover_nao_identificado(
+                xml_path,
+                pasta_path,
+                "nenhuma empresa no escopo da licença do agente",
+            )
             continue
 
         alvos: list[tuple[dict, Path]] = []

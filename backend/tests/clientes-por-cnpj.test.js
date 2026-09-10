@@ -114,6 +114,23 @@ describe("buscarClientePorCnpj", () => {
     assert.equal(res.body.erro, "não encontrado");
   });
 
+  it("404 quando CNPJ existe mas não é o cliente da licença (isolamento #462)", async () => {
+    tokenLicencaValido();
+    // Query com .eq("id", licenca.cliente_id) não encontra linha → maybeSingle null.
+    queue("clientes", "maybeSingle", { data: null, error: null });
+
+    const res = criarRes();
+    await buscarClientePorCnpj(
+      {
+        query: { cnpj: "98.765.432/0001-10" },
+        headers: { "x-licenca-token": "token-valido" },
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 404);
+  });
+
   it("400 quando CNPJ tem tamanho inválido", async () => {
     tokenLicencaValido();
 

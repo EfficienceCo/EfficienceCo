@@ -68,6 +68,7 @@ export async function buscarClientePorCnpj(req, res) {
     .from("clientes")
     .select("id, nome")
     .eq("cnpj", digitos)
+    .eq("id", licenca.cliente_id)
     .maybeSingle();
 
   if (error) {

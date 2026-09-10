@@ -115,37 +115,18 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(res.body.id, "novo-id");
   });
 
-  it("201 quando cliente_id difere do token mas CNPJ bate com tipo (escritório multi-cliente)", async () => {
+  it("403 quando cliente_id do payload não pertence ao token", async () => {
     tokenValido();
-    clienteComCnpj(CNPJ_DEST, CLIENTE_ID_OUTRO);
-    const body = payloadValido({
-      tipo: "entrada",
-      cliente_id: CLIENTE_ID_OUTRO,
-    });
-    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
-    queue("lancamentos_fiscais", "single", { data: { id: "outro-tenant", ...body }, error: null });
-
-    const req = { headers: { "x-licenca-token": "tok" }, body };
+    // Nem chega a validar CNPJ: isolamento por licença vem primeiro.
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: payloadValido({ cliente_id: CLIENTE_ID_OUTRO }),
+    };
     const res = criarResposta();
     await criarLancamentoFiscal(req, res);
 
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.id, "outro-tenant");
-  });
-
-  it("201 para mesma chave_nfe em outro cliente_id (UNIQUE composto)", async () => {
-    tokenValido();
-    clienteComCnpj(CNPJ_EMIT, CLIENTE_ID_OUTRO);
-    const body = payloadValido({ cliente_id: CLIENTE_ID_OUTRO, tipo: "saida" });
-    // Pré-check scoped: não acha (cliente_id, chave) — mesmo que outra linha exista globalmente.
-    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
-    queue("lancamentos_fiscais", "single", { data: { id: "segunda-linha", ...body }, error: null });
-
-    const req = { headers: { "x-licenca-token": "tok" }, body };
-    const res = criarResposta();
-    await criarLancamentoFiscal(req, res);
-
-    assert.equal(res.statusCode, 201);
+    assert.equal(res.statusCode, 403);
+    assert.match(res.body.erro, /não corresponde ao token/i);
   });
 
   it("409 quando já existe lançamento para o mesmo (cliente_id, chave_nfe)", async () => {
@@ -211,18 +192,19 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(res.statusCode, 400);
   });
 
-  it("403 quando CNPJ do cliente_id não corresponde ao tipo da nota", async () => {
+  it("403 quando CNPJ do cliente da licença não corresponde ao tipo da nota", async () => {
     tokenValido();
-    clienteComCnpj(CNPJ_ALHEIO, CLIENTE_ID_OUTRO);
+    clienteComCnpj(CNPJ_ALHEIO);
 
     const req = {
       headers: { "x-licenca-token": "tok" },
-      body: payloadValido({ cliente_id: CLIENTE_ID_OUTRO }),
+      body: payloadValido(),
     };
     const res = criarResposta();
     await criarLancamentoFiscal(req, res);
 
     assert.equal(res.statusCode, 403);
+    assert.match(res.body.erro, /CNPJ/i);
   });
 });
 

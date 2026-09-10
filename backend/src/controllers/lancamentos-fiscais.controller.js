@@ -48,9 +48,8 @@ function resolverClienteIdQuery(req) {
 
 // Agente local envia o payload do XML da NFe já parseado, autenticado via
 // x-licenca-token (mesmo padrão de uploadFolhaAgente em folha.controller.js).
-// Auth multi-cliente (escritório): token válido + cliente_id existente cujo CNPJ
-// bate com destinatário (entrada) ou emitente (saida) — não exige igualdade com
-// licenca.cliente_id.
+// Authz: cliente_id do payload DEVE ser o da licença. Checagem CNPJ↔tipo é
+// integridade do lançamento (não substitui isolamento multi-tenant).
 export async function criarLancamentoFiscal(req, res) {
   const token = req.headers["x-licenca-token"];
   const licenca = await validarTokenLicenca(token);
@@ -81,6 +80,10 @@ export async function criarLancamentoFiscal(req, res) {
 
   if (!TIPOS_VALIDOS.has(tipo)) {
     return res.status(400).json({ erro: "tipo deve ser 'entrada' ou 'saida'" });
+  }
+
+  if (cliente_id !== licenca.cliente_id) {
+    return res.status(403).json({ erro: "cliente_id não corresponde ao token de licença" });
   }
 
   const { data: cliente, error: erroCliente } = await supabase
