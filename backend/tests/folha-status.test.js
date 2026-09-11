@@ -434,6 +434,30 @@ describe("GET status e download (controllers)", () => {
     assert.match(res.body.motivo_erro, /inválida/);
   });
 
+  it("#440: geração de saída falhou → saida_status expõe o erro mesmo com status concluido", async () => {
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: {
+        id: PROC_ID,
+        cliente_id: CLIENTE_A,
+        status: "concluido",
+        mes_referencia: "2026-07-01",
+        motivo_erro: "Erro ao gerar holerite de João",
+        saida_status: "erro",
+      },
+      error: null,
+    });
+    mockDb.queue("folha_calculos", "await", { data: [{ empresa: "A", holerite_path: null }], error: null });
+    mockDb.queue("folha_relatorios", "await", { data: [], error: null });
+
+    const res = criarRes();
+    await consultarStatusFolha(reqBase(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.status, "concluido");
+    assert.equal(res.body.saida_status, "erro");
+    assert.match(res.body.motivo_erro, /holerite/);
+  });
+
   it("bloqueia download quando status não é concluido", async () => {
     mockDb.queue("processamentos_folha", "maybeSingle", {
       data: {
