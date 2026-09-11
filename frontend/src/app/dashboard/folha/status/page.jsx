@@ -7,6 +7,7 @@ import { useAuth } from '../../../../context/AuthContext';
 import {
   baixarArquivoFolha,
   obterProcessamentoFolha,
+  tentarNovamenteGerarSaidaFolha,
 } from '../../../../services/folha.service';
 
 const STORAGE_KEY = 'efficience:folha:processamentos';
@@ -425,6 +426,14 @@ function normalizarProcessamento(payload, fallback = {}) {
       processamento?.mensagem_erro ||
       fallback.motivo_erro ||
       '',
+    // saida_status distingue "cálculo concluído" (status) de "arquivos de saída
+    // gerados" — status pode ficar "concluido" mesmo quando a geração do PDF falhou,
+    // de propósito, pra não travar o retry idempotente no backend (#440).
+    saida_status:
+      processamento?.saida_status ||
+      processamento?.saidaStatus ||
+      fallback.saida_status ||
+      '',
     criado_em:
       processamento?.criado_em ||
       processamento?.created_at ||
@@ -455,6 +464,14 @@ function mesclarProcessamento(atual, novo) {
     return novo;
   }
 
+  // novo.erro_consulta só vem preenchido quando a própria consulta a este
+  // processamento falhou (ver carregarProcessamentos) — nesse caso "novo" é um
+  // registro degradado e não deve apagar motivo_erro/saida_status bons que já
+  // tínhamos. Numa consulta que teve sucesso, erro_consulta vem vazio e "novo" é
+  // a fonte da verdade — inclusive quando um retry limpou motivo_erro/saida_status
+  // (iriam pra '' e ficariam presos no valor antigo se usássemos apenas `||`).
+  const consultaFalhou = Boolean(novo.erro_consulta);
+
   return {
     ...atual,
     ...novo,
@@ -462,7 +479,8 @@ function mesclarProcessamento(atual, novo) {
     cliente_nome: novo.cliente_nome || atual.cliente_nome,
     mes_referencia: novo.mes_referencia || atual.mes_referencia,
     status: novo.status || atual.status,
-    motivo_erro: novo.motivo_erro || atual.motivo_erro,
+    motivo_erro: consultaFalhou ? atual.motivo_erro : novo.motivo_erro,
+    saida_status: consultaFalhou ? atual.saida_status : novo.saida_status,
     criado_em: novo.criado_em || atual.criado_em,
     atualizado_em: novo.atualizado_em || atual.atualizado_em,
     arquivos: novo.arquivos?.length ? novo.arquivos : atual.arquivos || [],
@@ -680,6 +698,8 @@ function StatusFolhaContent() {
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState('');
   const [baixandoArquivo, setBaixandoArquivo] = useState('');
   const [erroDownload, setErroDownload] = useState('');
+  const [tentandoNovamente, setTentandoNovamente] = useState('');
+  const [erroTentarNovamente, setErroTentarNovamente] = useState('');
 
   const processamentoDaUrl = useMemo(() => {
     const params = new URLSearchParams(parametrosUrl);
@@ -859,6 +879,25 @@ function StatusFolhaContent() {
     }
   }, []);
 
+  const handleTentarNovamenteSaida = useCallback(
+    async (processamentoId) => {
+      setErroTentarNovamente('');
+      setTentandoNovamente(processamentoId);
+
+      try {
+        await tentarNovamenteGerarSaidaFolha(processamentoId);
+        await carregarProcessamentos({ silencioso: true });
+      } catch (error) {
+        setErroTentarNovamente(
+          obterMensagemErro(error, 'Não foi possível gerar os arquivos novamente.'),
+        );
+      } finally {
+        setTentandoNovamente('');
+      }
+    },
+    [carregarProcessamentos],
+  );
+
   if (isLoading) {
     return <p className="p-6 text-sm text-slate-500">Carregando...</p>;
   }
@@ -955,6 +994,12 @@ function StatusFolhaContent() {
         </section>
       ) : null}
 
+      {erroTentarNovamente ? (
+        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+          <p className="text-sm font-medium text-rose-800">{erroTentarNovamente}</p>
+        </section>
+      ) : null}
+
       {processamentos.length === 0 ? (
         <section className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
           <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-md bg-sky-50 text-sky-700 ring-1 ring-sky-100">
@@ -997,10 +1042,20 @@ function StatusFolhaContent() {
                 {processamentos.map((processamento) => {
                   const statusMeta = obterStatusMeta(processamento.status);
                   const statusNormalizado = normalizarStatus(processamento.status) || 'pendente';
+                  // saida_status pode acusar falha mesmo com status "concluido" — o
+                  // cálculo terminou, mas a geração dos PDFs falhou (#440). Sem checar
+                  // saida_status aqui, essa falha fica invisível atrás do badge verde.
+                  const saidaComErro = processamento.saida_status === 'erro';
                   const mostrarMotivoErro =
-                    statusNormalizado === 'erro' && Boolean(processamento.motivo_erro);
+                    (statusNormalizado === 'erro' || saidaComErro) &&
+                    Boolean(processamento.motivo_erro);
+                  // Não gatear por saidaComErro aqui: a geração é idempotente por item
+                  // (folha.controller.js pula holerite/relatório já gerado), então uma
+                  // falha parcial pode conviver com arquivos já gerados com sucesso —
+                  // escondê-los tornaria download indisponível pra algo que já existe.
                   const arquivosDisponiveis =
                     statusNormalizado === 'concluido' ? processamento.arquivos : [];
+                  const estaTentandoNovamente = tentandoNovamente === processamento.id;
 
                   return (
                     <tr key={processamento.id} className="align-top transition hover:bg-slate-50">
@@ -1023,6 +1078,13 @@ function StatusFolhaContent() {
                           <StatusDot status={statusNormalizado} />
                           {statusMeta.label}
                         </span>
+                        {saidaComErro ? (
+                          <p className="mt-2">
+                            <span className="inline-flex items-center gap-2 rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-800 ring-1 ring-rose-200">
+                              Falha ao gerar arquivos
+                            </span>
+                          </p>
+                        ) : null}
                         {processamento.arquivos?.length ? (
                           <p className="mt-2 text-xs text-slate-500">
                             {processamento.arquivos.length} arquivo
@@ -1033,9 +1095,22 @@ function StatusFolhaContent() {
                       </td>
                       <td className="max-w-sm px-4 py-4">
                         {mostrarMotivoErro ? (
-                          <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
-                            {processamento.motivo_erro}
-                          </p>
+                          <div className="space-y-2">
+                            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                              {processamento.motivo_erro}
+                            </p>
+                            {saidaComErro ? (
+                              <button
+                                type="button"
+                                onClick={() => handleTentarNovamenteSaida(processamento.id)}
+                                disabled={estaTentandoNovamente}
+                                className="inline-flex items-center justify-center gap-1.5 rounded-md border border-rose-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {estaTentandoNovamente ? <Spinner /> : <RefreshIcon />}
+                                {estaTentandoNovamente ? 'Tentando novamente...' : 'Tentar novamente'}
+                              </button>
+                            ) : null}
+                          </div>
                         ) : processamento.erro_consulta ? (
                           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                             {processamento.erro_consulta}
