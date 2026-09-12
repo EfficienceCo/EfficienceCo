@@ -112,70 +112,105 @@ function sidebarLinkClasses(ativo) {
   return 'text-slate-400 hover:bg-white/5 hover:text-white';
 }
 
-export default function Sidebar() {
+export default function Sidebar({ aberta = false, aoFechar = () => {} }) {
   const pathname = usePathname();
   const { logout, user } = useAuth();
 
   return (
-    <aside className="nova-sidebar w-full border-b border-white/10 text-slate-300 md:fixed md:inset-y-0 md:w-[264px] md:border-b-0 md:border-r">
-      <div className="flex h-full flex-col">
-        <div className="border-b border-white/10 px-5 py-5">
-          <div className="flex items-center gap-3">
-            <img
-              src="/logo.svg"
-              alt="Efficience Co"
-              className="h-8 w-8 rounded-lg shadow-brand"
-            />
-            <p className="font-display text-lg font-semibold text-white">
-              Efficience <span className="text-slate-500">Co</span>
+    <>
+      {aberta ? (
+        <button
+          type="button"
+          onClick={aoFechar}
+          aria-label="Fechar menu"
+          className="fixed inset-0 z-40 bg-slate-950/60 md:hidden"
+        />
+      ) : null}
+
+      <aside
+        className={`nova-sidebar fixed inset-y-0 left-0 z-50 w-[264px] -translate-x-full border-r border-white/10 text-slate-300 transition-transform duration-200 ease-out md:translate-x-0 ${
+          aberta ? 'translate-x-0' : ''
+        }`}
+      >
+        <div className="flex h-full flex-col">
+          <div className="border-b border-white/10 px-5 py-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <img
+                  src="/logo.svg"
+                  alt="Efficience Co"
+                  className="h-8 w-8 rounded-lg shadow-brand"
+                />
+                <p className="font-display text-lg font-semibold text-white">
+                  Efficience <span className="text-slate-500">Co</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={aoFechar}
+                aria-label="Fechar menu"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-white/5 hover:text-white md:hidden"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-sky-300">
+              Plataforma
+            </p>
+            <p className="mt-2 truncate text-sm text-slate-500">
+              {user?.nome || user?.email || 'Usuário autenticado'}
             </p>
           </div>
-          <p className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-sky-300">
-            Plataforma
-          </p>
-          <p className="mt-2 truncate text-sm text-slate-500">
-            {user?.nome || user?.email || 'Usuário autenticado'}
-          </p>
-        </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
-          <ul className="grid gap-1.5">
-            {NAV_ITEMS.map((item) => {
-              if (item.type === 'separator') {
+          <nav className="flex-1 overflow-y-auto px-3 py-4">
+            <ul className="grid gap-1.5">
+              {NAV_ITEMS.map((item) => {
+                if (item.type === 'separator') {
+                  return (
+                    <li key={item.key} aria-hidden="true" className="my-2 border-t border-white/10" />
+                  );
+                }
+
+                const ativo = isRouteActive(pathname, item);
+                const Icon = item.icon;
+
                 return (
-                  <li key={item.key} aria-hidden="true" className="my-2 border-t border-white/10" />
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      onClick={aoFechar}
+                      className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${sidebarLinkClasses(ativo)}`}
+                    >
+                      <Icon />
+                      <span className="flex-1">{item.label}</span>
+                    </Link>
+                  </li>
                 );
-              }
+              })}
+            </ul>
+          </nav>
 
-              const ativo = isRouteActive(pathname, item);
-              const Icon = item.icon;
-
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${sidebarLinkClasses(ativo)}`}
-                  >
-                    <Icon />
-                    <span className="flex-1">{item.label}</span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
-
-        <div className="border-t border-white/10 px-4 py-4">
-          <button
-            type="button"
-            onClick={logout}
-            className="w-full rounded-lg border border-white/10 px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white"
-          >
-            Sair
-          </button>
+          <div className="border-t border-white/10 px-4 py-4">
+            <button
+              type="button"
+              onClick={logout}
+              className="w-full rounded-lg border border-white/10 px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white"
+            >
+              Sair
+            </button>
+          </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <IconBase>
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
+    </IconBase>
   );
 }
 

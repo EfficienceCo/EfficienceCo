@@ -330,6 +330,50 @@ function formatarDataHora(valor) {
   }).format(data);
 }
 
+function formatarMesReferenciaCurto(valor) {
+  const mesReferencia = normalizarMesReferencia(valor);
+
+  if (!mesReferencia) {
+    return '';
+  }
+
+  const [anoTexto, mesTexto] = mesReferencia.split('-');
+  const data = new Date(Number.parseInt(anoTexto, 10), Number.parseInt(mesTexto, 10) - 1, 1);
+
+  return new Intl.DateTimeFormat('pt-BR', { month: 'short', year: '2-digit' })
+    .format(data)
+    .replace('.', '')
+    .toUpperCase();
+}
+
+function formatarHora(valor) {
+  if (!valor) {
+    return '';
+  }
+
+  const data = new Date(valor);
+  if (Number.isNaN(data.getTime())) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(data);
+}
+
+function obterCodigoAbreviado(id) {
+  const texto = String(id || '').replace(/-/g, '');
+  return texto ? texto.slice(0, 8).toUpperCase() : '';
+}
+
+function formatarReferenciaCurta(processamento) {
+  const partes = [
+    formatarMesReferenciaCurto(processamento.mes_referencia),
+    formatarHora(processamento.criado_em || processamento.atualizado_em),
+    obterCodigoAbreviado(processamento.id),
+  ].filter(Boolean);
+
+  return partes.join(' · ') || processamento.id;
+}
+
 function obterReferenciaArquivo(arquivo) {
   if (arquivo.tipo === 'holerite') {
     return [arquivo.funcionario, arquivo.empresa].filter(Boolean).join(' · ') || '-';
@@ -667,6 +711,83 @@ function ArquivosDownload({ processamentoId, arquivos, baixandoArquivo, onBaixar
   );
 }
 
+function ReferenciaProcessamento({ processamento, className = '' }) {
+  return (
+    <div className={className}>
+      <p className="font-mono text-sm font-semibold text-slate-700">
+        {formatarReferenciaCurta(processamento)}
+      </p>
+      <details className="mt-1">
+        <summary className="cursor-pointer text-xs text-slate-400 transition hover:text-slate-600">
+          ID técnico
+        </summary>
+        <p className="mt-1 break-all font-mono text-xs text-slate-500">{processamento.id}</p>
+      </details>
+    </div>
+  );
+}
+
+function ProcessamentoCard({ processamento, baixandoArquivo, onBaixar }) {
+  const statusMeta = obterStatusMeta(processamento.status);
+  const statusNormalizado = normalizarStatus(processamento.status) || 'pendente';
+  const mostrarMotivoErro = statusNormalizado === 'erro' && Boolean(processamento.motivo_erro);
+  const arquivosDisponiveis = statusNormalizado === 'concluido' ? processamento.arquivos : [];
+
+  return (
+    <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-900">
+            {processamento.cliente_nome || 'Empresa não informada'}
+          </p>
+          <p className="mt-0.5 text-sm font-semibold text-slate-700">
+            {formatarMesReferencia(processamento.mes_referencia)}
+          </p>
+        </div>
+        <span
+          className={`inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${statusMeta.classes}`}
+          aria-live="polite"
+        >
+          <StatusDot status={statusNormalizado} />
+          {statusMeta.label}
+        </span>
+      </div>
+
+      <ReferenciaProcessamento processamento={processamento} className="mt-3" />
+
+      {mostrarMotivoErro ? (
+        <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+          {processamento.motivo_erro}
+        </p>
+      ) : processamento.erro_consulta ? (
+        <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {processamento.erro_consulta}
+        </p>
+      ) : null}
+
+      <div className="mt-3 border-t border-slate-100 pt-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Arquivos</p>
+        <div className="mt-2">
+          {statusNormalizado === 'concluido' ? (
+            <ArquivosDownload
+              processamentoId={processamento.id}
+              arquivos={arquivosDisponiveis}
+              baixandoArquivo={baixandoArquivo}
+              onBaixar={onBaixar}
+            />
+          ) : (
+            <span className="text-sm text-slate-400">Disponível após conclusão</span>
+          )}
+        </div>
+      </div>
+
+      <p className="mt-3 text-xs text-slate-500">
+        Atualizado: {formatarDataHora(processamento.atualizado_em || processamento.ultima_consulta_em)}
+      </p>
+    </article>
+  );
+}
+
 function StatusFolhaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -968,7 +1089,19 @@ function StatusFolhaContent() {
           </p>
         </section>
       ) : (
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <>
+          <section className="grid gap-3 lg:hidden">
+            {processamentos.map((processamento) => (
+              <ProcessamentoCard
+                key={processamento.id}
+                processamento={processamento}
+                baixandoArquivo={baixandoArquivo}
+                onBaixar={handleBaixarArquivo}
+              />
+            ))}
+          </section>
+
+          <section className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:block">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-200">
               <thead className="bg-slate-50">
@@ -1008,9 +1141,10 @@ function StatusFolhaContent() {
                         <p className="max-w-xs text-sm font-semibold text-slate-900">
                           {processamento.cliente_nome || 'Empresa não informada'}
                         </p>
-                        <p className="mt-1 max-w-xs break-all font-mono text-xs text-slate-500">
-                          {processamento.id}
-                        </p>
+                        <ReferenciaProcessamento
+                          processamento={processamento}
+                          className="mt-1 max-w-xs"
+                        />
                       </td>
                       <td className="px-4 py-4 text-sm font-semibold text-slate-700">
                         {formatarMesReferencia(processamento.mes_referencia)}
@@ -1069,7 +1203,8 @@ function StatusFolhaContent() {
               </tbody>
             </table>
           </div>
-        </section>
+          </section>
+        </>
       )}
     </main>
   );
