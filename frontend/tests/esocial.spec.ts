@@ -270,6 +270,32 @@ test.describe('eSocial — wizard /dashboard/dp/esocial (issue #379)', () => {
     await expect(page.getByText('Revisão do evento')).toHaveCount(0);
   });
 
+  test('voltar tipo de contrato pra indeterminado esconde e limpa os campos de prazo determinado (BUG-ESOCIAL-03)', async ({ page }) => {
+    await page.getByRole('button', { name: 'Avançar para o formulário' }).click();
+    await preencherFormularioS2200(page);
+
+    const duracao = grupo(page, 'Duração do contrato');
+    await duracao.getByLabel('Tipo de contrato').selectOption('2');
+    await duracao.getByLabel('Data de término').fill('02/02/2027');
+    await duracao.getByLabel('Cláusula assecuratória').selectOption('S');
+    await duracao.getByLabel(/Objeto determinante/).fill('Substituição de empregada afastada');
+
+    // volta pra prazo indeterminado
+    await duracao.getByLabel('Tipo de contrato').selectOption('1');
+
+    // os campos de prazo determinado somem da tela
+    await expect(duracao.getByLabel('Data de término')).toHaveCount(0);
+    await expect(duracao.getByLabel('Cláusula assecuratória')).toHaveCount(0);
+    await expect(duracao.getByLabel(/Objeto determinante/)).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Revisar' }).click();
+    await expect(page.getByText('Revisão do evento')).toBeVisible();
+
+    // ... e não sujam o payload enviado pro backend
+    const evento = (page as any)._backend.eventos[0];
+    expect(evento.dados_formulario.dadosAdmissao.duracao).toEqual({ tpContr: '1' });
+  });
+
   test('reabre um evento aprovado a partir do histórico com XML e download', async ({ page }) => {
     await page.getByRole('button', { name: 'Avançar para o formulário' }).click();
     await preencherFormularioS2200(page);
