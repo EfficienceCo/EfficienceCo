@@ -88,7 +88,10 @@ const CATEGORIAS_ESTATUTARIAS = new Set([301, 302, 303, 306, 307, 309, 310, 312,
 const TP_INSC_EMPREGADOR = new Set([1, 2]);
 const TP_INSC_LOCAL_GERAL = new Set([1, 3, 4]);
 const TP_INSC_ESTAB_VINC = new Set([1, 2]);
-const TP_JORNADA = new Set([2, 3, 4, 5, 6, 7, 9]);
+// Domínio aceito para horContratual.tpJornada. Precisa casar exatamente com
+// TP_JORNADA de frontend/src/lib/esocial-tabelas.js — testado em
+// backend/tests/esocial-tabelas-sync.test.js.
+export const TP_JORNADA = new Set([2, 3, 4, 5, 6, 7, 9]);
 const TMP_PARC = new Set([0, 1, 2, 3]);
 
 // ---------------------------------------------------------------------------
