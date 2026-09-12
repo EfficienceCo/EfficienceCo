@@ -1330,10 +1330,28 @@ function PassoFormulario({
       </Fieldset>
 
       <Fieldset titulo="Duração do contrato">
-        <CampoSelect label="Tipo de contrato" obrigatorio opcoes={TP_CONTRATO} value={a.duracao.tpContr} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'tpContr', v)} />
-        <Campo label="Data de término" placeholder="dd/mm/aaaa" value={a.duracao.dataTermino} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'dataTermino', v)} />
-        <CampoSelect label="Cláusula assecuratória" opcoes={SIM_NAO} value={a.duracao.clausulaAssecuratoria} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'clausulaAssecuratoria', v)} />
-        <Campo label="Objeto determinante (contrato por obra)" value={a.duracao.objetoDeterminante} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'objetoDeterminante', v)} />
+        <CampoSelect
+          label="Tipo de contrato"
+          obrigatorio
+          opcoes={TP_CONTRATO}
+          value={a.duracao.tpContr}
+          onChange={(v) => {
+            atualizarAdmissaoAninhado('duracao', 'tpContr', v);
+            if (v === '1') {
+              // prazo indeterminado não tem campos de prazo determinado — limpa pra não sujar o payload
+              atualizarAdmissaoAninhado('duracao', 'dataTermino', '');
+              atualizarAdmissaoAninhado('duracao', 'clausulaAssecuratoria', '');
+              atualizarAdmissaoAninhado('duracao', 'objetoDeterminante', '');
+            }
+          }}
+        />
+        {a.duracao.tpContr !== '1' ? (
+          <>
+            <Campo label="Data de término" placeholder="dd/mm/aaaa" value={a.duracao.dataTermino} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'dataTermino', v)} />
+            <CampoSelect label="Cláusula assecuratória" opcoes={SIM_NAO} value={a.duracao.clausulaAssecuratoria} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'clausulaAssecuratoria', v)} />
+            <Campo label="Objeto determinante (contrato por obra)" value={a.duracao.objetoDeterminante} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'objetoDeterminante', v)} />
+          </>
+        ) : null}
       </Fieldset>
 
       <Fieldset titulo="Local de trabalho">
