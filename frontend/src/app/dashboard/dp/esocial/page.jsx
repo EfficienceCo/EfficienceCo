@@ -385,6 +385,16 @@ function validarFormulario(form) {
   exigir(a.horContratual.tmpParc, 'Horário — tempo parcial');
   exigir(a.horContratual.horarioNoturno, 'Horário — trabalho noturno');
   exigir(a.horContratual.descricaoJornada, 'Horário — descrição da jornada');
+  // Espelha a checagem de montarHorContratual em esocial-xml.util.js: o
+  // tempo parcial de 25h (tmpParc=1) só existe para empregado doméstico
+  // (codCateg=104); as demais categorias usam 30h ou 26h (tmpParc=2/3).
+  if (a.horContratual.tmpParc === '1' && a.codCateg !== '104') {
+    erros['Horário — tempo parcial'] =
+      'Tempo parcial de 25h semanais (opção 1) só é válido para a categoria 104 — Empregado doméstico.';
+  } else if (['2', '3'].includes(a.horContratual.tmpParc) && a.codCateg === '104') {
+    erros['Horário — tempo parcial'] =
+      'A categoria 104 — Empregado doméstico só admite tempo parcial de 25h semanais (opção 1), não 30h/26h.';
+  }
 
   // Regime-específico
   if (estatutaria) {
