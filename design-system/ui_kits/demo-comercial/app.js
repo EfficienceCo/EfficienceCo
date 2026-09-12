@@ -494,7 +494,7 @@ function renderEmissaoGuias(){
       + '</div>';
   }).join('');
   return '<div class="page">'
-    + '<div class="page-head"><p class="crumbline"><b>Fiscal</b> &gt; Emissão de guias</p><h1>Emissão de Guias (DAS/DARF)</h1><p>Assim que um imposto é apurado, a guia sai pronta para pagar, com código de barras e vencimento, sem digitar o valor de novo em nenhum sistema do governo.</p></div>'
+    + '<div class="page-head"><p class="crumbline"><b>Fiscal</b> &gt; Emissão de guias</p><h1>Emissão de Guias (DAS/DARF)</h1><p>Assim que um imposto é apurado, o agente monta a guia com código de barras, competência e vencimento — pronta como base para a emissão oficial junto ao governo.</p></div>'
     + noteChip('GNRE e guias de ISS seguem o mesmo fluxo — esta lista consolida todas as guias pendentes do escritório por vencimento.')
     + '<div class="guia-grid">'+cards+'</div>'
     + '<div class="card"><div class="totals-footer" style="border-top:none;border-radius:var(--r-xl);"><span>Total em guias do período <b class="tnum">'+fmtBRL(total)+'</b></span><span>'+s.rows.length+' guias · '+emitidas+' já emitidas ou pagas</span></div></div>'
