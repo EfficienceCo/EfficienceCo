@@ -264,30 +264,12 @@ export function calcularIR(dados, tabelaIrrf) {
   if (baseCalculo <= 0) return 0;
 
   const { faixas, reducaoMensal } = tabelaIrrf;
-// dedução mais vantajosa (simplificada × legal) e a redução mensal da Lei
-// 15.270/2025 quando a tabela vigente as define (o motor legado de 2024 não tinha
-// nenhuma das duas). Recebe o INSS SEM arredondar. Retorna o IRRF final arredondado.
-export function calcularIR({ baseCalculo, inss, numDependentes }, tabelaIrrf) {
-  if (baseCalculo <= 0) return 0;
-
-  const { faixas, deducaoPorDependente, descontoSimplificado, reducaoMensal } = tabelaIrrf;
 
   // Redução mensal: até o piso de isenção o imposto é integralmente zerado,
   // independentemente do que a tabela progressiva apuraria.
   if (reducaoMensal && baseCalculo <= reducaoMensal.isencaoAte) return 0;
 
   const baseIr = calcularBaseIR(dados, tabelaIrrf);
-  if (baseIr <= 0) return 0;
-
-  const faixa = faixas.find(({ limite }) => baseIr <= limite);
-  const impostoTabela = Math.max(0, baseIr * faixa.aliquota - faixa.deducao);
-
-  const deducaoLegal = inss + numDependentes * deducaoPorDependente;
-  const deducao = descontoSimplificado != null
-    ? Math.max(deducaoLegal, descontoSimplificado)
-    : deducaoLegal;
-
-  const baseIr = baseCalculo - deducao;
   if (baseIr <= 0) return 0;
 
   const faixa = faixas.find(({ limite }) => baseIr <= limite);
@@ -327,10 +309,6 @@ export function calcularFolhaFuncionario(linha, competencia) {
   };
   const baseIr = calcularBaseIR(dadosIrrf, tabelaIrrf);
   const ir = calcularIR(dadosIrrf, tabelaIrrf);
-  const ir = calcularIR(
-    { baseCalculo, inss: inssPreciso, numDependentes: linha.num_dependentes },
-    tabelaIrrf,
-  );
 
   const liquido = arredondar(baseCalculo - inss - ir - linha.adiantamento - descontoVt);
 
