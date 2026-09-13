@@ -4,7 +4,25 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 test.describe('Folha de Pagamento', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    // O cenário LGPD é autocontido: não deve depender de backend/credenciais só
+    // para validar o contrato visual e a URL opaca do download.
+    if (testInfo.title.includes('identificador opaco')) {
+      const payload = Buffer.from(JSON.stringify({
+        id: 'usuario-teste',
+        perfil: 'admin_cliente',
+        cliente_id: '11111111-1111-4111-8111-111111111111',
+        exp: 4102444800,
+      })).toString('base64url');
+      await page.route('**/auth/login', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ token: `eyJhbGciOiJub25lIn0.${payload}.assinatura` }),
+      }));
+      await login(page, 'teste@efficience.local', 'senha-teste');
+      return;
+    }
+
     await login(page);
   });
 
