@@ -51,7 +51,10 @@ supabase.from = function (tabela) {
     const match = clientesRows.find((row) =>
       Object.entries(filtros).every(([col, val]) => row[col] === val),
     );
-    return { data: match ? { nome: match.nome } : null, error: null };
+    return {
+      data: match ? { id: match.id, nome: match.nome } : null,
+      error: null,
+    };
   }
 
   return builder;
@@ -92,7 +95,7 @@ describe("GET /clientes/por-cnpj — escopo por licença (#449)", () => {
     );
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.body, { nome: "Cliente A Ltda" });
+    assert.deepEqual(res.body, { id: CLIENTE_A, nome: "Cliente A Ltda" });
   });
 
   it("404 quando o CNPJ pertence a outro cliente da plataforma", async () => {
@@ -146,6 +149,6 @@ describe("GET /clientes/por-cnpj — escopo por licença (#449)", () => {
     );
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.body, { nome: "Cliente Teste Dev" });
+    assert.deepEqual(res.body, { id: CLIENTE_B, nome: "Cliente Teste Dev" });
   });
 });

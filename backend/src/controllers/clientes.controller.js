@@ -69,7 +69,7 @@ export async function buscarClientePorCnpj(req, res) {
   // existência nem razão social fora do escopo do licenciado (LGPD, #449).
   const { data, error } = await supabase
     .from("clientes")
-    .select("nome")
+    .select("id, nome")
     .eq("cnpj", digitos)
     .eq("id", licenca.cliente_id)
     .maybeSingle();
