@@ -90,12 +90,7 @@ func (c *Controller) Start() error {
 
 	cmd := commandForAgent(c.AgenteExe)
 	cmd.Dir = workDirForAgent(c.AgenteExe)
-	cmd.Env = append(os.Environ(),
-		"API_URL="+c.BackendURL,
-		"LICENSE_TOKEN="+c.Token,
-		"CLIENTE_ID="+c.ClienteID,
-		"PASTA_BASE="+c.PastaBase,
-	)
+	cmd.Env = agentEnv(c.BackendURL, c.Token, c.ClienteID, c.PastaBase)
 	hideWindow(cmd)
 
 	if err := cmd.Start(); err != nil {
@@ -245,6 +240,20 @@ func (c *Controller) writeLock(pid int, tracked string) error {
 	}
 	content := fmt.Sprintf("%d\n%s\n", pid, tracked)
 	return os.WriteFile(c.lockPath(), []byte(content), 0o644)
+}
+
+// agentEnv builds the worker process environment.
+// PYTHONUTF8 / PYTHONIOENCODING evitam UnicodeEncodeError em console Windows
+// cp1252 (BUG-NFE-01) quando o launcher sobe o worker com janela oculta.
+func agentEnv(backendURL, token, clienteID, pastaBase string) []string {
+	return append(os.Environ(),
+		"API_URL="+backendURL,
+		"LICENSE_TOKEN="+token,
+		"CLIENTE_ID="+clienteID,
+		"PASTA_BASE="+pastaBase,
+		"PYTHONUTF8=1",
+		"PYTHONIOENCODING=utf-8",
+	)
 }
 
 // commandForAgent runs .cmd/.bat via cmd.exe (CreateProcess cannot launch them directly).
