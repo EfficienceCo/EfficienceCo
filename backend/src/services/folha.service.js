@@ -240,8 +240,30 @@ export function calcularINSS(baseCalculo, tabelaInss) {
   return inss;
 }
 
+// A base do IRRF precisa ser persistida exatamente como foi usada no cálculo.
+// Em tabelas que oferecem desconto simplificado, escolhe a maior dedução entre
+// ele e as deduções legais (INSS + dependentes).
+export function calcularBaseIR({ baseCalculo, inss, numDependentes }, tabelaIrrf) {
+  if (baseCalculo <= 0) return 0;
+
+  const { deducaoPorDependente, descontoSimplificado } = tabelaIrrf;
+  const deducaoLegal = inss + numDependentes * deducaoPorDependente;
+  const deducao = descontoSimplificado != null
+    ? Math.max(deducaoLegal, descontoSimplificado)
+    : deducaoLegal;
+
+  return arredondar(Math.max(0, baseCalculo - deducao));
+}
+
 // IRRF mensal: tabela progressiva (alíquota da faixa onde a base cai, menos a
 // parcela a deduzir dela própria) — não é cálculo marginal como o INSS. Aplica a
+// redução mensal da Lei 15.270/2025 quando a tabela vigente a define. Recebe o
+// INSS SEM arredondar. Retorna o IRRF final arredondado.
+export function calcularIR(dados, tabelaIrrf) {
+  const { baseCalculo } = dados;
+  if (baseCalculo <= 0) return 0;
+
+  const { faixas, reducaoMensal } = tabelaIrrf;
 // dedução mais vantajosa (simplificada × legal) e a redução mensal da Lei
 // 15.270/2025 quando a tabela vigente as define (o motor legado de 2024 não tinha
 // nenhuma das duas). Recebe o INSS SEM arredondar. Retorna o IRRF final arredondado.
@@ -253,6 +275,12 @@ export function calcularIR({ baseCalculo, inss, numDependentes }, tabelaIrrf) {
   // Redução mensal: até o piso de isenção o imposto é integralmente zerado,
   // independentemente do que a tabela progressiva apuraria.
   if (reducaoMensal && baseCalculo <= reducaoMensal.isencaoAte) return 0;
+
+  const baseIr = calcularBaseIR(dados, tabelaIrrf);
+  if (baseIr <= 0) return 0;
+
+  const faixa = faixas.find(({ limite }) => baseIr <= limite);
+  const impostoTabela = Math.max(0, baseIr * faixa.aliquota - faixa.deducao);
 
   const deducaoLegal = inss + numDependentes * deducaoPorDependente;
   const deducao = descontoSimplificado != null
@@ -292,6 +320,13 @@ export function calcularFolhaFuncionario(linha, competencia) {
   const inss = arredondar(inssPreciso);
   const fgts = arredondar(baseCalculo * ALIQUOTA_FGTS);
 
+  const dadosIrrf = {
+    baseCalculo,
+    inss: inssPreciso,
+    numDependentes: linha.num_dependentes,
+  };
+  const baseIr = calcularBaseIR(dadosIrrf, tabelaIrrf);
+  const ir = calcularIR(dadosIrrf, tabelaIrrf);
   const ir = calcularIR(
     { baseCalculo, inss: inssPreciso, numDependentes: linha.num_dependentes },
     tabelaIrrf,
@@ -317,6 +352,7 @@ export function calcularFolhaFuncionario(linha, competencia) {
     base_calculo: baseCalculo,
     inss,
     fgts,
+    base_ir: baseIr,
     ir,
     liquido,
   };
@@ -762,6 +798,31 @@ function montarLinhasVerbas(calculo) {
   return linhas;
 }
 
+// Linha de bases/totais do rodapé do holerite. BASE FGTS reaproveita base_calculo
+// (não existe base de FGTS isolada persistida). BASE IRRF usa a base_ir realmente
+// calculada e persistida em folha_calculos; só cai para "-" quando não há imposto
+// retido (IRRF genuinamente 0) ou quando a base não foi persistida — caso de
+// linhas anteriores à migration 89.sql, onde exibir "0,00" seria um número falso.
+export function montarCelulasBases(calculo) {
+  const totalProventos = Number(calculo.salario_bruto) + Number(calculo.valor_horas_extras);
+  const totalDescontos =
+    Number(calculo.inss) + Number(calculo.ir) + Number(calculo.valor_faltas) +
+    Number(calculo.adiantamento) + Number(calculo.desconto_vt);
+
+  const baseIrDisponivel = calculo.base_ir != null && Number.isFinite(Number(calculo.base_ir));
+
+  return [
+    { rotulo: "SALAR. BASE", texto: formatarMoeda(calculo.salario_bruto) },
+    { rotulo: "SAL. CONTR.", texto: formatarMoeda(calculo.base_calculo) },
+    { rotulo: "BASE FGTS", texto: formatarMoeda(calculo.base_calculo) },
+    { rotulo: "FGTS MES", texto: formatarMoeda(calculo.fgts) },
+    { rotulo: "BASE IRRF", texto: baseIrDisponivel ? formatarMoeda(calculo.base_ir) : "-" },
+    { rotulo: "DEP IR", texto: String(calculo.num_dependentes) },
+    { rotulo: "TOT. PROVENTOS", texto: formatarMoeda(totalProventos) },
+    { rotulo: "TOT. DESCONTOS", texto: formatarMoeda(totalDescontos) },
+  ];
+}
+
 const COLUNAS_TABELA_VERBAS = (larguraUtil) => [
   { chave: "verba", largura: larguraUtil * 0.1, rotulo: "VERBA" },
   { chave: "descricao", largura: larguraUtil * 0.44, rotulo: "DESCRIÇÃO DA VERBA" },
@@ -837,23 +898,7 @@ export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
       y = doc.page.margins.top;
     }
 
-    // BASE FGTS reaproveita base_calculo (não existe base de FGTS isolada persistida) e
-    // BASE IRRF fica em branco (idem para base de IR) — não fabricamos valor sem dado real.
-    const totalProventos = Number(calculo.salario_bruto) + Number(calculo.valor_horas_extras);
-    const totalDescontos =
-      Number(calculo.inss) + Number(calculo.ir) + Number(calculo.valor_faltas) +
-      Number(calculo.adiantamento) + Number(calculo.desconto_vt);
-
-    const celulasBases = [
-      { rotulo: "SALAR. BASE", texto: formatarMoeda(calculo.salario_bruto) },
-      { rotulo: "SAL. CONTR.", texto: formatarMoeda(calculo.base_calculo) },
-      { rotulo: "BASE FGTS", texto: formatarMoeda(calculo.base_calculo) },
-      { rotulo: "FGTS MES", texto: formatarMoeda(calculo.fgts) },
-      { rotulo: "BASE IRRF", texto: "-" },
-      { rotulo: "DEP IR", texto: String(calculo.num_dependentes) },
-      { rotulo: "TOT. PROVENTOS", texto: formatarMoeda(totalProventos) },
-      { rotulo: "TOT. DESCONTOS", texto: formatarMoeda(totalDescontos) },
-    ];
+    const celulasBases = montarCelulasBases(calculo);
     const larguraCelulaBase = larguraUtil / celulasBases.length;
     desenharLinhaCelulas(
       doc,
