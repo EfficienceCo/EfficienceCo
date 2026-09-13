@@ -194,6 +194,18 @@ describe("lerLinhasPlanilha — CPF (normalização e DV)", () => {
     assert.equal(erros.length, 0, `erros: ${JSON.stringify(erros)}`);
     assert.equal(linhas[0].cpf, CPF_VALIDO_A_DIGITOS);
   });
+
+  it("CPF numérico com menos de 11 dígitos aponta formatação como texto", async () => {
+    // Excel perdeu o zero à esquerda → célula chega como number com < 11 dígitos
+    const { linhas, erros } = await lerLinhasPlanilha(await criarBuffer({ cpf: 1234567890 }));
+    assert.equal(linhas.length, 0);
+    assert.ok(
+      erros.some((e) =>
+        e.motivos.some((m) => /célula numérica/i.test(m) && /texto/i.test(m)),
+      ),
+      `erros: ${JSON.stringify(erros)}`,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

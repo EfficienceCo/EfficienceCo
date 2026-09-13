@@ -262,13 +262,21 @@ export async function lerLinhasPlanilha(buffer) {
       linhaConvertida[campo] = typeof bruta[campo] === "string" ? bruta[campo].trim() : bruta[campo];
     });
 
+    const cpfBruto = desembrulharValorCelula(bruta.cpf);
     const cpfTexto = valorCelulaParaTextoCpf(bruta.cpf);
     const cpfDigitos = normalizarCpf(cpfTexto || bruta.cpf);
+    const cpfVeioComoNumero = typeof cpfBruto === "number";
     if (!cpfTexto && cpfDigitos.length === 0) {
       errosDaLinha.push("cpf vazio ou inválido");
       linhaConvertida.cpf = "";
     } else if (!cpfValido(cpfDigitos)) {
-      errosDaLinha.push("cpf inválido");
+      if (cpfVeioComoNumero && cpfDigitos.length !== 11) {
+        errosDaLinha.push(
+          "cpf inválido: célula numérica perde zero à esquerda — formate a coluna como texto",
+        );
+      } else {
+        errosDaLinha.push("cpf inválido");
+      }
       linhaConvertida.cpf = cpfDigitos;
     } else {
       linhaConvertida.cpf = cpfDigitos;
