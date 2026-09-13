@@ -60,9 +60,9 @@ export async function buscarClientePorCnpj(req, res) {
     return res.status(400).json({ erro: "CNPJ inválido" });
   }
 
-  console.log(
-    `[clientes.controller] buscarClientePorCnpj — cnpj: ${digitos} | licenca cliente: ${licenca.cliente_id}`,
-  );
+  // Não registra CNPJ nem identificador do cliente: ambos são desnecessários
+  // para operação e tornariam os logs uma nova superfície de dados sensíveis.
+  console.log("[clientes.controller] Consulta de cliente por CNPJ autenticada");
 
   // Escopo por licença: o token só resolve o CNPJ do próprio cliente vinculado.
   // CNPJ de outro cliente cai no mesmo 404 de "não cadastrado" — não vaza
