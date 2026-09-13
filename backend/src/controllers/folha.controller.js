@@ -11,9 +11,10 @@ import {
 import {
   montarListaArquivos,
   arquivosParaResposta,
-  resolverPathDownload,
+  resolverArquivoDownload,
   calcularTotaisProcessamento,
   registrarEventoConclusaoFolha,
+  sanitizarNomeArquivo,
 } from "../services/folha-status.service.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
@@ -38,15 +39,6 @@ function aplicarIsolamentoCliente(query, req) {
     return query;
   }
   return query.eq("cliente_id", resolverClienteId(req));
-}
-
-function sanitizarNomeArquivo(nome) {
-  return nome
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-z0-9_.-]/g, "");
 }
 
 export async function baixarTemplate(req, res) {
@@ -339,10 +331,11 @@ export async function gerarSaidaFolha(req, res) {
       if (calculo.holerite_path) continue;
 
       const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado);
-      // CPF no nome, não só o nome do funcionário — dois funcionários com o mesmo nome
-      // na mesma empresa (comum: "Maria Silva", "João Santos") colidiriam no path e o
-      // segundo upload falharia (upsert:false). CPF é o identificador que garante unicidade.
-      const nomeArquivo = `holerite_${sanitizarNomeArquivo(calculo.empresa)}_${sanitizarNomeArquivo(calculo.funcionario)}_${sanitizarNomeArquivo(calculo.cpf)}_${mesReferenciaArquivo}.pdf`;
+      // id da linha de folha_calculos no nome (não o CPF): dois funcionários com o mesmo
+      // nome na mesma empresa (comum: "Maria Silva") colidiriam no path e o segundo upload
+      // falharia (upsert:false). O id garante unicidade sem expor o CPF no storage,
+      // na URL de download ou em log HTTP (LGPD / BUG-FOLHA-07).
+      const nomeArquivo = `holerite_${sanitizarNomeArquivo(calculo.empresa)}_${sanitizarNomeArquivo(calculo.funcionario)}_${calculo.id}_${mesReferenciaArquivo}.pdf`;
       // processamento_id no caminho evita colisão entre processamentos diferentes do
       // mesmo cliente/mês (ex: planilha reenviada e recalculada após correção).
       const caminhoStorage = `clientes/${processamento.cliente_id}/${mesReferenciaArquivo}/${processamentoId}/holerites/${nomeArquivo}`;
@@ -568,7 +561,7 @@ export async function consultarStatusFolha(req, res) {
 
   const { data: calculos, error: erroCalculos } = await supabase
     .from("folha_calculos")
-    .select("empresa, holerite_path")
+    .select("id, empresa, funcionario, holerite_path")
     .eq("processamento_id", processamentoId);
 
   if (erroCalculos) {
@@ -578,7 +571,7 @@ export async function consultarStatusFolha(req, res) {
 
   const { data: relatorios, error: erroRelatorios } = await supabase
     .from("folha_relatorios")
-    .select("arquivo_path")
+    .select("id, arquivo_path")
     .eq("processamento_id", processamentoId);
 
   if (erroRelatorios) {
@@ -602,7 +595,9 @@ export async function consultarStatusFolha(req, res) {
 
 // Download de um arquivo gerado — somente quando status === concluido.
 export async function baixarArquivoFolha(req, res) {
-  const { processamento_id: processamentoId, arquivo: nomeArquivo } = req.params;
+  // `arquivo` na URL é um identificador opaco (id da linha de folha_calculos /
+  // folha_relatorios), nunca o CPF nem o nome do arquivo (LGPD / BUG-FOLHA-07).
+  const { processamento_id: processamentoId, arquivo: arquivoId } = req.params;
 
   let queryBusca = supabase
     .from("processamentos_folha")
@@ -630,7 +625,7 @@ export async function baixarArquivoFolha(req, res) {
 
   const { data: calculos, error: erroCalculos } = await supabase
     .from("folha_calculos")
-    .select("holerite_path")
+    .select("id, empresa, funcionario, holerite_path")
     .eq("processamento_id", processamentoId);
 
   if (erroCalculos) {
@@ -640,7 +635,7 @@ export async function baixarArquivoFolha(req, res) {
 
   const { data: relatorios, error: erroRelatorios } = await supabase
     .from("folha_relatorios")
-    .select("arquivo_path")
+    .select("id, arquivo_path")
     .eq("processamento_id", processamentoId);
 
   if (erroRelatorios) {
@@ -649,16 +644,16 @@ export async function baixarArquivoFolha(req, res) {
   }
 
   const arquivos = montarListaArquivos(calculos || [], relatorios || []);
-  const caminhoStorage = resolverPathDownload(nomeArquivo, arquivos);
+  const arquivoAlvo = resolverArquivoDownload(arquivoId, arquivos);
 
-  if (!caminhoStorage) {
+  if (!arquivoAlvo) {
     return res.status(404).json({ erro: "Arquivo não encontrado para este processamento" });
   }
 
   try {
     const { data: arquivo, error: erroDownload } = await supabase.storage
       .from("folhas-pagamento")
-      .download(caminhoStorage);
+      .download(arquivoAlvo.path);
 
     if (erroDownload) {
       console.error("[folha.controller] Erro ao baixar arquivo do storage:", erroDownload.message);
@@ -668,9 +663,10 @@ export async function baixarArquivoFolha(req, res) {
     const buffer = Buffer.from(await arquivo.arrayBuffer());
 
     res.setHeader("Content-Type", "application/pdf");
+    // Nome de exibição resolvido a partir do dado persistido (sem CPF), não do que veio na URL.
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${nomeArquivo}"`,
+      `attachment; filename="${arquivoAlvo.nome}"`,
     );
 
     return res.status(200).send(buffer);
