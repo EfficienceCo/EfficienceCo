@@ -118,6 +118,25 @@ export default function AdminClientes() {
     }
   }
 
+  // Libera o 1º evento eSocial do cliente (bloqueado em
+  // eventos-esocial.controller.js enquanto esocial_configurado for false).
+  async function handleToggleEsocialConfigurado(cliente) {
+    setAtualizandoId(cliente.id);
+
+    try {
+      const atualizado = await atualizarCliente(cliente.id, {
+        esocial_configurado: !cliente.esocial_configurado,
+      });
+      setClientes((prev) =>
+        prev.map((c) => (c.id === atualizado.id ? atualizado : c)),
+      );
+    } catch (error) {
+      setErroLista(obterMensagemErro(error, 'Não foi possível alterar a configuração do eSocial.'));
+    } finally {
+      setAtualizandoId(null);
+    }
+  }
+
   function handleChange(event) {
     const { name, value } = event.target;
     setFormData((previousValue) => ({
@@ -276,6 +295,7 @@ export default function AdminClientes() {
                 <th className="px-4 py-3">Nome</th>
                 <th className="px-4 py-3">CNPJ</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">eSocial (Grupo 1)</th>
                 <th className="px-4 py-3">Usuários</th>
                 <th className="px-4 py-3">Criado em</th>
                 <th className="px-4 py-3">Ações</th>
@@ -299,6 +319,24 @@ export default function AdminClientes() {
                       <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusClasses}`}>
                         {formatarStatus(cliente.status)}
                       </span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleEsocialConfigurado(cliente)}
+                        disabled={atualizandoId === cliente.id}
+                        className={`rounded-md px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                          cliente.esocial_configurado
+                            ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                            : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                        }`}
+                      >
+                        {atualizandoId === cliente.id
+                          ? '...'
+                          : cliente.esocial_configurado
+                            ? 'Configurado'
+                            : 'Marcar como configurado'}
+                      </button>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
                       {Number.isFinite(cliente.total_usuarios) ? cliente.total_usuarios : 0}
