@@ -315,7 +315,10 @@ def processar_pasta_nfe(pasta: str) -> None:
         try:
             dados = parsear_nfe(str(xml_path))
         except ValueError as e:
-            _mover_nao_identificado(xml_path, pasta_path, str(e))
+            try:
+                _mover_nao_identificado(xml_path, pasta_path, str(e))
+            except Exception:
+                pass
             continue
 
         try:
@@ -324,7 +327,10 @@ def processar_pasta_nfe(pasta: str) -> None:
                 dados["cnpj_destinatario"],
             )
         except ValueError as e:
-            _mover_nao_identificado(xml_path, pasta_path, str(e))
+            try:
+                _mover_nao_identificado(xml_path, pasta_path, str(e))
+            except Exception:
+                pass
             continue
 
         alvos: list[tuple[dict, Path]] = []
@@ -340,11 +346,14 @@ def processar_pasta_nfe(pasta: str) -> None:
             alvos.append((empresa, destino))
 
         if not alvos:
-            _mover_nao_identificado(
-                xml_path,
-                pasta_path,
-                "nome de empresa inválido (" + "; ".join(nomes_invalidos) + ")",
-            )
+            try:
+                _mover_nao_identificado(
+                    xml_path,
+                    pasta_path,
+                    "nome de empresa inválido (" + "; ".join(nomes_invalidos) + ")",
+                )
+            except Exception:
+                pass
             continue
 
         # Resolve os caminhos finais antes do POST para garantir que arquivo_xml

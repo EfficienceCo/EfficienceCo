@@ -136,24 +136,28 @@ def test_nao_identificado_move_sem_post(pasta_nfe):
     assert (inbox / "nao_identificado" / "entrada.xml").is_file()
 
 
-def test_falha_mover_nao_identificado_propaga(pasta_nfe):
-    """Falha de move não pode ser engolida — senão o XML fica em loop no inbox."""
+def test_falha_mover_nao_identificado_nao_aborta_pasta(pasta_nfe):
+    """Falha de move em um XML não pode travar o restante da pasta."""
     inbox, _base = pasta_nfe
-    _copiar_fixture("entrada.xml", inbox)
+    quebrado = inbox / "a-quebrado.xml"
+    quebrado.write_text("<nfeProc><NFe>", encoding="utf-8")
+    shutil.copy(FIXTURES / "entrada.xml", inbox / "b-valido.xml")
 
     with (
-        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", return_value=None),
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
         patch(
             "automacoes.processar_nfe._mover_xml",
             side_effect=OSError("disco cheio"),
         ),
         patch("automacoes.processar_nfe.client.post") as mock_post,
     ):
-        with pytest.raises(OSError, match="disco cheio"):
-            processar_pasta_nfe(str(inbox))
+        mock_post.return_value = MagicMock()
+        processar_pasta_nfe(str(inbox))
 
-    mock_post.assert_not_called()
-    assert (inbox / "entrada.xml").is_file()
+    assert mock_post.called
+    assert mock_post.call_args.args[1]["tipo"] == "entrada"
+    assert quebrado.is_file()
+    assert (inbox / "b-valido.xml").is_file()
 
 
 def test_nome_empresa_invalido_nao_posta(pasta_nfe):
