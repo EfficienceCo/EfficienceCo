@@ -45,6 +45,7 @@ const LINHAS_DE_DADOS = 500;
 // Fontes: Portaria Interministerial MPS/MF 2024; Instrução Normativa RFB (fev/2024).
 const TABELA_FOLHA_2024 = {
   vigenciaInicio: "2024-01",
+  vigenciaFim: "2025-12",
   inss: {
     faixas: [
       { limite: 1412.00, aliquota: 0.075 },
@@ -76,6 +77,7 @@ const TABELA_FOLHA_2024 = {
 //    gov.br/receitafederal › ... › exemplos-de-aplicacao-da-lei-15-270-2025
 const TABELA_FOLHA_2026 = {
   vigenciaInicio: "2026-01",
+  vigenciaFim: "2026-12",
   inss: {
     faixas: [
       { limite: 1621.00, aliquota: 0.075 },
@@ -124,11 +126,15 @@ export function resolverTabelaFolha(competencia) {
   }
 
   const vigente = TABELAS_FOLHA
-    .filter((tabela) => tabela.vigenciaInicio <= chave)
+    .filter(
+      (tabela) =>
+        tabela.vigenciaInicio <= chave &&
+        (!tabela.vigenciaFim || chave <= tabela.vigenciaFim),
+    )
     .at(-1);
 
   if (!vigente) {
-    throw new Error(`Nenhuma tabela de folha vigente para a competência ${chave}`);
+    throw new Error(`Nenhuma tabela de folha cadastrada para a competência ${chave}`);
   }
 
   return vigente;

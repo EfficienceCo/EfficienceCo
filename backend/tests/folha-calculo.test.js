@@ -47,7 +47,11 @@ test("resolverTabelaFolha: competência de 2025 cai na tabela legada (2024-01)",
 test("resolverTabelaFolha: competência de 2026 usa a tabela 2026-01", () => {
   assert.equal(resolverTabelaFolha("2026-01").vigenciaInicio, "2026-01");
   assert.equal(resolverTabelaFolha("2026-09").vigenciaInicio, "2026-01");
-  assert.equal(resolverTabelaFolha("2030-06").vigenciaInicio, "2026-01");
+});
+
+test("resolverTabelaFolha: não reutiliza silenciosamente a última tabela em anos futuros", () => {
+  assert.throws(() => resolverTabelaFolha("2027-01"), /Nenhuma tabela de folha cadastrada/);
+  assert.throws(() => resolverTabelaFolha("2030-06"), /Nenhuma tabela de folha cadastrada/);
 });
 
 test("resolverTabelaFolha: aceita 'YYYY-MM' e 'YYYY-MM-DD'", () => {
@@ -55,7 +59,7 @@ test("resolverTabelaFolha: aceita 'YYYY-MM' e 'YYYY-MM-DD'", () => {
 });
 
 test("resolverTabelaFolha: competência anterior à tabela mais antiga lança", () => {
-  assert.throws(() => resolverTabelaFolha("2023-12"), /Nenhuma tabela de folha vigente/);
+  assert.throws(() => resolverTabelaFolha("2023-12"), /Nenhuma tabela de folha cadastrada/);
 });
 
 test("resolverTabelaFolha: competência ausente ou malformada lança", () => {
