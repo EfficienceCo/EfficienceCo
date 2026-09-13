@@ -93,10 +93,10 @@ async function get(path, headers = {}) {
 // ---------------------------------------------------------------------------
 
 describe("GET /clientes/por-cnpj — camada HTTP", () => {
-  it("200 com nome quando CNPJ existe e token é válido", async () => {
+  it("200 com id e nome quando CNPJ existe e token é válido", async () => {
     tokenValido();
     queue("clientes", "maybeSingle", {
-      data: { nome: "Padaria do João" },
+      data: { id: "11111111-1111-1111-1111-111111111111", nome: "Padaria do João" },
       error: null,
     });
 
@@ -107,6 +107,7 @@ describe("GET /clientes/por-cnpj — camada HTTP", () => {
 
     assert.equal(status, 200);
     assert.equal(body.nome, "Padaria do João");
+    assert.equal(body.id, "11111111-1111-1111-1111-111111111111");
   });
 
   it("404 quando CNPJ não encontrado no banco", async () => {

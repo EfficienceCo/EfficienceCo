@@ -67,7 +67,7 @@ describe("buscarClientePorCnpj — casos de borda", () => {
   it("CNPJ no banco (só dígitos) é encontrado com input mascarado", async () => {
     tokenValido();
     queue("clientes", "maybeSingle", {
-      data: { nome: "Mercado Central" },
+      data: { id: CLIENTE_ID, nome: "Mercado Central" },
       error: null,
     });
 
@@ -79,12 +79,13 @@ describe("buscarClientePorCnpj — casos de borda", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.nome, "Mercado Central");
+    assert.equal(res.body.id, CLIENTE_ID);
   });
 
   it(".eq + maybeSingle retorna o cliente correspondente", async () => {
     tokenValido();
     queue("clientes", "maybeSingle", {
-      data: { nome: "Empresa B" },
+      data: { id: "22222222-2222-2222-2222-222222222222", nome: "Empresa B" },
       error: null,
     });
 
@@ -96,6 +97,7 @@ describe("buscarClientePorCnpj — casos de borda", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.nome, "Empresa B");
+    assert.equal(res.body.id, "22222222-2222-2222-2222-222222222222");
   });
 
   // ---- validação do token ------------------------------------------------
