@@ -1,5 +1,7 @@
 """Testes do monitor processar_pasta_nfe (lookup backend + POST + arquivamento)."""
 
+import contextlib
+import io
 import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -29,6 +31,27 @@ def pasta_nfe(tmp_path, monkeypatch):
     monkeypatch.setattr("comunicacao.api_client.LICENSE_TOKEN", "tok-teste")
     monkeypatch.setattr("comunicacao.api_client.PASTA_BASE", str(base))
     return inbox, base
+
+
+@pytest.fixture
+def stdout_cp1252():
+    """Stdout que encoda em cp1252 strict — reproduz console Windows PT-BR (BUG-NFE-01)."""
+    buf = io.BytesIO()
+    stream = io.TextIOWrapper(
+        buf, encoding="cp1252", errors="strict", write_through=True, newline="\n"
+    )
+
+    @contextlib.contextmanager
+    def capturar():
+        with contextlib.redirect_stdout(stream):
+            yield
+        stream.flush()
+
+    def ler() -> str:
+        stream.flush()
+        return buf.getvalue().decode("cp1252")
+
+    return capturar, ler
 
 
 def _copiar_fixture(nome: str, destino: Path) -> Path:
@@ -244,3 +267,47 @@ def test_nao_recursivo_ignora_subpasta(pasta_nfe):
 
     mock_post.assert_not_called()
     assert (sub / "entrada.xml").is_file()
+
+
+def test_sucesso_loga_arquivado_sem_falha_em_cp1252(pasta_nfe, stdout_cp1252):
+    inbox, base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+    capturar, ler = stdout_cp1252
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        mock_post.return_value = MagicMock()
+        with capturar():
+            processar_pasta_nfe(str(inbox))
+
+    log = ler()
+    assert "criado" in log
+    assert "arquivado" in log
+    assert "falha ao arquivar" not in log
+    assert _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").is_file()
+
+
+def test_nao_identificado_loga_sem_falha_em_cp1252(pasta_nfe, stdout_cp1252):
+    inbox, _base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+    capturar, ler = stdout_cp1252
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", return_value=None),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        with capturar():
+            processar_pasta_nfe(str(inbox))
+
+    log = ler()
+    assert "não identificado" in log
+    assert "falha ao mover" not in log
+    mock_post.assert_not_called()
+    assert (inbox / "nao_identificado" / "entrada.xml").is_file()
+
+
+def test_processar_nfe_sem_seta_unicode_nos_prints():
+    fonte = Path(__file__).resolve().parents[1] / "automacoes" / "processar_nfe.py"
+    assert "\u2192" not in fonte.read_text(encoding="utf-8")
