@@ -6,9 +6,25 @@ import {
   resolverPathDownload,
   calcularTotaisProcessamento,
 } from "../src/services/folha-status.helpers.js";
+import { PERFIS } from "../src/config/perfis.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const PROC_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+function criarRes() {
+  return {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+  };
+}
 
 function criarMockSupabase() {
   const filas = new Map();
@@ -96,6 +112,7 @@ function criarMockSupabase() {
 describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
   const mockDb = criarMockSupabase();
   let dispararPipelineAutomatico;
+  let gerarSaidaFolha;
   let erroLog;
 
   before(async () => {
@@ -145,6 +162,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
 
     const controller = await import("../src/controllers/folha.controller.js");
     dispararPipelineAutomatico = controller.dispararPipelineAutomatico;
+    gerarSaidaFolha = controller.gerarSaidaFolha;
   });
 
   beforeEach(() => {
@@ -187,11 +205,17 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     mockDb.queue("folha_relatorios", "maybeSingle", { data: null, error: null });
     // gerarSaidaFolha: insere relatório
     mockDb.queue("folha_relatorios", "await", { data: null, error: null });
+    // finalizarGeracaoSaida: sucesso -> grava saida_status "ok" (#440)
+    mockDb.queue("processamentos_folha", "await", { data: null, error: null });
 
     await dispararPipelineAutomatico(PROC_ID);
 
     assert.equal(erroLog.mock.callCount(), 0, "não deveria logar erro no caminho feliz");
     assert.equal(mockDb.restantes(), 0, "todas as etapas do pipeline (calc + saída) devem ter sido consumidas");
+
+    const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
+    assert.equal(ultimoUpdate.saida_status, "ok");
+    assert.equal(ultimoUpdate.motivo_erro, null);
   });
 
   it("cálculo falha → geração de saída não roda e falha fica registrada", async () => {
@@ -222,7 +246,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     assert.match(logsDoPipeline[0].arguments[0], /Cálculo automático não concluído/);
   });
 
-  it("geração de saída falha → status continua concluido (retry idempotente continua possível) e motivo fica registrado", async () => {
+  it("geração de saída falha → status continua concluido (retry idempotente continua possível), motivo fica registrado e saida_status vira erro", async () => {
     // calcularFolha: sucesso completo (mesma sequência do caminho feliz)
     mockDb.queue("processamentos_folha", "maybeSingle", {
       data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "pendente", arquivo_origem_path: "x.xlsx" },
@@ -257,11 +281,115 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     assert.ok(ultimoUpdate, "deveria ter chamado update em processamentos_folha");
     assert.equal(ultimoUpdate.status, undefined, "status não pode ser sobrescrito — senão o retry via /gerar-saida fica bloqueado pelo guard de status");
     assert.match(ultimoUpdate.motivo_erro, /holerite/);
+    assert.equal(ultimoUpdate.saida_status, "erro", "saida_status precisa distinguir a falha independente de status (#440)");
 
     const logsDoPipeline = erroLog.mock.calls.filter((c) =>
       String(c.arguments[0]).includes("[folha.pipeline]"),
     );
     assert.equal(logsDoPipeline.length, 1);
     assert.match(logsDoPipeline[0].arguments[0], /Geração de saída automática não concluída/);
+  });
+
+  // Cobre o caminho HTTP direto (POST /:id/gerar-saida) — o retry manual que o usuário
+  // aciona pelo botão "tentar novamente". Antes desta suíte, só dispararPipelineAutomatico
+  // exercitava gerarSaidaFolha/executarEFinalizarSaida; um bug específico do retry manual
+  // (ex: processamentoId errado, ou o flag tentativaDeGeracaoIniciada não sendo setado)
+  // passaria despercebido.
+  function reqRetry(overrides = {}) {
+    return {
+      params: { processamento_id: PROC_ID },
+      usuario: { perfil: PERFIS.ADMIN_CLIENTE, cliente_id: CLIENTE_A },
+      body: {},
+      query: {},
+      ...overrides,
+    };
+  }
+
+  it("retry manual (POST /:id/gerar-saida) tem sucesso → grava saida_status ok", async () => {
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "concluido", mes_referencia: "2026-07-01" },
+      error: null,
+    });
+    mockDb.queue("folha_calculos", "await", {
+      data: [
+        { id: "calc-1", empresa: "Padaria", funcionario: "João", cpf: "111.111.111-11", holerite_path: null },
+      ],
+      error: null,
+    });
+    mockDb.queue("folha_calculos", "await", { data: null, error: null });
+    mockDb.queue("folha_relatorios", "maybeSingle", { data: null, error: null });
+    mockDb.queue("folha_relatorios", "await", { data: null, error: null });
+    mockDb.queue("processamentos_folha", "await", { data: null, error: null });
+
+    const res = criarRes();
+    await gerarSaidaFolha(reqRetry(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(mockDb.restantes(), 0);
+
+    const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
+    assert.equal(ultimoUpdate.saida_status, "ok");
+    assert.equal(ultimoUpdate.motivo_erro, null);
+  });
+
+  it("retry manual (POST /:id/gerar-saida) falha → grava saida_status erro sem mudar status", async () => {
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "concluido", mes_referencia: "2026-07-01" },
+      error: null,
+    });
+    mockDb.queue("folha_calculos", "await", {
+      data: [
+        { id: "calc-1", empresa: "Padaria", funcionario: "João", cpf: "111.111.111-11", holerite_path: null },
+      ],
+      error: null,
+    });
+    mockDb.queue("storage", "upload", { error: { message: "falha ao subir holerite" } });
+    mockDb.queue("processamentos_folha", "await", { data: null, error: null });
+
+    const res = criarRes();
+    await gerarSaidaFolha(reqRetry(), res);
+
+    assert.equal(res.statusCode, 500);
+    assert.equal(mockDb.restantes(), 0);
+
+    const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
+    assert.equal(ultimoUpdate.status, undefined);
+    assert.equal(ultimoUpdate.saida_status, "erro");
+    assert.match(ultimoUpdate.motivo_erro, /holerite/);
+  });
+
+  it("retry manual bloqueado por guard (cálculo ainda não concluído) não mexe em saida_status", async () => {
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "processando", mes_referencia: "2026-07-01" },
+      error: null,
+    });
+
+    const res = criarRes();
+    await gerarSaidaFolha(reqRetry(), res);
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(mockDb.restantes(), 0, "guard de status não deveria disparar nenhuma escrita em saida_status");
+    assert.equal(mockDb.ultimoUpdate("processamentos_folha"), undefined);
+  });
+
+  it("retry manual: erro de infra ao buscar o processamento também grava saida_status erro", async () => {
+    // erroBusca (500) acontece ANTES de qualquer guard de autorização/estado — não é um
+    // guard, é uma falha de verdade, então precisa ser registrada (diferente dos guards
+    // 403/404/409 acima, que não mexem em saida_status).
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: null,
+      error: { message: "timeout de conexão" },
+    });
+    mockDb.queue("processamentos_folha", "await", { data: null, error: null });
+
+    const res = criarRes();
+    await gerarSaidaFolha(reqRetry(), res);
+
+    assert.equal(res.statusCode, 500);
+    assert.equal(mockDb.restantes(), 0);
+
+    const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
+    assert.equal(ultimoUpdate.saida_status, "erro");
+    assert.match(ultimoUpdate.motivo_erro, /buscar processamento/);
   });
 });
