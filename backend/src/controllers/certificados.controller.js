@@ -1,6 +1,10 @@
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { dataIsoValida } from "../utils/data.util.js";
+import {
+  calcularDiasRestantes,
+  calcularFaixa,
+} from "../utils/certificado-prazo.util.js";
 
 const TIPOS_VALIDOS = new Set(["A1", "A3"]);
 const CAMPOS_OBRIGATORIOS_POST = ["tipo", "validade"];
@@ -11,23 +15,6 @@ function camposFaltando(body, campos) {
   return campos.filter(
     (campo) => body[campo] === undefined || body[campo] === null || body[campo] === "",
   );
-}
-
-function calcularDiasRestantes(validade) {
-  const hoje = new Date();
-  const hojeUtc = Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
-
-  const [ano, mes, dia] = validade.slice(0, 10).split("-").map(Number);
-  const validadeUtc = Date.UTC(ano, mes - 1, dia);
-
-  return Math.round((validadeUtc - hojeUtc) / (1000 * 60 * 60 * 24));
-}
-
-function calcularFaixa(diasRestantes) {
-  if (diasRestantes <= 0) return "vencido";
-  if (diasRestantes < 30) return "vermelho";
-  if (diasRestantes <= 60) return "ambar";
-  return "verde";
 }
 
 function comFaixa(certificado) {
@@ -201,6 +188,8 @@ export async function editarCertificado(req, res) {
         return res.status(400).json({ erro: "validade deve estar no formato AAAA-MM-DD" });
       }
       atualizacoes.validade = valor;
+      // CD-3: validade nova reinicia a cadeia de marcos 60/30/7.
+      atualizacoes.ultimo_marco_alertado = null;
       continue;
     }
 
