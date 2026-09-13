@@ -395,7 +395,7 @@ describe("GET status e download (controllers)", () => {
     assert.equal(res.statusCode, 404);
   });
 
-  it("retorna 403 quando processamento é de outro cliente", async () => {
+  it("retorna 404 (não 403) quando processamento é de outro cliente — não revela existência (#441)", async () => {
     mockDb.queue("processamentos_folha", "maybeSingle", {
       data: {
         id: PROC_ID,
@@ -409,7 +409,8 @@ describe("GET status e download (controllers)", () => {
 
     const res = criarRes();
     await consultarStatusFolha(reqBase(), res);
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 404);
+    assert.match(res.body.erro, /não encontrado/i);
   });
 
   it("em erro inclui motivo_erro", async () => {
