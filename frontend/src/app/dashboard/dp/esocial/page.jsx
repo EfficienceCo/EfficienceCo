@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../../context/AuthContext';
-import { listarClientes } from '../../../../services/clientes.service';
+import { atualizarCliente, listarClientes } from '../../../../services/clientes.service';
 import {
   aprovarEventoEsocial,
   baixarXmlEventoEsocial,
@@ -542,6 +542,7 @@ export default function EsocialPage() {
 
   const [eventoAtual, setEventoAtual] = useState(null);
   const [erroSubmit, setErroSubmit] = useState(null);
+  const [isConfigurandoEsocial, setIsConfigurandoEsocial] = useState(false);
   const [isSubmetendo, setIsSubmetendo] = useState(false);
   const [isAprovando, setIsAprovando] = useState(false);
   const [erroAprovar, setErroAprovar] = useState('');
@@ -737,6 +738,31 @@ export default function EsocialPage() {
     }
   }
 
+  // Atalho pro admin resolver o bloqueio ESOCIAL_NAO_CONFIGURADO sem sair do
+  // wizard: liga a flag (mesmo PATCH da tela admin/clientes) e refaz a
+  // criação do rascunho que acabou de falhar.
+  async function handleConfirmarEsocialConfigurado() {
+    if (!clienteIdEfetivo) return;
+    setIsConfigurandoEsocial(true);
+    try {
+      await atualizarCliente(clienteIdEfetivo, { esocial_configurado: true });
+      setClientes((prev) =>
+        prev.map((c) =>
+          c.id === clienteIdEfetivo ? { ...c, esocial_configurado: true } : c,
+        ),
+      );
+      await handleRevisar();
+    } catch (error) {
+      setErroSubmit({
+        codigo: obterCodigoErro(error),
+        mensagem: obterMensagemErro(error, 'Não foi possível marcar o eSocial como configurado.'),
+        camposFaltando: [],
+      });
+    } finally {
+      setIsConfigurandoEsocial(false);
+    }
+  }
+
   async function handleAprovar() {
     if (!eventoAtual?.id) return;
     setIsAprovando(true);
@@ -921,6 +947,9 @@ export default function EsocialPage() {
               onRevisar={handleRevisar}
               isSubmetendo={isSubmetendo}
               erroSubmit={erroSubmit}
+              isAdminEfficience={isAdminEfficience}
+              onConfirmarEsocialConfigurado={handleConfirmarEsocialConfigurado}
+              isConfigurandoEsocial={isConfigurandoEsocial}
             />
           ) : null}
 
@@ -1128,6 +1157,9 @@ function PassoFormulario({
   onRevisar,
   isSubmetendo,
   erroSubmit,
+  isAdminEfficience,
+  onConfirmarEsocialConfigurado,
+  isConfigurandoEsocial,
 }) {
   const f = form.funcionario;
   const a = form.dadosAdmissao;
@@ -1398,10 +1430,24 @@ function PassoFormulario({
         <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
           <p className="text-sm font-semibold text-rose-800">{erroSubmit.mensagem}</p>
           {erroSubmit.codigo === 'ESOCIAL_NAO_CONFIGURADO' ? (
-            <p className="mt-1 text-sm text-rose-700">
-              É o primeiro evento deste cliente. Confirme com quem faz a configuração inicial do
-              eSocial (Grupo 1) antes de enviar.
-            </p>
+            <div className="mt-1 space-y-2">
+              <p className="text-sm text-rose-700">
+                É o primeiro evento deste cliente. Confirme com quem faz a configuração inicial do
+                eSocial (Grupo 1) antes de enviar.
+              </p>
+              {isAdminEfficience ? (
+                <button
+                  type="button"
+                  onClick={onConfirmarEsocialConfigurado}
+                  disabled={isConfigurandoEsocial}
+                  className="rounded-md bg-rose-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isConfigurandoEsocial
+                    ? 'Confirmando...'
+                    : 'Já configurei o Grupo 1 — liberar e tentar novamente'}
+                </button>
+              ) : null}
+            </div>
           ) : null}
           {erroSubmit.camposFaltando?.length ? (
             <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-rose-700">
