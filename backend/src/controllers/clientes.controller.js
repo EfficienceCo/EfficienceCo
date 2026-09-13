@@ -66,8 +66,9 @@ export async function buscarClientePorCnpj(req, res) {
 
   const { data, error } = await supabase
     .from("clientes")
-    .select("nome")
+    .select("id, nome")
     .eq("cnpj", digitos)
+    .eq("id", licenca.cliente_id)
     .maybeSingle();
 
   if (error) {
@@ -82,7 +83,7 @@ export async function buscarClientePorCnpj(req, res) {
     return res.status(404).json({ erro: "não encontrado" });
   }
 
-  return res.status(200).json({ nome: data.nome });
+  return res.status(200).json({ id: data.id, nome: data.nome });
 }
 
 export async function criarCliente(req, res) {
@@ -144,7 +145,7 @@ export async function atualizarCliente(req, res) {
   }
 
   const STATUSES_VALIDOS = ["ativo", "inativo", "suspenso"];
-  const { nome, cnpj, status } = req.body;
+  const { nome, cnpj, status, esocial_configurado } = req.body;
   const updates = {};
   if (nome !== undefined) updates.nome = nome;
   if (cnpj !== undefined) {
@@ -163,6 +164,15 @@ export async function atualizarCliente(req, res) {
       return res.status(400).json({ erro: "Status inválido. Use: ativo, inativo ou suspenso" });
     }
     updates.status = status;
+  }
+  // Libera o 1º evento eSocial do cliente (ver eventos-esocial.controller.js) —
+  // rota já é admin_efficience-only (clientes.routes.js), então não precisa de
+  // checagem de perfil adicional aqui.
+  if (esocial_configurado !== undefined) {
+    if (typeof esocial_configurado !== "boolean") {
+      return res.status(400).json({ erro: "esocial_configurado deve ser boolean" });
+    }
+    updates.esocial_configurado = esocial_configurado;
   }
 
   if (Object.keys(updates).length === 0) {

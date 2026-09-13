@@ -15,7 +15,7 @@ import { lerLinhasPlanilha, COLUNAS_FOLHA } from "../src/services/folha.service.
 const LINHA_BASE = {
   empresa: "Padaria do João",
   funcionario: "Maria Silva",
-  cpf: "111.111.111-11",
+  cpf: "529.982.247-25",
   cargo: "Caixa",
   salario_bruto: 3000,
   dias_trabalhados: 30,
