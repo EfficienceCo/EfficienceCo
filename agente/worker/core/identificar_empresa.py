@@ -125,9 +125,9 @@ def _identificar_por_conteudo(caminho_arquivo, pasta_base, empresa_propria=None)
         return None
 
     for cnpj in extrair_cnpjs(texto):
-        nome = buscar_empresa_por_cnpj(cnpj)
-        if nome:
-            return nome
+        empresa = buscar_empresa_por_cnpj(cnpj)
+        if empresa and empresa.get("nome"):
+            return empresa["nome"]
 
     empresas = listar_empresas(pasta_base)
     texto_norm = normalizar_texto_livre(texto)
