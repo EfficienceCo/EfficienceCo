@@ -38,14 +38,11 @@ const LINHAS_DE_DADOS = 500;
 //                       sem redução.
 // ---------------------------------------------------------------------------
 
-// Conjunto "legado": INSS/IRRF de 2024, exatamente o que o motor usava fixo
-// antes do #437. Cobre toda competência anterior a 2026-01 — 2025 não é modelado
-// à parte de propósito: não foi objeto do #437 e manter o legado aqui não
-// introduz regressão (é o que já rodava em produção).
+// Conjunto legado de 2024, exatamente o que o motor usava fixo antes do #437.
 // Fontes: Portaria Interministerial MPS/MF 2024; Instrução Normativa RFB (fev/2024).
 const TABELA_FOLHA_2024 = {
   vigenciaInicio: "2024-01",
-  vigenciaFim: "2025-12",
+  vigenciaFim: "2024-12",
   inss: {
     faixas: [
       { limite: 1412.00, aliquota: 0.075 },
@@ -65,6 +62,57 @@ const TABELA_FOLHA_2024 = {
     ],
     deducaoPorDependente: 189.59,
     descontoSimplificado: null,
+    reducaoMensal: null,
+  },
+};
+
+// Em 2025 o INSS mudou em janeiro e a tabela mensal do IRRF mudou novamente em
+// maio. Manter duas vigências impede aplicar retroativamente o aumento da faixa
+// de isenção aos meses de janeiro a abril.
+// Fontes oficiais: Portaria Interministerial MPS/MF nº 6/2025 e tabela IRPF 2025
+// da Receita Federal.
+const INSS_2025 = {
+  faixas: [
+    { limite: 1518.00, aliquota: 0.075 },
+    { limite: 2793.88, aliquota: 0.09 },
+    { limite: 4190.83, aliquota: 0.12 },
+    { limite: 8157.41, aliquota: 0.14 },
+  ],
+  tetoContribuicao: 951.62,
+};
+
+const TABELA_FOLHA_2025_JAN_ABR = {
+  vigenciaInicio: "2025-01",
+  vigenciaFim: "2025-04",
+  inss: INSS_2025,
+  irrf: {
+    faixas: [
+      { limite: 2259.20, aliquota: 0, deducao: 0 },
+      { limite: 2826.65, aliquota: 0.075, deducao: 169.44 },
+      { limite: 3751.05, aliquota: 0.15, deducao: 381.44 },
+      { limite: 4664.68, aliquota: 0.225, deducao: 662.77 },
+      { limite: Infinity, aliquota: 0.275, deducao: 896.00 },
+    ],
+    deducaoPorDependente: 189.59,
+    descontoSimplificado: 564.80,
+    reducaoMensal: null,
+  },
+};
+
+const TABELA_FOLHA_2025_MAI_DEZ = {
+  vigenciaInicio: "2025-05",
+  vigenciaFim: "2025-12",
+  inss: INSS_2025,
+  irrf: {
+    faixas: [
+      { limite: 2428.80, aliquota: 0, deducao: 0 },
+      { limite: 2826.65, aliquota: 0.075, deducao: 182.16 },
+      { limite: 3751.05, aliquota: 0.15, deducao: 394.16 },
+      { limite: 4664.68, aliquota: 0.225, deducao: 675.49 },
+      { limite: Infinity, aliquota: 0.275, deducao: 908.73 },
+    ],
+    deducaoPorDependente: 189.59,
+    descontoSimplificado: 607.20,
     reducaoMensal: null,
   },
 };
@@ -114,7 +162,12 @@ const TABELA_FOLHA_2026 = {
 };
 
 // Ordem crescente por vigência — resolverTabelaFolha depende disso.
-const TABELAS_FOLHA = [TABELA_FOLHA_2024, TABELA_FOLHA_2026];
+const TABELAS_FOLHA = [
+  TABELA_FOLHA_2024,
+  TABELA_FOLHA_2025_JAN_ABR,
+  TABELA_FOLHA_2025_MAI_DEZ,
+  TABELA_FOLHA_2026,
+];
 
 // Resolve o conjunto de tabelas vigente para a competência (aceita "YYYY-MM" ou
 // "YYYY-MM-DD"). Lança se a competência for anterior à tabela mais antiga — falhar
