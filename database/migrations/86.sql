@@ -1,10 +1,7 @@
--- BUG-FOLHA-02 (#438) — persistir a base de cálculo do IRRF em folha_calculos.
--- calcularFolhaFuncionario já calcula base_ir (base_calculo - INSS - dependentes),
--- mas o valor nunca era retornado nem gravado, então o holerite não tinha como
--- exibir "BASE IRRF" e o imposto retido ficava sem trilha de auditoria.
---
--- Coluna nullable (sem DEFAULT): linhas de folha_calculos anteriores a esta
--- migration não têm o valor e não dá pra recalcular sem reprocessar a planilha —
--- ficam NULL de propósito. Inserts novos sempre trazem base_ir
--- (folha.controller espalha o retorno de calcularFolhaFuncionario direto no insert).
-ALTER TABLE folha_calculos ADD COLUMN IF NOT EXISTS base_ir NUMERIC(12, 2);
+-- #377 (ES-8) — status intermediário para lock de transmissão.
+-- Evita POST /transmitir concorrentes enviarem o mesmo evento duas vezes ao gov.
+-- (84.sql da main já é certificados digitais CD-1.)
+ALTER TABLE eventos_esocial DROP CONSTRAINT IF EXISTS eventos_esocial_status_check;
+ALTER TABLE eventos_esocial
+  ADD CONSTRAINT eventos_esocial_status_check
+  CHECK (status IN ('rascunho','aprovado','transmitindo','transmitido','aceito','rejeitado'));

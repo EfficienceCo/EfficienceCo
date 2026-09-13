@@ -6,7 +6,7 @@
  * pelo mesmo código que roda em produção, abre o PDF no Chromium (o mesmo
  * visualizador que o usuário vê ao baixar) e confere que:
  *   - com IRRF > 0, a célula "BASE IRRF" mostra a base real do cálculo;
- *   - com IRRF = 0, a célula "BASE IRRF" mostra "-".
+ *   - com IRRF = 0, a célula ainda mostra a base efetivamente usada.
  *
  * Não depende de backend/DB no ar — exercita a geração real do artefato + o
  * render no navegador. Uma captura de tela do PDF fica anexada ao relatório.
@@ -85,8 +85,8 @@ test.beforeAll(async () => {
   const service: any = await import(pathToFileURL(SERVICE_PATH).href);
   gerarHoleritePDF = service.gerarHoleritePDF;
 
-  calcComIrrf = service.calcularFolhaFuncionario(linhaBase({ salario_bruto: 6000 }));
-  calcSemIrrf = service.calcularFolhaFuncionario(linhaBase({ salario_bruto: 1600 }));
+  calcComIrrf = service.calcularFolhaFuncionario(linhaBase({ salario_bruto: 6000 }), '2026-07');
+  calcSemIrrf = service.calcularFolhaFuncionario(linhaBase({ salario_bruto: 1600 }), '2026-07');
 
   expect(calcComIrrf.ir, 'pré-condição: salário 6000 gera IRRF > 0').toBeGreaterThan(0);
   expect(calcSemIrrf.ir, 'pré-condição: salário 1600 não gera IRRF').toBe(0);
@@ -107,9 +107,9 @@ test('holerite com IRRF > 0 exibe a BASE IRRF real (não "-")', async () => {
   expect(valor).toBe(formatarMoeda(calcComIrrf.base_ir));
 });
 
-test('holerite com IRRF = 0 exibe BASE IRRF como "-"', async () => {
+test('holerite com IRRF = 0 ainda exibe a BASE IRRF usada', async () => {
   const itens = await extrairItensTexto(pdfSemIrrf);
-  expect(valorDaCelula(itens, 'BASE IRRF')).toBe('-');
+  expect(valorDaCelula(itens, 'BASE IRRF')).toBe(formatarMoeda(calcSemIrrf.base_ir));
 });
 
 test('PDF do holerite renderiza no navegador com a BASE IRRF preenchida (captura visual)', async ({ page }) => {
