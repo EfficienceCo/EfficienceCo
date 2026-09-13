@@ -1,11 +1,14 @@
 import comunicacao.api_client as client
 from comunicacao.reportar_evento import reportar_evento
+from core.encoding_console import garantir_stdout_utf8
 from core.licenca import validar_licenca
 from core.agendador import iniciar_agendador
 
 api = False
 
 if __name__ == '__main__':
+    # Antes de qualquer print: Windows cp1252 / launcher sem PYTHONUTF8 (BUG-NFE-01).
+    garantir_stdout_utf8()
     print('\nIniciando agente Efficience...\n')
 
     try:
