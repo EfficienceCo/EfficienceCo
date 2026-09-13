@@ -66,8 +66,9 @@ export async function buscarClientePorCnpj(req, res) {
 
   const { data, error } = await supabase
     .from("clientes")
-    .select("nome")
+    .select("id, nome")
     .eq("cnpj", digitos)
+    .eq("id", licenca.cliente_id)
     .maybeSingle();
 
   if (error) {
@@ -82,7 +83,7 @@ export async function buscarClientePorCnpj(req, res) {
     return res.status(404).json({ erro: "não encontrado" });
   }
 
-  return res.status(200).json({ nome: data.nome });
+  return res.status(200).json({ id: data.id, nome: data.nome });
 }
 
 export async function criarCliente(req, res) {
