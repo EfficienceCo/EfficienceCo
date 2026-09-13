@@ -39,9 +39,12 @@ const linha = (over = {}) => ({
 // resolverTabelaFolha
 // ---------------------------------------------------------------------------
 
-test("resolverTabelaFolha: competência de 2025 cai na tabela legada (2024-01)", () => {
-  assert.equal(resolverTabelaFolha("2025-12").vigenciaInicio, "2024-01");
+test("resolverTabelaFolha: separa as duas vigências fiscais de 2025", () => {
   assert.equal(resolverTabelaFolha("2024-02").vigenciaInicio, "2024-01");
+  assert.equal(resolverTabelaFolha("2025-01").vigenciaInicio, "2025-01");
+  assert.equal(resolverTabelaFolha("2025-04").vigenciaInicio, "2025-01");
+  assert.equal(resolverTabelaFolha("2025-05").vigenciaInicio, "2025-05");
+  assert.equal(resolverTabelaFolha("2025-12").vigenciaInicio, "2025-05");
 });
 
 test("resolverTabelaFolha: competência de 2026 usa a tabela 2026-01", () => {
@@ -74,6 +77,7 @@ test("resolverTabelaFolha: competência ausente ou malformada lança", () => {
 // ---------------------------------------------------------------------------
 
 const inss2026 = resolverTabelaFolha("2026-09").inss;
+const inss2025 = resolverTabelaFolha("2025-09").inss;
 const inss2024 = resolverTabelaFolha("2024-06").inss;
 
 test("calcularINSS 2026: base zero ou negativa não contribui", () => {
@@ -105,12 +109,30 @@ test("calcularINSS 2024 (regressão): faixas e teto publicados inalterados", () 
   assert.equal(calcularINSS(9000.0, inss2024), 908.85); // tetoContribuicao publicado, exato
 });
 
+test("calcularINSS 2025: faixas e teto da Portaria MPS/MF nº 6", () => {
+  assert.equal(cent(calcularINSS(1518, inss2025)), 113.85);
+  assert.equal(cent(calcularINSS(3000, inss2025)), 253.41);
+  assert.equal(calcularINSS(9000, inss2025), 951.62);
+});
+
 // ---------------------------------------------------------------------------
 // calcularIR — dedução mais vantajosa + redução mensal Lei 15.270/2025
 // ---------------------------------------------------------------------------
 
 const irrf2026 = resolverTabelaFolha("2026-09").irrf;
+const irrf2025Jan = resolverTabelaFolha("2025-01").irrf;
+const irrf2025Mai = resolverTabelaFolha("2025-05").irrf;
 const irrf2024 = resolverTabelaFolha("2024-06").irrf;
+
+test("calcularIR 2025: aplica as vigências janeiro-abril e maio-dez", () => {
+  const dados = {
+    baseCalculo: 3000,
+    inss: calcularINSS(3000, inss2025),
+    numDependentes: 0,
+  };
+  assert.equal(calcularIR(dados, irrf2025Jan), 13.2);
+  assert.equal(calcularIR(dados, irrf2025Mai), 0);
+});
 
 test("calcularIR 2026: rendimento até R$ 5.000 é isento (redução mensal)", () => {
   assert.equal(
