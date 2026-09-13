@@ -182,7 +182,8 @@ test.describe('Folha de Pagamento', () => {
         `/dashboard/folha/status?processamento_id=${PROC_ID}&cliente_nome=Padaria%20do%20Ze`,
       );
 
-      const linhaArquivo = page.getByText(NOME_SEM_CPF, { exact: true });
+      const tabela = page.getByRole('table');
+      const linhaArquivo = tabela.getByText(NOME_SEM_CPF, { exact: true });
       await expect(linhaArquivo).toBeVisible({ timeout: 10000 });
 
       // Nada renderizado na tela pode conter o CPF (mascarado ou não).
@@ -193,7 +194,7 @@ test.describe('Folha de Pagamento', () => {
 
       const [download] = await Promise.all([
         page.waitForEvent('download'),
-        page.getByRole('button', { name: 'Baixar' }).first().click(),
+        tabela.getByRole('button', { name: 'Baixar' }).click(),
       ]);
 
       // A URL chamada carrega o id opaco, nunca o CPF.
