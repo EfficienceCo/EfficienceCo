@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import {
   montarListaArquivos,
   arquivosParaResposta,
-  resolverPathDownload,
+  resolverArquivoDownload,
   calcularTotaisProcessamento,
+  sanitizarNomeArquivo,
 } from "../src/services/folha-status.helpers.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
@@ -137,8 +138,9 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
         // sem relação nenhuma com a orquestração do pipeline sendo testada aqui.
         montarListaArquivos,
         arquivosParaResposta,
-        resolverPathDownload,
+        resolverArquivoDownload,
         calcularTotaisProcessamento,
+        sanitizarNomeArquivo,
         registrarEventoConclusaoFolha: async () => ({ registrado: true, descricao: "ok" }),
       },
     });

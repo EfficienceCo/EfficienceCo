@@ -5,8 +5,8 @@ import comunicacao.api_client as client
 
 def buscar_empresa_por_cnpj(cnpj):
     """
-    GET /clientes/por-cnpj. Retorna o nome da empresa ou None
-    (não encontrado, CNPJ inválido, rede/auth).
+    GET /clientes/por-cnpj. Retorna {"id", "nome"} ou None
+    (não encontrado, CNPJ inválido, sem id, rede/auth).
     """
     if not cnpj:
         return None
@@ -22,9 +22,17 @@ def buscar_empresa_por_cnpj(cnpj):
             addToHeaders={"x-licenca-token": client.LICENSE_TOKEN},
         )
         body = response.json()
-        nome = body.get("nome") if isinstance(body, dict) else None
-        if isinstance(nome, str) and nome.strip():
-            return nome.strip()
+        if not isinstance(body, dict):
+            return None
+        cliente_id = body.get("id")
+        nome = body.get("nome")
+        if (
+            isinstance(cliente_id, str)
+            and cliente_id.strip()
+            and isinstance(nome, str)
+            and nome.strip()
+        ):
+            return {"id": cliente_id.strip(), "nome": nome.strip()}
         return None
     except client.ApiError as e:
         if e.status_code in (400, 404, 401):
