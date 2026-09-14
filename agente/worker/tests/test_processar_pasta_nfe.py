@@ -285,6 +285,30 @@ def test_nao_identificado_move_sem_post(pasta_nfe):
     assert (inbox / "nao_identificado" / "entrada.xml").is_file()
 
 
+def test_falha_mover_nao_identificado_nao_aborta_pasta(pasta_nfe):
+    """Falha de move em um XML não pode travar o restante da pasta."""
+    inbox, _base = pasta_nfe
+    quebrado = inbox / "a-quebrado.xml"
+    quebrado.write_text("<nfeProc><NFe>", encoding="utf-8")
+    shutil.copy(FIXTURES / "entrada.xml", inbox / "b-valido.xml")
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch(
+            "automacoes.processar_nfe._mover_xml",
+            side_effect=OSError("disco cheio"),
+        ),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        mock_post.return_value = MagicMock()
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.called
+    assert mock_post.call_args.args[1]["tipo"] == "entrada"
+    assert quebrado.is_file()
+    assert (inbox / "b-valido.xml").is_file()
+
+
 def test_nome_empresa_invalido_nao_posta(pasta_nfe):
     inbox, _base = pasta_nfe
     _copiar_fixture("entrada.xml", inbox)
@@ -319,16 +343,18 @@ def test_duplicata_409_ainda_move(pasta_nfe):
     assert _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").is_file()
 
 
-def test_xml_invalido_permanece_na_inbox(pasta_nfe):
+def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
     inbox, _base = pasta_nfe
     ruim = inbox / "quebrado.xml"
     ruim.write_text("<nfeProc><NFe>", encoding="utf-8")
 
     with patch("automacoes.processar_nfe.client.post") as mock_post:
         processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
 
     mock_post.assert_not_called()
-    assert ruim.is_file()
+    assert not ruim.exists()
+    assert (inbox / "nao_identificado" / "quebrado.xml").is_file()
 
 
 def test_erro_api_nao_move(pasta_nfe):

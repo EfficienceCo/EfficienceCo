@@ -338,6 +338,7 @@ def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> No
         print(f"[processar_nfe] não identificado ({nome}): {motivo} -> {movido}")
     except Exception as move_err:
         print(f"[processar_nfe] falha ao mover {nome} para nao_identificado/: {move_err}")
+        raise
 
 
 def processar_pasta_nfe(pasta: str) -> None:
@@ -361,7 +362,10 @@ def processar_pasta_nfe(pasta: str) -> None:
         try:
             dados = parsear_nfe(str(xml_path))
         except ValueError as e:
-            print(f"[processar_nfe] XML inválido ({nome}): {e}")
+            try:
+                _mover_nao_identificado(xml_path, pasta_path, str(e))
+            except Exception:
+                pass
             continue
 
         try:
@@ -370,7 +374,10 @@ def processar_pasta_nfe(pasta: str) -> None:
                 dados["cnpj_destinatario"],
             )
         except ValueError as e:
-            _mover_nao_identificado(xml_path, pasta_path, str(e))
+            try:
+                _mover_nao_identificado(xml_path, pasta_path, str(e))
+            except Exception:
+                pass
             continue
 
         empresas = _empresas_no_escopo_licenca(empresas)
@@ -395,11 +402,14 @@ def processar_pasta_nfe(pasta: str) -> None:
             alvos.append((empresa, destino))
 
         if not alvos:
-            _mover_nao_identificado(
-                xml_path,
-                pasta_path,
-                "nome de empresa inválido (" + "; ".join(nomes_invalidos) + ")",
-            )
+            try:
+                _mover_nao_identificado(
+                    xml_path,
+                    pasta_path,
+                    "nome de empresa inválido (" + "; ".join(nomes_invalidos) + ")",
+                )
+            except Exception:
+                pass
             continue
 
         # Resolve os caminhos finais antes do POST para garantir que arquivo_xml
