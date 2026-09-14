@@ -178,13 +178,18 @@ export const TP_CONTRATO = [
   { value: '3', label: '3 — Prazo determinado, vinculado à ocorrência de um fato' },
 ];
 
+// Precisa casar exatamente com o Set TP_JORNADA de
+// backend/src/utils/esocial-xml.util.js — o gerador rejeita (ErroXmlESocial)
+// qualquer código fora dele. Testado em backend/tests/esocial-tabelas-sync.test.js.
+// Código 1 não existe no domínio aceito pelo gerador; 8 é reservado/não usado.
 export const TP_JORNADA = [
-  { value: '1', label: '1 — Jornada com horário diário e folga fixos' },
   { value: '2', label: '2 — Jornada 12 x 36 (12 de trabalho por 36 de descanso)' },
   { value: '3', label: '3 — Jornada com horário diário fixo e folga variável' },
   { value: '4', label: '4 — Jornada com horário diário fixo e variável (dias úteis e sábado)' },
   { value: '5', label: '5 — Jornada com horário diário e folga variáveis' },
   { value: '6', label: '6 — Demais tipos de jornada' },
+  { value: '7', label: '7 — Jornada isenta de controle' },
+  { value: '9', label: '9 — Regime de sobreaviso' },
 ];
 
 export const TMP_PARCIAL = [
