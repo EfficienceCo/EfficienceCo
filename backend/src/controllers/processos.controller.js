@@ -6,6 +6,7 @@ import {
   criarProcessoComEtapas,
   ETAPAS_PADRAO,
 } from "../services/processos.service.js";
+import { registrarEventoEtapa } from "../services/processos-eventos.service.js";
 
 const ACOES_AUTOMATIZADAS = ["gerar_contrato_social", "criar_pastas"];
 const STATUS_ETAPA = {
@@ -564,7 +565,7 @@ export async function concluirExecucaoEtapaAgente(req, res) {
   const { data: etapa, error: erroEtapa } = await supabase
     .from("etapas")
     .select(
-      "id, processo_id, tipo, status, execucao_token, processos!inner(cliente_id, status)",
+      "id, processo_id, tipo, acao, status, execucao_token, processos!inner(cliente_id, status, nome_empresa)",
     )
     .eq("id", etapaId)
     .maybeSingle();
@@ -618,6 +619,14 @@ export async function concluirExecucaoEtapaAgente(req, res) {
     if (!etapaAtualizada) {
       return res.status(409).json({ erro: "Claim de execução não é mais válido" });
     }
+
+    // Persistência do log no mesmo fluxo da conclusão (BUG-ABERT-03 / #489).
+    await registrarEventoEtapa(supabase, {
+      clienteId: processo.cliente_id,
+      acao: etapa.acao,
+      nomeEmpresa: processo.nome_empresa,
+      sucesso: true,
+    });
 
     const { data: todasEtapas, error: erroTodasEtapas } = await supabase
       .from("etapas")
@@ -676,6 +685,14 @@ export async function concluirExecucaoEtapaAgente(req, res) {
   if (!etapaComErro) {
     return res.status(409).json({ erro: "Claim de execução não é mais válido" });
   }
+
+  await registrarEventoEtapa(supabase, {
+    clienteId: processo.cliente_id,
+    acao: etapa.acao,
+    nomeEmpresa: processo.nome_empresa,
+    sucesso: false,
+    erro: mensagemErro,
+  });
 
   return res.status(200).json(etapaComErro);
 }

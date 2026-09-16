@@ -562,9 +562,14 @@ describe("processos.controller — concluirExecucaoEtapaAgente (issue #266, conc
         id: ETAPA_ID,
         processo_id: PROCESSO_ID,
         tipo: "automatizada",
+        acao: "gerar_contrato_social",
         status: "processando",
         execucao_token: EXECUCAO_TOKEN,
-        processos: { cliente_id: CLIENTE_A, status: "em_andamento" },
+        processos: {
+          cliente_id: CLIENTE_A,
+          status: "em_andamento",
+          nome_empresa: "Padaria do Joao",
+        },
       },
       error: null,
     });
@@ -591,6 +596,15 @@ describe("processos.controller — concluirExecucaoEtapaAgente (issue #266, conc
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.status, "concluida");
     assert.equal(res.body.arquivo_gerado, "C:/x/contrato.docx");
+
+    const insertEvento = chamadas.find(
+      (chamada) => chamada.tabela === "eventos" && chamada.metodo === "insert",
+    );
+    assert.ok(insertEvento, "deve persistir evento em Logs (#489)");
+    assert.equal(insertEvento.args[0].cliente_id, CLIENTE_A);
+    assert.equal(insertEvento.args[0].sucesso, true);
+    assert.match(insertEvento.args[0].descricao, /Contrato social gerado/);
+    assert.match(insertEvento.args[0].descricao, /Padaria do Joao/);
   });
 
   it("erro: volta a etapa pra pronta_para_execucao guardando a mensagem de erro (contador pode tentar de novo)", async () => {
@@ -600,9 +614,14 @@ describe("processos.controller — concluirExecucaoEtapaAgente (issue #266, conc
         id: ETAPA_ID,
         processo_id: PROCESSO_ID,
         tipo: "automatizada",
+        acao: "gerar_contrato_social",
         status: "processando",
         execucao_token: EXECUCAO_TOKEN,
-        processos: { cliente_id: CLIENTE_A, status: "em_andamento" },
+        processos: {
+          cliente_id: CLIENTE_A,
+          status: "em_andamento",
+          nome_empresa: "Padaria do Joao",
+        },
       },
       error: null,
     });
@@ -634,6 +653,65 @@ describe("processos.controller — concluirExecucaoEtapaAgente (issue #266, conc
     );
     assert.equal(update.args[0].execucao_token, null);
     assert.equal(update.args[0].execucao_iniciada_em, null);
+
+    const insertEvento = chamadas.find(
+      (chamada) => chamada.tabela === "eventos" && chamada.metodo === "insert",
+    );
+    assert.ok(insertEvento, "deve persistir evento de falha em Logs (#489)");
+    assert.equal(insertEvento.args[0].sucesso, false);
+    assert.match(insertEvento.args[0].descricao, /Falha ao processar etapa/);
+    assert.match(insertEvento.args[0].descricao, /Template não encontrado/);
+  });
+
+  it("sucesso criar_pastas: grava evento de estrutura de pastas no Logs", async () => {
+    tokenLicencaValido(CLIENTE_A);
+    queue("etapas", "maybeSingle", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        acao: "criar_pastas",
+        status: "processando",
+        execucao_token: EXECUCAO_TOKEN,
+        processos: {
+          cliente_id: CLIENTE_A,
+          status: "em_andamento",
+          nome_empresa: "Souza Comercio",
+        },
+      },
+      error: null,
+    });
+    queue("etapas", "maybeSingle", {
+      data: {
+        id: ETAPA_ID,
+        status: "concluida",
+        concluida: true,
+        arquivo_gerado: "C:/Souza/Souza Comercio",
+      },
+      error: null,
+    });
+    queue("etapas", "await", { data: [{ concluida: true }, { concluida: false }], error: null });
+
+    const res = criarRes();
+    await concluirExecucaoEtapaAgente(
+      {
+        headers: { "x-licenca-token": "token-valido" },
+        params: { etapaId: ETAPA_ID },
+        body: {
+          sucesso: true,
+          arquivo_gerado: "C:/Souza/Souza Comercio",
+          execucao_token: EXECUCAO_TOKEN,
+        },
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    const insertEvento = chamadas.find(
+      (chamada) => chamada.tabela === "eventos" && chamada.metodo === "insert",
+    );
+    assert.equal(insertEvento.args[0].descricao, "Estrutura de pastas criada para Souza Comercio");
+    assert.equal(insertEvento.args[0].sucesso, true);
   });
 
   it("400 rejeita string 'false' em vez de interpretar como sucesso", async () => {
