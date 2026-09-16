@@ -52,7 +52,9 @@ Ao iniciar o worker, o launcher injeta no processo filho (a partir do YAML):
 
 Não dependa de um `.env` separado no pacote de produção: esses valores vêm do `config.yaml` do launcher.
 
-Logs legíveis: `%APPDATA%\Efficience\launcher.log`
+Logs legíveis:
+- Launcher: `%APPDATA%\Efficience\launcher.log`
+- Worker (mesmo sem console / `-H windowsgui`): `%APPDATA%\Efficience\worker.log`
 
 ## Build (Windows nativo)
 
