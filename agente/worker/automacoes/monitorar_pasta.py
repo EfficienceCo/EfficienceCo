@@ -18,6 +18,13 @@ from datetime import datetime
 import time
 import os
 
+
+def _caminho_em_nao_classificado(caminho):
+    """True se o path está sob (ou é) a pasta de quarentena NAO_CLASSIFICADO."""
+    partes = os.path.normpath(caminho).split(os.sep)
+    return PASTA_NAO_CLASSIFICADO in partes
+
+
 class MonitorPasta(FileSystemEventHandler):
     def __init__(self, regras):
         self.regras = regras
@@ -31,8 +38,7 @@ class MonitorPasta(FileSystemEventHandler):
             return
 
         # evita loop ao mover para NAO_CLASSIFICADO sob a pasta monitorada
-        partes = os.path.normpath(event.src_path).split(os.sep)
-        if PASTA_NAO_CLASSIFICADO in partes:
+        if _caminho_em_nao_classificado(event.src_path):
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -174,10 +180,16 @@ def _varredura_inicial(regras, pasta):
         print(f"[monitor] Varrendo arquivos existentes em: {p}")
     
     for raiz, dirs, arquivos in os.walk(pasta):
+        # mesmo critério do on_created: não reprocessar quarentena (BUG-ORG-07 / #485)
+        dirs[:] = [d for d in dirs if d != PASTA_NAO_CLASSIFICADO]
+        if _caminho_em_nao_classificado(raiz):
+            continue
         for nome in arquivos:
             if nome == "desktop.ini":
                 continue
             caminho = os.path.join(raiz, nome)
+            if _caminho_em_nao_classificado(caminho):
+                continue
             print(f"[monitor] Arquivo encontrado na varredura: {nome}")
             _processar_arquivo(caminho, regras)
 
