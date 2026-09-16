@@ -16,6 +16,12 @@ const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
 const PROCESSO_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const ETAPA_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const EXECUCAO_TOKEN = "123e4567-e89b-42d3-a456-426614174000";
+const PAYLOAD_CONTRATO = {
+  socios: [{ nome: "Fulano", cpf: "111", participacao: 100 }],
+  capital_social: 1000,
+  objeto_social: "Serviços contábeis",
+  endereco: "Rua Exemplo, 123",
+};
 
 function criarRes() {
   return {
@@ -218,6 +224,10 @@ describe("processos.controller — executarAcaoEtapaJwt (issue #266)", () => {
       objeto_social: "Serviços contábeis",
       endereco: "Rua Exemplo, 123",
     };
+    queue("etapas", "await", {
+      data: [{ descricao: "Criar estrutura de pastas", concluida: true }],
+      error: null,
+    });
     queue("etapas", "maybeSingle", {
       data: { id: ETAPA_ID, status: "pronta_para_execucao", payload_execucao: payload },
       error: null,
@@ -229,6 +239,142 @@ describe("processos.controller — executarAcaoEtapaJwt (issue #266)", () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.status, "pronta_para_execucao");
     assert.deepEqual(res.body.payload_execucao, payload);
+  });
+
+  it("409 bloqueia gerar_contrato_social enquanto criar_pastas não estiver concluída (#488)", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        acao: "gerar_contrato_social",
+        status: "pendente",
+        concluida: false,
+        erro_execucao: null,
+      },
+      error: null,
+    });
+    queue("etapas", "await", {
+      data: [{ descricao: "Criar estrutura de pastas", concluida: false }],
+      error: null,
+    });
+
+    const res = criarRes();
+    await executarAcaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+
+    assert.equal(res.statusCode, 409);
+    assert.match(res.body.erro, /Criar estrutura de pastas/);
+    assert.equal(chamadas.some((chamada) => chamada.metodo === "update"), false);
+    // A mensagem cita a etapa de menor ordem — a mesma que o aviso da UI aponta.
+    assert.ok(
+      chamadas.some(
+        (chamada) => chamada.metodo === "order" && chamada.args[0] === "ordem",
+      ),
+    );
+  });
+
+  it("libera o contrato quando uma das etapas criar_pastas repetidas concluiu (#488)", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        acao: "gerar_contrato_social",
+        status: "pendente",
+        concluida: false,
+        erro_execucao: null,
+      },
+      error: null,
+    });
+    // O seed 40.sql repete a ação criar_pastas em duas etapas do mesmo processo.
+    queue("etapas", "await", {
+      data: [
+        { descricao: "Criar estrutura de pastas", concluida: true },
+        { descricao: "Disparar robô de protocolo na Junta Comercial", concluida: false },
+      ],
+      error: null,
+    });
+    queue("etapas", "maybeSingle", {
+      data: { id: ETAPA_ID, status: "pronta_para_execucao", payload_execucao: PAYLOAD_CONTRATO },
+      error: null,
+    });
+
+    const res = criarRes();
+    await executarAcaoEtapaJwt(
+      reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }, { ...PAYLOAD_CONTRATO }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+  });
+
+  it("não bloqueia contrato em processo sem etapa de criar_pastas (#488)", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        acao: "gerar_contrato_social",
+        status: "pendente",
+        concluida: false,
+        erro_execucao: null,
+      },
+      error: null,
+    });
+    queue("etapas", "await", { data: [], error: null });
+    queue("etapas", "maybeSingle", {
+      data: { id: ETAPA_ID, status: "pronta_para_execucao", payload_execucao: PAYLOAD_CONTRATO },
+      error: null,
+    });
+
+    const res = criarRes();
+    await executarAcaoEtapaJwt(
+      reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }, { ...PAYLOAD_CONTRATO }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+  });
+
+  it("criar_pastas não depende de nenhuma outra etapa (#488)", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        acao: "criar_pastas",
+        status: "pendente",
+        concluida: false,
+        erro_execucao: null,
+      },
+      error: null,
+    });
+    queue("etapas", "maybeSingle", {
+      data: { id: ETAPA_ID, status: "pronta_para_execucao", payload_execucao: {} },
+      error: null,
+    });
+
+    const res = criarRes();
+    await executarAcaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.status, "pronta_para_execucao");
   });
 
   it("400 quando o processo está cancelado", async () => {
