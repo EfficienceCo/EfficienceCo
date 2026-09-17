@@ -1,4 +1,4 @@
-﻿﻿import supabase from "../config/database.js";
+﻿import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { criar as criarNotificacao } from "../services/notificacoes.service.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
@@ -260,8 +260,10 @@ export async function deletarObrigacao(req, res) {
 
 export async function proximasObrigacoes(req, res) {
   const clienteId = resolverClienteId(req);
+  // Widget "Próximas obrigações" do shell chama sem cliente_id para admin_efficience.
+  // Resposta vazia evita 400; GET /obrigacoes (tela) e mutações seguem exigindo cliente.
   if (!clienteId) {
-    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+    return res.status(200).json([]);
   }
 
   const dias = Math.max(1, parseInt(req.query.dias) || 7);
