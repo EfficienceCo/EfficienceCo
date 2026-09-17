@@ -115,6 +115,19 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(res.body.id, "novo-id");
   });
 
+  it("400 quando data_emissao é futura (BUG-APUR-08)", async () => {
+    tokenValido();
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: payloadValido({ data_emissao: "2099-12-08" }),
+    };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /não pode ser futura/i);
+  });
+
   it("403 quando cliente_id do payload não pertence ao token", async () => {
     tokenValido();
     // Nem chega a validar CNPJ: isolamento por licença vem primeiro.

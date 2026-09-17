@@ -1,7 +1,7 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
-import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
+import { aplicarFiltroPeriodo, dataLocalISO } from "../utils/periodo.util.js";
 
 const TIPOS_VALIDOS = new Set(["entrada", "saida"]);
 
@@ -77,6 +77,16 @@ export async function criarLancamentoFiscal(req, res) {
     cliente_id,
     arquivo_xml,
   } = req.body;
+
+  // BUG-APUR-08 / QA-E: NF-e com data futura não deve entrar no ledger —
+  // contaminaria RBT12/receita se a apuração cobrisse o período.
+  const emissaoISO = typeof data_emissao === "string" ? data_emissao.slice(0, 10) : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(emissaoISO)) {
+    return res.status(400).json({ erro: "data_emissao deve ser uma data ISO YYYY-MM-DD" });
+  }
+  if (emissaoISO > dataLocalISO()) {
+    return res.status(400).json({ erro: "data_emissao não pode ser futura" });
+  }
 
   if (!TIPOS_VALIDOS.has(tipo)) {
     return res.status(400).json({ erro: "tipo deve ser 'entrada' ou 'saida'" });
