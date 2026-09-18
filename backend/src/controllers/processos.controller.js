@@ -75,6 +75,42 @@ function validarPayloadExecucao(acao, payload) {
   return null;
 }
 
+// O contrato social é gravado dentro de {pasta_empresa}/Contratos — a árvore de
+// pastas precisa existir antes. O agente tem fallback para criá-la, mas a ordem
+// das etapas é regra de produto e vale mesmo assim (#488).
+const DEPENDENCIAS_ACAO = { gerar_contrato_social: "criar_pastas" };
+
+async function _dependenciaPendente(processoId, acao) {
+  const acaoRequerida = DEPENDENCIAS_ACAO[acao];
+  if (!acaoRequerida) return null;
+
+  // (processo_id, acao) não é único — um processo pode repetir a mesma ação em
+  // etapas diferentes. Uma delas concluída já garante a pasta no disco.
+  const { data: etapasRequeridas, error } = await supabase
+    .from("etapas")
+    .select("descricao, concluida")
+    .eq("processo_id", processoId)
+    .eq("acao", acaoRequerida)
+    .order("ordem", { ascending: true });
+
+  if (error) {
+    console.error("[processos.controller] Erro ao verificar dependência:", error.message);
+    return { status: 500, body: { erro: "Erro ao verificar dependências da etapa" } };
+  }
+
+  const candidatas = etapasRequeridas || [];
+  if (candidatas.length === 0 || candidatas.some((etapa) => etapa.concluida)) {
+    return null;
+  }
+
+  return {
+    status: 409,
+    body: {
+      erro: `Conclua a etapa "${candidatas[0].descricao}" antes de executar esta etapa`,
+    },
+  };
+}
+
 function resolverClienteId(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
     return req.body.cliente_id || req.query.cliente_id;
@@ -357,6 +393,11 @@ async function _executarAcaoEtapa(processoId, etapaId, clienteId, payload) {
 
   if (etapa.concluida) {
     return { status: 400, body: { erro: "Etapa já está concluída" } };
+  }
+
+  const dependenciaPendente = await _dependenciaPendente(processoId, etapa.acao);
+  if (dependenciaPendente) {
+    return dependenciaPendente;
   }
 
   const primeiraExecucao = etapa.status === STATUS_ETAPA.PENDENTE;
