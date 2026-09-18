@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import {
   montarListaArquivos,
   arquivosParaResposta,
-  resolverPathDownload,
+  resolverArquivoDownload,
   calcularTotaisProcessamento,
+  sanitizarNomeArquivo,
 } from "../src/services/folha-status.helpers.js";
 import { PERFIS } from "../src/config/perfis.js";
 
@@ -154,8 +155,9 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
         // sem relação nenhuma com a orquestração do pipeline sendo testada aqui.
         montarListaArquivos,
         arquivosParaResposta,
-        resolverPathDownload,
+        resolverArquivoDownload,
         calcularTotaisProcessamento,
+        sanitizarNomeArquivo,
         registrarEventoConclusaoFolha: async () => ({ registrado: true, descricao: "ok" }),
       },
     });
@@ -372,24 +374,49 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     assert.equal(mockDb.ultimoUpdate("processamentos_folha"), undefined);
   });
 
-  it("retry manual: erro de infra ao buscar o processamento também grava saida_status erro", async () => {
-    // erroBusca (500) acontece ANTES de qualquer guard de autorização/estado — não é um
-    // guard, é uma falha de verdade, então precisa ser registrada (diferente dos guards
-    // 403/404/409 acima, que não mexem em saida_status).
+  it("retry manual: erro na busca inicial não escreve antes de validar o dono", async () => {
     mockDb.queue("processamentos_folha", "maybeSingle", {
       data: null,
       error: { message: "timeout de conexão" },
     });
-    mockDb.queue("processamentos_folha", "await", { data: null, error: null });
-
     const res = criarRes();
     await gerarSaidaFolha(reqRetry(), res);
 
     assert.equal(res.statusCode, 500);
     assert.equal(mockDb.restantes(), 0);
 
-    const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
-    assert.equal(ultimoUpdate.saida_status, "erro");
-    assert.match(ultimoUpdate.motivo_erro, /buscar processamento/);
+    assert.match(res.body.erro, /buscar processamento/);
+    assert.equal(mockDb.ultimoUpdate("processamentos_folha"), undefined);
+  });
+
+  for (const processamento of [null, {
+    id: PROC_ID,
+    cliente_id: "22222222-2222-2222-2222-222222222222",
+    status: "concluido",
+  }]) {
+    it(`retry manual: ${processamento ? "outro tenant" : "inexistente"} retorna 404 sem escrever`, async () => {
+      mockDb.queue("processamentos_folha", "maybeSingle", { data: processamento, error: null });
+
+      const res = criarRes();
+      await gerarSaidaFolha(reqRetry(), res);
+
+      assert.equal(res.statusCode, 404);
+      assert.equal(mockDb.restantes(), 0);
+      assert.equal(mockDb.ultimoUpdate("processamentos_folha"), undefined);
+    });
+  }
+
+  it("retry manual: falha na leitura dos cálculos após autorização registra erro de saída", async () => {
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "concluido" }, error: null,
+    });
+    mockDb.queue("folha_calculos", "await", { data: null, error: { message: "timeout" } });
+
+    const res = criarRes();
+    await gerarSaidaFolha(reqRetry(), res);
+
+    assert.equal(res.statusCode, 500);
+    assert.equal(mockDb.restantes(), 0);
+    assert.equal(mockDb.ultimoUpdate("processamentos_folha").saida_status, "erro");
   });
 });

@@ -9,6 +9,10 @@ import {
 } from "../src/controllers/lancamentos-fiscais.controller.js";
 
 const CLIENTE_ID = "11111111-1111-1111-1111-111111111111";
+const CLIENTE_ID_OUTRO = "22222222-2222-2222-2222-222222222222";
+const CNPJ_EMIT = "12345678000190";
+const CNPJ_DEST = "98765432000155";
+const CNPJ_ALHEIO = "11111111000191";
 
 // ---------------------------------------------------------------------------
 // Mock de supabase
@@ -72,12 +76,19 @@ function tokenValido(override = {}) {
   });
 }
 
+function clienteComCnpj(cnpj, id = CLIENTE_ID) {
+  queue("clientes", "maybeSingle", {
+    data: { id, cnpj },
+    error: null,
+  });
+}
+
 function payloadValido(overrides = {}) {
   return {
     chave_nfe: "35240612345678000190550010000000011234567890",
     tipo: "saida",
-    cnpj_emitente: "12345678000190",
-    cnpj_destinatario: "98765432000155",
+    cnpj_emitente: CNPJ_EMIT,
+    cnpj_destinatario: CNPJ_DEST,
     valor_total: 1000.5,
     data_emissao: "2026-07-15",
     cliente_id: CLIENTE_ID,
@@ -92,6 +103,7 @@ function payloadValido(overrides = {}) {
 describe("POST /lancamentos-fiscais", () => {
   it("201 e persiste quando payload válido e chave_nfe inédita", async () => {
     tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
     queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
     queue("lancamentos_fiscais", "single", { data: { id: "novo-id", ...payloadValido() }, error: null });
 
@@ -103,8 +115,23 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(res.body.id, "novo-id");
   });
 
-  it("409 quando chave_nfe já existe", async () => {
+  it("403 quando cliente_id do payload não pertence ao token", async () => {
     tokenValido();
+    // Nem chega a validar CNPJ: isolamento por licença vem primeiro.
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: payloadValido({ cliente_id: CLIENTE_ID_OUTRO }),
+    };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 403);
+    assert.match(res.body.erro, /não corresponde ao token/i);
+  });
+
+  it("409 quando já existe lançamento para o mesmo (cliente_id, chave_nfe)", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
     queue("lancamentos_fiscais", "maybeSingle", { data: { id: "existente" }, error: null });
 
     const req = { headers: { "x-licenca-token": "tok" }, body: payloadValido() };
@@ -116,6 +143,7 @@ describe("POST /lancamentos-fiscais", () => {
 
   it("409 quando insert colide por unique_violation (corrida entre chamadas concorrentes)", async () => {
     tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
     queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
     queue("lancamentos_fiscais", "single", {
       data: null,
@@ -164,17 +192,19 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(res.statusCode, 400);
   });
 
-  it("403 quando cliente_id do payload não pertence ao token", async () => {
+  it("403 quando CNPJ do cliente da licença não corresponde ao tipo da nota", async () => {
     tokenValido();
+    clienteComCnpj(CNPJ_ALHEIO);
 
     const req = {
       headers: { "x-licenca-token": "tok" },
-      body: payloadValido({ cliente_id: "22222222-2222-2222-2222-222222222222" }),
+      body: payloadValido(),
     };
     const res = criarResposta();
     await criarLancamentoFiscal(req, res);
 
     assert.equal(res.statusCode, 403);
+    assert.match(res.body.erro, /CNPJ/i);
   });
 });
 

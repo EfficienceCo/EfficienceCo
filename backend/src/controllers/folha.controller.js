@@ -11,9 +11,10 @@ import {
 import {
   montarListaArquivos,
   arquivosParaResposta,
-  resolverPathDownload,
+  resolverArquivoDownload,
   calcularTotaisProcessamento,
   registrarEventoConclusaoFolha,
+  sanitizarNomeArquivo,
 } from "../services/folha-status.service.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
@@ -21,13 +22,23 @@ import { PERFIS } from "../config/perfis.js";
 
 const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/;
 
-function sanitizarNomeArquivo(nome) {
-  return nome
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-z0-9_.-]/g, "");
+// Isolamento multi-tenant (#441 / BUG-FOLHA-05): a query já filtra por cliente_id para
+// não-admin e o handler responde 404 — nunca 403 — quando o processamento é de outro
+// tenant. 403 revelava a existência de UUIDs de outros clientes (enumeração). Mesmo
+// padrão de funcionarios.controller.js ("404 indistinguível de inexistente").
+function ehAdminEfficience(req) {
+  return req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE;
+}
+
+function processamentoPertenceAoCliente(req, processamento) {
+  return ehAdminEfficience(req) || processamento.cliente_id === resolverClienteId(req);
+}
+
+function aplicarIsolamentoCliente(query, req) {
+  if (ehAdminEfficience(req)) {
+    return query;
+  }
+  return query.eq("cliente_id", resolverClienteId(req));
 }
 
 export async function baixarTemplate(req, res) {
@@ -159,23 +170,22 @@ export async function uploadFolhaAgente(req, res) {
 export async function calcularFolha(req, res) {
   const { processamento_id: processamentoId } = req.params;
 
-  const { data: processamento, error: erroBusca } = await supabase
+  let queryBusca = supabase
     .from("processamentos_folha")
-    .select("id, cliente_id, status, arquivo_origem_path")
-    .eq("id", processamentoId)
-    .maybeSingle();
+    .select("id, cliente_id, status, arquivo_origem_path, mes_referencia")
+    .eq("id", processamentoId);
+  queryBusca = aplicarIsolamentoCliente(queryBusca, req);
+
+  const { data: processamento, error: erroBusca } = await queryBusca.maybeSingle();
 
   if (erroBusca) {
     console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
     return res.status(500).json({ erro: "Erro ao buscar processamento" });
   }
 
-  if (!processamento) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!processamento || !processamentoPertenceAoCliente(req, processamento)) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
-  }
-
-  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
-    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
   }
 
   // Reivindica o processamento de forma atômica: o UPDATE só afeta a linha se o status
@@ -218,9 +228,11 @@ export async function calcularFolha(req, res) {
       return res.status(422).json({ erro: "Planilha com linhas inválidas", detalhes: erros });
     }
 
+    // mes_referencia do processamento seleciona a tabela fiscal (INSS/IRRF) da
+    // competência — recálculo de folha antiga usa a tabela da época (#437).
     const calculos = linhas.map((linha) => ({
       processamento_id: processamentoId,
-      ...calcularFolhaFuncionario(linha),
+      ...calcularFolhaFuncionario(linha, processamento.mes_referencia),
     }));
 
     const { error: erroInsert } = await supabase.from("folha_calculos").insert(calculos);
@@ -269,38 +281,31 @@ function formatarMesReferencia(mesReferencia) {
 async function gerarSaidaFolhaCore(req, res) {
   const { processamento_id: processamentoId } = req.params;
 
-  const { data: processamento, error: erroBusca } = await supabase
+  let queryBusca = supabase
     .from("processamentos_folha")
     .select("id, cliente_id, status, mes_referencia")
-    .eq("id", processamentoId)
-    .maybeSingle();
+    .eq("id", processamentoId);
+  queryBusca = aplicarIsolamentoCliente(queryBusca, req);
+
+  const { data: processamento, error: erroBusca } = await queryBusca.maybeSingle();
 
   if (erroBusca) {
     console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
     return res.status(500).json({ erro: "Erro ao buscar processamento" });
   }
 
-  if (!processamento) {
-    // Guard de identidade, não falha de geração: não sabemos nem se esse processamento
-    // existe, não faz sentido gravar saida_status pra um ID que não é desta folha.
-    res.ehGuardDeAutorizacaoOuEstado = true;
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!processamento || !processamentoPertenceAoCliente(req, processamento)) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
   }
 
-  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
-    // Guard de autorização: quem chamou não tem acesso a este processamento, então essa
-    // tentativa não representa (nem deveria representar) o estado real da geração de saída.
-    res.ehGuardDeAutorizacaoOuEstado = true;
-    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
-  }
-
   if (processamento.status !== "concluido") {
-    // Guard de estado: o cálculo ainda não terminou, então "gerar saída" nem começou —
-    // registrar isso como saida_status = erro confundiria "cálculo não pronto" com "falha
-    // na geração" (o próprio bug que #440 corrige na outra direção).
-    res.ehGuardDeAutorizacaoOuEstado = true;
     return res.status(409).json({ erro: "Cálculo da folha ainda não foi concluído para este processamento" });
   }
+
+  // Só persiste o resultado após confirmar existência, dono e cálculo concluído.
+  // Uma falha na busca inicial não autoriza escrever no ID recebido na URL.
+  res.geracaoIniciada = true;
 
   const { data: calculos, error: erroCalculos } = await supabase
     .from("folha_calculos")
@@ -330,10 +335,11 @@ async function gerarSaidaFolhaCore(req, res) {
       if (calculo.holerite_path) continue;
 
       const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado);
-      // CPF no nome, não só o nome do funcionário — dois funcionários com o mesmo nome
-      // na mesma empresa (comum: "Maria Silva", "João Santos") colidiriam no path e o
-      // segundo upload falharia (upsert:false). CPF é o identificador que garante unicidade.
-      const nomeArquivo = `holerite_${sanitizarNomeArquivo(calculo.empresa)}_${sanitizarNomeArquivo(calculo.funcionario)}_${sanitizarNomeArquivo(calculo.cpf)}_${mesReferenciaArquivo}.pdf`;
+      // id da linha de folha_calculos no nome (não o CPF): dois funcionários com o mesmo
+      // nome na mesma empresa (comum: "Maria Silva") colidiriam no path e o segundo upload
+      // falharia (upsert:false). O id garante unicidade sem expor o CPF no storage,
+      // na URL de download ou em log HTTP (LGPD / BUG-FOLHA-07).
+      const nomeArquivo = `holerite_${sanitizarNomeArquivo(calculo.empresa)}_${sanitizarNomeArquivo(calculo.funcionario)}_${calculo.id}_${mesReferenciaArquivo}.pdf`;
       // processamento_id no caminho evita colisão entre processamentos diferentes do
       // mesmo cliente/mês (ex: planilha reenviada e recalculada após correção).
       const caminhoStorage = `clientes/${processamento.cliente_id}/${mesReferenciaArquivo}/${processamentoId}/holerites/${nomeArquivo}`;
@@ -450,16 +456,10 @@ async function gerarSaidaFolhaCore(req, res) {
   }
 }
 
-// Grava o resultado de gerarSaidaFolhaCore em saida_status/motivo_erro — chamado tanto
-// pelo retry manual (POST /:id/gerar-saida) quanto pelo pipeline automático, pra que os
-// dois caminhos deixem o mesmo rastro visível na tela de status (#440). Por padrão TODO
-// desfecho não-200 é tratado como falha de geração — só os guards de autorização/estado
-// explicitamente marcados em gerarSaidaFolhaCore (403/404 de processamento/409) ficam de
-// fora. Essa polaridade é proposital: um novo `return` adicionado ao core no futuro sem
-// marcar o guard passa a ser registrado por padrão, em vez de silenciosamente ignorado
-// como aconteceria com uma allowlist de status codes.
+// Pipeline automático e retry manual registram o mesmo resultado, somente depois
+// de passar pelos guards de identidade, autorização e estado (#440).
 async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
-  if (respostaInterna.ehGuardDeAutorizacaoOuEstado) {
+  if (!respostaInterna.geracaoIniciada) {
     return;
   }
 
@@ -594,28 +594,27 @@ export async function dispararPipelineAutomatico(processamentoId) {
 export async function consultarStatusFolha(req, res) {
   const { processamento_id: processamentoId } = req.params;
 
-  const { data: processamento, error: erroBusca } = await supabase
+  let queryBusca = supabase
     .from("processamentos_folha")
     .select("id, cliente_id, status, mes_referencia, motivo_erro, saida_status")
-    .eq("id", processamentoId)
-    .maybeSingle();
+    .eq("id", processamentoId);
+  queryBusca = aplicarIsolamentoCliente(queryBusca, req);
+
+  const { data: processamento, error: erroBusca } = await queryBusca.maybeSingle();
 
   if (erroBusca) {
     console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
     return res.status(500).json({ erro: "Erro ao buscar processamento" });
   }
 
-  if (!processamento) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!processamento || !processamentoPertenceAoCliente(req, processamento)) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
-  }
-
-  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
-    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
   }
 
   const { data: calculos, error: erroCalculos } = await supabase
     .from("folha_calculos")
-    .select("empresa, holerite_path")
+    .select("id, empresa, funcionario, holerite_path")
     .eq("processamento_id", processamentoId);
 
   if (erroCalculos) {
@@ -625,7 +624,7 @@ export async function consultarStatusFolha(req, res) {
 
   const { data: relatorios, error: erroRelatorios } = await supabase
     .from("folha_relatorios")
-    .select("arquivo_path")
+    .select("id, arquivo_path")
     .eq("processamento_id", processamentoId);
 
   if (erroRelatorios) {
@@ -650,25 +649,26 @@ export async function consultarStatusFolha(req, res) {
 
 // Download de um arquivo gerado — somente quando status === concluido.
 export async function baixarArquivoFolha(req, res) {
-  const { processamento_id: processamentoId, arquivo: nomeArquivo } = req.params;
+  // `arquivo` na URL é um identificador opaco (id da linha de folha_calculos /
+  // folha_relatorios), nunca o CPF nem o nome do arquivo (LGPD / BUG-FOLHA-07).
+  const { processamento_id: processamentoId, arquivo: arquivoId } = req.params;
 
-  const { data: processamento, error: erroBusca } = await supabase
+  let queryBusca = supabase
     .from("processamentos_folha")
     .select("id, cliente_id, status")
-    .eq("id", processamentoId)
-    .maybeSingle();
+    .eq("id", processamentoId);
+  queryBusca = aplicarIsolamentoCliente(queryBusca, req);
+
+  const { data: processamento, error: erroBusca } = await queryBusca.maybeSingle();
 
   if (erroBusca) {
     console.error("[folha.controller] Erro ao buscar processamento:", erroBusca.message);
     return res.status(500).json({ erro: "Erro ao buscar processamento" });
   }
 
-  if (!processamento) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!processamento || !processamentoPertenceAoCliente(req, processamento)) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
-  }
-
-  if (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && processamento.cliente_id !== resolverClienteId(req)) {
-    return res.status(403).json({ erro: "Acesso negado: processamento não pertence a este cliente" });
   }
 
   if (processamento.status !== "concluido") {
@@ -679,7 +679,7 @@ export async function baixarArquivoFolha(req, res) {
 
   const { data: calculos, error: erroCalculos } = await supabase
     .from("folha_calculos")
-    .select("holerite_path")
+    .select("id, empresa, funcionario, holerite_path")
     .eq("processamento_id", processamentoId);
 
   if (erroCalculos) {
@@ -689,7 +689,7 @@ export async function baixarArquivoFolha(req, res) {
 
   const { data: relatorios, error: erroRelatorios } = await supabase
     .from("folha_relatorios")
-    .select("arquivo_path")
+    .select("id, arquivo_path")
     .eq("processamento_id", processamentoId);
 
   if (erroRelatorios) {
@@ -698,16 +698,16 @@ export async function baixarArquivoFolha(req, res) {
   }
 
   const arquivos = montarListaArquivos(calculos || [], relatorios || []);
-  const caminhoStorage = resolverPathDownload(nomeArquivo, arquivos);
+  const arquivoAlvo = resolverArquivoDownload(arquivoId, arquivos);
 
-  if (!caminhoStorage) {
+  if (!arquivoAlvo) {
     return res.status(404).json({ erro: "Arquivo não encontrado para este processamento" });
   }
 
   try {
     const { data: arquivo, error: erroDownload } = await supabase.storage
       .from("folhas-pagamento")
-      .download(caminhoStorage);
+      .download(arquivoAlvo.path);
 
     if (erroDownload) {
       console.error("[folha.controller] Erro ao baixar arquivo do storage:", erroDownload.message);
@@ -717,9 +717,10 @@ export async function baixarArquivoFolha(req, res) {
     const buffer = Buffer.from(await arquivo.arrayBuffer());
 
     res.setHeader("Content-Type", "application/pdf");
+    // Nome de exibição resolvido a partir do dado persistido (sem CPF), não do que veio na URL.
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${nomeArquivo}"`,
+      `attachment; filename="${arquivoAlvo.nome}"`,
     );
 
     return res.status(200).send(buffer);

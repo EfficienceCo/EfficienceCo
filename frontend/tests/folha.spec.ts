@@ -3,8 +3,80 @@ import { login } from './helpers/auth';
 import * as path from 'path';
 import * as fs from 'fs';
 
+test.describe('Folha #440 — retry da saída (API simulada)', () => {
+  for (const width of [1440, 390]) {
+    test(`erro parcial e retry no layout ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 1000 });
+      const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+      const user = { id: 'qa-440', email: 'qa-440@example.test', perfil: 'admin_cliente', cliente_id: 'fixture' };
+      const token = `fixture.${Buffer.from(JSON.stringify(user)).toString('base64url')}.fixture`;
+      await page.addInitScript(value => localStorage.setItem('token', value), token);
+      let saidaStatus = 'erro', retryFalha = true, consultaFalha = false, tentativas = 0;
+      const motivo = 'Erro ao gerar holerite de Maria';
+      await page.route(`**/folha/${id}**`, async route => {
+        if (route.request().method() === 'POST') {
+          expect(new URL(route.request().url()).pathname).toBe(`/folha/${id}/gerar-saida`);
+          tentativas++;
+          if (retryFalha) return route.fulfill({ status: 500, json: { erro: 'Storage indisponível' } });
+          saidaStatus = 'ok';
+          return route.fulfill({ json: { processamento_id: id } });
+        }
+        if (consultaFalha) return route.fulfill({ status: 500, json: { erro: 'Consulta indisponível' } });
+        return route.fulfill({ json: {
+          processamento_id: id, status: 'concluido', saida_status: saidaStatus,
+          motivo_erro: saidaStatus === 'erro' ? motivo : null, mes_referencia: '2026-07-01',
+          arquivos: [{ id: 'calc-1', nome: 'holerite_joao.pdf', tipo: 'holerite', funcionario: 'João' }],
+        } });
+      });
+      await page.goto(`/dashboard/folha/status?processamento_id=${id}`);
+      // A tela mantém os dois layouts no DOM; validar somente o que está visível.
+      const aviso = page.getByText('Falha ao gerar arquivos', { exact: true }).filter({ visible: true });
+      const erro = page.getByText(motivo, { exact: true }).filter({ visible: true });
+      const retry = page.getByRole('button', { name: 'Tentar novamente', exact: true });
+      await expect(aviso).toBeVisible();
+      await expect(erro).toBeVisible();
+      await expect(page.getByText('holerite_joao.pdf', { exact: true }).filter({ visible: true })).toBeVisible();
+      await retry.click();
+      await expect(page.getByText('Storage indisponível', { exact: true })).toBeVisible();
+      await expect(retry).toBeEnabled();
+      retryFalha = false;
+      await retry.click();
+      await expect(aviso).toHaveCount(0);
+      await expect(erro).toHaveCount(0);
+      await expect(retry).toHaveCount(0);
+      expect(tentativas).toBe(2);
+      saidaStatus = 'erro';
+      await page.getByRole('button', { name: 'Atualizar lista', exact: true }).click();
+      await expect(erro).toBeVisible();
+      consultaFalha = true;
+      await page.getByRole('button', { name: 'Atualizar lista', exact: true }).click();
+      await expect(page.getByText('Consulta indisponível', { exact: true }).first()).toBeVisible();
+      await expect(erro).toBeVisible();
+      await expect(retry).toBeVisible();
+    });
+  }
+});
+
 test.describe('Folha de Pagamento', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    // O cenário LGPD é autocontido: não deve depender de backend/credenciais só
+    // para validar o contrato visual e a URL opaca do download.
+    if (testInfo.title.includes('identificador opaco')) {
+      const payload = Buffer.from(JSON.stringify({
+        id: 'usuario-teste',
+        perfil: 'admin_cliente',
+        cliente_id: '11111111-1111-4111-8111-111111111111',
+        exp: 4102444800,
+      })).toString('base64url');
+      await page.route('**/auth/login', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ token: `eyJhbGciOiJub25lIn0.${payload}.assinatura` }),
+      }));
+      await login(page, 'teste@efficience.local', 'senha-teste');
+      return;
+    }
+
     await login(page);
   });
 
@@ -120,6 +192,73 @@ test.describe('Folha de Pagamento', () => {
       await expect(page.locator('body')).toBeVisible();
       // Usa .first() pra evitar strict mode quando o regex bate em vários elementos
       await expect(page.getByText(/Pendente|Processando|Concluído|Erro|Nenhum processamento/i).first()).toBeVisible({ timeout: 10000 });
+    });
+  });
+
+  test.describe('Download de holerite — LGPD: sem CPF na URL nem no nome (#443)', () => {
+    const PROC_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const HOLERITE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const CPF = '52998224725';
+    const CPF_MASCARADO = '529.982.247-25';
+    const NOME_SEM_CPF = 'holerite_padaria_do_ze_joao_da_silva.pdf';
+    const REGEX_CPF = /\d{3}\.?\s?\d{3}\.?\s?\d{3}-?\s?\d{2}/;
+
+    test('nome exibido não tem CPF e o download usa identificador opaco', async ({ page }) => {
+      // Backend novo: status devolve id opaco + nome de exibição sem CPF, sem path de storage.
+      await page.route(`**/folha/${PROC_ID}`, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            processamento_id: PROC_ID,
+            status: 'concluido',
+            mes_referencia: '2026-07-01',
+            motivo_erro: null,
+            total_funcionarios: 1,
+            total_empresas: 1,
+            arquivos: [{ id: HOLERITE_ID, nome: NOME_SEM_CPF, tipo: 'holerite' }],
+          }),
+        }),
+      );
+
+      let urlDownload = '';
+      await page.route(`**/folha/${PROC_ID}/download/**`, (route) => {
+        urlDownload = route.request().url();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/pdf',
+          headers: { 'content-disposition': `attachment; filename="${NOME_SEM_CPF}"` },
+          body: Buffer.from('%PDF-1.4 fake'),
+        });
+      });
+
+      await page.goto(
+        `/dashboard/folha/status?processamento_id=${PROC_ID}&cliente_nome=Padaria%20do%20Ze`,
+      );
+
+      const tabela = page.getByRole('table');
+      const linhaArquivo = tabela.getByText(NOME_SEM_CPF, { exact: true });
+      await expect(linhaArquivo).toBeVisible({ timeout: 10000 });
+
+      // Nada renderizado na tela pode conter o CPF (mascarado ou não).
+      const corpo = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+      expect(corpo).not.toContain(CPF);
+      expect(corpo).not.toContain(CPF_MASCARADO);
+      expect(corpo).not.toMatch(REGEX_CPF);
+
+      const [download] = await Promise.all([
+        page.waitForEvent('download'),
+        tabela.getByRole('button', { name: 'Baixar' }).click(),
+      ]);
+
+      // A URL chamada carrega o id opaco, nunca o CPF.
+      expect(urlDownload).toContain(`/download/${HOLERITE_ID}`);
+      expect(urlDownload).not.toContain(CPF);
+      expect(urlDownload).not.toMatch(REGEX_CPF);
+
+      // E o nome sugerido pro arquivo salvo também não tem CPF.
+      expect(download.suggestedFilename()).toBe(NOME_SEM_CPF);
+      expect(download.suggestedFilename()).not.toMatch(REGEX_CPF);
     });
   });
 
