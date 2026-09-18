@@ -459,6 +459,27 @@ def test_nao_identificado_loga_sem_falha_em_cp1252(pasta_nfe, stdout_cp1252):
     assert (inbox / "nao_identificado" / "entrada.xml").is_file()
 
 
+def test_nfe_data_emissao_futura_vai_para_nao_identificado(pasta_nfe):
+    """BUG-APUR-08: NF-e com dhEmi futura não entra no ledger."""
+    inbox, _base = pasta_nfe
+    xml = _copiar_fixture("entrada.xml", inbox)
+    texto = xml.read_text(encoding="utf-8")
+    xml.write_text(
+        texto.replace("2026-07-15T14:30:00-03:00", "2099-12-08T14:30:00-03:00"),
+        encoding="utf-8",
+    )
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+
+    mock_post.assert_not_called()
+    assert (inbox / "nao_identificado" / "entrada.xml").is_file()
+    assert not (inbox / "entrada.xml").exists()
+
+
 def test_processar_nfe_sem_seta_unicode_nos_prints():
     fonte = Path(__file__).resolve().parents[1] / "automacoes" / "processar_nfe.py"
     assert "\u2192" not in fonte.read_text(encoding="utf-8")
