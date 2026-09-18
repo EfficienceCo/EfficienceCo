@@ -23,17 +23,17 @@ def identificar_tipo_no_nome(nome_arquivo):
 
 def classificar_arquivo(caminho):
     try:
-        from automacoes.rede.classificador import classificar_documento
+        from automacoes.classificador_documentos.classificador import classificar_documento
         resultado = classificar_documento(caminho, threshold=0.75)
         if isinstance(resultado, dict) and resultado.get("erro"):
             print(f"[identificar_tipo] Classificador: {resultado['erro']}")
             return "nao_identificado"
         return resultado["classe"]
-    except ImportError as e:
-        print(f"[identificar_tipo] Dependências da rede neural não instaladas: {e}")
+    except ModuleNotFoundError as e:
+        print(f"[identificar_tipo] Módulo ou dependência do classificador ausente ({e.name}): {e}")
         return "nao_identificado"
-    except FileNotFoundError:
-        print(f"[identificar_tipo] Arquivo de pesos não encontrado (classificador_documentos.pth)")
+    except ImportError as e:
+        print(f"[identificar_tipo] Falha ao importar o classificador: {e}")
         return "nao_identificado"
     except Exception as e:
         print(f"[identificar_tipo] Falha ao classificar: {e}")
