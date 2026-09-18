@@ -45,8 +45,3 @@ export async function aprovarApuracao(id) {
   const response = await api.patch(`/apuracoes/${id}/aprovar`);
   return response.data;
 }
-
-export async function recalcularApuracao(id) {
-  const response = await api.patch(`/apuracoes/${id}/recalcular`);
-  return response.data;
-}

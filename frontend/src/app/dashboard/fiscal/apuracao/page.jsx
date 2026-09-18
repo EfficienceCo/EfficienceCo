@@ -10,7 +10,6 @@ import {
   calcularApuracao,
   editarApuracao,
   listarApuracoes,
-  recalcularApuracao,
 } from '../../../../services/apuracao.service';
 
 const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
@@ -165,12 +164,6 @@ function formatarReferencia(item) {
   return item?.referencia || '-';
 }
 
-const FOLHA_STATUS_INFO = {
-  pendente: { label: 'Aguardando confirmação do agente', className: 'bg-amber-100 text-amber-700' },
-  verificado: { label: 'Verificado (12 meses)', className: 'bg-emerald-100 text-emerald-700' },
-  sem_dados: { label: 'Dados de folha incompletos', className: 'bg-rose-100 text-rose-700' },
-};
-
 function identificarNota(nota) {
   if (nota?.chave_nfe) {
     return `NF-e …${String(nota.chave_nfe).slice(-8)}`;
@@ -209,9 +202,6 @@ export default function ApuracoesPage() {
 
   const [erroEdicao, setErroEdicao] = useState('');
   const [isSalvandoEdicao, setIsSalvandoEdicao] = useState(false);
-
-  const [isRecalculando, setIsRecalculando] = useState(false);
-  const [erroRecalcular, setErroRecalcular] = useState('');
 
   const [showAprovarModal, setShowAprovarModal] = useState(false);
   const [isAprovando, setIsAprovando] = useState(false);
@@ -383,27 +373,6 @@ export default function ApuracoesPage() {
     }
   }
 
-  async function handleRecalcular() {
-    if (!apuracao?.id || isRecalculando) {
-      return;
-    }
-
-    setIsRecalculando(true);
-    setErroRecalcular('');
-
-    try {
-      const atualizado = await recalcularApuracao(apuracao.id);
-      setApuracao(atualizado);
-      setValorEditado(formatarValorInput(obterValorExibido(atualizado)));
-      setMotivo('');
-      setErroEdicao('');
-    } catch (error) {
-      setErroRecalcular(obterMensagemErro(error, 'Não foi possível recalcular o DAS.'));
-    } finally {
-      setIsRecalculando(false);
-    }
-  }
-
   function handleAbrirAprovar() {
     setErroAprovar('');
     setShowAprovarModal(true);
@@ -453,8 +422,6 @@ export default function ApuracoesPage() {
     apuracao?.anexo_original && anexoEfetivo && apuracao.anexo_original !== anexoEfetivo,
   );
   const mostrarFatorR = Boolean(apuracao) && apuracao.fator_r !== null && apuracao.fator_r !== undefined;
-  const folhaStatusInfo = apuracao?.folha_status ? FOLHA_STATUS_INFO[apuracao.folha_status] : null;
-  const dadosFolha = apuracao?.dados_folha || null;
   const historicoEdicoes = Array.isArray(apuracao?.historico_edicoes) ? apuracao.historico_edicoes : [];
   const rbt12Mensal = Array.isArray(apuracao?.rbt12_mensal) ? apuracao.rbt12_mensal : [];
   const notasConsideradas = Array.isArray(apuracao?.notas_fiscais?.consideradas)
@@ -624,36 +591,16 @@ export default function ApuracoesPage() {
                 </p>
               </div>
 
-              <div className="flex items-center gap-3">
-                {statusAprovado ? (
-                  <span className="whitespace-nowrap rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                    Aprovado
-                  </span>
-                ) : (
-                  <span className="whitespace-nowrap rounded-full bg-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700">
-                    Rascunho
-                  </span>
-                )}
-
-                {statusRascunho ? (
-                  <button
-                    type="button"
-                    onClick={handleRecalcular}
-                    disabled={isRecalculando}
-                    className="inline-flex items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isRecalculando ? <Spinner /> : null}
-                    {isRecalculando ? 'Recalculando...' : 'Recalcular'}
-                  </button>
-                ) : null}
-              </div>
+              {statusAprovado ? (
+                <span className="whitespace-nowrap rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                  Aprovado
+                </span>
+              ) : (
+                <span className="whitespace-nowrap rounded-full bg-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700">
+                  Rascunho
+                </span>
+              )}
             </div>
-
-            {erroRecalcular ? (
-              <p className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {erroRecalcular}
-              </p>
-            ) : null}
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
@@ -690,26 +637,6 @@ export default function ApuracoesPage() {
                   <div className="mt-1 font-mono text-sm font-semibold text-zinc-700">
                     {formatarPercentual(apuracao.fator_r)}
                   </div>
-                </div>
-              ) : null}
-
-              {folhaStatusInfo ? (
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                    Status da folha (FS12)
-                  </div>
-                  <div className="mt-1">
-                    <span
-                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${folhaStatusInfo.className}`}
-                    >
-                      {folhaStatusInfo.label}
-                    </span>
-                  </div>
-                  {dadosFolha ? (
-                    <div className="mt-1 text-xs text-zinc-500">
-                      {dadosFolha.totalMesesEncontrados}/12 meses encontrados pelo agente
-                    </div>
-                  ) : null}
                 </div>
               ) : null}
             </div>
