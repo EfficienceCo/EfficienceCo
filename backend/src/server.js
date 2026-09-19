@@ -14,12 +14,14 @@ console.log("[server.js] app.js importado com sucesso");
 
 import { iniciarJobFolhaMensal } from "./jobs/folha-mensal.job.js";
 import { iniciarJobAlertasCertificados } from "./jobs/certificados-alertas.job.js";
+import { iniciarJobObrigacoesAtrasadas } from "./jobs/obrigacoes-atraso.job.js";
 
 const PORT = process.env.PORT;
 console.log(`[server.js] PORT lida do .env: ${PORT}`);
 
 iniciarJobFolhaMensal();
 iniciarJobAlertasCertificados();
+iniciarJobObrigacoesAtrasadas();
 
 console.log("[server.js] Iniciando app.listen()...");
 app.listen(PORT, () => {

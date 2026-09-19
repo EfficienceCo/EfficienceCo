@@ -1,7 +1,7 @@
 ﻿﻿import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { criar as criarNotificacao } from "../services/notificacoes.service.js";
-import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
+import { aplicarFiltroPeriodo, hojeNoBrasil } from "../utils/periodo.util.js";
 
 function sanitizarNome(nome) {
   return nome
@@ -39,6 +39,34 @@ function resolverClienteId(req) {
   return req.usuario?.cliente_id;
 }
 
+// Bug #505 — o atraso é derivado da data, não só da coluna.
+//
+// O job diário (obrigacoes-atraso.job.js) persiste `atrasada`, mas entre a
+// virada do dia e a varredura — e para obrigações criadas já vencidas — a
+// coluna ainda diz `pendente`. Filtrar só por igualdade devolvia [] para
+// Status=Atrasada. Então:
+//   atrasada -> já marcadas + pendentes com vencimento anterior a hoje
+//   pendente -> só as que ainda estão no prazo (senão a mesma obrigação
+//               apareceria nos dois filtros, com a tela rotulando "Atrasada")
+// Demais status (concluida) seguem na comparação direta.
+function aplicarFiltroStatus(query, status, agora = new Date()) {
+  if (!status) return query;
+
+  const hoje = hojeNoBrasil(agora);
+
+  if (status === "atrasada") {
+    return query.or(
+      `status.eq.atrasada,and(status.eq.pendente,data_vencimento.lt.${hoje})`,
+    );
+  }
+
+  if (status === "pendente") {
+    return query.eq("status", "pendente").gte("data_vencimento", hoje);
+  }
+
+  return query.eq("status", status);
+}
+
 export async function listarObrigacoes(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -53,7 +81,7 @@ export async function listarObrigacoes(req, res) {
     .eq("cliente_id", clienteId)
     .order("data_vencimento", { ascending: true });
 
-  if (status) query = query.eq("status", status);
+  query = aplicarFiltroStatus(query, status);
 
   query = aplicarFiltroPeriodo(query, "data_vencimento", mes, ano);
 
