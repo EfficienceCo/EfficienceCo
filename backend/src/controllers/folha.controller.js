@@ -278,7 +278,7 @@ function formatarMesReferencia(mesReferencia) {
 // não existe (holerite_path nulo / linha ausente em folha_relatorios) — uma tentativa
 // anterior parcialmente falha (ex: caiu no meio do loop de funcionários) é retomada sem
 // duplicar upload, em vez de bloquear a chamada inteira.
-export async function gerarSaidaFolha(req, res) {
+async function gerarSaidaFolhaCore(req, res) {
   const { processamento_id: processamentoId } = req.params;
 
   let queryBusca = supabase
@@ -302,6 +302,10 @@ export async function gerarSaidaFolha(req, res) {
   if (processamento.status !== "concluido") {
     return res.status(409).json({ erro: "Cálculo da folha ainda não foi concluído para este processamento" });
   }
+
+  // Só persiste o resultado após confirmar existência, dono e cálculo concluído.
+  // Uma falha na busca inicial não autoriza escrever no ID recebido na URL.
+  res.geracaoIniciada = true;
 
   const { data: calculos, error: erroCalculos } = await supabase
     .from("folha_calculos")
@@ -452,6 +456,55 @@ export async function gerarSaidaFolha(req, res) {
   }
 }
 
+// Pipeline automático e retry manual registram o mesmo resultado, somente depois
+// de passar pelos guards de identidade, autorização e estado (#440).
+async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
+  if (!respostaInterna.geracaoIniciada) {
+    return;
+  }
+
+  if (respostaInterna.statusCode === 200) {
+    const { error } = await supabase
+      .from("processamentos_folha")
+      .update({ saida_status: "ok", motivo_erro: null })
+      .eq("id", processamentoId);
+
+    if (error) {
+      console.error(
+        "[folha.controller] Falha ao registrar sucesso da geração de saída:",
+        error.message,
+      );
+    }
+    return;
+  }
+
+  await registrarFalhaGeracaoSaida(
+    processamentoId,
+    respostaInterna.body?.erro || "Falha ao gerar holerites/relatórios da folha",
+  );
+}
+
+async function executarEFinalizarSaida(req) {
+  const respostaInterna = criarRespostaInterna();
+  await gerarSaidaFolhaCore(req, respostaInterna);
+  await finalizarGeracaoSaida(req.params.processamento_id, respostaInterna);
+  return respostaInterna;
+}
+
+export async function gerarSaidaFolha(req, res) {
+  try {
+    const resultado = await executarEFinalizarSaida(req);
+    return res.status(resultado.statusCode).json(resultado.body);
+  } catch (err) {
+    // gerarSaidaFolhaCore já tem seu próprio try/catch; isso protege especificamente
+    // finalizarGeracaoSaida (fora daquele try) de uma exceção síncrona do client do
+    // Supabase — sem isso, a rejeição não tratada derruba o processo inteiro (Express 4
+    // não tem handler global de unhandledRejection, ver comentário em calcularFolha).
+    console.error("[folha.controller] Erro inesperado no retry de geração de saída:", err.message);
+    return res.status(500).json({ erro: "Erro ao gerar arquivos de saída da folha" });
+  }
+}
+
 // Res mínimo pra reaproveitar calcularFolha/gerarSaidaFolha fora de uma request HTTP
 // real — captura status/body em vez de escrever numa conexão que não existe.
 function criarRespostaInterna() {
@@ -473,17 +526,18 @@ function criarRespostaInterna() {
   };
 }
 
-// Registra o motivo de uma falha na geração de saída SEM mudar o status pra "erro".
-// gerarSaidaFolha só reprocessa (idempotente: pula holerite/relatório já gerado) quando
-// o processamento ainda está "concluido" — se status virasse "erro" aqui, o retry via
-// POST /:id/gerar-saida ficaria bloqueado pelo próprio guard de status, e a única saída
-// seria recalcular do zero em POST /:id/calcular, que duplicaria as linhas já inseridas
-// em folha_calculos (esse insert não é idempotente). status continua "concluido" de
-// propósito — o cálculo realmente terminou, só a geração de arquivos que falhou.
+// Registra motivo + saida_status = 'erro' de uma falha na geração de saída SEM mudar
+// `status` pra "erro" (#440). gerarSaidaFolhaCore só reprocessa (idempotente: pula
+// holerite/relatório já gerado) quando o processamento ainda está "concluido" — se
+// `status` virasse "erro" aqui, o retry via POST /:id/gerar-saida ficaria bloqueado pelo
+// próprio guard de status, e a única saída seria recalcular do zero em POST /:id/calcular,
+// que duplicaria as linhas já inseridas em folha_calculos (esse insert não é idempotente).
+// `status` continua "concluido" de propósito — o cálculo realmente terminou, só a geração
+// de arquivos que falhou; `saida_status` é quem carrega esse sinal pra tela.
 async function registrarFalhaGeracaoSaida(processamentoId, motivo) {
   const { error } = await supabase
     .from("processamentos_folha")
-    .update({ motivo_erro: motivo })
+    .update({ motivo_erro: motivo, saida_status: "erro" })
     .eq("id", processamentoId);
 
   if (error) {
@@ -501,8 +555,8 @@ async function registrarFalhaGeracaoSaida(processamentoId, motivo) {
 // checagem de dono do processamento (resolverClienteId nem chega a ser avaliado: o `&&`
 // de curto-circuito já corta em `perfil !== ADMIN_EFFICIENCE`). Se o cálculo falhar, a
 // geração de saída não roda — calcularFolha já marca o processamento como "erro" com o
-// motivo internamente. gerarSaidaFolha NÃO marca erro sozinho (ver registrarFalhaGeracaoSaida
-// acima pro motivo), então essa falha é tratada aqui.
+// motivo internamente. A geração de saída passa por executarEFinalizarSaida, que já grava
+// saida_status/motivo_erro (mesmo caminho usado pelo retry manual em POST /:id/gerar-saida).
 export async function dispararPipelineAutomatico(processamentoId) {
   const reqInterno = {
     params: { processamento_id: processamentoId },
@@ -519,14 +573,13 @@ export async function dispararPipelineAutomatico(processamentoId) {
       return;
     }
 
-    const resSaida = await gerarSaidaFolha(reqInterno, criarRespostaInterna());
+    const resSaida = await executarEFinalizarSaida(reqInterno);
 
     if (resSaida.statusCode !== 200) {
       const motivo = resSaida.body?.erro || "Falha ao gerar holerites/relatórios da folha";
       console.error(
         `[folha.pipeline] Geração de saída automática não concluída para ${processamentoId} (status ${resSaida.statusCode}): ${motivo}`,
       );
-      await registrarFalhaGeracaoSaida(processamentoId, motivo);
     }
   } catch (err) {
     console.error(
@@ -543,7 +596,7 @@ export async function consultarStatusFolha(req, res) {
 
   let queryBusca = supabase
     .from("processamentos_folha")
-    .select("id, cliente_id, status, mes_referencia, motivo_erro")
+    .select("id, cliente_id, status, mes_referencia, motivo_erro, saida_status")
     .eq("id", processamentoId);
   queryBusca = aplicarIsolamentoCliente(queryBusca, req);
 
@@ -587,6 +640,7 @@ export async function consultarStatusFolha(req, res) {
     status: processamento.status,
     mes_referencia: processamento.mes_referencia,
     motivo_erro: processamento.motivo_erro,
+    saida_status: processamento.saida_status,
     total_funcionarios: totais.total_funcionarios,
     total_empresas: totais.total_empresas,
     arquivos: arquivosParaResposta(arquivos),

@@ -31,12 +31,15 @@ def _revalidar_licenca():
 
 
 def _polling_regras():
+    pendentes = None
     while True:
         time.sleep(INTERVALO_POLLING_SEGUNDOS)
         try:
             regras = verificar_atualizacao()
             if regras is not None:
-                aplicar_regras_no_monitor(regras)
+                pendentes = regras
+            if pendentes is not None and aplicar_regras_no_monitor(pendentes):
+                pendentes = None
         except Exception as e:
             print(f"[agendador] Erro no polling de regras: {e}")
 

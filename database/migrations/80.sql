@@ -1,3 +1,7 @@
-ALTER TABLE processamentos_folha ADD COLUMN IF NOT EXISTS esocial_status TEXT DEFAULT 'nao_iniciado'
-  CHECK (esocial_status IN ('nao_iniciado','s1200_enviado','s1210_enviado','fechado'));
-ALTER TABLE processamentos_folha ADD COLUMN IF NOT EXISTS esocial_fechado_em TIMESTAMPTZ;
+-- BUG-ESOCIAL-05 (#455)
+--
+-- Migration intencionalmente vazia. O conteudo original era byte-identico ao
+-- de 79.sql e tentava adicionar novamente as mesmas duas colunas. O arquivo e
+-- preservado para nao quebrar a sequencia historica das migrations; 79.sql e
+-- a fonte canonica de processamentos_folha.esocial_status e
+-- processamentos_folha.esocial_fechado_em.

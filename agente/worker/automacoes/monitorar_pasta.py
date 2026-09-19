@@ -2,7 +2,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from automacoes.mover_arquivo import mover_arquivo
 from comunicacao.reportar_evento import reportar_evento
-from core.configuracao import gerenciar_configuracoes, extrair_pastas, normalizar_regras
+from core.configuracao import extrair_pastas, normalizar_regras
 from automacoes.renomear_arquivo import renomear_arquivo
 from automacoes.abertura_empresa import criar_estrutura_empresa
 from automacoes.organizar_arquivo import organizar_arquivo
@@ -21,8 +21,9 @@ import os
 
 
 def _caminho_em_nao_classificado(caminho):
+    """True se o path está sob (ou é) a pasta de quarentena NAO_CLASSIFICADO."""
     partes = os.path.normpath(caminho).split(os.sep)
-    return PASTA_NAO_CLASSIFICADO in partes
+    return any(p.casefold() == PASTA_NAO_CLASSIFICADO.casefold() for p in partes)
 
 
 class MonitorPasta(FileSystemEventHandler):
@@ -44,14 +45,7 @@ class MonitorPasta(FileSystemEventHandler):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"\n[{timestamp}] Arquivo detectado em {os.path.dirname(event.src_path)}: {nome}")
 
-        try:
-            regras = gerenciar_configuracoes()
-            self.controlador.atualizar_regras_fallback(regras)
-        except Exception:
-            print(f"[{timestamp}] Falha ao buscar regras — usando regras da inicialização")
-            regras = self.controlador.regras
-
-        _processar_arquivo(event.src_path, regras)
+        self.controlador.processar(event.src_path)
 
 
 def _processar_arquivo(caminho, regras):
@@ -117,7 +111,12 @@ def _processar_arquivo(caminho, regras):
 
 
 def _arquivo_pertence_origem(caminho, pasta_origem):
-    return os.path.abspath(caminho).startswith(os.path.abspath(pasta_origem))
+    caminho = os.path.normcase(os.path.abspath(caminho))
+    origem = os.path.normcase(os.path.abspath(pasta_origem))
+    try:
+        return os.path.commonpath([caminho, origem]) == origem
+    except ValueError:
+        return False
 
 
 def _bate_condicao(caminho, condicao):
@@ -192,14 +191,16 @@ def _varredura_inicial(regras, pasta):
         print(f"[monitor] Varrendo arquivos existentes em: {p}")
 
     for raiz, dirs, arquivos in os.walk(pasta):
-        # não descer em NAO_CLASSIFICADO (quarentena)
-        dirs[:] = [d for d in dirs if d != PASTA_NAO_CLASSIFICADO]
+        # mesmo critério do on_created: não reprocessar quarentena (BUG-ORG-07 / #485)
+        dirs[:] = [d for d in dirs if d.casefold() != PASTA_NAO_CLASSIFICADO.casefold()]
         if _caminho_em_nao_classificado(raiz):
             continue
         for nome in arquivos:
             if nome == "desktop.ini":
                 continue
             caminho = os.path.join(raiz, nome)
+            if not os.path.isfile(caminho):
+                continue
             if _caminho_em_nao_classificado(caminho):
                 continue
             print(f"[monitor] Arquivo encontrado na varredura: {nome}")
@@ -235,7 +236,11 @@ def _pastas_para_monitorar(regras, pastas):
         pasta_padrao = (os.getenv("PASTA_PADRAO") or "").strip()
         if pasta_padrao:
             resultado.add(pasta_padrao)
-    return resultado
+    resultado = {os.path.normcase(os.path.abspath(p)) for p in resultado}
+    # Uma única observação por árvore evita eventos duplicados de raízes sobrepostas.
+    return {p for p in resultado if not any(
+        p != outra and _arquivo_pertence_origem(p, outra) for outra in resultado
+    )}
 
 
 class MonitorController:
@@ -243,54 +248,56 @@ class MonitorController:
 
     def __init__(self, regras, pastas):
         self._lock = threading.RLock()
+        self._process_lock = threading.RLock()
         self.regras = list(regras or [])
         self.pastas = set(pastas or [])
         self.observer = None
-        self._handlers = []
-        self._rodando = False
 
-    def atualizar_regras_fallback(self, regras):
-        with self._lock:
-            self.regras = list(regras or [])
+    def processar(self, caminho):
+        with self._process_lock:
+            if os.path.isfile(caminho):
+                _processar_arquivo(caminho, self.regras)
 
     def aplicar_regras(self, regras_brutas):
         """Aplica regras novas: pastas, observer, fallback e revarredura."""
         regras = normalizar_regras(regras_brutas)
         with self._lock:
-            self.regras = regras
+            with self._process_lock:
+                self.regras = regras
             _criar_pastas_regras(regras)
             novas_pastas = _pastas_para_monitorar(regras, extrair_pastas(regras))
 
-            if novas_pastas != self.pastas:
+            if novas_pastas != self.pastas or self.observer is None:
                 print("[monitor] Pastas monitoradas mudaram — reagendando observer")
                 self._reagendar(novas_pastas)
+                if self.pastas != novas_pastas:
+                    raise RuntimeError("Nem todas as pastas foram registradas; atualização será repetida")
             else:
-                for pasta in self.pastas:
-                    _varredura_inicial(self.regras, pasta)
+                with self._process_lock:
+                    for pasta in self.pastas:
+                        _varredura_inicial(self.regras, pasta)
 
             print(f"[monitor] Regras aplicadas ({len(self.regras)} regra(s))")
 
     def _reagendar(self, pastas):
         if self.observer is not None:
-            try:
-                self.observer.stop()
-                self.observer.join(timeout=5)
-            except Exception as e:
-                print(f"[monitor] Erro ao parar observer antigo: {e}")
+            # Não segura _process_lock durante join: o handler pode estar terminando.
+            self.observer.stop()
+            self.observer.join(timeout=5)
+            if self.observer.is_alive():
+                raise RuntimeError("Observer anterior ainda encerrando; atualização será repetida")
 
-        self.pastas = set(pastas)
-        self._handlers = []
+        self.pastas = set()
         self.observer = None
-        self._rodando = False
 
-        if not self.pastas:
+        if not pastas:
             print("[monitor] Nenhuma pasta disponível — agente idle (aguardando regras/pastas)")
             return
 
         observer = Observer()
         registradas = 0
 
-        for pasta in self.pastas:
+        for pasta in pastas:
             if not os.path.exists(pasta):
                 try:
                     os.makedirs(pasta)
@@ -305,8 +312,7 @@ class MonitorController:
             try:
                 handler = MonitorPasta(self)
                 observer.schedule(handler, path=pasta, recursive=True)
-                self._handlers.append(handler)
-                _varredura_inicial(self.regras, pasta)
+                self.pastas.add(pasta)
                 print(f"[monitor] Monitorando: {pasta}")
 
                 subpastas = set(
@@ -327,9 +333,17 @@ class MonitorController:
             print("[monitor] Nenhuma pasta disponível — agente idle (aguardando regras/pastas)")
             return
 
+        try:
+            observer.start()
+        except Exception:
+            observer.stop()
+            self.pastas = set()
+            raise
         self.observer = observer
-        self.observer.start()
-        self._rodando = True
+        # Observar antes de varrer evita perder arquivos criados durante a varredura.
+        with self._process_lock:
+            for pasta in self.pastas:
+                _varredura_inicial(self.regras, pasta)
 
     def iniciar(self):
         with self._lock:
@@ -361,11 +375,9 @@ def aplicar_regras_no_monitor(regras_brutas):
     """Hot-reload chamado pelo poll de regras do agendador."""
     ctrl = obter_controlador()
     if ctrl is None:
-        return
-    try:
-        ctrl.aplicar_regras(regras_brutas)
-    except Exception as e:
-        print(f"[monitor] Falha ao aplicar regras novas: {e}")
+        return False
+    ctrl.aplicar_regras(regras_brutas)
+    return True
 
 
 def iniciar_monitoramento(regras, pastas):

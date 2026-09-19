@@ -1,13 +1,13 @@
 import comunicacao.api_client as client
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import os
 import time
 
 CACHE_PATH = Path.home() / ".config" / "efficience" / "regras.json"
-CACHE_TTL_HORAS = 24
 INTERVALO_POLLING_SEGUNDOS = 30
+TIMEOUT_REGRAS_SEGUNDOS = 15
 # Se /versao falhar, força GET /regras completo neste intervalo (anti cache cego).
 INTERVALO_SYNC_FORCADO_SEGUNDOS = 300
 
@@ -25,8 +25,11 @@ def _cache_existe():
 def _ler_cache():
     try:
         with open(CACHE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
+            cache = json.load(f)
+        if not isinstance(cache, dict) or not isinstance(cache.get("regras"), list):
+            return None
+        return cache if all(isinstance(r, dict) for r in cache["regras"]) else None
+    except (ValueError, OSError):
         return None
 
 
@@ -37,40 +40,35 @@ def _cache_existe_com_regras():
     return cache is not None and "regras" in cache
 
 
-def _cache_antigo():
-    """True se o cache tem mais de CACHE_TTL_HORAS (aviso offline; não bloqueia sync)."""
-    cache = _ler_cache()
-    if cache is None or "timestamp" not in cache:
-        return True
-    try:
-        timestamp = datetime.fromisoformat(cache["timestamp"])
-    except (TypeError, ValueError):
-        return True
-    return datetime.now() - timestamp >= timedelta(hours=CACHE_TTL_HORAS)
-
-
 def _salvar_cache(regras, versao=None):
     os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
-    with open(CACHE_PATH, "w", encoding="utf-8") as f:
+    temporario = CACHE_PATH.with_suffix(".tmp")
+    with open(temporario, "w", encoding="utf-8") as f:
         json.dump({
             "timestamp": datetime.now().isoformat(),
             "versao": versao,
             "regras": regras
         }, f, indent=2)
+    os.replace(temporario, CACHE_PATH)
 
 
 def _buscar_configuracoes():
     response = client.get(
         f"/regras/{client.CLIENTE_ID}",
         addToHeaders={"x-licenca-token": client.LICENSE_TOKEN},
+        timeout=TIMEOUT_REGRAS_SEGUNDOS,
     )
-    return response.json()
+    regras = response.json()
+    if not isinstance(regras, list) or not all(isinstance(r, dict) for r in regras):
+        raise RuntimeError("Resposta de regras inválida")
+    return regras
 
 
 def _buscar_versao():
     response = client.get(
         f"/regras/{client.CLIENTE_ID}/versao",
         addToHeaders={"x-licenca-token": client.LICENSE_TOKEN},
+        timeout=TIMEOUT_REGRAS_SEGUNDOS,
     )
     return response.json().get("versao")
 
@@ -99,12 +97,13 @@ def _regras_iguais(a, b):
 
 def _buscar_e_salvar(versao=None):
     """Baixa regras e grava cache com versão (busca /versao se não informada)."""
-    regras = _buscar_configuracoes()
     if versao is None:
         try:
             versao = _buscar_versao()
         except RuntimeError:
-            versao = _versao_cache()
+            versao = None
+    # Versão antes dos dados: uma edição entre as requisições será vista no próximo poll.
+    regras = _buscar_configuracoes()
     _salvar_cache(regras, versao)
     return regras
 
@@ -169,34 +168,20 @@ def _sync_forcado_por_conteudo():
     """GET /regras completo; retorna regras se o conteúdo mudou, senão None."""
     global _ultimo_sync_forcado_em
     agora = time.monotonic()
-    if agora - _ultimo_sync_forcado_em < INTERVALO_SYNC_FORCADO_SEGUNDOS:
+    if _ultimo_sync_forcado_em and agora - _ultimo_sync_forcado_em < INTERVALO_SYNC_FORCADO_SEGUNDOS:
         return None
     _ultimo_sync_forcado_em = agora
 
+    antigas = _regras_cache_brutas()
     try:
-        regras = _buscar_configuracoes()
+        regras = _buscar_e_salvar()
     except RuntimeError:
         print("[configuracao] Sync forçado falhou — mantendo regras atuais")
         return None
 
-    antigas = _regras_cache_brutas()
     if antigas is not None and _regras_iguais(antigas, regras):
-        # Atualiza timestamp / tenta versão, sem sinalizar hot-reload.
-        try:
-            versao = _buscar_versao()
-        except RuntimeError:
-            versao = _versao_cache()
-        _salvar_cache(regras, versao)
         return None
-
-    versao = None
-    try:
-        versao = _buscar_versao()
-    except RuntimeError:
-        versao = _versao_cache()
-
     print("[configuracao] Sync forçado — regras atualizadas da API")
-    _salvar_cache(regras, versao)
     return regras
 
 
@@ -221,13 +206,7 @@ def verificar_atualizacao():
 
 
 def gerenciar_configuracoes():
-    """Hot path: lê cache se existir. Sync fica a cargo do poll / boot."""
-    if _cache_existe_com_regras():
-        cache = _ler_cache()
-        if _cache_antigo():
-            print("[configuracao] Cache antigo — poll/sync deve atualizar em breve")
-        return _normalizar_regras(cache["regras"])
-
+    """Boot consulta a API antes de varrer arquivos; cache só é fallback offline."""
     try:
         regras = _buscar_e_salvar()
         print("[configuracao] Regras atualizadas da API")

@@ -1,97 +1,72 @@
--- Restaura o contrato #286 (perdido quando 70.sql foi sobrescrito):
--- versão por regra + contador atômico por cliente para o poll do agente.
--- O contador no cliente detecta também DELETE e evita colisões concorrentes.
+-- BUG-FOLHA-06 (#442) - protege dados sensiveis da folha com RLS.
+-- O backend acessa estas tabelas exclusivamente com service_role; nao existe
+-- acesso direto para anon ou authenticated.
+ALTER TABLE public.processamentos_folha ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.folha_calculos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.folha_relatorios ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE public.regras
-  ADD COLUMN IF NOT EXISTS versao BIGINT;
+-- Limpa policies de negacao de uma versao preliminar que pode ter sido
+-- aplicada manualmente no dev. Sob RLS, a ausencia de policy positiva ja
+-- bloqueia essas roles e evita manter policies diretas desnecessarias.
+DROP POLICY IF EXISTS processamentos_folha_no_anon ON public.processamentos_folha;
+DROP POLICY IF EXISTS folha_calculos_no_anon ON public.folha_calculos;
+DROP POLICY IF EXISTS folha_relatorios_no_anon ON public.folha_relatorios;
+DROP POLICY IF EXISTS processamentos_folha_no_authenticated ON public.processamentos_folha;
+DROP POLICY IF EXISTS folha_calculos_no_authenticated ON public.folha_calculos;
+DROP POLICY IF EXISTS folha_relatorios_no_authenticated ON public.folha_relatorios;
 
-UPDATE public.regras
-SET versao = 1
-WHERE versao IS NULL;
-
-ALTER TABLE public.regras
-  ALTER COLUMN versao TYPE BIGINT USING versao::BIGINT,
-  ALTER COLUMN versao SET DEFAULT 1,
-  ALTER COLUMN versao SET NOT NULL;
-
-ALTER TABLE public.clientes
-  ADD COLUMN IF NOT EXISTS regras_versao BIGINT;
-
--- Na primeira aplicação, avança uma posição além do MAX legado para invalidar
--- imediatamente caches que já estavam incorretos. Em reaplicações, preserva o
--- contador existente e nunca o reduz.
-WITH versoes_existentes AS (
-  SELECT
-    cliente.id AS cliente_id,
-    cliente.regras_versao,
-    MAX(regra.versao) AS maior_versao_regra
-  FROM public.clientes AS cliente
-  LEFT JOIN public.regras AS regra ON regra.cliente_id = cliente.id
-  GROUP BY cliente.id, cliente.regras_versao
-)
-UPDATE public.clientes AS cliente
-SET regras_versao = CASE
-  WHEN versoes.regras_versao IS NULL AND versoes.maior_versao_regra IS NOT NULL
-    THEN versoes.maior_versao_regra + 1
-  WHEN versoes.regras_versao IS NULL
-    THEN 0
-  ELSE GREATEST(versoes.regras_versao, COALESCE(versoes.maior_versao_regra, 0))
-END
-FROM versoes_existentes AS versoes
-WHERE cliente.id = versoes.cliente_id;
-
-ALTER TABLE public.clientes
-  ALTER COLUMN regras_versao SET DEFAULT 0,
-  ALTER COLUMN regras_versao SET NOT NULL;
-
-CREATE OR REPLACE FUNCTION public.versionar_mutacao_regras()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$
-DECLARE
-  cliente_alvo UUID;
-  nova_versao BIGINT;
+-- Reaplicavel, inclusive depois de uma execucao parcial, no mesmo formato da
+-- migration 84 (certificados_digitais).
+DO $$
 BEGIN
-  cliente_alvo := CASE WHEN TG_OP = 'DELETE' THEN OLD.cliente_id ELSE NEW.cliente_id END;
-
-  -- Se uma regra algum dia mudar de cliente, ambos os conjuntos precisam ser
-  -- invalidados. Os controllers atuais não permitem isso, mas o trigger mantém
-  -- a invariável também para operações administrativas no banco.
-  IF TG_OP = 'UPDATE' AND OLD.cliente_id IS DISTINCT FROM NEW.cliente_id THEN
-    UPDATE public.clientes
-    SET regras_versao = regras_versao + 1
-    WHERE id = OLD.cliente_id;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_policy
+    WHERE polrelid = 'public.processamentos_folha'::regclass
+      AND polname = 'processamentos_folha_service_role'
+  ) THEN
+    CREATE POLICY processamentos_folha_service_role
+      ON public.processamentos_folha
+      FOR ALL
+      TO service_role
+      USING (true)
+      WITH CHECK (true);
   END IF;
 
-  UPDATE public.clientes
-  SET regras_versao = regras_versao + 1
-  WHERE id = cliente_alvo
-  RETURNING regras_versao INTO nova_versao;
-
-  IF nova_versao IS NULL THEN
-    -- No ON DELETE CASCADE, a linha de clientes pode já ter sido removida.
-    -- A exclusão da regra deve continuar; não existe mais agente para invalidar.
-    IF TG_OP = 'DELETE' THEN
-      RETURN OLD;
-    END IF;
-
-    RAISE EXCEPTION 'Cliente % não encontrado ao versionar regras', cliente_alvo;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_policy
+    WHERE polrelid = 'public.folha_calculos'::regclass
+      AND polname = 'folha_calculos_service_role'
+  ) THEN
+    CREATE POLICY folha_calculos_service_role
+      ON public.folha_calculos
+      FOR ALL
+      TO service_role
+      USING (true)
+      WITH CHECK (true);
   END IF;
 
-  IF TG_OP = 'DELETE' THEN
-    RETURN OLD;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_policy
+    WHERE polrelid = 'public.folha_relatorios'::regclass
+      AND polname = 'folha_relatorios_service_role'
+  ) THEN
+    CREATE POLICY folha_relatorios_service_role
+      ON public.folha_relatorios
+      FOR ALL
+      TO service_role
+      USING (true)
+      WITH CHECK (true);
   END IF;
-
-  NEW.versao := nova_versao;
-  RETURN NEW;
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trigger_versionar_mutacao_regras ON public.regras;
-
-CREATE TRIGGER trigger_versionar_mutacao_regras
-BEFORE INSERT OR UPDATE OR DELETE ON public.regras
-FOR EACH ROW
-EXECUTE FUNCTION public.versionar_mutacao_regras();
+-- Rollback controlado (reabre acesso direto e, por isso, exige aprovacao):
+-- DROP POLICY IF EXISTS processamentos_folha_service_role ON public.processamentos_folha;
+-- DROP POLICY IF EXISTS folha_calculos_service_role ON public.folha_calculos;
+-- DROP POLICY IF EXISTS folha_relatorios_service_role ON public.folha_relatorios;
+-- ALTER TABLE public.processamentos_folha DISABLE ROW LEVEL SECURITY;
+-- ALTER TABLE public.folha_calculos DISABLE ROW LEVEL SECURITY;
+-- ALTER TABLE public.folha_relatorios DISABLE ROW LEVEL SECURITY;
