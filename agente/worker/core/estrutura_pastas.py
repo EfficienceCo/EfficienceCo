@@ -26,7 +26,7 @@ TIPO_PARA_SUBPASTA = {
     "recibo": "Declaracoes",
 }
 
-SUBPASTAS_COM_MES = frozenset({"Folha", "Declaracoes", "Notas Fiscais"})
+SUBPASTAS_COM_MES = frozenset({"Folha", "Declaracoes", "Notas Fiscais", "Comprovantes"})
 
 PASTA_NAO_CLASSIFICADO = "NAO_CLASSIFICADO"
 
