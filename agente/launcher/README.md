@@ -55,6 +55,7 @@ Não dependa de um `.env` separado no pacote de produção: esses valores vêm d
 Logs legíveis:
 - Launcher: `%APPDATA%\Efficience\launcher.log`
 - Worker (mesmo sem console / `-H windowsgui`): `%APPDATA%\Efficience\worker.log`
+  (rotação em 5 MB, com até 3 arquivos de backup).
 
 ## Build (Windows nativo)
 

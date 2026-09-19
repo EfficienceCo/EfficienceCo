@@ -37,6 +37,15 @@ export async function obterProcessamentoFolha(processamentoId) {
   return response.data;
 }
 
+export async function tentarNovamenteGerarSaidaFolha(processamentoId) {
+  if (!processamentoId) {
+    throw new Error('processamento_id é obrigatório para tentar gerar a saída novamente.');
+  }
+
+  const response = await api.post(`/folha/${encodeURIComponent(processamentoId)}/gerar-saida`);
+  return response.data;
+}
+
 export async function baixarArquivoFolha({ processamentoId, arquivo } = {}) {
   if (!processamentoId || !arquivo) {
     throw new Error('Processamento e arquivo são obrigatórios para baixar a folha.');

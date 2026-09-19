@@ -9,7 +9,24 @@ from __future__ import annotations
 
 import os
 import sys
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+MAX_LOG_BYTES = 5 * 1024 * 1024
+BACKUP_LOGS = 3
+
+
+class _ArquivoLog(RotatingFileHandler):
+    terminator = ""
+
+    def write(self, texto):
+        self.handle(logging.LogRecord("worker", logging.INFO, "", 0, texto, (), None))
+        return len(texto)
+
+    def handleError(self, record):
+        # stderr também passa pelo tee: reportar ali causaria recursão se o disco falhar.
+        pass
 
 
 class _TeeTexto:
@@ -23,7 +40,7 @@ class _TeeTexto:
         if data is None:
             return 0
         texto = data if isinstance(data, str) else str(data)
-        escritos = 0
+        escritos = len(texto)
         if self._original is not None:
             try:
                 escritos = self._original.write(texto) or len(texto)
@@ -88,7 +105,8 @@ def iniciar_log_arquivo(caminho: Path | None = None) -> Path | None:
     destino = Path(caminho) if caminho is not None else caminho_log_worker()
     try:
         destino.parent.mkdir(parents=True, exist_ok=True)
-        arquivo = open(destino, "a", encoding="utf-8", errors="replace", buffering=1)
+        arquivo = _ArquivoLog(destino, maxBytes=MAX_LOG_BYTES, backupCount=BACKUP_LOGS,
+                              encoding="utf-8", errors="replace")
     except OSError as e:
         try:
             print(f"[log_arquivo] Não foi possível abrir {destino}: {e}", file=sys.stderr)
