@@ -1,5 +1,6 @@
-﻿﻿import supabase from "../config/database.js";
+﻿import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
+import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { criar as criarNotificacao } from "../services/notificacoes.service.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 
@@ -30,13 +31,6 @@ function construirNomeArquivo(nomeObrigacao, obrigacaoId, mimetype) {
   const hoje = new Date().toISOString().slice(0, 10);
   const ext = extDeMime(mimetype);
   return `${nomeSanitizado}_${obrigacaoId}_${hoje}_comprovante.${ext}`;
-}
-
-function resolverClienteId(req) {
-  if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
-    return req.body.cliente_id || req.query.cliente_id;
-  }
-  return req.usuario?.cliente_id;
 }
 
 export async function listarObrigacoes(req, res) {
