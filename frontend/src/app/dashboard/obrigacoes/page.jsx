@@ -167,10 +167,12 @@ function obterStatusObrigacao(obrigacao) {
     return 'atrasada';
   }
 
-  if (statusOriginal.includes('pend')) {
-    return 'pendente';
-  }
-
+  // Bug #505 — vencida conta como atrasada mesmo com a coluna dizendo
+  // 'pendente'. O backend só persiste 'atrasada' na varredura diária
+  // (obrigacoes-atraso.job.js); até ela rodar, uma obrigação criada já
+  // vencida chega 'pendente'. Por isso a data é checada ANTES de um
+  // includes('pend') — na ordem antiga este trecho era código morto e o card
+  // "Total atrasadas" mostrava 0 com a linha vencida visível na tabela.
   const dataVencimento = parseDataLocal(obterDataVencimento(obrigacao));
   if (dataVencimento && dataVencimento.getTime() < obterInicioHoje().getTime()) {
     return 'atrasada';
