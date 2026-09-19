@@ -533,6 +533,7 @@ export async function listarEtapasProntasAgente(req, res) {
 
 // Rota de conclusão do agente — reporta sucesso (com o path do arquivo gerado) ou erro
 // ao terminar de executar a ação da etapa.
+// A migration 94 grava evento/notificação na mesma transação do UPDATE da etapa.
 export async function concluirExecucaoEtapaAgente(req, res) {
   const token = req.headers["x-licenca-token"];
   const licenca = await validarTokenLicenca(token);

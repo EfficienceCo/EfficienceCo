@@ -459,6 +459,27 @@ describe("processos.controller — concluirExecucaoEtapaAgente (issue #266, conc
     chamadas.length = 0;
   });
 
+  for (const sucesso of [true, false]) {
+    it(`retorna 500 se a transação de etapa/evento falha (sucesso=${sucesso})`, async () => {
+      tokenLicencaValido();
+      queue("etapas", "maybeSingle", {
+        data: {
+          id: ETAPA_ID, processo_id: PROCESSO_ID, tipo: "automatizada",
+          status: "processando", execucao_token: EXECUCAO_TOKEN,
+          processos: { cliente_id: CLIENTE_A, status: "em_andamento" },
+        }, error: null,
+      });
+      queue("etapas", "maybeSingle", { data: null, error: { message: "insert evento falhou" } });
+      const res = criarRes();
+      await concluirExecucaoEtapaAgente({
+        headers: { "x-licenca-token": "token-valido" }, params: { etapaId: ETAPA_ID },
+        body: { sucesso, execucao_token: EXECUCAO_TOKEN, erro: "sem permissão" },
+      }, res);
+      assert.equal(res.statusCode, 500);
+      assert.equal(chamadas.some(c => c.tabela === "processos" && c.metodo === "update"), false);
+    });
+  }
+
   it("401 quando token de licença é inválido", async () => {
     const res = criarRes();
     await concluirExecucaoEtapaAgente({ headers: {}, params: { etapaId: ETAPA_ID }, body: { sucesso: true } }, res);
