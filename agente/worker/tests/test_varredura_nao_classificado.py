@@ -4,6 +4,8 @@ from unittest.mock import patch
 
 from automacoes.monitorar_pasta import _varredura_inicial
 from core.estrutura_pastas import PASTA_NAO_CLASSIFICADO
+import pytest
+from automacoes.monitorar_pasta import _caminho_em_nao_classificado
 
 
 def test_varredura_inicial_pula_nao_classificado(tmp_path):
@@ -31,3 +33,15 @@ def test_varredura_inicial_pula_nao_classificado(tmp_path):
 
     nomes = [p.split("\\")[-1].split("/")[-1] for p in processados]
     assert nomes == ["ok.pdf"]
+
+
+@pytest.mark.parametrize("pasta", ["nao_classificado", "Nao_Classificado"])
+def test_quarentena_independe_de_maiusculas(tmp_path, pasta):
+    quarentena = tmp_path / pasta
+    quarentena.mkdir()
+    arquivo = quarentena / "documento.pdf"
+    arquivo.write_bytes(b"x")
+    assert _caminho_em_nao_classificado(str(arquivo))
+    with patch("automacoes.monitorar_pasta._processar_arquivo") as processar:
+        _varredura_inicial([], str(tmp_path))
+    processar.assert_not_called()

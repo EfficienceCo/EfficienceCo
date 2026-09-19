@@ -11,6 +11,7 @@ dist/
 build/
 .next/
 .claude/
+.codex/
 CLAUDE.md
 _CLAUDE.md
 .postman/

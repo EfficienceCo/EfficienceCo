@@ -22,7 +22,7 @@ import os
 def _caminho_em_nao_classificado(caminho):
     """True se o path está sob (ou é) a pasta de quarentena NAO_CLASSIFICADO."""
     partes = os.path.normpath(caminho).split(os.sep)
-    return PASTA_NAO_CLASSIFICADO in partes
+    return any(p.casefold() == PASTA_NAO_CLASSIFICADO.casefold() for p in partes)
 
 
 class MonitorPasta(FileSystemEventHandler):
@@ -181,7 +181,7 @@ def _varredura_inicial(regras, pasta):
     
     for raiz, dirs, arquivos in os.walk(pasta):
         # mesmo critério do on_created: não reprocessar quarentena (BUG-ORG-07 / #485)
-        dirs[:] = [d for d in dirs if d != PASTA_NAO_CLASSIFICADO]
+        dirs[:] = [d for d in dirs if d.casefold() != PASTA_NAO_CLASSIFICADO.casefold()]
         if _caminho_em_nao_classificado(raiz):
             continue
         for nome in arquivos:

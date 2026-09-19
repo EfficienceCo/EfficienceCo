@@ -1,19 +1,14 @@
-CREATE OR REPLACE FUNCTION trg_set_esocial_fechado_em()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- Dispara apenas se o status mudou para 'FECHADO'
-    IF NEW.eventos_esocial_status = 'FECHADO' AND (OLD.status IS DISTINCT FROM 'FECHADO') THEN
-        UPDATE processamentos_folha
-        SET esocial_fechado_em = NOW()
-        WHERE id = NEW.processamento_folha_id;
-    END IF;
-    
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- 2. Criação da Trigger
-CREATE TRIGGER trigger_atualiza_esocial_fechado
-AFTER UPDATE ON eventos_esocial
-FOR EACH ROW
-EXECUTE FUNCTION trg_set_esocial_fechado_em();
+-- BUG-ESOCIAL-05 (#455)
+--
+-- Migration intencionalmente vazia. A trigger original nao representava o
+-- schema real:
+--   - a coluna de status e eventos_esocial.status, cujos valores nao incluem
+--     "fechado";
+--   - eventos_esocial nao possui processamento_folha_id nem outro vinculo com
+--     processamentos_folha.
+--
+-- Trocar apenas NEW.eventos_esocial_status por NEW.status manteria a trigger
+-- incorreta e ainda quebraria ao acessar NEW.processamento_folha_id. O
+-- fechamento mensal (S-1299) precisa de modelagem propria quando o Grupo 4 for
+-- implementado. A migration 85.sql continua removendo a funcao/trigger legada
+-- em bancos que tenham executado a versao antiga desta migration.
