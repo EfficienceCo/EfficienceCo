@@ -24,6 +24,17 @@ const ACOES_EXIGEM_ORIGEM = new Set([
   "upload_folha",
 ]);
 
+/**
+ * Caminho absoluto Windows: unidade + separador (`C:\x`, `C:/x`) ou UNC (`\\srv\share`).
+ * Sem caracteres inválidos de nome de arquivo (`< > " | ? *`) nem `:` fora da unidade.
+ * Alinhar ao FE (frontend/src/app/dashboard/regras/page.jsx).
+ */
+const CAMINHO_WINDOWS_ABSOLUTO = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/:*?"<>|]+[\\/][^\\/:*?"<>|]+)[^:*?"<>|]*$/;
+
+export function caminhoWindowsAbsolutoValido(caminho) {
+  return CAMINHO_WINDOWS_ABSOLUTO.test(String(caminho).trim());
+}
+
 function parseCondicao(condicao) {
   if (condicao === undefined || condicao === null || typeof condicao === "object") {
     return { valor: condicao };
@@ -43,7 +54,7 @@ function campoPreenchido(valor) {
 /**
  * Valida campos por ação. Em PATCH parcial (sem acao no body), só valida o que veio.
  */
-function validarCamposPorAcao({ acao, pasta_origem, pasta_destino, condicao }, { parcial = false } = {}) {
+function validarCamposPorAcao({ acao, pasta_origem, pasta_destino, condicao }, { parcial = false, validarFormatoOrigem = true } = {}) {
   if (acao !== undefined && acao !== null && acao !== "") {
     if (!ACOES_VALIDAS.has(acao)) {
       return { erro: `acao inválida: use uma de ${[...ACOES_VALIDAS].join(", ")}` };
@@ -58,6 +69,11 @@ function validarCamposPorAcao({ acao, pasta_origem, pasta_destino, condicao }, {
     if (!parcial || pasta_origem !== undefined) {
       if (!campoPreenchido(pasta_origem)) {
         return { erro: "pasta_origem é obrigatória para esta ação" };
+      }
+      if (validarFormatoOrigem && !caminhoWindowsAbsolutoValido(pasta_origem)) {
+        return {
+          erro: "pasta_origem inválida: informe um caminho absoluto do Windows (ex.: C:\\Docs\\Entrada)",
+        };
       }
     }
   }
@@ -203,7 +219,8 @@ export async function atualizarRegra(req, res) {
       pasta_destino: updates.pasta_destino ?? regra.pasta_destino,
       condicao: updates.condicao ?? regra.condicao,
     },
-    { parcial: true },
+    // só valida o formato quando a origem veio no body: regras legadas não travam toggles (ativa etc.)
+    { parcial: true, validarFormatoOrigem: updates.pasta_origem !== undefined },
   );
   if (erroCampos) {
     return res.status(400).json({ erro: erroCampos });

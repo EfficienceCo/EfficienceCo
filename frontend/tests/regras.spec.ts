@@ -28,3 +28,46 @@ test.describe('Regras de automação — normalizarCondicao só JSONB (issue #27
     await expect(page.locator('#condicao_extensao')).toHaveValue('pdf');
   });
 });
+
+test.describe('Regras de automação — pasta_origem validada (issue #484)', () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+    await page.goto('/dashboard/regras');
+    await page.getByRole('button', { name: 'Nova regra' }).click();
+  });
+
+  test('rejeita caminho malformado (C;\\Souza) com mensagem clara e sem chamar a API', async ({ page }) => {
+    let postsEnviados = 0;
+    await page.route('**/regras', (route) => {
+      if (route.request().method() === 'POST') postsEnviados += 1;
+      return route.continue();
+    });
+
+    await page.locator('#pasta_origem').fill('C;\\Souza');
+    await page.locator('#pasta_destino').fill('C:\\Souza\\SAIDA');
+    await page.getByRole('button', { name: 'Criar regra' }).click();
+
+    await expect(page.getByText(/Pasta origem inválida: informe um caminho absoluto do Windows/)).toBeVisible();
+    expect(postsEnviados).toBe(0);
+  });
+
+  test('aceita caminho absoluto válido e envia a regra', async ({ page }) => {
+    let corpo: Record<string, unknown> | null = null;
+    await page.route('**/regras', (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      corpo = route.request().postDataJSON();
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 'mock-484', ...corpo }),
+      });
+    });
+
+    await page.locator('#pasta_origem').fill('C:\\Souza\\ENTRADA');
+    await page.locator('#pasta_destino').fill('C:\\Souza\\SAIDA');
+    await page.getByRole('button', { name: 'Criar regra' }).click();
+
+    await expect(page.getByText(/Pasta origem inválida/)).toHaveCount(0);
+    await expect.poll(() => corpo?.pasta_origem).toBe('C:\\Souza\\ENTRADA');
+  });
+});

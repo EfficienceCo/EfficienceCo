@@ -163,6 +163,9 @@ const FORM_INICIAL = {
   ativa: true,
 };
 
+// Caminho absoluto Windows (C:\x, C:/x ou UNC \srv\share). Alinhado ao BE (regras.controller.js).
+const CAMINHO_WINDOWS_ABSOLUTO = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/:*?"<>|]+[\\/][^\\/:*?"<>|]+)[^:*?"<>|]*$/;
+
 function obterMensagemErro(error, fallback = 'Não foi possível processar sua solicitação.') {
   return (
     error?.response?.data?.erro ||
@@ -608,6 +611,11 @@ export default function Regras() {
 
     if (schema.pastaOrigem.obrigatorio && !pastaOrigem) {
       setErroFormulario(`Preencha ${schema.pastaOrigem.label.toLowerCase()}.`);
+      return;
+    }
+
+    if (schema.pastaOrigem.visivel && pastaOrigem && !CAMINHO_WINDOWS_ABSOLUTO.test(pastaOrigem)) {
+      setErroFormulario('Pasta origem inválida: informe um caminho absoluto do Windows (ex.: C:\\Docs\\Entrada).');
       return;
     }
 
