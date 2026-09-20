@@ -17,6 +17,7 @@ type EstadoApi = {
     id: string;
     cliente_id: string;
     titulo: string;
+    nome_empresa?: string;
     tipo: string;
     status: string;
     etapas: Etapa[];
@@ -159,6 +160,21 @@ async function prepararPagina(page: Page, estado = criarEstadoApi()) {
 
   return estado;
 }
+
+test.describe('Processos - titulo do card (#491)', () => {
+  test('usa nome_empresa quando nao ha titulo explicito', async ({ page }) => {
+    const estado = criarEstadoApi();
+    estado.processo.titulo = '';
+    estado.processo.nome_empresa = 'Empresa Exemplo #491';
+
+    await prepararPagina(page, estado);
+
+    await expect(
+      page.getByRole('heading', { name: 'Empresa Exemplo #491', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Processo 1', exact: true })).toHaveCount(0);
+  });
+});
 
 function etapaPorTexto(page: Page, texto: string) {
   return page.getByRole('listitem').filter({ hasText: texto });
