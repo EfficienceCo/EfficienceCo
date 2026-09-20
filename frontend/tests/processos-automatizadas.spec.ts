@@ -229,7 +229,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await preencherContrato(page, '60');
     await contrato.getByRole('button', { name: 'Adicionar sócio' }).click();
     await page.getByLabel('Nome do sócio 2').fill('João Souza');
-    await page.getByLabel('CPF do sócio 2').fill('00123456789');
+    await page.getByLabel('CPF do sócio 2').fill('11144477735');
     await page.getByLabel('Participação (%) do sócio 2').fill('40');
     await contrato.getByRole('button', { name: 'Concluir' }).click();
 
@@ -238,7 +238,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     expect(payloadContrato).toEqual({
       socios: [
         { nome: 'Maria da Silva', cpf: '01234567890', participacao: 60 },
-        { nome: 'João Souza', cpf: '00123456789', participacao: 40 },
+        { nome: 'João Souza', cpf: '11144477735', participacao: 40 },
       ],
       capital_social: 25000.5,
       objeto_social: 'Prestação de serviços de tecnologia.',
@@ -306,7 +306,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     etapa.status = 'pronta_para_execucao';
     etapa.erro_execucao = 'Falha ao preencher o modelo';
     etapa.payload_execucao = {
-      socios: [{ nome: 'Ana Lima', cpf: '00011122233', participacao: 100 }],
+      socios: [{ nome: 'Ana Lima', cpf: '12345678909', participacao: 100 }],
       capital_social: 15000,
       objeto_social: 'Comércio varejista.',
       endereco: 'Avenida Central, 20',
