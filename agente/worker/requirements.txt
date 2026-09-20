@@ -1,16 +1,34 @@
+# Dependências do worker (produção). Instalar com:
+#   py -3 -m pip install -r requirements.txt
+# O launcher em dev (run-worker-dev.cmd) e o build/build.sh passam por aqui
+# antes de subir / empacotar — BUG-AGENTE-DEPS-01 / #515.
+
+# HTTP / runtime
 requests>=2.31.0
 watchdog>=6.0.0
 schedule>=1.2.0
 python-dotenv>=1.0.0
 pyinstaller>=5.13.0
+
+# Contratos (abertura de empresa)
 docxtpl>=0.16.0
+
+# Classificação ML de produção (automacoes/rede — ResNet-18 + Excel/imagem)
 torch
 torchvision
 Pillow
 pypdfium2
-pdfplumber
-pytesseract
 pandas
 openpyxl
 matplotlib
+
+# Extração de texto / OCR (core/extrair_texto.py — organização de documentos)
+pdfplumber
+pytesseract
+
+# Testes
 pytest>=7.0.0
+
+# NOTA — automacoes/teste_rede_neural/ (TF-IDF + MLP) NÃO é produção
+# (ver #513 / BUG-ML-05). Não puxe scikit-learn/joblib pro .exe do agente.
+# Se for experimentar o scaffolding: pip install scikit-learn joblib
