@@ -90,8 +90,10 @@ function calcularPercentual(etapas) {
 
 export async function listarProcessos(req, res) {
   const clienteId = resolverClienteId(req);
+  // Widget do shell chama GET /processos?status=em_andamento sem cliente_id para
+  // admin_efficience. Resposta vazia evita 400; mutações continuam exigindo cliente.
   if (!clienteId) {
-    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+    return res.status(200).json([]);
   }
 
   const { tipo, status } = req.query;
