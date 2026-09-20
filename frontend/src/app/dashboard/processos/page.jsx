@@ -526,6 +526,12 @@ function aplicarAtualizacaoEtapaNaLista(lista, processoId, etapaId, concluida) {
   });
 }
 
+function agendarRestauracaoScroll({ x, y }) {
+  window.requestAnimationFrame(() => {
+    window.scrollTo(x, y);
+  });
+}
+
 function extrairEtapaAtualizada(payload) {
   if (!payload || typeof payload !== 'object') {
     return null;
@@ -1133,6 +1139,8 @@ export default function ProcessosPage() {
     }
 
     const chaveAtualizacao = `${processoId}::${etapaId}`;
+    const posicaoScroll = { x: window.scrollX, y: window.scrollY };
+    const preservarScroll = () => agendarRestauracaoScroll(posicaoScroll);
 
     setEtapasEmAtualizacao((valorAtual) => ({
       ...valorAtual,
@@ -1143,6 +1151,7 @@ export default function ProcessosPage() {
     setProcessos((valorAtual) =>
       aplicarAtualizacaoEtapaNaLista(valorAtual, processoId, etapaId, concluida),
     );
+    preservarScroll();
 
     try {
       const retorno = await concluirEtapa(processoId, etapaId, { concluida });
@@ -1152,18 +1161,22 @@ export default function ProcessosPage() {
         setProcessos((valorAtual) =>
           atualizarProcessoNaLista(valorAtual, processoId, processoAtualizado),
         );
+        preservarScroll();
       }
 
       await carregarProcessos({ silencioso: true });
+      preservarScroll();
     } catch (error) {
       setErro(obterMensagemErro(error, 'Não foi possível atualizar a etapa.'));
       await carregarProcessos({ silencioso: true });
+      preservarScroll();
     } finally {
       setEtapasEmAtualizacao((valorAtual) => {
         const proximo = { ...valorAtual };
         delete proximo[chaveAtualizacao];
         return proximo;
       });
+      preservarScroll();
     }
   }
 

@@ -206,6 +206,32 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     expect(estado.patches[0]).toEqual({ concluida: true });
   });
 
+  test('preserva o scroll ao marcar e desmarcar uma etapa manual (#495)', async ({ page }) => {
+    const estado = await prepararPagina(page);
+    const checkbox = etapaPorTexto(
+      page,
+      'Verificar viabilidade do nome empresarial',
+    ).getByRole('checkbox');
+
+    await checkbox.scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollBy(0, 200));
+    const scrollAntes = await page.evaluate(() => window.scrollY);
+    expect(scrollAntes).toBeGreaterThan(0);
+
+    await checkbox.check();
+
+    await expect.poll(() => estado.patches.length).toBe(1);
+    await expect(checkbox).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollAntes);
+
+    await checkbox.uncheck();
+
+    await expect.poll(() => estado.patches.length).toBe(2);
+    await expect(checkbox).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollAntes);
+    expect(estado.patches).toEqual([{ concluida: true }, { concluida: false }]);
+  });
+
   test('adiciona sócios, envia o payload tipado e entra em processamento', async ({ page }) => {
     const estado = await prepararPagina(page);
     const contrato = etapaPorTexto(page, 'Gerar contrato social');
