@@ -9,11 +9,16 @@ import {
   buscarApuracao,
   calcularApuracao,
   editarApuracao,
+  excluirApuracao,
   listarApuracoes,
 } from '../../../../services/apuracao.service';
 
 const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
 const REGIME_SIMPLES_NACIONAL = 'simples_nacional';
+// Piso da CHECK constraint de periodo_ano (database/migrations/70.sql) e da
+// validação do POST /apuracoes. Abrir o seletor até o piso do banco (#500):
+// a janela anterior era ano atual - 4 e escondia competências válidas.
+const ANO_MINIMO_APURACAO = 2020;
 
 const MESES = [
   { value: 1, label: 'Janeiro' },
@@ -108,7 +113,13 @@ function obterNomeCliente(cliente) {
 
 function obterAnosDisponiveis() {
   const anoAtual = new Date().getFullYear();
-  return [anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3, anoAtual - 4];
+  const anos = [];
+
+  for (let item = anoAtual; item >= ANO_MINIMO_APURACAO; item -= 1) {
+    anos.push(item);
+  }
+
+  return anos;
 }
 
 function formatarValor(valor) {
@@ -207,6 +218,10 @@ export default function ApuracoesPage() {
   const [isAprovando, setIsAprovando] = useState(false);
   const [erroAprovar, setErroAprovar] = useState('');
 
+  const [showExcluirModal, setShowExcluirModal] = useState(false);
+  const [isExcluindo, setIsExcluindo] = useState(false);
+  const [erroExcluir, setErroExcluir] = useState('');
+
   const clienteIdEfetivo = isAdminEfficience ? clienteId : user?.cliente_id || null;
 
   const anosDisponiveis = useMemo(obterAnosDisponiveis, []);
@@ -267,6 +282,7 @@ export default function ApuracoesPage() {
     setApuracao(null);
     setErro(null);
     setShowAprovarModal(false);
+    setShowExcluirModal(false);
   }
 
   function handleSelecionarMes(event) {
@@ -274,6 +290,7 @@ export default function ApuracoesPage() {
     setApuracao(null);
     setErro(null);
     setShowAprovarModal(false);
+    setShowExcluirModal(false);
   }
 
   function handleSelecionarAno(event) {
@@ -281,6 +298,7 @@ export default function ApuracoesPage() {
     setApuracao(null);
     setErro(null);
     setShowAprovarModal(false);
+    setShowExcluirModal(false);
   }
 
   async function handleCalcular() {
@@ -292,6 +310,7 @@ export default function ApuracoesPage() {
     setErro(null);
     setApuracao(null);
     setShowAprovarModal(false);
+    setShowExcluirModal(false);
 
     try {
       const buscarExistente = async () => {
@@ -402,6 +421,40 @@ export default function ApuracoesPage() {
       setErroAprovar(obterMensagemErro(error, 'Não foi possível aprovar o DAS.'));
     } finally {
       setIsAprovando(false);
+    }
+  }
+
+  function handleAbrirExcluir() {
+    setErroExcluir('');
+    setShowExcluirModal(true);
+  }
+
+  function handleFecharExcluir() {
+    if (isExcluindo) {
+      return;
+    }
+
+    setShowExcluirModal(false);
+  }
+
+  async function handleConfirmarExcluir() {
+    if (!apuracao?.id) {
+      return;
+    }
+
+    setIsExcluindo(true);
+    setErroExcluir('');
+
+    try {
+      await excluirApuracao(apuracao.id);
+      // Zerar a apuração tira da tela o resultado, o card de edição e as ações:
+      // a competência volta ao estado "nunca apurada" e Calcular DAS recomeça do zero.
+      setShowExcluirModal(false);
+      setApuracao(null);
+    } catch (error) {
+      setErroExcluir(obterMensagemErro(error, 'Não foi possível excluir o rascunho.'));
+    } finally {
+      setIsExcluindo(false);
     }
   }
 
@@ -906,14 +959,26 @@ export default function ApuracoesPage() {
               <p className="text-sm text-zinc-500">Revise os dados acima antes de aprovar este DAS.</p>
             )}
 
-            <button
-              type="button"
-              onClick={handleAbrirAprovar}
-              disabled={statusAprovado}
-              className="rounded-md bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-70"
-            >
-              Aprovar DAS
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {statusRascunho ? (
+                <button
+                  type="button"
+                  onClick={handleAbrirExcluir}
+                  className="rounded-md border border-rose-200 bg-white px-5 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50"
+                >
+                  Excluir rascunho
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={handleAbrirAprovar}
+                disabled={statusAprovado}
+                className="rounded-md bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-70"
+              >
+                Aprovar DAS
+              </button>
+            </div>
           </section>
         ) : null}
       </main>
@@ -952,6 +1017,47 @@ export default function ApuracoesPage() {
               >
                 {isAprovando ? <Spinner /> : null}
                 {isAprovando ? 'Aprovando...' : 'Confirmar aprovação'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {showExcluirModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
+          <section className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-semibold text-zinc-900">Excluir rascunho</h2>
+            <p className="mt-3 text-sm leading-relaxed text-zinc-700">
+              Excluir o rascunho do DAS de <strong>{formatarValor(obterValorExibido(apuracao))}</strong>{' '}
+              para <strong>{clienteSelecionadoNome}</strong> referente a{' '}
+              <strong>{competenciaLabel}</strong>? O cálculo e o histórico de edições serão perdidos —
+              esta ação não pode ser desfeita.
+            </p>
+
+            {erroExcluir ? (
+              <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {erroExcluir}
+              </p>
+            ) : null}
+
+            <footer className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleFecharExcluir}
+                disabled={isExcluindo}
+                className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmarExcluir}
+                disabled={isExcluindo}
+                className="inline-flex items-center gap-2 rounded-md bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isExcluindo ? <Spinner /> : null}
+                {isExcluindo ? 'Excluindo...' : 'Confirmar exclusão'}
               </button>
             </footer>
           </section>

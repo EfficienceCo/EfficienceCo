@@ -45,3 +45,7 @@ export async function aprovarApuracao(id) {
   const response = await api.patch(`/apuracoes/${id}/aprovar`);
   return response.data;
 }
+
+export async function excluirApuracao(id) {
+  await api.delete(`/apuracoes/${id}`);
+}

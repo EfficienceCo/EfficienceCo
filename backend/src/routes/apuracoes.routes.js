@@ -7,6 +7,7 @@ import {
   editarApuracao,
   aprovarApuracao,
   recalcularApuracao,
+  excluirApuracao,
   listarFolhaPendente,
   registrarResultadoFolha,
 } from "../controllers/apuracoes.controller.js";
@@ -33,6 +34,9 @@ router.patch("/:id/aprovar", admins, aprovarApuracao);
 // Fecha o loop do #365: reaplica o cálculo com os dados de folha atualizados
 // (após o agente confirmar e o contador subir a planilha correta).
 router.patch("/:id/recalcular", admins, recalcularApuracao);
+// Desfaz um rascunho (#500) — mesma faixa de perfis das demais mutações da
+// apuração; aprovada nunca some (409 no controller).
+router.delete("/:id", admins, excluirApuracao);
 
 console.log("[apuracoes.routes] Rotas de apurações registradas");
 
