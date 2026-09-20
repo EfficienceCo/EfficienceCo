@@ -13,4 +13,6 @@ pytesseract
 pandas
 openpyxl
 matplotlib
+scikit-learn
+joblib
 pytest>=7.0.0
