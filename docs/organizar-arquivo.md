@@ -142,7 +142,7 @@ Módulo: `agente/core/identificar_empresa.py`
 
 | Arquivo | Mudança |
 |---|---|
-| `backend/src/controllers/regras.controller.js` | Allowlist de ações; `pasta_destino` / `pasta_origem` / `nome_empresa` validados conforme a ação |
+| `backend/src/controllers/regras.controller.js` | Allowlist de ações; `pasta_destino` / `pasta_origem` / `nome_empresa` validados conforme a ação; `pasta_origem` deve ser caminho absoluto do Windows (`C:\x`, `C:/x` ou UNC) — malformado retorna 400 (#484) |
 | `backend/tests/regras.test.js` | Casos para `renomear` sem destino, `mover`/`organizar_arquivo` exigindo destino |
 
 ---
