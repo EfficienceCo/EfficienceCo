@@ -1,6 +1,11 @@
 """
 Testa excel_para_imagem_pil e classificar_documento do classificador de rede.
 
+Alvo de produção: automacoes.rede.classificador (ResNet-18 + Excel/imagem).
+Restaurado após o #434 ter removido o módulo — a suíte quebrava com
+ModuleNotFoundError (BUG-ML-04 / #512). Deps de Excel: pandas + openpyxl
+(+ matplotlib), listados em requirements.txt (BUG-AGENTE-DEPS-01 / #515).
+
 - excel_para_imagem_pil: gera uma imagem PIL a partir de um arquivo Excel real
   criado em memória via openpyxl.
 - classificar_documento: testa o ramo de decisão por extensão e a resposta
