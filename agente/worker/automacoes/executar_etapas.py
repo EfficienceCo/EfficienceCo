@@ -10,7 +10,7 @@ import os
 
 from comunicacao.etapas_agente import concluir_execucao, listar_etapas_prontas
 from automacoes.gerar_contrato_social import gerar_contrato_social
-from core.estrutura_pastas import criar_estrutura_empresa_em
+from core.estrutura_pastas import criar_estrutura_empresa_em, pasta_empresa_em_abertura
 from core.utils import resolver_pasta_base, validar_nome
 
 
@@ -35,7 +35,7 @@ def _criar_pastas(etapa):
     except ValueError as e:
         return {"sucesso": False, "erro": str(e), "arquivo_gerado": None}
 
-    pasta_empresa = os.path.join(pasta_base, nome_empresa)
+    pasta_empresa = pasta_empresa_em_abertura(pasta_base, nome_empresa)
     try:
         criar_estrutura_empresa_em(pasta_empresa)
     except PermissionError:

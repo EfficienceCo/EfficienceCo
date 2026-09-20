@@ -3,7 +3,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from automacoes.executar_etapas import processar_etapa, processar_etapas_pendentes
+from automacoes.executar_etapas import _criar_pastas, processar_etapa, processar_etapas_pendentes
 from core.estrutura_pastas import SUBPASTAS
 
 
@@ -80,7 +80,7 @@ def test_criar_pastas_no_loop(tmp_path, monkeypatch):
         resultado = processar_etapa(etapa)
 
     assert resultado["sucesso"] is True
-    pasta_empresa = tmp_path / "Empresa Pastas"
+    pasta_empresa = tmp_path / "CLIENTES" / "EM_ABERTURA" / "Empresa Pastas"
     for sub in SUBPASTAS:
         assert (pasta_empresa / sub).is_dir()
     kwargs = mock_concluir.call_args.kwargs
@@ -105,7 +105,7 @@ def test_criar_pastas_pasta_base_relativa_usa_raiz_local(tmp_path, monkeypatch):
         resultado = processar_etapa(etapa)
 
     assert resultado["sucesso"] is True
-    assert Path(resultado["arquivo_gerado"]) == tmp_path / "Empresa Pastas"
+    assert Path(resultado["arquivo_gerado"]) == tmp_path / "CLIENTES" / "EM_ABERTURA" / "Empresa Pastas"
     assert mock_concluir.call_args.kwargs["sucesso"] is True
 
 
@@ -125,7 +125,7 @@ def test_criar_pastas_pasta_base_ausente_usa_raiz_local(tmp_path, monkeypatch):
         resultado = processar_etapa(etapa)
 
     assert resultado["sucesso"] is True
-    pasta_empresa = tmp_path / "Empresa Pastas"
+    pasta_empresa = tmp_path / "CLIENTES" / "EM_ABERTURA" / "Empresa Pastas"
     for sub in SUBPASTAS:
         assert (pasta_empresa / sub).is_dir()
     assert mock_concluir.call_args.kwargs["sucesso"] is True
@@ -149,7 +149,7 @@ def test_criar_pastas_caminho_remoto_nao_sobrescreve_raiz_local(tmp_path, monkey
         resultado = processar_etapa(etapa)
 
     assert resultado["sucesso"] is True
-    assert Path(resultado["arquivo_gerado"]) == raiz_local / "Empresa Pastas"
+    assert Path(resultado["arquivo_gerado"]) == raiz_local / "CLIENTES" / "EM_ABERTURA" / "Empresa Pastas"
     assert not raiz_remota.exists()
 
 
@@ -200,3 +200,27 @@ def test_falha_polling_nao_derruba():
         side_effect=RuntimeError("timeout"),
     ):
         assert processar_etapas_pendentes() == []
+
+
+def test_criar_pastas_destino_canonico_clientes_em_abertura(tmp_path, monkeypatch):
+    """#490: estrutura nasce em {PASTA_BASE}/CLIENTES/EM_ABERTURA/{empresa}, não na raiz."""
+    monkeypatch.setenv("PASTA_BASE", str(tmp_path))
+
+    resultado = _criar_pastas({"nome_empresa": "Empresa Canonica", "pasta_base": None})
+
+    assert resultado["sucesso"] is True
+    esperado = tmp_path / "CLIENTES" / "EM_ABERTURA" / "Empresa Canonica"
+    assert Path(resultado["arquivo_gerado"]) == esperado
+    assert not (tmp_path / "Empresa Canonica").exists()
+
+
+def test_abertura_empresa_legada_usa_destino_canonico(tmp_path, monkeypatch):
+    from automacoes.abertura_empresa import criar_estrutura_empresa
+
+    monkeypatch.setenv("PASTA_BASE", str(tmp_path))
+    with patch("automacoes.abertura_empresa.reportar_evento"):
+        pasta = criar_estrutura_empresa({"condicao": {"nome_empresa": "Empresa Legada"}})
+
+    assert Path(pasta) == tmp_path / "CLIENTES" / "EM_ABERTURA" / "Empresa Legada"
+    for sub in SUBPASTAS:
+        assert (Path(pasta) / sub).is_dir()
