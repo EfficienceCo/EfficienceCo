@@ -526,12 +526,6 @@ function aplicarAtualizacaoEtapaNaLista(lista, processoId, etapaId, concluida) {
   });
 }
 
-function agendarRestauracaoScroll({ x, y }) {
-  window.requestAnimationFrame(() => {
-    window.scrollTo(x, y);
-  });
-}
-
 function extrairEtapaAtualizada(payload) {
   if (!payload || typeof payload !== 'object') {
     return null;
@@ -1139,9 +1133,6 @@ export default function ProcessosPage() {
     }
 
     const chaveAtualizacao = `${processoId}::${etapaId}`;
-    const posicaoScroll = { x: window.scrollX, y: window.scrollY };
-    const preservarScroll = () => agendarRestauracaoScroll(posicaoScroll);
-
     setEtapasEmAtualizacao((valorAtual) => ({
       ...valorAtual,
       [chaveAtualizacao]: true,
@@ -1151,32 +1142,30 @@ export default function ProcessosPage() {
     setProcessos((valorAtual) =>
       aplicarAtualizacaoEtapaNaLista(valorAtual, processoId, etapaId, concluida),
     );
-    preservarScroll();
 
     try {
       const retorno = await concluirEtapa(processoId, etapaId, { concluida });
-      const processoAtualizado = extrairProcessoAtualizado(retorno);
+      const etapaAtualizada = extrairEtapaAtualizada(retorno);
 
-      if (processoAtualizado) {
+      if (etapaAtualizada) {
         setProcessos((valorAtual) =>
-          atualizarProcessoNaLista(valorAtual, processoId, processoAtualizado),
+          atualizarEtapaNaLista(valorAtual, processoId, etapaId, (etapaAtual) => ({
+            ...etapaAtual,
+            ...etapaAtualizada,
+          })),
         );
-        preservarScroll();
       }
 
       await carregarProcessos({ silencioso: true });
-      preservarScroll();
     } catch (error) {
       setErro(obterMensagemErro(error, 'Não foi possível atualizar a etapa.'));
       await carregarProcessos({ silencioso: true });
-      preservarScroll();
     } finally {
       setEtapasEmAtualizacao((valorAtual) => {
         const proximo = { ...valorAtual };
         delete proximo[chaveAtualizacao];
         return proximo;
       });
-      preservarScroll();
     }
   }
 

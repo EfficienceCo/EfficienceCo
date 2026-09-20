@@ -24,6 +24,7 @@ type EstadoApi = {
   posts: Array<Record<string, unknown>>;
   patches: Array<Record<string, unknown>>;
   erroProximoPost: string;
+  atrasoRecarregamentoMs: number;
 };
 
 const API_URL = 'http://localhost:3001';
@@ -86,6 +87,7 @@ function criarEstadoApi(): EstadoApi {
     posts: [],
     patches: [],
     erroProximoPost: '',
+    atrasoRecarregamentoMs: 0,
   };
 }
 
@@ -112,6 +114,9 @@ async function prepararPagina(page: Page, estado = criarEstadoApi()) {
     const method = request.method();
 
     if (method === 'GET' && url.pathname === '/processos') {
+      if (estado.patches.length > 0 && estado.atrasoRecarregamentoMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, estado.atrasoRecarregamentoMs));
+      }
       await route.fulfill({ status: 200, json: [estado.processo] });
       return;
     }
@@ -230,6 +235,44 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await expect(checkbox).toBeEnabled();
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollAntes);
     expect(estado.patches).toEqual([{ concluida: true }, { concluida: false }]);
+  });
+
+  test('mantém o card aberto e respeita scroll intencional durante a atualização (#495)', async ({
+    page,
+  }) => {
+    const estado = criarEstadoApi();
+    estado.atrasoRecarregamentoMs = 700;
+    estado.processo.etapas.push(
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `etapa-manual-extra-${index + 1}`,
+        descricao: `Etapa manual extra ${String(index + 1).padStart(2, '0')}`,
+        tipo: 'manual',
+        acao: null,
+        status: 'pendente',
+        concluida: false,
+      })),
+    );
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await prepararPagina(page, estado);
+    const checkbox = etapaPorTexto(page, 'Etapa manual extra 10').getByRole('checkbox');
+
+    await checkbox.scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollBy(0, -100));
+    const scrollNoClique = await page.evaluate(() => window.scrollY);
+    expect(scrollNoClique).toBeGreaterThan(0);
+
+    await checkbox.check();
+    await expect.poll(() => estado.patches.length).toBe(1);
+    await page.waitForTimeout(150);
+
+    await expect(checkbox).toBeVisible();
+    await page.evaluate(() => window.scrollBy(0, 200));
+    const scrollEscolhidoPeloUsuario = await page.evaluate(() => window.scrollY);
+    expect(scrollEscolhidoPeloUsuario).toBeGreaterThan(scrollNoClique);
+
+    await expect(checkbox).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollEscolhidoPeloUsuario);
   });
 
   test('adiciona sócios, envia o payload tipado e entra em processamento', async ({ page }) => {
