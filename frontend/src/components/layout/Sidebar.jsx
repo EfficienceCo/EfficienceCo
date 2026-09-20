@@ -31,6 +31,11 @@ const NAV_ITEMS = [
     icon: FiscalIcon,
   },
   {
+    href: '/dashboard/obrigacoes',
+    label: 'Calendário Fiscal',
+    icon: CalendarioIcon,
+  },
+  {
     href: '/dashboard/contabil',
     label: 'Contábil',
     icon: ContabilIcon,
@@ -249,6 +254,17 @@ function FiscalIcon() {
       <path d="M15 3.5V7h3" />
       <path d="M9 12.5h6" />
       <path d="M9 16h6" />
+    </IconBase>
+  );
+}
+
+function CalendarioIcon() {
+  return (
+    <IconBase>
+      <rect x="4" y="5" width="16" height="15" rx="1.5" />
+      <path d="M4 9.5h16" />
+      <path d="M8 3.5v3M16 3.5v3" />
+      <path d="M8 13h1.5M12 13h1.5M16 13h.01" />
     </IconBase>
   );
 }

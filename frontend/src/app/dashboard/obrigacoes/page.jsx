@@ -691,7 +691,7 @@ export default function ObrigacoesPage() {
       <main className="space-y-6 p-6">
         <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-900">Obrigações</h1>
+            <h1 className="text-2xl font-semibold text-zinc-900">Calendário Fiscal</h1>
             <p className="mt-1 text-sm text-zinc-500">
               Visão consolidada de vencimentos para substituir planilhas e lembretes manuais.
             </p>
