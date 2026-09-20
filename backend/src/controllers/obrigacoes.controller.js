@@ -39,6 +39,18 @@ function resolverClienteId(req) {
   return req.usuario?.cliente_id;
 }
 
+function aplicarIsolamentoCliente(query, req) {
+  if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) return query;
+  return query.eq("cliente_id", req.usuario?.cliente_id);
+}
+
+function obrigacaoPertenceAoCliente(req, obrigacao) {
+  return (
+    req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE ||
+    obrigacao?.cliente_id === req.usuario?.cliente_id
+  );
+}
+
 export async function listarObrigacoes(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -152,21 +164,22 @@ export async function criarObrigacao(req, res) {
 export async function atualizarObrigacao(req, res) {
   const { id } = req.params;
 
-  const { data: obrigacao, error: erroBusca } = await supabase
+  let query = supabase
     .from("obrigacoes")
     .select("cliente_id, tipo, status, recorrente")
-    .eq("id", id)
-    .single();
+    .eq("id", id);
+  query = aplicarIsolamentoCliente(query, req);
 
-  if (erroBusca || !obrigacao) {
-    return res.status(404).json({ erro: "Obrigação não encontrada" });
+  const { data: obrigacao, error: erroBusca } = await query.maybeSingle();
+
+  if (erroBusca) {
+    console.error("[obrigacoes.controller] Erro ao buscar obrigação:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar obrigação" });
   }
 
-  if (
-    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-    obrigacao.cliente_id !== req.usuario.cliente_id
-  ) {
-    return res.status(403).json({ erro: "Sem permissão para alterar esta obrigação" });
+  // Isolamento multi-tenant: outro cliente é indistinguível de um id inexistente.
+  if (!obrigacao || !obrigacaoPertenceAoCliente(req, obrigacao)) {
+    return res.status(404).json({ erro: "Obrigação não encontrada" });
   }
 
   if (obrigacao.status === "concluida") {
@@ -200,6 +213,7 @@ export async function atualizarObrigacao(req, res) {
     .from("obrigacoes")
     .update(updates)
     .eq("id", id)
+    .eq("cliente_id", obrigacao.cliente_id)
     .select()
     .single();
 
@@ -214,24 +228,29 @@ export async function atualizarObrigacao(req, res) {
 export async function deletarObrigacao(req, res) {
   const { id } = req.params;
 
-  const { data: obrigacao, error: erroBusca } = await supabase
+  let query = supabase
     .from("obrigacoes")
     .select("cliente_id, comprovante_path")
-    .eq("id", id)
-    .single();
+    .eq("id", id);
+  query = aplicarIsolamentoCliente(query, req);
 
-  if (erroBusca || !obrigacao) {
+  const { data: obrigacao, error: erroBusca } = await query.maybeSingle();
+
+  if (erroBusca) {
+    console.error("[obrigacoes.controller] Erro ao buscar obrigação:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar obrigação" });
+  }
+
+  // Isolamento multi-tenant: outro cliente é indistinguível de um id inexistente.
+  if (!obrigacao || !obrigacaoPertenceAoCliente(req, obrigacao)) {
     return res.status(404).json({ erro: "Obrigação não encontrada" });
   }
 
-  if (
-    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-    obrigacao.cliente_id !== req.usuario.cliente_id
-  ) {
-    return res.status(403).json({ erro: "Sem permissão para remover esta obrigação" });
-  }
-
-  const { error } = await supabase.from("obrigacoes").delete().eq("id", id);
+  const { error } = await supabase
+    .from("obrigacoes")
+    .delete()
+    .eq("id", id)
+    .eq("cliente_id", obrigacao.cliente_id);
 
   if (error) {
     console.error("[obrigacoes.controller] Erro ao deletar:", error.message);
@@ -326,21 +345,22 @@ export async function concluirObrigacao(req, res) {
     return res.status(400).json({ erro: "Comprovante é obrigatório" });
   }
 
-  const { data: obrigacao, error: erroBusca } = await supabase
+  let query = supabase
     .from("obrigacoes")
     .select("id, cliente_id, nome, status")
-    .eq("id", id)
-    .single();
+    .eq("id", id);
+  query = aplicarIsolamentoCliente(query, req);
 
-  if (erroBusca || !obrigacao) {
-    return res.status(404).json({ erro: "Obrigação não encontrada" });
+  const { data: obrigacao, error: erroBusca } = await query.maybeSingle();
+
+  if (erroBusca) {
+    console.error("[obrigacoes.controller] Erro ao buscar obrigação:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar obrigação" });
   }
 
-  if (
-    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-    obrigacao.cliente_id !== req.usuario.cliente_id
-  ) {
-    return res.status(403).json({ erro: "Sem permissão para concluir esta obrigação" });
+  // Isolamento multi-tenant: outro cliente é indistinguível de um id inexistente.
+  if (!obrigacao || !obrigacaoPertenceAoCliente(req, obrigacao)) {
+    return res.status(404).json({ erro: "Obrigação não encontrada" });
   }
 
   if (obrigacao.status === "concluida") {
@@ -370,6 +390,7 @@ export async function concluirObrigacao(req, res) {
     .from("obrigacoes")
     .update({ status: "concluida", comprovante_path: publicUrl })
     .eq("id", id)
+    .eq("cliente_id", obrigacao.cliente_id)
     .select()
     .single();
 
