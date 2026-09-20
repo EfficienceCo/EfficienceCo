@@ -209,20 +209,14 @@ function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO = dataL
     const compoeRbt12 = !emissaoFutura && mesesRbt12Fechados.has(referencia);
     const compoeReceitaMes = !emissaoFutura && referencia === mesReferenciaAtual;
 
-    if (emissaoFutura) {
+    // Data futura ou mês da janela ainda aberto: fora da soma, com motivo explícito.
+    if (emissaoFutura || (naJanela && !compoeRbt12 && !compoeReceitaMes)) {
       notasExcluidasPeriodo.push(resumirNota(nota, {
         compoe_rbt12: false,
         compoe_receita_mes: false,
-        motivo: "Nota fiscal com data de emissão futura — excluída da RBT12 e da receita da competência.",
-      }));
-      continue;
-    }
-
-    if (naJanela && !compoeRbt12 && !compoeReceitaMes) {
-      notasExcluidasPeriodo.push(resumirNota(nota, {
-        compoe_rbt12: false,
-        compoe_receita_mes: false,
-        motivo: "Período ainda não fechado — excluída da RBT12.",
+        motivo: emissaoFutura
+          ? "Nota fiscal com data de emissão futura — excluída da RBT12 e da receita da competência."
+          : "Período ainda não fechado — excluída da RBT12.",
       }));
       continue;
     }

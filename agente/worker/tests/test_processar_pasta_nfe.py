@@ -213,7 +213,7 @@ def test_dois_clientes_licenca_dest_posta_entrada(pasta_nfe):
     assert payload["cliente_id"] == CLIENTE_ID
     assert payload["chave_nfe"] == CHAVE_DOIS_CLIENTES
     assert not (inbox / "dois-clientes.xml").exists()
-    assert _arquivo_nfe(base, NOME_EMPRESA, "dois-clientes.xml", mes="2026-12").is_file()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "dois-clientes.xml", mes="2026-06").is_file()
 
 
 def test_dois_clientes_licenca_emit_posta_saida(pasta_nfe, monkeypatch):
@@ -237,7 +237,7 @@ def test_dois_clientes_licenca_emit_posta_saida(pasta_nfe, monkeypatch):
     assert payload["tipo"] == "saida"
     assert payload["cliente_id"] == CLIENTE_ID_EMIT
     assert payload["chave_nfe"] == CHAVE_DOIS_CLIENTES
-    assert _arquivo_nfe(base, NOME_FORNECEDOR, "dois-clientes.xml", mes="2026-12").is_file()
+    assert _arquivo_nfe(base, NOME_FORNECEDOR, "dois-clientes.xml", mes="2026-06").is_file()
 
 
 def test_dois_clientes_reprocesso_idempotente(pasta_nfe):
@@ -266,7 +266,7 @@ def test_dois_clientes_reprocesso_idempotente(pasta_nfe):
 
     assert mock_post2.call_count == 1
     assert not (inbox / "dois-clientes.xml").exists()
-    pasta_dest = base / NOME_EMPRESA / "Notas Fiscais" / "2026-12"
+    pasta_dest = base / NOME_EMPRESA / "Notas Fiscais" / "2026-06"
     assert any(pasta_dest.glob("dois-clientes*.xml"))
 
 
