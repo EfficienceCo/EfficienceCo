@@ -2,7 +2,7 @@ import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { calcularSimplesNacional } from "../utils/simples-nacional.util.js";
-import { ultimoDiaDoMes } from "../utils/periodo.util.js";
+import { competenciaEstaFechada, ultimaCompetenciaFechada, ultimoDiaDoMes } from "../utils/periodo.util.js";
 
 const REGIMES_SUPORTADOS = new Set(["simples_nacional"]);
 const FOLHA_STATUS = {
@@ -309,6 +309,20 @@ export async function dispararApuracao(req, res) {
     return res.status(400).json({ erro: "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020" });
   }
 
+  // Teto contra a data atual (#497). Sem isso, competência futura ou o mês
+  // corrente ainda aberto entravam normalmente: a receita do mês e a janela de
+  // RBT12 somam meses incompletos ou inexistentes, a alíquota efetiva sai
+  // subestimada e o DAS resultante fica abaixo do devido — bastava errar o ano
+  // no seletor. 422 (e não 400) porque mes/ano são estruturalmente válidos;
+  // é a regra de negócio que recusa, como em REGIME_NAO_SUPORTADO.
+  if (!competenciaEstaFechada(anoNum, mesNum)) {
+    const ultima = ultimaCompetenciaFechada();
+    return res.status(422).json({
+      erro: "COMPETENCIA_NAO_FECHADA",
+      competencia_maxima: chaveMes(ultima.ano, ultima.mes),
+    });
+  }
+
   const [{ data: existente, error: erroExistente }, { data: cliente, error: erroCliente }] = await Promise.all([
     supabase
       .from("apuracoes")
@@ -611,7 +625,7 @@ export async function aprovarApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("cliente_id, status")
+    .select("cliente_id, status, periodo_mes, periodo_ano")
     .eq("id", id)
     .maybeSingle();
 
@@ -626,6 +640,18 @@ export async function aprovarApuracao(req, res) {
 
   if (apuracao.status === "aprovado") {
     return res.status(409).json({ erro: "Apuração já está aprovada" });
+  }
+
+  // Aprovar é o que transforma o rascunho em número oficial do cliente, então
+  // a mesma regra da criação vale aqui (#497) — sem isso, os registros de
+  // competência futura que já existem no banco (11/2026 no dev) continuariam
+  // aprováveis, que é exatamente o sintoma relatado na issue.
+  if (!competenciaEstaFechada(apuracao.periodo_ano, apuracao.periodo_mes)) {
+    const ultima = ultimaCompetenciaFechada();
+    return res.status(422).json({
+      erro: "COMPETENCIA_NAO_FECHADA",
+      competencia_maxima: chaveMes(ultima.ano, ultima.mes),
+    });
   }
 
   const { data, error } = await supabase
@@ -677,6 +703,17 @@ export async function recalcularApuracao(req, res) {
 
   if (apuracao.status === "aprovado") {
     return res.status(409).json({ erro: "Apuração já aprovada não pode ser recalculada" });
+  }
+
+  // Mesma regra da criação (#497): registros de competência futura criados
+  // antes desta validação (o Supabase de dev tem 11/2026 aprovado) não podem
+  // ser recalculados sobre uma janela que ainda não fechou.
+  if (!competenciaEstaFechada(apuracao.periodo_ano, apuracao.periodo_mes)) {
+    const ultima = ultimaCompetenciaFechada();
+    return res.status(422).json({
+      erro: "COMPETENCIA_NAO_FECHADA",
+      competencia_maxima: chaveMes(ultima.ano, ultima.mes),
+    });
   }
 
   const { data: cliente, error: erroCliente } = await supabase

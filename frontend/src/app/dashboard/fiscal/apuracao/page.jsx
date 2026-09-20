@@ -53,7 +53,23 @@ function obterCodigoErro(error) {
     return 'REGIME_NAO_SUPORTADO';
   }
 
+  if (mensagem === 'COMPETENCIA_NAO_FECHADA') {
+    return 'COMPETENCIA_NAO_FECHADA';
+  }
+
   return null;
+}
+
+// competencia_maxima vem do backend como AAAA-MM (#497).
+function formatarCompetenciaMaxima(competencia) {
+  if (typeof competencia !== 'string') {
+    return '';
+  }
+
+  const [ano, mes] = competencia.split('-');
+  const rotulo = MESES[Number(mes) - 1]?.label;
+
+  return rotulo && ano ? `${rotulo}/${ano}` : '';
 }
 
 function obterValorExibido(apuracao) {
@@ -106,9 +122,20 @@ function obterNomeCliente(cliente) {
   return cliente?.nome || cliente?.razao_social || cliente?.email || obterIdCliente(cliente);
 }
 
-function obterAnosDisponiveis() {
-  const anoAtual = new Date().getFullYear();
-  return [anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3, anoAtual - 4];
+// A apuração só roda sobre competência fechada (#497): o backend recusa mês
+// corrente ou futuro com 422 COMPETENCIA_NAO_FECHADA, porque a receita do mês e
+// a janela de RBT12 de um período em aberto somam meses incompletos e o DAS sai
+// abaixo do devido. A tela nasce na última competência fechada e trava o botão
+// Calcular quando o par mês+ano escolhido ainda está em aberto — desabilitar o
+// mês no seletor impediria escolher, por exemplo, novembro de um ano passado.
+function ultimaCompetenciaFechada(hoje = new Date()) {
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth() + 1;
+  return mes === 1 ? { ano: ano - 1, mes: 12 } : { ano, mes: mes - 1 };
+}
+
+function obterAnosDisponiveis({ ano }) {
+  return [ano, ano - 1, ano - 2, ano - 3, ano - 4];
 }
 
 function formatarValor(valor) {
@@ -192,8 +219,8 @@ export default function ApuracoesPage() {
   const [erroClientes, setErroClientes] = useState('');
 
   const [clienteId, setClienteId] = useState(null);
-  const [mes, setMes] = useState(new Date().getMonth() + 1);
-  const [ano, setAno] = useState(new Date().getFullYear());
+  const [mes, setMes] = useState(() => ultimaCompetenciaFechada().mes);
+  const [ano, setAno] = useState(() => ultimaCompetenciaFechada().ano);
   const [apuracao, setApuracao] = useState(null);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState(null);
@@ -209,7 +236,8 @@ export default function ApuracoesPage() {
 
   const clienteIdEfetivo = isAdminEfficience ? clienteId : user?.cliente_id || null;
 
-  const anosDisponiveis = useMemo(obterAnosDisponiveis, []);
+  const ultimaFechada = useMemo(() => ultimaCompetenciaFechada(), []);
+  const anosDisponiveis = useMemo(() => obterAnosDisponiveis(ultimaFechada), [ultimaFechada]);
 
   const clientesOrdenados = useMemo(
     () =>
@@ -329,7 +357,11 @@ export default function ApuracoesPage() {
       setMotivo('');
       setErroEdicao('');
     } catch (error) {
-      setErro({ codigo: obterCodigoErro(error), mensagem: obterMensagemErro(error) });
+      setErro({
+        codigo: obterCodigoErro(error),
+        mensagem: obterMensagemErro(error),
+        competenciaMaxima: error?.response?.data?.competencia_maxima,
+      });
     } finally {
       setLoading(false);
     }
@@ -414,7 +446,10 @@ export default function ApuracoesPage() {
   }
 
   const aguardandoSelecaoCliente = isAdminEfficience && !clienteId;
-  const podeCalcular = Boolean(clienteIdEfetivo) && !loading;
+  // Bloqueia o par mês+ano ainda em aberto antes de gastar uma ida ao backend
+  // (#497) — ele recusaria com 422 COMPETENCIA_NAO_FECHADA de todo jeito.
+  const competenciaEmAberto = ano * 12 + mes > ultimaFechada.ano * 12 + ultimaFechada.mes;
+  const podeCalcular = Boolean(clienteIdEfetivo) && !loading && !competenciaEmAberto;
   const statusRascunho = apuracao?.status === 'rascunho';
   const statusAprovado = apuracao?.status === 'aprovado';
   const anexoEfetivo = apuracao?.anexo_efetivo || apuracao?.anexo;
@@ -510,6 +545,14 @@ export default function ApuracoesPage() {
               {loading ? 'Calculando...' : 'Calcular DAS'}
             </button>
           </div>
+
+          {competenciaEmAberto ? (
+            <p className="mt-3 text-sm text-amber-700">
+              {competenciaLabel} ainda não fechou. O DAS só pode ser apurado depois que o mês
+              termina — antes disso a receita e a RBT12 do período ficariam incompletas. A última
+              competência disponível é {MESES[ultimaFechada.mes - 1].label}/{ultimaFechada.ano}.
+            </p>
+          ) : null}
         </section>
 
         {erroClientes ? (
@@ -572,10 +615,37 @@ export default function ApuracoesPage() {
           </section>
         ) : null}
 
+        {!aguardandoSelecaoCliente && erro?.codigo === 'COMPETENCIA_NAO_FECHADA' ? (
+          <section className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="mt-0.5 h-5 w-5 shrink-0 text-amber-600"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+            <div>
+              <p className="font-semibold text-amber-800">Competência ainda não fechou</p>
+              <p className="mt-1 text-sm text-zinc-700">
+                O DAS só pode ser apurado depois que o mês termina — a receita e a RBT12 de um
+                período em aberto ficariam incompletas. Escolha uma competência até{' '}
+                {formatarCompetenciaMaxima(erro.competenciaMaxima) || 'o mês passado'}.
+              </p>
+            </div>
+          </section>
+        ) : null}
+
         {!aguardandoSelecaoCliente &&
         erro &&
         erro.codigo !== 'FATOR_R_SEM_FOLHA' &&
-        erro.codigo !== 'REGIME_NAO_SUPORTADO' ? (
+        erro.codigo !== 'REGIME_NAO_SUPORTADO' &&
+        erro.codigo !== 'COMPETENCIA_NAO_FECHADA' ? (
           <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
             <p className="text-sm font-medium text-rose-800">{erro.mensagem}</p>
           </section>

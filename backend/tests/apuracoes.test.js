@@ -2,6 +2,7 @@ import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
+import { ultimaCompetenciaFechada } from "../src/utils/periodo.util.js";
 import {
   dispararApuracao,
   listarApuracoes,
@@ -337,6 +338,50 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 400);
   });
 
+  // #497 — competência futura ou mês corrente ainda aberto não podem ser
+  // apurados: a janela de RBT12 somaria meses incompletos e o DAS sairia
+  // abaixo do devido. Os períodos são derivados de ultimaCompetenciaFechada()
+  // para o teste não caducar com a passagem dos meses.
+  it("422 COMPETENCIA_NAO_FECHADA quando a competência é o mês corrente", async () => {
+    const ultima = ultimaCompetenciaFechada();
+    const corrente = ultima.mes === 12 ? { ano: ultima.ano + 1, mes: 1 } : { ano: ultima.ano, mes: ultima.mes + 1 };
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido(corrente) }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
+    assert.equal(res.body.competencia_maxima, `${ultima.ano}-${String(ultima.mes).padStart(2, "0")}`);
+    assert.deepEqual(operacoes, []);
+  });
+
+  it("422 COMPETENCIA_NAO_FECHADA quando a competência é de um ano futuro", async () => {
+    const ultima = ultimaCompetenciaFechada();
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido({ ano: ultima.ano + 1, mes: 6 }) }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
+    assert.deepEqual(operacoes, []);
+  });
+
+  it("201 na última competência já fechada", async () => {
+    const ultima = ultimaCompetenciaFechada();
+    queueSemDuplicata();
+    queueCliente("I");
+    queueNotas([]);
+    queue("apuracoes", "single", { data: { id: "nova-apuracao", status: "rascunho" }, error: null });
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido(ultima) }), res);
+
+    assert.equal(res.statusCode, 201);
+    const insert = operacoes.find((operacao) => operacao.metodo === "insert");
+    assert.equal(insert.payload.periodo_mes, ultima.mes);
+    assert.equal(insert.payload.periodo_ano, ultima.ano);
+  });
+
   it("400 quando mes está fora do intervalo 1-12", async () => {
     const res = criarResposta();
     await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 15 }) }), res);
@@ -643,7 +688,7 @@ describe("PATCH /apuracoes/:id", () => {
 
 describe("PATCH /apuracoes/:id/aprovar", () => {
   it("200 e marca como aprovado", async () => {
-    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 }, error: null });
     queue("apuracoes", "maybeSingle", {
       data: { id: APURACAO_ID, status: "aprovado", aprovado_por: "contador@teste.com" },
       error: null,
@@ -658,13 +703,30 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
   });
 
   it("409 quando outra requisição aprova entre a leitura e a atualização", async () => {
-    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 }, error: null });
     queue("apuracoes", "maybeSingle", { data: null, error: null });
 
     const res = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
     assert.equal(res.statusCode, 409);
+  });
+
+  // #497 — registros de competência futura anteriores à validação de criação
+  // continuavam aprováveis, que é o sintoma descrito na issue.
+  it("422 COMPETENCIA_NAO_FECHADA quando a competência ainda não fechou", async () => {
+    const ultima = ultimaCompetenciaFechada();
+    queue("apuracoes", "maybeSingle", {
+      data: { cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 6, periodo_ano: ultima.ano + 1 },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
+    assert.deepEqual(operacoes, []);
   });
 
   it("409 quando já está aprovada", async () => {
@@ -677,7 +739,7 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
   });
 
   it("404 quando a apuração pertence a outro cliente", async () => {
-    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_B, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_B, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 }, error: null });
 
     const res = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);

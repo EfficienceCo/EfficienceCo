@@ -7,6 +7,7 @@ import {
   recalcularApuracao,
 } from "../src/controllers/apuracoes.controller.js";
 import { PERFIS } from "../src/config/perfis.js";
+import { ultimaCompetenciaFechada } from "../src/utils/periodo.util.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -469,6 +470,20 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
     await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
     assert.equal(res.statusCode, 409);
+  });
+
+  // #497 — registros de competência futura criados antes da validação de
+  // criação (o Supabase de dev tem 11/2026) não podem ser recalculados sobre
+  // uma janela que ainda não fechou.
+  it("422 COMPETENCIA_NAO_FECHADA quando a competência da apuração ainda não fechou", async () => {
+    const ultima = ultimaCompetenciaFechada();
+    queueApuracaoBase({ periodo_ano: ultima.ano + 1, periodo_mes: 6 });
+
+    const res = criarResposta();
+    await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
   });
 
   it("422 FATOR_R_SEM_FOLHA quando Anexo V ainda sem processamentos de folha completos", async () => {
