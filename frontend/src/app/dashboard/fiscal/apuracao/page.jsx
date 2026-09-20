@@ -706,6 +706,22 @@ export default function ApuracoesPage() {
               </p>
             </header>
 
+            {apuracao.breakdown_desatualizado ? (
+              <div
+                role="alert"
+                data-testid="aviso-breakdown-desatualizado"
+                className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-xs text-amber-900"
+              >
+                <p className="font-semibold">Composição desatualizada em relação ao valor apurado.</p>
+                <p className="mt-1">
+                  As linhas abaixo refletem os lançamentos atuais
+                  ({formatarValor(apuracao.breakdown_divergencia?.rbt12_reconstruido)}), mas o RBT12 e o DAS
+                  foram apurados com {formatarValor(apuracao.breakdown_divergencia?.rbt12_persistido)}. Alguma
+                  NF-e da janela mudou depois do cálculo.
+                </p>
+              </div>
+            ) : null}
+
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-left text-sm">
                 <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
