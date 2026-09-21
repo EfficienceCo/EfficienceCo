@@ -23,6 +23,12 @@ export const ETAPAS_PADRAO = {
       acao: null,
     },
     { descricao: "Registrar na Junta Comercial", tipo: "manual", acao: null },
+    // O contrato é gravado dentro da árvore de pastas, então ela vem antes (#488).
+    {
+      descricao: "Criar estrutura de pastas",
+      tipo: "automatizada",
+      acao: "criar_pastas",
+    },
     {
       descricao: "Gerar contrato social",
       tipo: "automatizada",
@@ -40,19 +46,17 @@ export const ETAPAS_PADRAO = {
       tipo: "manual",
       acao: null,
     },
-    {
-      descricao: "Criar estrutura de pastas",
-      tipo: "automatizada",
-      acao: "criar_pastas",
-    },
     { descricao: "Configurar emissão de NFS-e", tipo: "manual", acao: null },
   ],
 };
 
+// Cliente existente já tem contrato e CNPJ: entra com cadastro interno no lugar
+// do registro e segue a partir do Alvará, mantendo a criação das pastas.
 const ETAPAS_CLIENTE_EXISTENTE = [
   ETAPAS_PADRAO.abertura_empresa[0],
   { descricao: "Cadastro interno da empresa", tipo: "manual", acao: null },
-  ...ETAPAS_PADRAO.abertura_empresa.slice(4),
+  ETAPAS_PADRAO.abertura_empresa[2],
+  ...ETAPAS_PADRAO.abertura_empresa.slice(5),
 ];
 
 function obterEtapasPadrao(tipo, cenario) {

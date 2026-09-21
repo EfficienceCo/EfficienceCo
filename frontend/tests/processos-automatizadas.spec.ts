@@ -98,6 +98,15 @@ function localizarEtapa(estado: EstadoApi, etapaId: string) {
   return etapa;
 }
 
+// "Gerar contrato social" só abre depois de "Criar estrutura de pastas" (#488),
+// então todo cenário de contrato parte das pastas já concluídas.
+function comPastasConcluidas(estado = criarEstadoApi()) {
+  const pastas = localizarEtapa(estado, 'etapa-pastas');
+  pastas.status = 'concluida';
+  pastas.concluida = true;
+  return estado;
+}
+
 async function prepararPagina(page: Page, estado = criarEstadoApi()) {
   await page.addInitScript((token) => {
     window.localStorage.setItem('token', token);
@@ -180,6 +189,12 @@ function etapaPorTexto(page: Page, texto: string) {
   return page.getByRole('listitem').filter({ hasText: texto });
 }
 
+// As etapas automatizadas se citam entre si (aviso de dependência), então filtrar
+// por texto casaria mais de um item da lista.
+function etapaPorId(page: Page, etapaId: string) {
+  return page.getByTestId(`etapa-${etapaId}`);
+}
+
 async function preencherContrato(page: Page, participacao = '100') {
   await page.getByLabel('Nome do sócio 1').fill('Maria da Silva');
   await page.getByLabel('CPF do sócio 1').fill('01234567890');
@@ -196,8 +211,8 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await prepararPagina(page);
 
     const manual = etapaPorTexto(page, 'Verificar viabilidade do nome empresarial');
-    const contrato = etapaPorTexto(page, 'Gerar contrato social');
-    const pastas = etapaPorTexto(page, 'Criar estrutura de pastas');
+    const contrato = etapaPorId(page, 'etapa-contrato');
+    const pastas = etapaPorId(page, 'etapa-pastas');
 
     await expect(manual.getByRole('checkbox')).toBeVisible();
     await expect(contrato.getByRole('checkbox')).toHaveCount(0);
@@ -223,8 +238,8 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
   });
 
   test('adiciona sócios, envia o payload tipado e entra em processamento', async ({ page }) => {
-    const estado = await prepararPagina(page);
-    const contrato = etapaPorTexto(page, 'Gerar contrato social');
+    const estado = await prepararPagina(page, comPastasConcluidas());
+    const contrato = etapaPorId(page, 'etapa-contrato');
 
     await preencherContrato(page, '60');
     await contrato.getByRole('button', { name: 'Adicionar sócio' }).click();
@@ -248,8 +263,8 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
   });
 
   test('não envia contrato quando as participações não totalizam 100%', async ({ page }) => {
-    const estado = await prepararPagina(page);
-    const contrato = etapaPorTexto(page, 'Gerar contrato social');
+    const estado = await prepararPagina(page, comPastasConcluidas());
+    const contrato = etapaPorId(page, 'etapa-contrato');
 
     await preencherContrato(page, '60');
     await contrato.getByRole('button', { name: 'Concluir' }).click();
@@ -261,8 +276,8 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
   });
 
   test('erro HTTP aparece na etapa e preserva o formulário para nova tentativa', async ({ page }) => {
-    const estado = await prepararPagina(page);
-    const contrato = etapaPorTexto(page, 'Gerar contrato social');
+    const estado = await prepararPagina(page, comPastasConcluidas());
+    const contrato = etapaPorId(page, 'etapa-contrato');
     estado.erroProximoPost = 'Serviço temporariamente indisponível';
 
     await preencherContrato(page);
@@ -279,8 +294,8 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
   });
 
   test('erro do agente no polling reabre o form e permite tentar novamente', async ({ page }) => {
-    const estado = await prepararPagina(page);
-    const contrato = etapaPorTexto(page, 'Gerar contrato social');
+    const estado = await prepararPagina(page, comPastasConcluidas());
+    const contrato = etapaPorId(page, 'etapa-contrato');
     await page.clock.install();
 
     await preencherContrato(page);
@@ -301,7 +316,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
   });
 
   test('hidrata o retry com payload e erro recebidos do backend', async ({ page }) => {
-    const estado = criarEstadoApi();
+    const estado = comPastasConcluidas();
     const etapa = localizarEtapa(estado, 'etapa-contrato');
     etapa.status = 'pronta_para_execucao';
     etapa.erro_execucao = 'Falha ao preencher o modelo';
@@ -313,7 +328,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     };
 
     await prepararPagina(page, estado);
-    const contrato = etapaPorTexto(page, 'Gerar contrato social');
+    const contrato = etapaPorId(page, 'etapa-contrato');
 
     await expect(contrato.getByRole('alert')).toContainText('Falha ao preencher o modelo');
     await expect(page.getByLabel('Nome do sócio 1')).toHaveValue('Ana Lima');
@@ -324,8 +339,8 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
   });
 
   test('sucesso do polling conclui a etapa e mostra o arquivo sem recarregar', async ({ page }) => {
-    const estado = await prepararPagina(page);
-    const contrato = etapaPorTexto(page, 'Gerar contrato social');
+    const estado = await prepararPagina(page, comPastasConcluidas());
+    const contrato = etapaPorId(page, 'etapa-contrato');
     await page.clock.install();
 
     await preencherContrato(page);
@@ -342,8 +357,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await expect(
       contrato.getByRole('link', { name: 'contrato-social.docx' }),
     ).toHaveAttribute('href', 'https://arquivos.exemplo.test/contrato-social.docx');
-    await expect(contrato.getByText('Próximo passo: Criar estrutura de pastas.')).toBeVisible();
-    await expect(page.getByText('1 de 3 etapas')).toBeVisible();
+    await expect(page.getByText('2 de 3 etapas')).toBeVisible();
   });
 
   test('arquivo em caminho local exibe somente o nome, sem link quebrado', async ({ page }) => {
@@ -354,7 +368,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     etapa.arquivo_gerado = 'C:\\Clientes\\Empresa\\contrato-social-v1.docx';
 
     await prepararPagina(page, estado);
-    const contrato = etapaPorTexto(page, 'Gerar contrato social');
+    const contrato = etapaPorId(page, 'etapa-contrato');
 
     await expect(contrato.getByText('contrato-social-v1.docx')).toBeVisible();
     await expect(contrato.getByRole('link')).toHaveCount(0);
@@ -380,9 +394,45 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     ).toBeVisible();
   });
 
+  test('bloqueia o contrato social enquanto criar pastas não conclui (#488)', async ({ page }) => {
+    const estado = await prepararPagina(page);
+    const contrato = etapaPorId(page, 'etapa-contrato');
+
+    await expect(
+      contrato.getByText('Disponível apenas após concluir a etapa "Criar estrutura de pastas".'),
+    ).toBeVisible();
+    await expect(contrato.getByRole('button', { name: 'Concluir' })).toBeDisabled();
+    await expect(contrato.getByLabel('Nome do sócio 1')).toBeDisabled();
+    expect(estado.posts).toHaveLength(0);
+  });
+
+  test('libera o contrato social quando criar pastas conclui pelo polling (#488)', async ({
+    page,
+  }) => {
+    const estado = await prepararPagina(page);
+    const contrato = etapaPorId(page, 'etapa-contrato');
+    const pastas = etapaPorId(page, 'etapa-pastas');
+    await page.clock.install();
+
+    await pastas.getByRole('button', { name: 'Concluir' }).click();
+    await expect(pastas.getByRole('status')).toContainText('Processando');
+
+    const etapaPastas = localizarEtapa(estado, 'etapa-pastas');
+    etapaPastas.status = 'concluida';
+    etapaPastas.concluida = true;
+    await page.clock.runFor(3_100);
+
+    await expect(contrato.getByRole('button', { name: 'Concluir' })).toBeEnabled();
+    await preencherContrato(page);
+    await contrato.getByRole('button', { name: 'Concluir' }).click();
+
+    await expect.poll(() => estado.posts.length).toBe(2);
+    await expect(contrato.getByRole('status')).toContainText('Processando');
+  });
+
   test('criar pastas confirma sem campos e envia objeto vazio', async ({ page }) => {
     const estado = await prepararPagina(page);
-    const pastas = etapaPorTexto(page, 'Criar estrutura de pastas');
+    const pastas = etapaPorId(page, 'etapa-pastas');
 
     await pastas.getByRole('button', { name: 'Concluir' }).click();
 

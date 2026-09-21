@@ -55,3 +55,19 @@ export function aplicarFiltroPeriodo(query, campo, mes, ano) {
   }
   return query;
 }
+
+// Data de hoje no fuso de Brasília (America/Sao_Paulo), YYYY-MM-DD.
+// data_vencimento é DATE e representa um dia útil brasileiro, mas o servidor
+// roda em UTC: entre 21:00 e 24:00 (BRT) o toISOString() já está no dia
+// seguinte e marcaria como atrasada uma obrigação que vence hoje no Brasil.
+// `agora` é injetável para testes determinísticos.
+const formatadorBrasil = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Sao_Paulo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+export function hojeNoBrasil(agora = new Date()) {
+  return formatadorBrasil.format(agora);
+}

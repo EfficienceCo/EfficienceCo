@@ -85,16 +85,17 @@ describe("ETAPAS_PADRAO", () => {
     const automatizadas = etapas.filter((etapa) => etapa.tipo === "automatizada");
 
     assert.equal(etapas.length, 9);
+    // #488: criar as pastas precede o contrato — o documento é gravado dentro delas.
     assert.deepEqual(automatizadas, [
-      {
-        descricao: "Gerar contrato social",
-        tipo: "automatizada",
-        acao: "gerar_contrato_social",
-      },
       {
         descricao: "Criar estrutura de pastas",
         tipo: "automatizada",
         acao: "criar_pastas",
+      },
+      {
+        descricao: "Gerar contrato social",
+        tipo: "automatizada",
+        acao: "gerar_contrato_social",
       },
     ]);
 
