@@ -229,6 +229,74 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
     expect(chamadasPost).toBe(0);
   });
 
+  test('reabre apuração com composição desatualizada e avisa a divergência (#499)', async ({ page }) => {
+    const competenciaConsistente = ultimaCompetenciaFechada();
+    const dataCompetenciaDivergente = new Date(
+      competenciaConsistente.ano,
+      competenciaConsistente.mes - 2,
+      1,
+    );
+    const competenciaDivergente = {
+      ano: dataCompetenciaDivergente.getFullYear(),
+      mes: dataCompetenciaDivergente.getMonth() + 1,
+    };
+    const divergente = apuracaoDetalhada({
+      id: 'apuracao-divergente',
+      periodo_mes: competenciaDivergente.mes,
+      periodo_ano: competenciaDivergente.ano,
+      breakdown_desatualizado: true,
+      breakdown_divergencia: {
+        rbt12_persistido: 250000,
+        rbt12_reconstruido: 275000,
+        receita_mes_persistida: 20000,
+        receita_mes_reconstruida: 20000,
+      },
+    });
+    const consistente = apuracaoDetalhada({
+      id: 'apuracao-consistente',
+      periodo_mes: competenciaConsistente.mes,
+      periodo_ano: competenciaConsistente.ano,
+      breakdown_desatualizado: false,
+    });
+    let atual = divergente;
+
+    await page.route('**/apuracoes**', async (route) => {
+      const url = new URL(route.request().url());
+
+      if (url.pathname === '/apuracoes' && route.request().method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+          { id: atual.id, regime: 'simples_nacional' },
+        ]) });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${atual.id}` && route.request().method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(atual) });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.reload();
+    await page.getByLabel('Mês').selectOption(String(competenciaDivergente.mes));
+    await page.getByLabel('Ano').selectOption(String(competenciaDivergente.ano));
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+
+    const aviso = page.getByTestId('aviso-breakdown-desatualizado');
+    await expect(aviso).toBeVisible();
+    await expect(aviso).toContainText('Composição desatualizada');
+    await expect(aviso).toContainText('R$ 275.000,00');
+    await expect(aviso).toContainText('R$ 250.000,00');
+
+    atual = consistente;
+    await page.getByLabel('Mês').selectOption(String(competenciaConsistente.mes));
+    await page.getByLabel('Ano').selectOption(String(competenciaConsistente.ano));
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    await expect(page.getByRole('heading', { name: 'Composição da RBT12' })).toBeVisible();
+    await expect(page.getByTestId('aviso-breakdown-desatualizado')).toHaveCount(0);
+  });
+
   test('traduz os códigos de regime não suportado e ausência de folha em orientações claras', async ({ page }) => {
     let codigoErro = 'REGIME_NAO_SUPORTADO';
 

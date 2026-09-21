@@ -252,6 +252,26 @@ export function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO 
   };
 }
 
+// O headline (rbt12_usado/receita_mes/valor_calculado) é o valor gravado na
+// criação; o breakdown é reconstruído dos lançamentos atuais. Se uma NF-e da
+// janela mudou depois, os dois divergem — sinalizamos em vez de reescrever o
+// valor persistido (que pode já estar aprovado).
+function detectarBreakdownDesatualizado(resultado, bases) {
+  const diferenca = (persistido, reconstruido) => arredondar(reconstruido - persistido);
+  const rbt12Diferenca = diferenca(resultado.rbt12_usado, bases.rbt12);
+  const receitaMesDiferenca = diferenca(resultado.receita_mes, bases.receitaMes);
+
+  return {
+    breakdown_desatualizado: rbt12Diferenca !== 0 || receitaMesDiferenca !== 0,
+    breakdown_divergencia: {
+      rbt12_persistido: resultado.rbt12_usado,
+      rbt12_reconstruido: bases.rbt12,
+      receita_mes_persistida: resultado.receita_mes,
+      receita_mes_reconstruida: bases.receitaMes,
+    },
+  };
+}
+
 function enriquecerApuracao(apuracao, resultado, bases) {
   return {
     ...apuracao,
@@ -268,6 +288,7 @@ function enriquecerApuracao(apuracao, resultado, bases) {
     receita_mes: resultado.receita_mes,
     rbt12_mensal: bases.rbt12Mensal,
     notas_fiscais: bases.notasFiscais,
+    ...detectarBreakdownDesatualizado(resultado, bases),
   };
 }
 

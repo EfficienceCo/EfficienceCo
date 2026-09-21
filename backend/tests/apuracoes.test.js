@@ -617,6 +617,48 @@ describe("GET /apuracoes/:id", () => {
     assert.equal(res.body.anexo_efetivo, "I");
     assert.equal(res.body.aliquota_nominal, 0.04);
     assert.equal(res.body.rbt12_mensal.length, 12);
+    assert.equal(res.body.breakdown_desatualizado, false);
+  });
+
+  it("sinaliza breakdown desatualizado quando uma NF-e da janela mudou após a criação (#499)", async () => {
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        id: APURACAO_ID,
+        cliente_id: CLIENTE_A,
+        periodo_mes: 8,
+        periodo_ano: 2026,
+        regime: "simples_nacional",
+        rbt12_usado: 40000,
+        receita_mes: 45000,
+        anexo: "I",
+        fator_r: null,
+        folha12: null,
+        aliquota_efetiva: 0.04,
+        valor_calculado: 1800,
+      },
+      error: null,
+    });
+    queueCliente("I");
+    // NF-e da janela passou de 40000 para 55000 depois da criação.
+    queueNotas([
+      { tipo: "saida", valor_total: 55000, data_emissao: "2025-09-15" },
+      { tipo: "saida", valor_total: 45000, data_emissao: "2026-08-10" },
+    ]);
+
+    const res = criarResposta();
+    await detalharApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    // Headline segue o persistido; o breakdown reflete os lançamentos atuais.
+    assert.equal(res.body.rbt12_usado, 40000);
+    assert.equal(res.body.valor_calculado, 1800);
+    assert.equal(res.body.breakdown_desatualizado, true);
+    assert.deepEqual(res.body.breakdown_divergencia, {
+      rbt12_persistido: 40000,
+      rbt12_reconstruido: 55000,
+      receita_mes_persistida: 45000,
+      receita_mes_reconstruida: 45000,
+    });
   });
 
   it("reconstrói o anexo original e a migração do Fator R no detalhe", async () => {
