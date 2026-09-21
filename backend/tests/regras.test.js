@@ -49,6 +49,7 @@ function queue(tabela, metodo, resultado) {
 
 const chamadasInsert = [];
 const chamadasUpdate = [];
+const chamadasOrder = [];
 
 supabase.from = function (tabela) {
   const consumir = (metodo, fallback = { data: null, error: null }) => {
@@ -73,7 +74,8 @@ supabase.from = function (tabela) {
     eq() {
       return builder;
     },
-    order() {
+    order(coluna, opcoes) {
+      chamadasOrder.push({ tabela, coluna, opcoes });
       return builder;
     },
     limit() {
@@ -104,6 +106,7 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     filas.clear();
     chamadasInsert.length = 0;
     chamadasUpdate.length = 0;
+    chamadasOrder.length = 0;
   });
 
   function reqAdmin(body, overrides = {}) {
@@ -400,6 +403,18 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
 
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body[0], regra);
+  });
+
+  it("listarRegras: ordena por criado_em desc para a regra nova ficar estável no topo (#480)", async () => {
+    queue("regras", "await", { data: [], error: null });
+
+    const res = criarRes();
+    await listarRegras(reqAdmin(undefined, { body: {}, query: {} }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(chamadasOrder, [
+      { tabela: "regras", coluna: "criado_em", opcoes: { ascending: false } },
+    ]);
   });
 
   it("buscarRegras (rota do agente): retorna condicao como objeto para o cliente correto", async () => {
