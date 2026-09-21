@@ -138,11 +138,12 @@ describe("GET /obrigacoes/proximas — resolução do cliente (#506)", () => {
     assert.equal(filtroCliente().valor, CLIENTE_ID);
   });
 
-  it("400 quando admin_efficience não informa cliente", async () => {
+  it("200 vazio quando admin_efficience não informa cliente no widget", async () => {
     const res = criarResposta();
     await proximasObrigacoes(staff(), res);
 
-    assert.equal(res.statusCode, 400);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, []);
   });
 });
 
