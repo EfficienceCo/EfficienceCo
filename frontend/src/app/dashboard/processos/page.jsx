@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
+import { soDigitos, validarCpf } from '../../../lib/esocial-tabelas';
 import {
   concluirEtapa,
   criar,
@@ -247,7 +248,7 @@ function montarPayloadContratoSocial(formulario) {
   return {
     socios: formulario.socios.map((socio) => ({
       nome: socio.nome.trim(),
-      cpf: socio.cpf.trim(),
+      cpf: soDigitos(socio.cpf),
       participacao: Number(socio.participacao),
     })),
     capital_social: Number(formulario.capital_social),
@@ -272,6 +273,16 @@ function validarFormularioContratoSocial(formulario) {
 
   if (socioInvalido) {
     return 'Preencha nome, CPF e participação válida para todos os sócios.';
+  }
+
+  const cpfInvalido = formulario.socios.some((socio) => !validarCpf(socio.cpf));
+  if (cpfInvalido) {
+    return 'Informe um CPF válido para todos os sócios.';
+  }
+
+  const cpfsNormalizados = formulario.socios.map((socio) => soDigitos(socio.cpf));
+  if (new Set(cpfsNormalizados).size !== cpfsNormalizados.length) {
+    return 'Não é possível repetir o CPF de um sócio.';
   }
 
   const participacaoTotal = formulario.socios.reduce(
