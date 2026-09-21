@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 
+const PERFIS_GERENCIAM_REGRAS = new Set(['admin_cliente', 'admin_efficience']);
+
 const NAV_ITEMS = [
   {
     href: '/dashboard',
@@ -20,6 +22,12 @@ const NAV_ITEMS = [
     href: '/dashboard/efficience',
     label: 'Efficience',
     icon: EfficienceIcon,
+  },
+  {
+    href: '/dashboard/regras',
+    label: 'Regras',
+    icon: RegrasIcon,
+    perfis: PERFIS_GERENCIAM_REGRAS,
   },
   {
     type: 'separator',
@@ -171,6 +179,10 @@ export default function Sidebar({ aberta = false, aoFechar = () => {} }) {
                   );
                 }
 
+                if (item.perfis && !item.perfis.has(user?.perfil)) {
+                  return null;
+                }
+
                 const ativo = isRouteActive(pathname, item);
                 const Icon = item.icon;
 
@@ -267,6 +279,19 @@ function EfficienceIcon() {
   return (
     <IconBase>
       <path d="M13 3 5 13.5h5.5L11 21l8-10.5h-5.5z" />
+    </IconBase>
+  );
+}
+
+function RegrasIcon() {
+  return (
+    <IconBase>
+      <path d="M4 7h10" />
+      <path d="M18 7h2" />
+      <circle cx="16" cy="7" r="2" />
+      <path d="M4 17h2" />
+      <path d="M10 17h10" />
+      <circle cx="8" cy="17" r="2" />
     </IconBase>
   );
 }

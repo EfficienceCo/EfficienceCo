@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
+import { normalizarCpf, cpfValido } from "../utils/cpf.util.js";
 import {
   criarProcessoComEtapas,
   ETAPAS_PADRAO,
@@ -52,6 +53,14 @@ function validarPayloadExecucao(acao, payload) {
     return "Preencha nome, CPF e participação válida para todos os sócios";
   }
 
+  const cpfsNormalizados = socios.map((socio) => normalizarCpf(socio.cpf));
+  if (cpfsNormalizados.some((cpf) => !cpfValido(cpf))) {
+    return "Informe um CPF válido para todos os sócios";
+  }
+  if (new Set(cpfsNormalizados).size !== cpfsNormalizados.length) {
+    return "Não é possível repetir o CPF de um sócio";
+  }
+
   const participacaoTotal = socios.reduce(
     (total, socio) => total + Number(socio.participacao),
     0,
@@ -90,8 +99,10 @@ function calcularPercentual(etapas) {
 
 export async function listarProcessos(req, res) {
   const clienteId = resolverClienteId(req);
+  // Widget do shell chama GET /processos?status=em_andamento sem cliente_id para
+  // admin_efficience. Resposta vazia evita 400; mutações continuam exigindo cliente.
   if (!clienteId) {
-    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+    return res.status(200).json([]);
   }
 
   const { tipo, status } = req.query;
@@ -162,6 +173,28 @@ async function _criarAberturaEmpresa(req, res, clienteId) {
   }
   if (!cenario || !["nova", "cliente_existente"].includes(cenario)) {
     return res.status(400).json({ erro: "cenario deve ser 'nova' ou 'cliente_existente'" });
+  }
+
+  // Dados do contrato social são opcionais na criação (cliente_existente não os
+  // envia). Se vierem, valida com a mesma regra da execução da etapa — senão o
+  // processo nasce com sócios/CPF/participação inconsistentes que só seriam
+  // barrados depois, ao executar a etapa "gerar_contrato_social".
+  const dadosContratoInformados =
+    socios !== undefined ||
+    capital_social !== undefined ||
+    objeto_social !== undefined ||
+    endereco !== undefined;
+
+  if (dadosContratoInformados) {
+    const erroContrato = validarPayloadExecucao("gerar_contrato_social", {
+      socios,
+      capital_social,
+      objeto_social,
+      endereco,
+    });
+    if (erroContrato) {
+      return res.status(400).json({ erro: erroContrato });
+    }
   }
 
   // A raiz pertence à configuração da máquina do agente. O backend não deve
@@ -533,6 +566,7 @@ export async function listarEtapasProntasAgente(req, res) {
 
 // Rota de conclusão do agente — reporta sucesso (com o path do arquivo gerado) ou erro
 // ao terminar de executar a ação da etapa.
+// A migration 94 grava evento/notificação na mesma transação do UPDATE da etapa.
 export async function concluirExecucaoEtapaAgente(req, res) {
   const token = req.headers["x-licenca-token"];
   const licenca = await validarTokenLicenca(token);
