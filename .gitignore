@@ -2,7 +2,6 @@ node_modules/
 .env
 .env.local
 .env*.local
-backend/scripts/seed-dev.js
 __pycache__/
 *.pyc
 .pytest_cache/

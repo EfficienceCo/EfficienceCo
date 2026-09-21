@@ -305,11 +305,109 @@ describe("POST /apuracoes", () => {
         receita_nfes: 0,
         receita_historico: 100000,
         total: 100000,
+        periodo_fechado: true,
       },
     );
     assert.equal(res.body.notas_fiscais.consideradas.length, 2);
     assert.equal(res.body.notas_fiscais.excluidas.length, 1);
     assert.match(res.body.notas_fiscais.excluidas[0].motivo, /entrada não compõe/);
+  });
+
+  it("exclui da RBT12 notas de mês ainda não fechado (BUG-APUR-08)", async () => {
+    // Competência alguns meses à frente: a janela RBT12 mistura meses já
+    // fechados com o mês civil corrente (ainda aberto).
+    const agora = new Date();
+    const competencia = new Date(agora.getFullYear(), agora.getMonth() + 3, 1);
+    const mesCompetencia = competencia.getMonth() + 1;
+    const anoCompetencia = competencia.getFullYear();
+    const mesCorrente = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}`;
+    const dia = String(Math.min(agora.getDate(), 28)).padStart(2, "0");
+    const dataNoMesAberto = `${mesCorrente}-${dia}`;
+    // Mês anterior ao corrente — garantido fechado e dentro da janela dos
+    // 12 meses anteriores à competência (competência = corrente + 3).
+    const mesFechadoDate = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
+    const refFechado = `${mesFechadoDate.getFullYear()}-${String(mesFechadoDate.getMonth() + 1).padStart(2, "0")}`;
+    const dataFechada = `${refFechado}-10`;
+
+    queueSemDuplicata();
+    queueCliente("I");
+    queueNotas([
+      {
+        id: "nfe-mes-aberto",
+        chave_nfe: "35260900000000000000550010000000041000000040",
+        tipo: "saida",
+        valor_total: 99999,
+        data_emissao: dataNoMesAberto,
+      },
+      {
+        id: "nfe-mes-fechado",
+        chave_nfe: "35250800000000000000550010000000051000000050",
+        tipo: "saida",
+        valor_total: 40000,
+        data_emissao: dataFechada,
+      },
+    ]);
+    queue("apuracoes", "single", { data: { id: "apuracao-rbt12-filtro" }, error: null });
+
+    const res = criarResposta();
+    await dispararApuracao(
+      reqAdmin({ body: payloadValido({ mes: mesCompetencia, ano: anoCompetencia }) }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.rbt12, 40000);
+    const linhaAberta = res.body.rbt12_mensal.find((item) => item.referencia === mesCorrente);
+    assert.ok(linhaAberta, `esperava linha RBT12 para ${mesCorrente}`);
+    assert.equal(linhaAberta.periodo_fechado, false);
+    assert.equal(linhaAberta.total, 0);
+    assert.equal(res.body.notas_fiscais.consideradas.length, 1);
+    assert.equal(res.body.notas_fiscais.consideradas[0].id, "nfe-mes-fechado");
+    const excluida = res.body.notas_fiscais.excluidas.find((n) => n.id === "nfe-mes-aberto");
+    assert.match(excluida.motivo, /não fechado/i);
+  });
+
+  it("exclui NF-e com data de emissão futura da RBT12 e da receita (BUG-APUR-08)", async () => {
+    const agora = new Date();
+    const amanha = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1);
+    const dataFutura = `${amanha.getFullYear()}-${String(amanha.getMonth() + 1).padStart(2, "0")}-${String(amanha.getDate()).padStart(2, "0")}`;
+    // Competência = mês de amanhã (ainda aberto / futuro civil).
+    const mesCompetencia = amanha.getMonth() + 1;
+    const anoCompetencia = amanha.getFullYear();
+    const mesFechadoDate = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
+    const dataFechada = `${mesFechadoDate.getFullYear()}-${String(mesFechadoDate.getMonth() + 1).padStart(2, "0")}-15`;
+
+    queueSemDuplicata();
+    queueCliente("I");
+    queueNotas([
+      {
+        id: "nfe-futura",
+        chave_nfe: "35261200000000000000550010000000061000000060",
+        tipo: "saida",
+        valor_total: 50000,
+        data_emissao: dataFutura,
+      },
+      {
+        id: "nfe-ok",
+        chave_nfe: "35250800000000000000550010000000071000000070",
+        tipo: "saida",
+        valor_total: 40000,
+        data_emissao: dataFechada,
+      },
+    ]);
+    queue("apuracoes", "single", { data: { id: "apuracao-data-futura" }, error: null });
+
+    const res = criarResposta();
+    await dispararApuracao(
+      reqAdmin({ body: payloadValido({ mes: mesCompetencia, ano: anoCompetencia }) }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.receita_mes, 0);
+    assert.equal(res.body.rbt12, 40000);
+    const excluida = res.body.notas_fiscais.excluidas.find((n) => n.id === "nfe-futura");
+    assert.match(excluida.motivo, /data de emissão futura/i);
   });
 
   it("422 quando faltam meses de folha na janela completa do Fator R", async () => {
@@ -336,6 +434,15 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: { clienteId: CLIENTE_A, mes: 8, ano: 2026 } }), res);
 
     assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "mes, ano e regime são obrigatórios");
+  });
+
+  it("400 com mensagem de faixa quando mes=0 (não confundir com ausente)", async () => {
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 0 }) }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
   });
 
   // #497 — competência futura ou mês corrente ainda aberto não podem ser
@@ -387,6 +494,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 15 }) }), res);
 
     assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
   });
 
   it("400 quando ano é anterior a 2020", async () => {
@@ -394,6 +502,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ ano: 1999 }) }), res);
 
     assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
   });
 
   it("400 quando mes contém sufixo não numérico", async () => {
