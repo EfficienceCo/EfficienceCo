@@ -368,6 +368,18 @@ def processar_pasta_nfe(pasta: str) -> None:
                 pass
             continue
 
+        # BUG-APUR-08 / QA-E: NF-e com data futura não entra no ledger.
+        if dados["data_emissao"] > date.today():
+            try:
+                _mover_nao_identificado(
+                    xml_path,
+                    pasta_path,
+                    f"data de emissão futura ({dados['data_emissao'].isoformat()})",
+                )
+            except Exception:
+                pass
+            continue
+
         try:
             empresas = resolver_empresas_nfe(
                 dados["cnpj_emitente"],

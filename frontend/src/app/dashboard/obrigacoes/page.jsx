@@ -12,6 +12,7 @@ import {
   listar as listarObrigacoes,
 } from '../../../services/obrigacoes.service';
 import { listarCertificados } from '../../../services/certificados.service';
+import { calcularDiasRestantes, calcularFaixaPrazo, CLASSE_BADGE_FAIXA } from '../../../lib/prazoUrgencia';
 
 const PERFIS_AUTORIZADOS = new Set(['admin_cliente', 'admin_efficience']);
 
@@ -253,7 +254,7 @@ function formatarStatus(status) {
   return 'Pendente';
 }
 
-function classeBadgeStatus(status) {
+function classeBadgeStatus(status, dias) {
   if (status === 'concluida') {
     return 'bg-emerald-100 text-emerald-700';
   }
@@ -262,7 +263,7 @@ function classeBadgeStatus(status) {
     return 'bg-rose-100 text-rose-700';
   }
 
-  return 'bg-amber-100 text-amber-800';
+  return CLASSE_BADGE_FAIXA[calcularFaixaPrazo(dias)];
 }
 
 function obterMesAtual() {
@@ -889,6 +890,7 @@ export default function ObrigacoesPage() {
                   const status = obterStatusObrigacao(prazo);
                   const linhaAtrasada = status === 'atrasada';
                   const ehCertificado = prazo?.origem === 'certificado';
+                  const diasRestantes = calcularDiasRestantes(obterDataVencimento(prazo));
 
                   return (
                     <tr
@@ -911,6 +913,7 @@ export default function ObrigacoesPage() {
                         <span
                           className={`rounded-full px-2 py-1 text-xs font-semibold ${classeBadgeStatus(
                             status,
+                            diasRestantes,
                           )}`}
                         >
                           {formatarStatus(status)}
