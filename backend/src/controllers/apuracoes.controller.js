@@ -2,7 +2,7 @@ import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { calcularSimplesNacional } from "../utils/simples-nacional.util.js";
-import { ultimoDiaDoMes } from "../utils/periodo.util.js";
+import { dataLocalISO, mesJaFechado, ultimoDiaDoMes } from "../utils/periodo.util.js";
 
 const REGIMES_SUPORTADOS = new Set(["simples_nacional"]);
 const FOLHA_STATUS = {
@@ -135,15 +135,36 @@ function resumirNota(nota, detalhes) {
   };
 }
 
-function montarBasesCalculo({ notas, historicoReceita, mes, ano }) {
+function dataEmissaoISO(nota) {
+  return typeof nota?.data_emissao === "string" ? nota.data_emissao.slice(0, 10) : "";
+}
+
+function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO = dataLocalISO() }) {
   const janelaRbt12 = calcularJanela12MesesAnteriores(mes, ano);
+  // BUG-APUR-08 / QA-F §F8: só meses já fechados no calendário entram na RBT12 —
+  // competência futura ou mês corrente parcial não podem inflar/subestimar a base.
+  const mesesRbt12Fechados = new Set(
+    [...janelaRbt12.meses].filter((referencia) => mesJaFechado(referencia, hojeISO)),
+  );
   const mesReferenciaAtual = chaveMes(ano, mes);
   const linhasNotas = Array.isArray(notas) ? notas : [];
   const notasSaida = linhasNotas.filter(ehNotaDeSaida);
-  const notasRbt12 = notasSaida.filter((nota) => janelaRbt12.meses.has(referenciaDaNota(nota)));
-  const notasReceitaMes = notasSaida.filter((nota) => referenciaDaNota(nota) === mesReferenciaAtual);
+
+  const notaComDataFutura = (nota) => {
+    const emissao = dataEmissaoISO(nota);
+    return Boolean(emissao) && emissao > hojeISO;
+  };
+
+  const notasRbt12 = notasSaida.filter((nota) => {
+    if (notaComDataFutura(nota)) return false;
+    return mesesRbt12Fechados.has(referenciaDaNota(nota));
+  });
+  const notasReceitaMes = notasSaida.filter((nota) => {
+    if (notaComDataFutura(nota)) return false;
+    return referenciaDaNota(nota) === mesReferenciaAtual;
+  });
   const mesesComNotas = new Set(notasRbt12.map(referenciaDaNota));
-  const historico = somarHistoricoReceita(historicoReceita, janelaRbt12.meses, mesesComNotas);
+  const historico = somarHistoricoReceita(historicoReceita, mesesRbt12Fechados, mesesComNotas);
 
   if (historico.erro) return historico;
 
@@ -158,8 +179,9 @@ function montarBasesCalculo({ notas, historicoReceita, mes, ano }) {
 
   const rbt12Mensal = [...janelaRbt12.meses].map((referencia) => {
     const [anoReferencia, mesReferencia] = referencia.split("-").map(Number);
-    const receitaNfes = receitaNfesPorMes.get(referencia) || 0;
-    const receitaHistorico = historico.receitasUsadas.get(referencia) || 0;
+    const periodoFechado = mesesRbt12Fechados.has(referencia);
+    const receitaNfes = periodoFechado ? (receitaNfesPorMes.get(referencia) || 0) : 0;
+    const receitaHistorico = periodoFechado ? (historico.receitasUsadas.get(referencia) || 0) : 0;
 
     return {
       referencia,
@@ -168,6 +190,7 @@ function montarBasesCalculo({ notas, historicoReceita, mes, ano }) {
       receita_nfes: receitaNfes,
       receita_historico: receitaHistorico,
       total: arredondar(receitaNfes + receitaHistorico),
+      periodo_fechado: periodoFechado,
     };
   });
 
@@ -176,28 +199,49 @@ function montarBasesCalculo({ notas, historicoReceita, mes, ano }) {
     notasReceitaMes.reduce((soma, nota) => soma + Number(nota.valor_total), 0),
   );
 
-  const notasConsideradas = notasSaida.map((nota) => {
+  const notasConsideradas = [];
+  const notasExcluidasPeriodo = [];
+
+  for (const nota of notasSaida) {
     const referencia = referenciaDaNota(nota);
-    const compoeRbt12 = janelaRbt12.meses.has(referencia);
-    const compoeReceitaMes = referencia === mesReferenciaAtual;
+    const emissaoFutura = notaComDataFutura(nota);
+    const naJanela = janelaRbt12.meses.has(referencia);
+    const compoeRbt12 = !emissaoFutura && mesesRbt12Fechados.has(referencia);
+    const compoeReceitaMes = !emissaoFutura && referencia === mesReferenciaAtual;
+
+    // Data futura ou mês da janela ainda aberto: fora da soma, com motivo explícito.
+    if (emissaoFutura || (naJanela && !compoeRbt12 && !compoeReceitaMes)) {
+      notasExcluidasPeriodo.push(resumirNota(nota, {
+        compoe_rbt12: false,
+        compoe_receita_mes: false,
+        motivo: emissaoFutura
+          ? "Nota fiscal com data de emissão futura — excluída da RBT12 e da receita da competência."
+          : "Período ainda não fechado — excluída da RBT12.",
+      }));
+      continue;
+    }
+
     const motivo = compoeRbt12
       ? "Nota fiscal de saída incluída na RBT12."
-      : "Nota fiscal de saída incluída na receita da competência."
+      : "Nota fiscal de saída incluída na receita da competência.";
 
-    return resumirNota(nota, {
+    notasConsideradas.push(resumirNota(nota, {
       compoe_rbt12: compoeRbt12,
       compoe_receita_mes: compoeReceitaMes,
       motivo,
-    });
-  });
-
-  const notasExcluidas = linhasNotas
-    .filter((nota) => !ehNotaDeSaida(nota))
-    .map((nota) => resumirNota(nota, {
-      compoe_rbt12: false,
-      compoe_receita_mes: false,
-      motivo: "Nota fiscal de entrada não compõe a receita bruta.",
     }));
+  }
+
+  const notasExcluidas = [
+    ...linhasNotas
+      .filter((nota) => !ehNotaDeSaida(nota))
+      .map((nota) => resumirNota(nota, {
+        compoe_rbt12: false,
+        compoe_receita_mes: false,
+        motivo: "Nota fiscal de entrada não compõe a receita bruta.",
+      })),
+    ...notasExcluidasPeriodo,
+  ];
 
   return {
     janelaRbt12,
