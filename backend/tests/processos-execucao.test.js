@@ -17,7 +17,7 @@ const PROCESSO_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const ETAPA_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const EXECUCAO_TOKEN = "123e4567-e89b-42d3-a456-426614174000";
 const PAYLOAD_CONTRATO = {
-  socios: [{ nome: "Fulano", cpf: "111", participacao: 100 }],
+  socios: [{ nome: "Fulano", cpf: "123.456.789-09", participacao: 100 }],
   capital_social: 1000,
   objeto_social: "Serviços contábeis",
   endereco: "Rua Exemplo, 123",
