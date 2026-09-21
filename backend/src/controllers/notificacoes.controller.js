@@ -10,8 +10,10 @@ function resolverClienteId(req) {
 
 export async function listarNotificacoes(req, res) {
   const clienteId = resolverClienteId(req);
+  // Shell do dashboard (sino / widget) chama sem cliente_id para admin_efficience.
+  // Resposta vazia evita 400 em toda página; com cliente_id na query, filtra normal.
   if (!clienteId) {
-    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+    return res.status(200).json([]);
   }
 
   const todas = req.query.todas === "true";
