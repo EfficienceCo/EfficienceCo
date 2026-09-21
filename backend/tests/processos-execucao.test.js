@@ -213,7 +213,7 @@ describe("processos.controller — executarAcaoEtapaJwt (issue #266)", () => {
       error: null,
     });
     const payload = {
-      socios: [{ nome: "Fulano", cpf: "111", participacao: 100 }],
+      socios: [{ nome: "Fulano", cpf: "123.456.789-09", participacao: 100 }],
       capital_social: 1000,
       objeto_social: "Serviços contábeis",
       endereco: "Rua Exemplo, 123",

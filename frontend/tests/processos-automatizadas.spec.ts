@@ -17,6 +17,7 @@ type EstadoApi = {
     id: string;
     cliente_id: string;
     titulo: string;
+    nome_empresa?: string;
     tipo: string;
     status: string;
     etapas: Etapa[];
@@ -160,6 +161,21 @@ async function prepararPagina(page: Page, estado = criarEstadoApi()) {
   return estado;
 }
 
+test.describe('Processos - titulo do card (#491)', () => {
+  test('usa nome_empresa quando nao ha titulo explicito', async ({ page }) => {
+    const estado = criarEstadoApi();
+    estado.processo.titulo = '';
+    estado.processo.nome_empresa = 'Empresa Exemplo #491';
+
+    await prepararPagina(page, estado);
+
+    await expect(
+      page.getByRole('heading', { name: 'Empresa Exemplo #491', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Processo 1', exact: true })).toHaveCount(0);
+  });
+});
+
 function etapaPorTexto(page: Page, texto: string) {
   return page.getByRole('listitem').filter({ hasText: texto });
 }
@@ -213,7 +229,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await preencherContrato(page, '60');
     await contrato.getByRole('button', { name: 'Adicionar sócio' }).click();
     await page.getByLabel('Nome do sócio 2').fill('João Souza');
-    await page.getByLabel('CPF do sócio 2').fill('00123456789');
+    await page.getByLabel('CPF do sócio 2').fill('11144477735');
     await page.getByLabel('Participação (%) do sócio 2').fill('40');
     await contrato.getByRole('button', { name: 'Concluir' }).click();
 
@@ -222,7 +238,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     expect(payloadContrato).toEqual({
       socios: [
         { nome: 'Maria da Silva', cpf: '01234567890', participacao: 60 },
-        { nome: 'João Souza', cpf: '00123456789', participacao: 40 },
+        { nome: 'João Souza', cpf: '11144477735', participacao: 40 },
       ],
       capital_social: 25000.5,
       objeto_social: 'Prestação de serviços de tecnologia.',
@@ -290,7 +306,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     etapa.status = 'pronta_para_execucao';
     etapa.erro_execucao = 'Falha ao preencher o modelo';
     etapa.payload_execucao = {
-      socios: [{ nome: 'Ana Lima', cpf: '00011122233', participacao: 100 }],
+      socios: [{ nome: 'Ana Lima', cpf: '12345678909', participacao: 100 }],
       capital_social: 15000,
       objeto_social: 'Comércio varejista.',
       endereco: 'Avenida Central, 20',
@@ -326,6 +342,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await expect(
       contrato.getByRole('link', { name: 'contrato-social.docx' }),
     ).toHaveAttribute('href', 'https://arquivos.exemplo.test/contrato-social.docx');
+    await expect(contrato.getByText('Próximo passo: Criar estrutura de pastas.')).toBeVisible();
     await expect(page.getByText('1 de 3 etapas')).toBeVisible();
   });
 
@@ -341,6 +358,26 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
 
     await expect(contrato.getByText('contrato-social-v1.docx')).toBeVisible();
     await expect(contrato.getByRole('link')).toHaveCount(0);
+    await expect(contrato.getByText('Salvo em: C:\\Clientes\\Empresa')).toBeVisible();
+    await expect(contrato.getByText('Próximo passo: Criar estrutura de pastas.')).toBeVisible();
+  });
+
+  test('última etapa concluída indica que o processo terminou, sem próximo passo', async ({ page }) => {
+    const estado = criarEstadoApi();
+    localizarEtapa(estado, 'etapa-manual').concluida = true;
+    localizarEtapa(estado, 'etapa-manual').status = 'concluida';
+    localizarEtapa(estado, 'etapa-contrato').concluida = true;
+    localizarEtapa(estado, 'etapa-contrato').status = 'concluida';
+    const etapa = localizarEtapa(estado, 'etapa-pastas');
+    etapa.status = 'concluida';
+    etapa.concluida = true;
+
+    await prepararPagina(page, estado);
+    const pastas = etapaPorTexto(page, 'Criar estrutura de pastas');
+
+    await expect(
+      pastas.getByText('Todas as etapas deste processo foram concluídas.'),
+    ).toBeVisible();
   });
 
   test('criar pastas confirma sem campos e envia objeto vazio', async ({ page }) => {
