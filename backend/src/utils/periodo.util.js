@@ -57,9 +57,10 @@ export function aplicarFiltroPeriodo(query, campo, mes, ano) {
 }
 
 // Data de hoje no fuso de Brasília (America/Sao_Paulo), YYYY-MM-DD.
-// data_vencimento é DATE e representa um dia útil brasileiro, mas o servidor
-// roda em UTC: entre 21:00 e 24:00 (BRT) o toISOString() já está no dia
-// seguinte e marcaria como atrasada uma obrigação que vence hoje no Brasil.
+// Datas civis do produto representam dias brasileiros. Como o servidor roda
+// em UTC, usar toISOString() entre 21:00 e 24:00 (BRT) anteciparia a virada do
+// dia e poderia tanto marcar obrigação como atrasada quanto liberar uma
+// competência antes do fechamento real no Brasil.
 // `agora` é injetável para testes determinísticos.
 const formatadorBrasil = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Sao_Paulo",
@@ -70,4 +71,22 @@ const formatadorBrasil = new Intl.DateTimeFormat("en-CA", {
 
 export function hojeNoBrasil(agora = new Date()) {
   return formatadorBrasil.format(agora);
+}
+
+// Última competência (mês/ano) já encerrada no fuso de Brasília. A apuração do
+// Simples só faz sentido sobre um mês fechado: tanto a receita do mês quanto a
+// janela de RBT12 de uma competência em aberto somam meses incompletos, o que
+// subestima a alíquota efetiva e o DAS (#497). Usa hojeNoBrasil() pelo mesmo
+// motivo daquele helper — no último dia do mês, o servidor em UTC já estaria no
+// mês seguinte depois das 21:00 (BRT) e liberaria uma competência ainda aberta.
+export function ultimaCompetenciaFechada(agora = new Date()) {
+  const hoje = hojeNoBrasil(agora);
+  const ano = Number(hoje.slice(0, 4));
+  const mes = Number(hoje.slice(5, 7));
+  return mes === 1 ? { ano: ano - 1, mes: 12 } : { ano, mes: mes - 1 };
+}
+
+export function competenciaEstaFechada(ano, mes, agora = new Date()) {
+  const ultima = ultimaCompetenciaFechada(agora);
+  return ano * 12 + mes <= ultima.ano * 12 + ultima.mes;
 }

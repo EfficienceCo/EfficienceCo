@@ -2,8 +2,10 @@ import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
+import { ultimaCompetenciaFechada } from "../src/utils/periodo.util.js";
 import {
   dispararApuracao,
+  montarBasesCalculo,
   listarApuracoes,
   detalharApuracao,
   editarApuracao,
@@ -328,9 +330,8 @@ describe("POST /apuracoes", () => {
     const refFechado = `${mesFechadoDate.getFullYear()}-${String(mesFechadoDate.getMonth() + 1).padStart(2, "0")}`;
     const dataFechada = `${refFechado}-10`;
 
-    queueSemDuplicata();
-    queueCliente("I");
-    queueNotas([
+    const bases = montarBasesCalculo({
+      notas: [
       {
         id: "nfe-mes-aberto",
         chave_nfe: "35260900000000000000550010000000041000000040",
@@ -345,24 +346,21 @@ describe("POST /apuracoes", () => {
         valor_total: 40000,
         data_emissao: dataFechada,
       },
-    ]);
-    queue("apuracoes", "single", { data: { id: "apuracao-rbt12-filtro" }, error: null });
+      ],
+      historicoReceita: [],
+      mes: mesCompetencia,
+      ano: anoCompetencia,
+      hojeISO: dataNoMesAberto,
+    });
 
-    const res = criarResposta();
-    await dispararApuracao(
-      reqAdmin({ body: payloadValido({ mes: mesCompetencia, ano: anoCompetencia }) }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.rbt12, 40000);
-    const linhaAberta = res.body.rbt12_mensal.find((item) => item.referencia === mesCorrente);
+    assert.equal(bases.rbt12, 40000);
+    const linhaAberta = bases.rbt12Mensal.find((item) => item.referencia === mesCorrente);
     assert.ok(linhaAberta, `esperava linha RBT12 para ${mesCorrente}`);
     assert.equal(linhaAberta.periodo_fechado, false);
     assert.equal(linhaAberta.total, 0);
-    assert.equal(res.body.notas_fiscais.consideradas.length, 1);
-    assert.equal(res.body.notas_fiscais.consideradas[0].id, "nfe-mes-fechado");
-    const excluida = res.body.notas_fiscais.excluidas.find((n) => n.id === "nfe-mes-aberto");
+    assert.equal(bases.notasFiscais.consideradas.length, 1);
+    assert.equal(bases.notasFiscais.consideradas[0].id, "nfe-mes-fechado");
+    const excluida = bases.notasFiscais.excluidas.find((n) => n.id === "nfe-mes-aberto");
     assert.match(excluida.motivo, /não fechado/i);
   });
 
@@ -373,12 +371,12 @@ describe("POST /apuracoes", () => {
     // Competência = mês de amanhã (ainda aberto / futuro civil).
     const mesCompetencia = amanha.getMonth() + 1;
     const anoCompetencia = amanha.getFullYear();
+    const hojeISO = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
     const mesFechadoDate = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
     const dataFechada = `${mesFechadoDate.getFullYear()}-${String(mesFechadoDate.getMonth() + 1).padStart(2, "0")}-15`;
 
-    queueSemDuplicata();
-    queueCliente("I");
-    queueNotas([
+    const bases = montarBasesCalculo({
+      notas: [
       {
         id: "nfe-futura",
         chave_nfe: "35261200000000000000550010000000061000000060",
@@ -393,19 +391,16 @@ describe("POST /apuracoes", () => {
         valor_total: 40000,
         data_emissao: dataFechada,
       },
-    ]);
-    queue("apuracoes", "single", { data: { id: "apuracao-data-futura" }, error: null });
+      ],
+      historicoReceita: [],
+      mes: mesCompetencia,
+      ano: anoCompetencia,
+      hojeISO,
+    });
 
-    const res = criarResposta();
-    await dispararApuracao(
-      reqAdmin({ body: payloadValido({ mes: mesCompetencia, ano: anoCompetencia }) }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.receita_mes, 0);
-    assert.equal(res.body.rbt12, 40000);
-    const excluida = res.body.notas_fiscais.excluidas.find((n) => n.id === "nfe-futura");
+    assert.equal(bases.receitaMes, 0);
+    assert.equal(bases.rbt12, 40000);
+    const excluida = bases.notasFiscais.excluidas.find((n) => n.id === "nfe-futura");
     assert.match(excluida.motivo, /data de emissão futura/i);
   });
 
@@ -442,6 +437,50 @@ describe("POST /apuracoes", () => {
 
     assert.equal(res.statusCode, 400);
     assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+  });
+
+  // #497 — competência futura ou mês corrente ainda aberto não podem ser
+  // apurados: a janela de RBT12 somaria meses incompletos e o DAS sairia
+  // abaixo do devido. Os períodos são derivados de ultimaCompetenciaFechada()
+  // para o teste não caducar com a passagem dos meses.
+  it("422 COMPETENCIA_NAO_FECHADA quando a competência é o mês corrente", async () => {
+    const ultima = ultimaCompetenciaFechada();
+    const corrente = ultima.mes === 12 ? { ano: ultima.ano + 1, mes: 1 } : { ano: ultima.ano, mes: ultima.mes + 1 };
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido(corrente) }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
+    assert.equal(res.body.competencia_maxima, `${ultima.ano}-${String(ultima.mes).padStart(2, "0")}`);
+    assert.deepEqual(operacoes, []);
+  });
+
+  it("422 COMPETENCIA_NAO_FECHADA quando a competência é de um ano futuro", async () => {
+    const ultima = ultimaCompetenciaFechada();
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido({ ano: ultima.ano + 1, mes: 6 }) }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
+    assert.deepEqual(operacoes, []);
+  });
+
+  it("201 na última competência já fechada", async () => {
+    const ultima = ultimaCompetenciaFechada();
+    queueSemDuplicata();
+    queueCliente("I");
+    queueNotas([]);
+    queue("apuracoes", "single", { data: { id: "nova-apuracao", status: "rascunho" }, error: null });
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido(ultima) }), res);
+
+    assert.equal(res.statusCode, 201);
+    const insert = operacoes.find((operacao) => operacao.metodo === "insert");
+    assert.equal(insert.payload.periodo_mes, ultima.mes);
+    assert.equal(insert.payload.periodo_ano, ultima.ano);
   });
 
   it("400 quando mes está fora do intervalo 1-12", async () => {
@@ -752,7 +791,7 @@ describe("PATCH /apuracoes/:id", () => {
 
 describe("PATCH /apuracoes/:id/aprovar", () => {
   it("200 e marca como aprovado", async () => {
-    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 }, error: null });
     queue("apuracoes", "maybeSingle", {
       data: { id: APURACAO_ID, status: "aprovado", aprovado_por: "contador@teste.com" },
       error: null,
@@ -767,13 +806,30 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
   });
 
   it("409 quando outra requisição aprova entre a leitura e a atualização", async () => {
-    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 }, error: null });
     queue("apuracoes", "maybeSingle", { data: null, error: null });
 
     const res = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
     assert.equal(res.statusCode, 409);
+  });
+
+  // #497 — registros de competência futura anteriores à validação de criação
+  // continuavam aprováveis, que é o sintoma descrito na issue.
+  it("422 COMPETENCIA_NAO_FECHADA quando a competência ainda não fechou", async () => {
+    const ultima = ultimaCompetenciaFechada();
+    queue("apuracoes", "maybeSingle", {
+      data: { cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 6, periodo_ano: ultima.ano + 1 },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
+    assert.deepEqual(operacoes, []);
   });
 
   it("409 quando já está aprovada", async () => {
@@ -786,7 +842,7 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
   });
 
   it("404 quando a apuração pertence a outro cliente", async () => {
-    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_B, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_B, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 }, error: null });
 
     const res = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
