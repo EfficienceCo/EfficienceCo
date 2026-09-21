@@ -721,6 +721,53 @@ export async function aprovarApuracao(req, res) {
   return res.status(200).json(data);
 }
 
+// Desfazer um rascunho (#500): sem isso, um cálculo errado só saía do banco
+// sendo aprovado ou por SQL manual. Aprovada continua imutável — mesma trava
+// de editarApuracao/aprovarApuracao.
+export async function excluirApuracao(req, res) {
+  const { id } = req.params;
+
+  const { data: apuracao, error: erroBusca } = await supabase
+    .from("apuracoes")
+    .select("cliente_id, status")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (erroBusca) {
+    console.error("[apuracoes.controller] Erro ao buscar apuração:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar apuração" });
+  }
+
+  if (!apuracao || (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && apuracao.cliente_id !== req.usuario?.cliente_id)) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
+
+  if (apuracao.status === "aprovado") {
+    return res.status(409).json({ erro: "Apuração já aprovada não pode ser excluída" });
+  }
+
+  // O .eq("status", "rascunho") fecha a corrida com uma aprovação concorrente
+  // entre a leitura e o delete — mesmo padrão do update em aprovarApuracao.
+  const { data, error } = await supabase
+    .from("apuracoes")
+    .delete()
+    .eq("id", id)
+    .eq("status", "rascunho")
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error("[apuracoes.controller] Erro ao excluir apuração:", error.message);
+    return res.status(500).json({ erro: "Erro ao excluir apuração" });
+  }
+
+  if (!data) {
+    return res.status(409).json({ erro: "Apuração já aprovada não pode ser excluída" });
+  }
+
+  return res.status(204).send();
+}
+
 // Refaz o cálculo com os dados atuais de lancamentos_fiscais/processamentos_folha
 // — fecha o loop do #365: o agente só confirma que a folha existe localmente
 // (resultado-folha), quem efetivamente traz os números pro banco é o upload em

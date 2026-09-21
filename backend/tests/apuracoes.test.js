@@ -10,6 +10,7 @@ import {
   detalharApuracao,
   editarApuracao,
   aprovarApuracao,
+  excluirApuracao,
 } from "../src/controllers/apuracoes.controller.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
@@ -41,6 +42,7 @@ supabase.from = function (tabela) {
     select() { return builder; },
     insert(payload) { operacoes.push({ tabela, metodo: "insert", payload }); return builder; },
     update(payload) { operacoes.push({ tabela, metodo: "update", payload }); return builder; },
+    delete() { operacoes.push({ tabela, metodo: "delete" }); return builder; },
     eq() { return builder; },
     gte() { return builder; },
     lte() { return builder; },
@@ -74,6 +76,7 @@ function criarResposta() {
     body: null,
     status(codigo) { this.statusCode = codigo; return this; },
     json(payload) { this.body = payload; return this; },
+    send(payload) { this.body = payload ?? null; return this; },
   };
 }
 
@@ -848,5 +851,84 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
     assert.equal(res.statusCode, 404);
+  });
+});
+
+describe("DELETE /apuracoes/:id", () => {
+  it("204 e remove o rascunho", async () => {
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: { id: APURACAO_ID, status: "rascunho" }, error: null });
+
+    const res = criarResposta();
+    await excluirApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 204);
+    assert.equal(res.body, null);
+    assert.equal(operacoes.filter((op) => op.tabela === "apuracoes" && op.metodo === "delete").length, 1);
+  });
+
+  it("409 quando já está aprovada", async () => {
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "aprovado" }, error: null });
+
+    const res = criarResposta();
+    await excluirApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(operacoes.filter((op) => op.metodo === "delete").length, 0);
+  });
+
+  it("409 quando outra requisição aprova entre a leitura e o delete", async () => {
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: null, error: null });
+
+    const res = criarResposta();
+    await excluirApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 409);
+  });
+
+  it("404 quando a apuração pertence a outro cliente", async () => {
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_B, status: "rascunho" }, error: null });
+
+    const res = criarResposta();
+    await excluirApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 404);
+    assert.equal(operacoes.filter((op) => op.metodo === "delete").length, 0);
+  });
+
+  it("404 quando a apuração não existe", async () => {
+    queue("apuracoes", "maybeSingle", { data: null, error: null });
+
+    const res = criarResposta();
+    await excluirApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 404);
+  });
+
+  it("admin_efficience remove rascunho de qualquer cliente", async () => {
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_B, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: { id: APURACAO_ID, status: "rascunho" }, error: null });
+
+    const res = criarResposta();
+    await excluirApuracao(
+      reqAdmin({
+        params: { id: APURACAO_ID },
+        usuario: { perfil: PERFIS.ADMIN_EFFICIENCE, id: "admin-1", email: "admin@efficience.com" },
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 204);
+  });
+
+  it("500 quando o banco falha no delete", async () => {
+    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: null, error: { message: "timeout" } });
+
+    const res = criarResposta();
+    await excluirApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 500);
   });
 });
