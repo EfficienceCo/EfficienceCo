@@ -9,6 +9,7 @@ import {
   ultimaCompetenciaFechada,
   ultimoDiaDoMes,
 } from "../utils/periodo.util.js";
+import { validarHistoricoReceita } from "../utils/regime-tributario.util.js";
 
 const REGIMES_SUPORTADOS = new Set(["simples_nacional"]);
 const FOLHA_STATUS = {
@@ -87,24 +88,14 @@ function calcularJanela12MesesAnteriores(mes, ano) {
 }
 
 function somarHistoricoReceita(historico, mesesEsperados, mesesComNotas) {
-  if (historico == null) return { total: 0, receitasUsadas: new Map() };
-  if (!Array.isArray(historico)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
+  // Mesma validação que clientes.controller.js aplica na escrita (#496): o que a
+  // tela de cadastro grava é sempre legível aqui, sem drift entre as pontas.
+  const validado = validarHistoricoReceita(historico);
+  if (validado.erro) return { erro: validado.erro };
 
-  const receitasPorMes = new Map();
-
-  for (const entrada of historico) {
-    const mes = inteiroEstrito(entrada?.mes);
-    const ano = inteiroEstrito(entrada?.ano);
-    const receita = numeroNaoNegativo(entrada?.receita);
-
-    if (mes === null || mes < 1 || mes > 12 || ano === null || ano < 2020 || receita === null) {
-      return { erro: "HISTORICO_RECEITA_INVALIDO" };
-    }
-
-    const referencia = chaveMes(ano, mes);
-    if (receitasPorMes.has(referencia)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
-    receitasPorMes.set(referencia, receita);
-  }
+  const receitasPorMes = new Map(
+    validado.entradas.map((entrada) => [chaveMes(entrada.ano, entrada.mes), entrada.receita]),
+  );
 
   let total = 0;
   const receitasUsadas = new Map();
