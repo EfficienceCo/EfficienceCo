@@ -49,3 +49,8 @@ export async function aprovarApuracao(id) {
 export async function excluirApuracao(id) {
   await api.delete(`/apuracoes/${id}`);
 }
+
+export async function recalcularApuracao(id) {
+  const response = await api.patch(`/apuracoes/${id}/recalcular`);
+  return response.data;
+}

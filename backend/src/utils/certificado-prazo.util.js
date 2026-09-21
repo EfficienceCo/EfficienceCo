@@ -1,15 +1,9 @@
 /**
- * Cálculo de prazo do certificado digital (CD-2 UI + CD-3 alertas).
- * `hoje` injetável para testes determinísticos.
+ * Prazo do certificado digital (CD-2 UI + CD-3 alertas).
+ * O cálculo de dias vive em prazo.util.js — compartilhado com os alertas de
+ * obrigações (#529); re-exportado aqui para não quebrar quem já importava daqui.
  */
-export function calcularDiasRestantes(validade, hoje = new Date()) {
-  const hojeUtc = Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
-
-  const [ano, mes, dia] = String(validade).slice(0, 10).split("-").map(Number);
-  const validadeUtc = Date.UTC(ano, mes - 1, dia);
-
-  return Math.round((validadeUtc - hojeUtc) / (1000 * 60 * 60 * 24));
-}
+export { calcularDiasRestantes } from "./prazo.util.js";
 
 export function calcularFaixa(diasRestantes) {
   if (diasRestantes <= 0) return "vencido";

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
 import {
@@ -474,6 +474,11 @@ export default function Regras() {
   const [regras, setRegras] = useState([]);
   const [isLoadingRegras, setIsLoadingRegras] = useState(true);
   const [erroLista, setErroLista] = useState('');
+  // Erro de uma ação sobre a lista (ex.: alternar status): não pode esconder a tabela.
+  const [erroAcaoLista, setErroAcaoLista] = useState('');
+  // Só a listagem mais recente pode escrever no estado (descarta respostas obsoletas).
+  const requisicaoListaRef = useRef(0);
+  const listaCarregadaRef = useRef(false);
 
   const [isFormModalAberto, setIsFormModalAberto] = useState(false);
   const [modoFormulario, setModoFormulario] = useState('criar');
@@ -497,28 +502,55 @@ export default function Regras() {
   const extensaoRestritaFolha = formData.condicao_tipo === TIPO_FOLHA_PAGAMENTO;
   const schemaAcao = obterSchemaAcao(formData.acao);
 
-  const carregarRegras = useCallback(async () => {
-    if (requerClienteId) {
-      setIsLoadingRegras(false);
-      setRegras([]);
-      setErroLista(
-        'Seu usuário admin_efficience não possui cliente_id no token. Use um admin_cliente para configurar regras.',
-      );
-      return;
-    }
+  // silencioso: reconcilia com o servidor sem spinner nem esconder a tabela (pós-mutação).
+  const carregarRegras = useCallback(
+    async ({ silencioso = false } = {}) => {
+      if (requerClienteId) {
+        setIsLoadingRegras(false);
+        setRegras([]);
+        setErroLista(
+          'Seu usuário admin_efficience não possui cliente_id no token. Use um admin_cliente para configurar regras.',
+        );
+        return;
+      }
 
-    setIsLoadingRegras(true);
-    setErroLista('');
+      const requisicaoId = ++requisicaoListaRef.current;
 
-    try {
-      const data = await listarRegras({ clienteId: clienteIdAdminGlobal || undefined });
-      setRegras(Array.isArray(data) ? data : []);
-    } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Não foi possível carregar as regras.'));
-    } finally {
-      setIsLoadingRegras(false);
-    }
-  }, [clienteIdAdminGlobal, requerClienteId]);
+      if (!silencioso) {
+        setIsLoadingRegras(true);
+        setErroLista('');
+      }
+
+      try {
+        const data = await listarRegras({ clienteId: clienteIdAdminGlobal || undefined });
+
+        if (requisicaoId !== requisicaoListaRef.current) {
+          return;
+        }
+
+        setRegras(Array.isArray(data) ? data : []);
+        setErroLista('');
+        listaCarregadaRef.current = true;
+      } catch (error) {
+        if (requisicaoId !== requisicaoListaRef.current) {
+          return;
+        }
+
+        // Reconciliação silenciosa que falha só é ignorada se já há uma lista válida na tela;
+        // senão ela substituiu a carga inicial e o operador precisa ver o erro.
+        if (silencioso && listaCarregadaRef.current) {
+          return;
+        }
+
+        setErroLista(obterMensagemErro(error, 'Não foi possível carregar as regras.'));
+      } finally {
+        if (requisicaoId === requisicaoListaRef.current) {
+          setIsLoadingRegras(false);
+        }
+      }
+    },
+    [clienteIdAdminGlobal, requerClienteId],
+  );
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -680,6 +712,9 @@ export default function Regras() {
       setIsFormModalAberto(false);
       setRegraEditandoId(null);
       setFormData(FORM_INICIAL);
+      setErroAcaoLista('');
+      // Invalida qualquer listagem em voo (obsoleta) e reconcilia com o servidor.
+      carregarRegras({ silencioso: true });
     } catch (error) {
       setErroFormulario(obterMensagemErro(error));
     } finally {
@@ -707,8 +742,10 @@ export default function Regras() {
       setRegras((currentValue) =>
         currentValue.map((item) => (item.id === atualizada.id ? atualizada : item)),
       );
+      setErroAcaoLista('');
+      carregarRegras({ silencioso: true });
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Não foi possível atualizar o status da regra.'));
+      setErroAcaoLista(obterMensagemErro(error, 'Não foi possível atualizar o status da regra.'));
     } finally {
       setStatusEmAtualizacao((currentValue) => {
         const nextValue = { ...currentValue };
@@ -752,6 +789,8 @@ export default function Regras() {
       );
       setIsDeleteModalAberto(false);
       setRegraParaDeletar(null);
+      setErroAcaoLista('');
+      carregarRegras({ silencioso: true });
     } catch (error) {
       setErroDelete(obterMensagemErro(error, 'Não foi possível deletar a regra.'));
     } finally {
@@ -802,7 +841,7 @@ export default function Regras() {
 
             <button
               type="button"
-              onClick={carregarRegras}
+              onClick={() => carregarRegras()}
               disabled={isLoadingRegras}
               className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -814,6 +853,15 @@ export default function Regras() {
         {erroLista ? (
           <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
             <p className="text-sm font-medium text-rose-800">{erroLista}</p>
+          </section>
+        ) : null}
+
+        {erroAcaoLista ? (
+          <section
+            role="alert"
+            className="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm"
+          >
+            <p className="text-sm font-medium text-rose-800">{erroAcaoLista}</p>
           </section>
         ) : null}
 
