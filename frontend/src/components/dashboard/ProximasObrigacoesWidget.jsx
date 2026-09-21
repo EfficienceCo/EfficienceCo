@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { listarProximasObrigacoes } from '../../services/obrigacoes.service';
+import { calcularDiasRestantes, calcularFaixaPrazo, CLASSE_BADGE_FAIXA } from '../../lib/prazoUrgencia';
 import WidgetCard from './WidgetCard';
 
 const DIAS_PADRAO = 7;
@@ -57,6 +58,21 @@ function obterDataVencimento(obrigacao) {
 
 function obterStatus(obrigacao) {
   return obrigacao?.status || obrigacao?.situacao || '';
+}
+
+function classeBadgeObrigacao(obrigacao) {
+  const status = String(obterStatus(obrigacao)).trim().toLowerCase();
+
+  if (status.includes('conclu')) {
+    return 'bg-emerald-100 text-emerald-700';
+  }
+
+  if (status.includes('atras')) {
+    return 'bg-rose-100 text-rose-700';
+  }
+
+  const dias = calcularDiasRestantes(obterDataVencimento(obrigacao));
+  return CLASSE_BADGE_FAIXA[calcularFaixaPrazo(dias)];
 }
 
 function formatarData(data) {
@@ -137,7 +153,11 @@ export default function ProximasObrigacoesWidget() {
                 <div className="flex items-start justify-between gap-3">
                   <p className="text-sm font-medium text-zinc-900">{titulo}</p>
                   {status ? (
-                    <span className="whitespace-nowrap rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700">
+                    <span
+                      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${classeBadgeObrigacao(
+                        obrigacao,
+                      )}`}
+                    >
                       {status}
                     </span>
                   ) : null}

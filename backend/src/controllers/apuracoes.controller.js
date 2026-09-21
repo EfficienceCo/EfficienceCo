@@ -292,7 +292,9 @@ export async function dispararApuracao(req, res) {
   }
 
   const { mes, ano, regime } = req.body;
-  if (!mes || !ano || !regime) {
+  // Distinguir ausente (undefined/null/"") de fora de faixa (ex.: mes=0) —
+  // `!mes` tratava 0 como ausente e devolvia mensagem enganosa (QA-F §F7 / #502).
+  if (mes == null || mes === "" || ano == null || ano === "" || regime == null || regime === "") {
     return res.status(400).json({ erro: "mes, ano e regime são obrigatórios" });
   }
 

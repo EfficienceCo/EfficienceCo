@@ -112,7 +112,7 @@ describe("#529 — proximasObrigacoes não notifica mais", () => {
 // ---------------------------------------------------------------------------
 describe("#529 — atualizarObrigacao e o ciclo de marcos", () => {
   function enfileirarObrigacaoExistente() {
-    queue("obrigacoes", "single", {
+    queue("obrigacoes", "maybeSingle", {
       data: { cliente_id: CLIENTE_ID, tipo: "mensal", status: "pendente", recorrente: true },
       error: null,
     });

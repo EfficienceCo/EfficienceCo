@@ -423,7 +423,13 @@ function classeBadgeStatus(status) {
 }
 
 function tituloProcesso(processo, index) {
-  return processo?.titulo || processo?.nome || processo?.descricao || `Processo ${index + 1}`;
+  return (
+    processo?.titulo ||
+    processo?.nome_empresa ||
+    processo?.nome ||
+    processo?.descricao ||
+    `Processo ${index + 1}`
+  );
 }
 
 function calcularTotalProcessos(payload, processos) {

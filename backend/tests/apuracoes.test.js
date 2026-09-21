@@ -335,6 +335,15 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: { clienteId: CLIENTE_A, mes: 8, ano: 2026 } }), res);
 
     assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "mes, ano e regime são obrigatórios");
+  });
+
+  it("400 com mensagem de faixa quando mes=0 (não confundir com ausente)", async () => {
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 0 }) }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
   });
 
   it("400 quando mes está fora do intervalo 1-12", async () => {
@@ -342,6 +351,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 15 }) }), res);
 
     assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
   });
 
   it("400 quando ano é anterior a 2020", async () => {
@@ -349,6 +359,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ ano: 1999 }) }), res);
 
     assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
   });
 
   it("400 quando mes contém sufixo não numérico", async () => {
