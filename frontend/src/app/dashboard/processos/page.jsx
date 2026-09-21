@@ -156,6 +156,33 @@ function obterAcaoEtapa(etapa) {
     .toLowerCase();
 }
 
+// O contrato social é gravado dentro da árvore de pastas da empresa, então a
+// etapa só abre depois que "Criar estrutura de pastas" conclui (#488).
+const DEPENDENCIA_ETAPA = {
+  gerar_contrato_social: 'criar_pastas',
+};
+
+function obterDependenciaPendente(etapa, etapas) {
+  const acaoRequerida = DEPENDENCIA_ETAPA[obterAcaoEtapa(etapa)];
+
+  if (!acaoRequerida) {
+    return '';
+  }
+
+  const etapasRequeridas = etapas.filter(
+    (item) => obterAcaoEtapa(item) === acaoRequerida,
+  );
+
+  if (
+    etapasRequeridas.length === 0 ||
+    etapasRequeridas.some((item) => etapaConcluida(item))
+  ) {
+    return '';
+  }
+
+  return obterTituloEtapa(etapasRequeridas[0]);
+}
+
 function obterStatusEtapa(etapa) {
   if (!etapa || typeof etapa !== 'object') {
     return 'pendente';
@@ -816,6 +843,7 @@ function EtapaAutomatizada({
   acao,
   bloqueada,
   concluida,
+  dependenciaPendente,
   enviando,
   erro,
   formulario,
@@ -930,8 +958,16 @@ function EtapaAutomatizada({
               : 'Confirme para o agente criar a estrutura padrão de pastas.'}
           </p>
         </div>
-        <span className="text-xs font-medium text-amber-700">Pendente</span>
+        <span className="text-xs font-medium text-amber-700">
+          {dependenciaPendente ? 'Bloqueada' : 'Pendente'}
+        </span>
       </div>
+
+      {dependenciaPendente ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Disponível apenas após concluir a etapa &quot;{dependenciaPendente}&quot;.
+        </p>
+      ) : null}
 
       {erro ? (
         <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -1641,12 +1677,16 @@ export default function ProcessosPage() {
                             : null;
                           const erroEtapa =
                             errosExecucaoEtapa[chaveEtapa] || obterErroExecucaoEtapa(etapa);
+                          const dependenciaPendente = automatizada
+                            ? obterDependenciaPendente(etapa, etapas)
+                            : '';
                           const bloqueado =
                             !podeMarcarEtapa ||
                             !processoId ||
                             !etapaId ||
                             atualizandoEtapa ||
-                            enviandoEtapa;
+                            enviandoEtapa ||
+                            Boolean(dependenciaPendente);
                           const idBase = `etapa-${String(etapaId || etapaIndex).replace(
                             /[^a-zA-Z0-9_-]/g,
                             '-',
@@ -1668,6 +1708,7 @@ export default function ProcessosPage() {
                                   arquivo={obterArquivoGerado(etapa)}
                                   bloqueada={bloqueado}
                                   concluida={concluida}
+                                  dependenciaPendente={dependenciaPendente}
                                   enviando={enviandoEtapa}
                                   erro={erroEtapa}
                                   formulario={formulario}
