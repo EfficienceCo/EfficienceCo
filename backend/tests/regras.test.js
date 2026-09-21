@@ -344,6 +344,70 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.match(res.body.erro, /condicao/);
   });
 
+  it("criarRegra: rejeita pasta_origem malformada (C;\\Souza) sem chamar o banco (#484)", async () => {
+    const res = criarRes();
+    await criarRegra(
+      reqAdmin({
+        condicao: {},
+        acao: "mover",
+        pasta_origem: "C;\\Souza",
+        pasta_destino: "C:/out",
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /pasta_origem inválida/);
+  });
+
+  it("criarRegra: rejeita pasta_origem relativa ou com caractere inválido (#484)", async () => {
+    for (const origem of ["Souza\\ENTRADA", "C:Souza", "C:\\a?b", "\\\\srv", "C:\\a:b"]) {
+      const res = criarRes();
+      await criarRegra(
+        reqAdmin({ condicao: {}, acao: "mover", pasta_origem: origem, pasta_destino: "C:/out" }),
+        res,
+      );
+      assert.equal(res.statusCode, 400, `deveria rejeitar ${origem}`);
+    }
+  });
+
+  it("criarRegra: aceita pasta_origem absoluta (barra, contrabarra e UNC) (#484)", async () => {
+    for (const origem of ["C:\\Souza\\ENTRADA", "d:/Souza/ENTRADA", "\\\\srv\\share\\ENTRADA", "C:\\"]) {
+      queue("regras", "single", { data: { id: REGRA_ID, cliente_id: CLIENTE_A }, error: null });
+      const res = criarRes();
+      await criarRegra(
+        reqAdmin({ condicao: {}, acao: "mover", pasta_origem: origem, pasta_destino: "C:/out" }),
+        res,
+      );
+      assert.equal(res.statusCode, 201, `deveria aceitar ${origem}`);
+    }
+  });
+
+  it("atualizarRegra: rejeita pasta_origem malformada no body (#484)", async () => {
+    queue("regras", "single", {
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A, acao: "mover", pasta_origem: "C:/in", pasta_destino: "C:/out" },
+      error: null,
+    });
+    const res = criarRes();
+    await atualizarRegra(
+      reqAdmin({ pasta_origem: "C;\\Souza" }, { params: { id: REGRA_ID } }),
+      res,
+    );
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /pasta_origem inválida/);
+  });
+
+  it("atualizarRegra: não revalida origem legada ao alterar só outro campo (#484)", async () => {
+    queue("regras", "single", {
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A, acao: "mover", pasta_origem: "ENTRADA", pasta_destino: "C:/out" },
+      error: null,
+    });
+    queue("regras", "single", { data: { id: REGRA_ID, ativa: false }, error: null });
+    const res = criarRes();
+    await atualizarRegra(reqAdmin({ ativa: false }, { params: { id: REGRA_ID } }), res);
+    assert.equal(res.statusCode, 200);
+  });
+
   it("atualizarRegra: 403 quando admin_cliente tenta alterar regra de outro cliente", async () => {
     queue("regras", "single", {
       data: { id: REGRA_ID, cliente_id: CLIENTE_B, acao: "mover" },
