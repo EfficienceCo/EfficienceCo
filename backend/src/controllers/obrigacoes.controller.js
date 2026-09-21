@@ -1,6 +1,5 @@
 ﻿import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
-import { criar as criarNotificacao } from "../services/notificacoes.service.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 
 function sanitizarNome(nome) {
@@ -201,7 +200,11 @@ export async function atualizarObrigacao(req, res) {
   const updates = {};
   if (nome !== undefined) updates.nome = nome;
   if (tipo !== undefined) updates.tipo = tipo;
-  if (data_vencimento !== undefined) updates.data_vencimento = data_vencimento;
+  if (data_vencimento !== undefined) {
+    updates.data_vencimento = data_vencimento;
+    // Vencimento novo, ciclo de alertas novo (#529).
+    updates.ultimo_marco_alertado = null;
+  }
   if (recorrente !== undefined) updates.recorrente = recorrente;
   if (status !== undefined) updates.status = status;
 
@@ -306,34 +309,9 @@ export async function proximasObrigacoes(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar próximas obrigações" });
   }
 
-  // Gera notificações para vencimentos em ≤ 3 dias, sem duplicar por dia
-  const limite3Dias = new Date(hoje);
-  limite3Dias.setDate(limite3Dias.getDate() + 3);
-  const limite3Str = limite3Dias.toISOString().slice(0, 10);
-
-  const iminentes = data.filter((o) => o.data_vencimento <= limite3Str);
-
-  const hojeInicio = new Date(hoje);
-  hojeInicio.setHours(0, 0, 0, 0);
-
-  for (const obrigacao of iminentes) {
-    const msRestantes = new Date(obrigacao.data_vencimento) - hoje;
-    const diasRestantes = Math.ceil(msRestantes / (1000 * 60 * 60 * 24));
-    const mensagem = `Obrigação "${obrigacao.nome}" [${obrigacao.id}] vence em ${diasRestantes} dia(s).`;
-
-    const { data: existente } = await supabase
-      .from("notificacoes")
-      .select("id")
-      .eq("cliente_id", clienteId)
-      .eq("tipo", "obrigacao_vencendo")
-      .gte("criado_em", hojeInicio.toISOString())
-      .ilike("mensagem", `%${obrigacao.id}%`)
-      .maybeSingle();
-
-    if (!existente) {
-      await criarNotificacao(clienteId, "obrigacao_vencendo", mensagem);
-    }
-  }
+  // As notificações de vencimento saíram daqui (#529): o limiar fixo de <= 3 dias
+  // só disparava para quem abrisse o dashboard. Agora quem alerta é o job diário
+  // obrigacoes-alertas.job.js, nos marcos 60/30/7/3/0.
 
   return res.status(200).json(data);
 }
