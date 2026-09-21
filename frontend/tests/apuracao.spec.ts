@@ -230,8 +230,20 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
   });
 
   test('reabre apuração com composição desatualizada e avisa a divergência (#499)', async ({ page }) => {
+    const competenciaConsistente = ultimaCompetenciaFechada();
+    const dataCompetenciaDivergente = new Date(
+      competenciaConsistente.ano,
+      competenciaConsistente.mes - 2,
+      1,
+    );
+    const competenciaDivergente = {
+      ano: dataCompetenciaDivergente.getFullYear(),
+      mes: dataCompetenciaDivergente.getMonth() + 1,
+    };
     const divergente = apuracaoDetalhada({
       id: 'apuracao-divergente',
+      periodo_mes: competenciaDivergente.mes,
+      periodo_ano: competenciaDivergente.ano,
       breakdown_desatualizado: true,
       breakdown_divergencia: {
         rbt12_persistido: 250000,
@@ -242,7 +254,8 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
     });
     const consistente = apuracaoDetalhada({
       id: 'apuracao-consistente',
-      periodo_mes: 9,
+      periodo_mes: competenciaConsistente.mes,
+      periodo_ano: competenciaConsistente.ano,
       breakdown_desatualizado: false,
     });
     let atual = divergente;
@@ -266,8 +279,8 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
     });
 
     await page.reload();
-    await page.getByLabel('Mês').selectOption('8');
-    await page.getByLabel('Ano').selectOption('2026');
+    await page.getByLabel('Mês').selectOption(String(competenciaDivergente.mes));
+    await page.getByLabel('Ano').selectOption(String(competenciaDivergente.ano));
     await page.getByRole('button', { name: 'Calcular DAS' }).click();
 
     const aviso = page.getByTestId('aviso-breakdown-desatualizado');
@@ -277,7 +290,8 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
     await expect(aviso).toContainText('R$ 250.000,00');
 
     atual = consistente;
-    await page.getByLabel('Mês').selectOption('9');
+    await page.getByLabel('Mês').selectOption(String(competenciaConsistente.mes));
+    await page.getByLabel('Ano').selectOption(String(competenciaConsistente.ano));
     await page.getByRole('button', { name: 'Calcular DAS' }).click();
     await expect(page.getByRole('heading', { name: 'Composição da RBT12' })).toBeVisible();
     await expect(page.getByTestId('aviso-breakdown-desatualizado')).toHaveCount(0);
