@@ -56,10 +56,11 @@ export function aplicarFiltroPeriodo(query, campo, mes, ano) {
   return query;
 }
 
-// Data de hoje no fuso de Brasília (America/Sao_Paulo), YYYY-MM-DD. O servidor
-// roda em UTC: entre 21:00 e 24:00 (BRT) o toISOString() já está no dia
-// seguinte, então o último dia do mês viraria "mês que vem" três horas antes de
-// o mês realmente fechar no Brasil.
+// Data de hoje no fuso de Brasília (America/Sao_Paulo), YYYY-MM-DD.
+// Datas civis do produto representam dias brasileiros. Como o servidor roda
+// em UTC, usar toISOString() entre 21:00 e 24:00 (BRT) anteciparia a virada do
+// dia e poderia tanto marcar obrigação como atrasada quanto liberar uma
+// competência antes do fechamento real no Brasil.
 // `agora` é injetável para testes determinísticos.
 const formatadorBrasil = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Sao_Paulo",
