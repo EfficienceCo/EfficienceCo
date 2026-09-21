@@ -106,6 +106,15 @@ describe("criarCliente — campos tributários", () => {
     assert.equal(operacoes.length, 0);
   });
 
+  it("400 quando o anexo vem sem o regime do Simples Nacional", async () => {
+    const res = criarResposta();
+    await criarCliente({ body: { nome: "Alfa", anexo_simples: "III" } }, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /Simples Nacional/i);
+    assert.equal(operacoes.length, 0);
+  });
+
   it("400 quando o regime não é um dos suportados", async () => {
     const res = criarResposta();
     await criarCliente({ body: { nome: "Alfa", regime_tributario: "mei" } }, res);

@@ -86,6 +86,10 @@ function montarCamposTributarios(body, atual = {}) {
     if (regimeFinal === "simples_nacional" && anexoFinal === null) {
       return { erro: `Cliente no Simples Nacional exige o anexo. Use: ${ANEXOS_SIMPLES.join(", ")}` };
     }
+
+    if (anexoFinal !== null && regimeFinal !== "simples_nacional") {
+      return { erro: "Anexo do Simples só pode ser informado para cliente no Simples Nacional" };
+    }
   }
 
   return { updates };
