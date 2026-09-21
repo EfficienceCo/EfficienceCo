@@ -56,7 +56,7 @@ test.describe('Sidebar — Conciliação nested em Contábil (issue #333, atuali
     await expect(sidebar.getByRole('link', { name: 'Obrigações' })).toHaveCount(0);
     await expect(sidebar.getByRole('link', { name: 'Processos' })).toHaveCount(0);
     await expect(sidebar.getByRole('link', { name: 'Folha', exact: true })).toHaveCount(0);
-    await expect(sidebar.getByRole('link', { name: 'Regras' })).toHaveCount(0);
+    await expect(sidebar.getByRole('link', { name: 'Regras', exact: true })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'Comunicação' })).toHaveCount(0);
 
     await page.goto('/dashboard/fiscal');

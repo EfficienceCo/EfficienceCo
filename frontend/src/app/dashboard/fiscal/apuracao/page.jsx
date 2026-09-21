@@ -9,11 +9,17 @@ import {
   buscarApuracao,
   calcularApuracao,
   editarApuracao,
+  excluirApuracao,
   listarApuracoes,
+  recalcularApuracao,
 } from '../../../../services/apuracao.service';
 
 const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
 const REGIME_SIMPLES_NACIONAL = 'simples_nacional';
+// Piso da CHECK constraint de periodo_ano (database/migrations/70.sql) e da
+// validação do POST /apuracoes. Abrir o seletor até o piso do banco (#500):
+// a janela anterior era ano atual - 4 e escondia competências válidas.
+const ANO_MINIMO_APURACAO = 2020;
 
 const MESES = [
   { value: 1, label: 'Janeiro' },
@@ -53,7 +59,23 @@ function obterCodigoErro(error) {
     return 'REGIME_NAO_SUPORTADO';
   }
 
+  if (mensagem === 'COMPETENCIA_NAO_FECHADA') {
+    return 'COMPETENCIA_NAO_FECHADA';
+  }
+
   return null;
+}
+
+// competencia_maxima vem do backend como AAAA-MM (#497).
+function formatarCompetenciaMaxima(competencia) {
+  if (typeof competencia !== 'string') {
+    return '';
+  }
+
+  const [ano, mes] = competencia.split('-');
+  const rotulo = MESES[Number(mes) - 1]?.label;
+
+  return rotulo && ano ? `${rotulo}/${ano}` : '';
 }
 
 function obterValorExibido(apuracao) {
@@ -106,9 +128,26 @@ function obterNomeCliente(cliente) {
   return cliente?.nome || cliente?.razao_social || cliente?.email || obterIdCliente(cliente);
 }
 
-function obterAnosDisponiveis() {
-  const anoAtual = new Date().getFullYear();
-  return [anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3, anoAtual - 4];
+// A apuração só roda sobre competência fechada (#497): o backend recusa mês
+// corrente ou futuro com 422 COMPETENCIA_NAO_FECHADA, porque a receita do mês e
+// a janela de RBT12 de um período em aberto somam meses incompletos e o DAS sai
+// abaixo do devido. A tela nasce na última competência fechada e trava o botão
+// Calcular quando o par mês+ano escolhido ainda está em aberto — desabilitar o
+// mês no seletor impediria escolher, por exemplo, novembro de um ano passado.
+function ultimaCompetenciaFechada(hoje = new Date()) {
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth() + 1;
+  return mes === 1 ? { ano: ano - 1, mes: 12 } : { ano, mes: mes - 1 };
+}
+
+function obterAnosDisponiveis({ ano }) {
+  const anos = [];
+
+  for (let item = ano; item >= ANO_MINIMO_APURACAO; item -= 1) {
+    anos.push(item);
+  }
+
+  return anos;
 }
 
 function formatarValor(valor) {
@@ -164,6 +203,12 @@ function formatarReferencia(item) {
   return item?.referencia || '-';
 }
 
+const FOLHA_STATUS_INFO = {
+  pendente: { label: 'Aguardando confirmação do agente', className: 'bg-amber-100 text-amber-700' },
+  verificado: { label: 'Verificado (12 meses)', className: 'bg-emerald-100 text-emerald-700' },
+  sem_dados: { label: 'Dados de folha incompletos', className: 'bg-rose-100 text-rose-700' },
+};
+
 function identificarNota(nota) {
   if (nota?.chave_nfe) {
     return `NF-e …${String(nota.chave_nfe).slice(-8)}`;
@@ -192,8 +237,8 @@ export default function ApuracoesPage() {
   const [erroClientes, setErroClientes] = useState('');
 
   const [clienteId, setClienteId] = useState(null);
-  const [mes, setMes] = useState(new Date().getMonth() + 1);
-  const [ano, setAno] = useState(new Date().getFullYear());
+  const [mes, setMes] = useState(() => ultimaCompetenciaFechada().mes);
+  const [ano, setAno] = useState(() => ultimaCompetenciaFechada().ano);
   const [apuracao, setApuracao] = useState(null);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState(null);
@@ -203,13 +248,21 @@ export default function ApuracoesPage() {
   const [erroEdicao, setErroEdicao] = useState('');
   const [isSalvandoEdicao, setIsSalvandoEdicao] = useState(false);
 
+  const [isRecalculando, setIsRecalculando] = useState(false);
+  const [erroRecalcular, setErroRecalcular] = useState('');
+
   const [showAprovarModal, setShowAprovarModal] = useState(false);
   const [isAprovando, setIsAprovando] = useState(false);
   const [erroAprovar, setErroAprovar] = useState('');
 
+  const [showExcluirModal, setShowExcluirModal] = useState(false);
+  const [isExcluindo, setIsExcluindo] = useState(false);
+  const [erroExcluir, setErroExcluir] = useState('');
+
   const clienteIdEfetivo = isAdminEfficience ? clienteId : user?.cliente_id || null;
 
-  const anosDisponiveis = useMemo(obterAnosDisponiveis, []);
+  const ultimaFechada = useMemo(() => ultimaCompetenciaFechada(), []);
+  const anosDisponiveis = useMemo(() => obterAnosDisponiveis(ultimaFechada), [ultimaFechada]);
 
   const clientesOrdenados = useMemo(
     () =>
@@ -267,6 +320,7 @@ export default function ApuracoesPage() {
     setApuracao(null);
     setErro(null);
     setShowAprovarModal(false);
+    setShowExcluirModal(false);
   }
 
   function handleSelecionarMes(event) {
@@ -274,6 +328,7 @@ export default function ApuracoesPage() {
     setApuracao(null);
     setErro(null);
     setShowAprovarModal(false);
+    setShowExcluirModal(false);
   }
 
   function handleSelecionarAno(event) {
@@ -281,6 +336,7 @@ export default function ApuracoesPage() {
     setApuracao(null);
     setErro(null);
     setShowAprovarModal(false);
+    setShowExcluirModal(false);
   }
 
   async function handleCalcular() {
@@ -292,6 +348,7 @@ export default function ApuracoesPage() {
     setErro(null);
     setApuracao(null);
     setShowAprovarModal(false);
+    setShowExcluirModal(false);
 
     try {
       const buscarExistente = async () => {
@@ -329,7 +386,11 @@ export default function ApuracoesPage() {
       setMotivo('');
       setErroEdicao('');
     } catch (error) {
-      setErro({ codigo: obterCodigoErro(error), mensagem: obterMensagemErro(error) });
+      setErro({
+        codigo: obterCodigoErro(error),
+        mensagem: obterMensagemErro(error),
+        competenciaMaxima: error?.response?.data?.competencia_maxima,
+      });
     } finally {
       setLoading(false);
     }
@@ -373,6 +434,27 @@ export default function ApuracoesPage() {
     }
   }
 
+  async function handleRecalcular() {
+    if (!apuracao?.id || isRecalculando) {
+      return;
+    }
+
+    setIsRecalculando(true);
+    setErroRecalcular('');
+
+    try {
+      const atualizado = await recalcularApuracao(apuracao.id);
+      setApuracao(atualizado);
+      setValorEditado(formatarValorInput(obterValorExibido(atualizado)));
+      setMotivo('');
+      setErroEdicao('');
+    } catch (error) {
+      setErroRecalcular(obterMensagemErro(error, 'Não foi possível recalcular o DAS.'));
+    } finally {
+      setIsRecalculando(false);
+    }
+  }
+
   function handleAbrirAprovar() {
     setErroAprovar('');
     setShowAprovarModal(true);
@@ -405,6 +487,40 @@ export default function ApuracoesPage() {
     }
   }
 
+  function handleAbrirExcluir() {
+    setErroExcluir('');
+    setShowExcluirModal(true);
+  }
+
+  function handleFecharExcluir() {
+    if (isExcluindo) {
+      return;
+    }
+
+    setShowExcluirModal(false);
+  }
+
+  async function handleConfirmarExcluir() {
+    if (!apuracao?.id) {
+      return;
+    }
+
+    setIsExcluindo(true);
+    setErroExcluir('');
+
+    try {
+      await excluirApuracao(apuracao.id);
+      // Zerar a apuração tira da tela o resultado, o card de edição e as ações:
+      // a competência volta ao estado "nunca apurada" e Calcular DAS recomeça do zero.
+      setShowExcluirModal(false);
+      setApuracao(null);
+    } catch (error) {
+      setErroExcluir(obterMensagemErro(error, 'Não foi possível excluir o rascunho.'));
+    } finally {
+      setIsExcluindo(false);
+    }
+  }
+
   if (isLoading) {
     return <p>Carregando...</p>;
   }
@@ -414,7 +530,10 @@ export default function ApuracoesPage() {
   }
 
   const aguardandoSelecaoCliente = isAdminEfficience && !clienteId;
-  const podeCalcular = Boolean(clienteIdEfetivo) && !loading;
+  // Bloqueia o par mês+ano ainda em aberto antes de gastar uma ida ao backend
+  // (#497) — ele recusaria com 422 COMPETENCIA_NAO_FECHADA de todo jeito.
+  const competenciaEmAberto = ano * 12 + mes > ultimaFechada.ano * 12 + ultimaFechada.mes;
+  const podeCalcular = Boolean(clienteIdEfetivo) && !loading && !competenciaEmAberto;
   const statusRascunho = apuracao?.status === 'rascunho';
   const statusAprovado = apuracao?.status === 'aprovado';
   const anexoEfetivo = apuracao?.anexo_efetivo || apuracao?.anexo;
@@ -422,6 +541,8 @@ export default function ApuracoesPage() {
     apuracao?.anexo_original && anexoEfetivo && apuracao.anexo_original !== anexoEfetivo,
   );
   const mostrarFatorR = Boolean(apuracao) && apuracao.fator_r !== null && apuracao.fator_r !== undefined;
+  const folhaStatusInfo = apuracao?.folha_status ? FOLHA_STATUS_INFO[apuracao.folha_status] : null;
+  const dadosFolha = apuracao?.dados_folha || null;
   const historicoEdicoes = Array.isArray(apuracao?.historico_edicoes) ? apuracao.historico_edicoes : [];
   const rbt12Mensal = Array.isArray(apuracao?.rbt12_mensal) ? apuracao.rbt12_mensal : [];
   const notasConsideradas = Array.isArray(apuracao?.notas_fiscais?.consideradas)
@@ -510,6 +631,14 @@ export default function ApuracoesPage() {
               {loading ? 'Calculando...' : 'Calcular DAS'}
             </button>
           </div>
+
+          {competenciaEmAberto ? (
+            <p className="mt-3 text-sm text-amber-700">
+              {competenciaLabel} ainda não fechou. O DAS só pode ser apurado depois que o mês
+              termina — antes disso a receita e a RBT12 do período ficariam incompletas. A última
+              competência disponível é {MESES[ultimaFechada.mes - 1].label}/{ultimaFechada.ano}.
+            </p>
+          ) : null}
         </section>
 
         {erroClientes ? (
@@ -572,10 +701,37 @@ export default function ApuracoesPage() {
           </section>
         ) : null}
 
+        {!aguardandoSelecaoCliente && erro?.codigo === 'COMPETENCIA_NAO_FECHADA' ? (
+          <section className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="mt-0.5 h-5 w-5 shrink-0 text-amber-600"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+            <div>
+              <p className="font-semibold text-amber-800">Competência ainda não fechou</p>
+              <p className="mt-1 text-sm text-zinc-700">
+                O DAS só pode ser apurado depois que o mês termina — a receita e a RBT12 de um
+                período em aberto ficariam incompletas. Escolha uma competência até{' '}
+                {formatarCompetenciaMaxima(erro.competenciaMaxima) || 'o mês passado'}.
+              </p>
+            </div>
+          </section>
+        ) : null}
+
         {!aguardandoSelecaoCliente &&
         erro &&
         erro.codigo !== 'FATOR_R_SEM_FOLHA' &&
-        erro.codigo !== 'REGIME_NAO_SUPORTADO' ? (
+        erro.codigo !== 'REGIME_NAO_SUPORTADO' &&
+        erro.codigo !== 'COMPETENCIA_NAO_FECHADA' ? (
           <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
             <p className="text-sm font-medium text-rose-800">{erro.mensagem}</p>
           </section>
@@ -591,16 +747,36 @@ export default function ApuracoesPage() {
                 </p>
               </div>
 
-              {statusAprovado ? (
-                <span className="whitespace-nowrap rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                  Aprovado
-                </span>
-              ) : (
-                <span className="whitespace-nowrap rounded-full bg-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700">
-                  Rascunho
-                </span>
-              )}
+              <div className="flex items-center gap-3">
+                {statusAprovado ? (
+                  <span className="whitespace-nowrap rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    Aprovado
+                  </span>
+                ) : (
+                  <span className="whitespace-nowrap rounded-full bg-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700">
+                    Rascunho
+                  </span>
+                )}
+
+                {statusRascunho ? (
+                  <button
+                    type="button"
+                    onClick={handleRecalcular}
+                    disabled={isRecalculando}
+                    className="inline-flex items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isRecalculando ? <Spinner /> : null}
+                    {isRecalculando ? 'Recalculando...' : 'Recalcular'}
+                  </button>
+                ) : null}
+              </div>
             </div>
+
+            {erroRecalcular ? (
+              <p className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {erroRecalcular}
+              </p>
+            ) : null}
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
@@ -637,6 +813,26 @@ export default function ApuracoesPage() {
                   <div className="mt-1 font-mono text-sm font-semibold text-zinc-700">
                     {formatarPercentual(apuracao.fator_r)}
                   </div>
+                </div>
+              ) : null}
+
+              {folhaStatusInfo ? (
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                    Status da folha (FS12)
+                  </div>
+                  <div className="mt-1">
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${folhaStatusInfo.className}`}
+                    >
+                      {folhaStatusInfo.label}
+                    </span>
+                  </div>
+                  {dadosFolha ? (
+                    <div className="mt-1 text-xs text-zinc-500">
+                      {dadosFolha.totalMesesEncontrados}/12 meses encontrados pelo agente
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -922,14 +1118,26 @@ export default function ApuracoesPage() {
               <p className="text-sm text-zinc-500">Revise os dados acima antes de aprovar este DAS.</p>
             )}
 
-            <button
-              type="button"
-              onClick={handleAbrirAprovar}
-              disabled={statusAprovado}
-              className="rounded-md bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-70"
-            >
-              Aprovar DAS
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {statusRascunho ? (
+                <button
+                  type="button"
+                  onClick={handleAbrirExcluir}
+                  className="rounded-md border border-rose-200 bg-white px-5 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50"
+                >
+                  Excluir rascunho
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={handleAbrirAprovar}
+                disabled={statusAprovado}
+                className="rounded-md bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-70"
+              >
+                Aprovar DAS
+              </button>
+            </div>
           </section>
         ) : null}
       </main>
@@ -968,6 +1176,47 @@ export default function ApuracoesPage() {
               >
                 {isAprovando ? <Spinner /> : null}
                 {isAprovando ? 'Aprovando...' : 'Confirmar aprovação'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {showExcluirModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
+          <section className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-semibold text-zinc-900">Excluir rascunho</h2>
+            <p className="mt-3 text-sm leading-relaxed text-zinc-700">
+              Excluir o rascunho do DAS de <strong>{formatarValor(obterValorExibido(apuracao))}</strong>{' '}
+              para <strong>{clienteSelecionadoNome}</strong> referente a{' '}
+              <strong>{competenciaLabel}</strong>? O cálculo e o histórico de edições serão perdidos —
+              esta ação não pode ser desfeita.
+            </p>
+
+            {erroExcluir ? (
+              <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {erroExcluir}
+              </p>
+            ) : null}
+
+            <footer className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleFecharExcluir}
+                disabled={isExcluindo}
+                className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmarExcluir}
+                disabled={isExcluindo}
+                className="inline-flex items-center gap-2 rounded-md bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isExcluindo ? <Spinner /> : null}
+                {isExcluindo ? 'Excluindo...' : 'Confirmar exclusão'}
               </button>
             </footer>
           </section>

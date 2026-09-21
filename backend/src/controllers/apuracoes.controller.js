@@ -2,7 +2,14 @@ import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { calcularSimplesNacional } from "../utils/simples-nacional.util.js";
-import { ultimoDiaDoMes } from "../utils/periodo.util.js";
+import {
+  competenciaEstaFechada,
+  dataLocalISO,
+  mesJaFechado,
+  ultimaCompetenciaFechada,
+  ultimoDiaDoMes,
+} from "../utils/periodo.util.js";
+import { validarHistoricoReceita } from "../utils/regime-tributario.util.js";
 
 const REGIMES_SUPORTADOS = new Set(["simples_nacional"]);
 const FOLHA_STATUS = {
@@ -81,24 +88,14 @@ function calcularJanela12MesesAnteriores(mes, ano) {
 }
 
 function somarHistoricoReceita(historico, mesesEsperados, mesesComNotas) {
-  if (historico == null) return { total: 0, receitasUsadas: new Map() };
-  if (!Array.isArray(historico)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
+  // Mesma validação que clientes.controller.js aplica na escrita (#496): o que a
+  // tela de cadastro grava é sempre legível aqui, sem drift entre as pontas.
+  const validado = validarHistoricoReceita(historico);
+  if (validado.erro) return { erro: validado.erro };
 
-  const receitasPorMes = new Map();
-
-  for (const entrada of historico) {
-    const mes = inteiroEstrito(entrada?.mes);
-    const ano = inteiroEstrito(entrada?.ano);
-    const receita = numeroNaoNegativo(entrada?.receita);
-
-    if (mes === null || mes < 1 || mes > 12 || ano === null || ano < 2020 || receita === null) {
-      return { erro: "HISTORICO_RECEITA_INVALIDO" };
-    }
-
-    const referencia = chaveMes(ano, mes);
-    if (receitasPorMes.has(referencia)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
-    receitasPorMes.set(referencia, receita);
-  }
+  const receitasPorMes = new Map(
+    validado.entradas.map((entrada) => [chaveMes(entrada.ano, entrada.mes), entrada.receita]),
+  );
 
   let total = 0;
   const receitasUsadas = new Map();
@@ -135,15 +132,36 @@ function resumirNota(nota, detalhes) {
   };
 }
 
-function montarBasesCalculo({ notas, historicoReceita, mes, ano }) {
+function dataEmissaoISO(nota) {
+  return typeof nota?.data_emissao === "string" ? nota.data_emissao.slice(0, 10) : "";
+}
+
+export function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO = dataLocalISO() }) {
   const janelaRbt12 = calcularJanela12MesesAnteriores(mes, ano);
+  // BUG-APUR-08 / QA-F §F8: só meses já fechados no calendário entram na RBT12 —
+  // competência futura ou mês corrente parcial não podem inflar/subestimar a base.
+  const mesesRbt12Fechados = new Set(
+    [...janelaRbt12.meses].filter((referencia) => mesJaFechado(referencia, hojeISO)),
+  );
   const mesReferenciaAtual = chaveMes(ano, mes);
   const linhasNotas = Array.isArray(notas) ? notas : [];
   const notasSaida = linhasNotas.filter(ehNotaDeSaida);
-  const notasRbt12 = notasSaida.filter((nota) => janelaRbt12.meses.has(referenciaDaNota(nota)));
-  const notasReceitaMes = notasSaida.filter((nota) => referenciaDaNota(nota) === mesReferenciaAtual);
+
+  const notaComDataFutura = (nota) => {
+    const emissao = dataEmissaoISO(nota);
+    return Boolean(emissao) && emissao > hojeISO;
+  };
+
+  const notasRbt12 = notasSaida.filter((nota) => {
+    if (notaComDataFutura(nota)) return false;
+    return mesesRbt12Fechados.has(referenciaDaNota(nota));
+  });
+  const notasReceitaMes = notasSaida.filter((nota) => {
+    if (notaComDataFutura(nota)) return false;
+    return referenciaDaNota(nota) === mesReferenciaAtual;
+  });
   const mesesComNotas = new Set(notasRbt12.map(referenciaDaNota));
-  const historico = somarHistoricoReceita(historicoReceita, janelaRbt12.meses, mesesComNotas);
+  const historico = somarHistoricoReceita(historicoReceita, mesesRbt12Fechados, mesesComNotas);
 
   if (historico.erro) return historico;
 
@@ -158,8 +176,9 @@ function montarBasesCalculo({ notas, historicoReceita, mes, ano }) {
 
   const rbt12Mensal = [...janelaRbt12.meses].map((referencia) => {
     const [anoReferencia, mesReferencia] = referencia.split("-").map(Number);
-    const receitaNfes = receitaNfesPorMes.get(referencia) || 0;
-    const receitaHistorico = historico.receitasUsadas.get(referencia) || 0;
+    const periodoFechado = mesesRbt12Fechados.has(referencia);
+    const receitaNfes = periodoFechado ? (receitaNfesPorMes.get(referencia) || 0) : 0;
+    const receitaHistorico = periodoFechado ? (historico.receitasUsadas.get(referencia) || 0) : 0;
 
     return {
       referencia,
@@ -168,6 +187,7 @@ function montarBasesCalculo({ notas, historicoReceita, mes, ano }) {
       receita_nfes: receitaNfes,
       receita_historico: receitaHistorico,
       total: arredondar(receitaNfes + receitaHistorico),
+      periodo_fechado: periodoFechado,
     };
   });
 
@@ -176,28 +196,49 @@ function montarBasesCalculo({ notas, historicoReceita, mes, ano }) {
     notasReceitaMes.reduce((soma, nota) => soma + Number(nota.valor_total), 0),
   );
 
-  const notasConsideradas = notasSaida.map((nota) => {
+  const notasConsideradas = [];
+  const notasExcluidasPeriodo = [];
+
+  for (const nota of notasSaida) {
     const referencia = referenciaDaNota(nota);
-    const compoeRbt12 = janelaRbt12.meses.has(referencia);
-    const compoeReceitaMes = referencia === mesReferenciaAtual;
+    const emissaoFutura = notaComDataFutura(nota);
+    const naJanela = janelaRbt12.meses.has(referencia);
+    const compoeRbt12 = !emissaoFutura && mesesRbt12Fechados.has(referencia);
+    const compoeReceitaMes = !emissaoFutura && referencia === mesReferenciaAtual;
+
+    // Data futura ou mês da janela ainda aberto: fora da soma, com motivo explícito.
+    if (emissaoFutura || (naJanela && !compoeRbt12 && !compoeReceitaMes)) {
+      notasExcluidasPeriodo.push(resumirNota(nota, {
+        compoe_rbt12: false,
+        compoe_receita_mes: false,
+        motivo: emissaoFutura
+          ? "Nota fiscal com data de emissão futura — excluída da RBT12 e da receita da competência."
+          : "Período ainda não fechado — excluída da RBT12.",
+      }));
+      continue;
+    }
+
     const motivo = compoeRbt12
       ? "Nota fiscal de saída incluída na RBT12."
-      : "Nota fiscal de saída incluída na receita da competência."
+      : "Nota fiscal de saída incluída na receita da competência.";
 
-    return resumirNota(nota, {
+    notasConsideradas.push(resumirNota(nota, {
       compoe_rbt12: compoeRbt12,
       compoe_receita_mes: compoeReceitaMes,
       motivo,
-    });
-  });
-
-  const notasExcluidas = linhasNotas
-    .filter((nota) => !ehNotaDeSaida(nota))
-    .map((nota) => resumirNota(nota, {
-      compoe_rbt12: false,
-      compoe_receita_mes: false,
-      motivo: "Nota fiscal de entrada não compõe a receita bruta.",
     }));
+  }
+
+  const notasExcluidas = [
+    ...linhasNotas
+      .filter((nota) => !ehNotaDeSaida(nota))
+      .map((nota) => resumirNota(nota, {
+        compoe_rbt12: false,
+        compoe_receita_mes: false,
+        motivo: "Nota fiscal de entrada não compõe a receita bruta.",
+      })),
+    ...notasExcluidasPeriodo,
+  ];
 
   return {
     janelaRbt12,
@@ -313,7 +354,9 @@ export async function dispararApuracao(req, res) {
   }
 
   const { mes, ano, regime } = req.body;
-  if (!mes || !ano || !regime) {
+  // Distinguir ausente (undefined/null/"") de fora de faixa (ex.: mes=0) —
+  // `!mes` tratava 0 como ausente e devolvia mensagem enganosa (QA-F §F7 / #502).
+  if (mes == null || mes === "" || ano == null || ano === "" || regime == null || regime === "") {
     return res.status(400).json({ erro: "mes, ano e regime são obrigatórios" });
   }
 
@@ -328,6 +371,20 @@ export async function dispararApuracao(req, res) {
   // com 400 em vez de deixar o Postgres rejeitar o insert com um 500 genérico.
   if (!Number.isInteger(mesNum) || mesNum < 1 || mesNum > 12 || !Number.isInteger(anoNum) || anoNum < 2020) {
     return res.status(400).json({ erro: "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020" });
+  }
+
+  // Teto contra a data atual (#497). Sem isso, competência futura ou o mês
+  // corrente ainda aberto entravam normalmente: a receita do mês e a janela de
+  // RBT12 somam meses incompletos ou inexistentes, a alíquota efetiva sai
+  // subestimada e o DAS resultante fica abaixo do devido — bastava errar o ano
+  // no seletor. 422 (e não 400) porque mes/ano são estruturalmente válidos;
+  // é a regra de negócio que recusa, como em REGIME_NAO_SUPORTADO.
+  if (!competenciaEstaFechada(anoNum, mesNum)) {
+    const ultima = ultimaCompetenciaFechada();
+    return res.status(422).json({
+      erro: "COMPETENCIA_NAO_FECHADA",
+      competencia_maxima: chaveMes(ultima.ano, ultima.mes),
+    });
   }
 
   const [{ data: existente, error: erroExistente }, { data: cliente, error: erroCliente }] = await Promise.all([
@@ -632,7 +689,7 @@ export async function aprovarApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("cliente_id, status")
+    .select("cliente_id, status, periodo_mes, periodo_ano")
     .eq("id", id)
     .maybeSingle();
 
@@ -647,6 +704,18 @@ export async function aprovarApuracao(req, res) {
 
   if (apuracao.status === "aprovado") {
     return res.status(409).json({ erro: "Apuração já está aprovada" });
+  }
+
+  // Aprovar é o que transforma o rascunho em número oficial do cliente, então
+  // a mesma regra da criação vale aqui (#497) — sem isso, os registros de
+  // competência futura que já existem no banco (11/2026 no dev) continuariam
+  // aprováveis, que é exatamente o sintoma relatado na issue.
+  if (!competenciaEstaFechada(apuracao.periodo_ano, apuracao.periodo_mes)) {
+    const ultima = ultimaCompetenciaFechada();
+    return res.status(422).json({
+      erro: "COMPETENCIA_NAO_FECHADA",
+      competencia_maxima: chaveMes(ultima.ano, ultima.mes),
+    });
   }
 
   const { data, error } = await supabase
@@ -671,6 +740,53 @@ export async function aprovarApuracao(req, res) {
   }
 
   return res.status(200).json(data);
+}
+
+// Desfazer um rascunho (#500): sem isso, um cálculo errado só saía do banco
+// sendo aprovado ou por SQL manual. Aprovada continua imutável — mesma trava
+// de editarApuracao/aprovarApuracao.
+export async function excluirApuracao(req, res) {
+  const { id } = req.params;
+
+  const { data: apuracao, error: erroBusca } = await supabase
+    .from("apuracoes")
+    .select("cliente_id, status")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (erroBusca) {
+    console.error("[apuracoes.controller] Erro ao buscar apuração:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar apuração" });
+  }
+
+  if (!apuracao || (req.usuario?.perfil !== PERFIS.ADMIN_EFFICIENCE && apuracao.cliente_id !== req.usuario?.cliente_id)) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
+
+  if (apuracao.status === "aprovado") {
+    return res.status(409).json({ erro: "Apuração já aprovada não pode ser excluída" });
+  }
+
+  // O .eq("status", "rascunho") fecha a corrida com uma aprovação concorrente
+  // entre a leitura e o delete — mesmo padrão do update em aprovarApuracao.
+  const { data, error } = await supabase
+    .from("apuracoes")
+    .delete()
+    .eq("id", id)
+    .eq("status", "rascunho")
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error("[apuracoes.controller] Erro ao excluir apuração:", error.message);
+    return res.status(500).json({ erro: "Erro ao excluir apuração" });
+  }
+
+  if (!data) {
+    return res.status(409).json({ erro: "Apuração já aprovada não pode ser excluída" });
+  }
+
+  return res.status(204).send();
 }
 
 // Refaz o cálculo com os dados atuais de lancamentos_fiscais/processamentos_folha
@@ -698,6 +814,17 @@ export async function recalcularApuracao(req, res) {
 
   if (apuracao.status === "aprovado") {
     return res.status(409).json({ erro: "Apuração já aprovada não pode ser recalculada" });
+  }
+
+  // Mesma regra da criação (#497): registros de competência futura criados
+  // antes desta validação (o Supabase de dev tem 11/2026 aprovado) não podem
+  // ser recalculados sobre uma janela que ainda não fechou.
+  if (!competenciaEstaFechada(apuracao.periodo_ano, apuracao.periodo_mes)) {
+    const ultima = ultimaCompetenciaFechada();
+    return res.status(422).json({
+      erro: "COMPETENCIA_NAO_FECHADA",
+      competencia_maxima: chaveMes(ultima.ano, ultima.mes),
+    });
   }
 
   const { data: cliente, error: erroCliente } = await supabase

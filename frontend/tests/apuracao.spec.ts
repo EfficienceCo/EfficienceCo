@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 import { login } from './helpers/auth';
 
 // Competência pseudo-única por execução: a apuração é uma entidade natural
@@ -7,23 +7,62 @@ import { login } from './helpers/auth';
 // o mesmo período faria a segunda execução pular a etapa de edição. Variar a
 // competência a cada execução evita colidir com o resultado de uma rodada
 // anterior.
-// O seletor de Ano só oferece o ano atual e os 4 anteriores (ver
-// obterAnosDisponiveis em page.jsx) — a competência pseudo-única precisa
-// cair dentro dessa janela (60 combinações possíveis de mês×ano).
-// `Date.now() % 12` sozinho colide fácil entre dois testes do mesmo arquivo
+// Desde o #500 o seletor de Ano vai do ano atual até 2020, mas a competência
+// pseudo-única segue restrita às 60 combinações (mês × 5 anos) — janela
+// suficiente pra não colidir e que continua válida em qualquer ano corrente.
+// Desde o #497 ela também
+// precisa ser uma competência já fechada: o backend recusa mês corrente ou
+// futuro com 422 COMPETENCIA_NAO_FECHADA, e o seletor nem oferece esses meses.
+// `Date.now() % n` sozinho colide fácil entre dois testes do mesmo arquivo
 // rodando a poucos segundos de distância — por isso soma um índice que avança
 // a cada chamada, garantindo competências distintas dentro do mesmo run.
 let indiceCompetencia = 0;
 
+function ultimaCompetenciaFechada(hoje = new Date()) {
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth() + 1;
+  return mes === 1 ? { ano: ano - 1, mes: 12 } : { ano, mes: mes - 1 };
+}
+
 function proximaCompetencia() {
-  const anoAtual = new Date().getFullYear();
-  const slot = (Date.now() + indiceCompetencia) % 60;
+  const ultima = ultimaCompetenciaFechada();
+  const maisRecente = ultima.ano * 12 + (ultima.mes - 1);
+  const maisAntiga = (ultima.ano - 4) * 12;
+  const slot = (Date.now() + indiceCompetencia) % (maisRecente - maisAntiga + 1);
   indiceCompetencia += 1;
 
+  const total = maisRecente - slot;
+
   return {
-    ano: anoAtual - Math.floor(slot / 12),
-    mes: (slot % 12) + 1,
+    ano: Math.floor(total / 12),
+    mes: (total % 12) + 1,
   };
+}
+
+// Uma competência já aprovada perde o card de edição e o botão de aprovar, e o
+// Supabase de dev acumula aprovações de execuções antigas (não há DELETE de
+// apuração — issue #500), então sortear uma única competência falha sempre que
+// o sorteio cai numa dessas. Confirmado na main, antes do #497. Tenta
+// competências diferentes até achar uma ainda em rascunho.
+async function abrirCompetenciaEmRascunho(page: Page, tentativas = 12) {
+  for (let tentativa = 0; tentativa < tentativas; tentativa += 1) {
+    const { ano, mes } = proximaCompetencia();
+
+    await page.getByLabel('Mês').selectOption(String(mes));
+    await page.getByLabel('Ano').selectOption(String(ano));
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible({
+      timeout: 15000,
+    });
+
+    if (await page.getByRole('heading', { name: 'Editar valor' }).isVisible()) {
+      return { ano, mes };
+    }
+  }
+
+  throw new Error(
+    `Nenhuma competência em rascunho encontrada em ${tentativas} tentativas — o Supabase de dev está saturado de apurações aprovadas.`,
+  );
 }
 
 function tokenFrontendDeTeste() {
@@ -83,7 +122,7 @@ function apuracaoDetalhada(overrides = {}) {
 
 test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #356)', () => {
   test.beforeEach(async ({ page }, testInfo) => {
-    if (/reabre|traduz os códigos|fluxo completo isolado/.test(testInfo.title)) {
+    if (/reabre|traduz os códigos|traduz COMPETENCIA_NAO_FECHADA|fluxo completo isolado|competência em aberto/.test(testInfo.title)) {
       const token = tokenFrontendDeTeste();
       await page.addInitScript((valorToken) => window.localStorage.setItem('token', valorToken), token);
       await page.goto('/dashboard/fiscal/apuracao');
@@ -279,6 +318,64 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
     await expect(page.getByText(/Importe as folhas de pagamento dos 12 meses anteriores/)).toBeVisible();
   });
 
+  // #497 — o seletor não pode oferecer competência em aberto, e o 422 do
+  // backend precisa virar orientação legível se ela chegar por outro caminho
+  // (relógio da máquina adiantado, requisição fora da tela).
+  test('bloqueia o cálculo de competência em aberto e nasce no último mês fechado', async ({ page }) => {
+    const ultima = ultimaCompetenciaFechada();
+
+    await expect(page.getByLabel('Mês')).toHaveValue(String(ultima.mes));
+    await expect(page.getByLabel('Ano')).toHaveValue(String(ultima.ano));
+
+    // O ano da última competência fechada é o mais recente do seletor.
+    await expect(page.getByLabel('Ano').locator('option').first()).toHaveText(String(ultima.ano));
+    await expect(page.getByLabel('Ano').locator(`option[value="${ultima.ano + 1}"]`)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Calcular DAS' })).toBeEnabled();
+
+    // Dezembro fechado significa que estamos em janeiro: nenhum mês do ano
+    // ofertado está em aberto, não há o que bloquear.
+    if (ultima.mes < 12) {
+      await page.getByLabel('Mês').selectOption(String(ultima.mes + 1));
+
+      await expect(page.getByRole('button', { name: 'Calcular DAS' })).toBeDisabled();
+      await expect(page.getByText(/ainda não fechou\. O DAS só pode ser apurado/)).toBeVisible();
+
+      await page.getByLabel('Mês').selectOption(String(ultima.mes));
+      await expect(page.getByRole('button', { name: 'Calcular DAS' })).toBeEnabled();
+    }
+  });
+
+  test('traduz COMPETENCIA_NAO_FECHADA em orientação clara com a competência máxima', async ({ page }) => {
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+        return;
+      }
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'POST') {
+        await route.fulfill({
+          status: 422,
+          contentType: 'application/json',
+          body: JSON.stringify({ erro: 'COMPETENCIA_NAO_FECHADA', competencia_maxima: '2026-08' }),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.reload();
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+
+    await expect(page.getByText('Competência ainda não fechou', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Escolha uma competência até Agosto\/2026/)).toBeVisible();
+    await expect(page.getByText('COMPETENCIA_NAO_FECHADA')).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).not.toBeVisible();
+  });
+
   test('fluxo completo isolado: calcula, audita, edita com histórico e aprova', async ({ page }) => {
     const apuracaoInicial = apuracaoDetalhada();
 
@@ -367,13 +464,7 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
   });
 
   test('edita o valor com motivo e o histórico de edições aparece na tela', async ({ page }) => {
-    const { ano, mes } = proximaCompetencia();
-    await page.getByLabel('Mês').selectOption(String(mes));
-    await page.getByLabel('Ano').selectOption(String(ano));
-    await page.getByRole('button', { name: 'Calcular DAS' }).click();
-    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible({
-      timeout: 15000,
-    });
+    await abrirCompetenciaEmRascunho(page);
 
     const secaoEditar = page.locator('section', { hasText: 'Editar valor' }).first();
     await expect(secaoEditar).toBeVisible();
@@ -390,15 +481,10 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
   });
 
   test('aprova o DAS via modal de confirmação e o status muda visualmente', async ({ page }) => {
-    const { ano, mes } = proximaCompetencia();
-    await page.getByLabel('Mês').selectOption(String(mes));
-    await page.getByLabel('Ano').selectOption(String(ano));
-    await page.getByRole('button', { name: 'Calcular DAS' }).click();
-    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible({
-      timeout: 15000,
-    });
+    await abrirCompetenciaEmRascunho(page);
 
-    await expect(page.getByText('Rascunho')).toBeVisible();
+    // exact: o botão 'Excluir rascunho' (#500) também casa com o texto solto.
+    await expect(page.getByText('Rascunho', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Aprovar DAS' }).click();
     await expect(page.getByRole('heading', { name: 'Confirmar aprovação' })).toBeVisible();
@@ -441,5 +527,162 @@ test.describe('Sidebar — Apuração Fiscal nested em Fiscal (issue #356, atual
 
     const outroLink = sidebar.getByRole('link', { name: 'Contábil' });
     await expect(outroLink).not.toHaveClass(/bg-sky-400\/10/);
+  });
+});
+
+test.describe('Apuração Fiscal — excluir rascunho e janela de anos (issue #500)', () => {
+  test.beforeEach(async ({ page }) => {
+    const token = tokenFrontendDeTeste();
+    await page.addInitScript((valorToken) => window.localStorage.setItem('token', valorToken), token);
+    await page.goto('/dashboard/fiscal/apuracao');
+  });
+
+  test('seletor de Ano vai do ano atual até 2020, sem cortar em ano atual - 4', async ({ page }) => {
+    const anoAtual = new Date().getFullYear();
+    const seletor = page.getByLabel('Ano');
+
+    await expect(seletor.locator('option')).toHaveCount(anoAtual - 2020 + 1);
+    await expect(seletor.locator('option').first()).toHaveText(String(anoAtual));
+    await expect(seletor.locator('option').last()).toHaveText('2020');
+
+    // O ano que a janela antiga escondia (atual - 5) agora é selecionável.
+    await seletor.selectOption(String(anoAtual - 5));
+    await expect(seletor).toHaveValue(String(anoAtual - 5));
+  });
+
+  test('exclui o rascunho pelo modal e a competência volta ao estado não apurado', async ({ page }) => {
+    const apuracao = apuracaoDetalhada({ id: 'apuracao-excluir' });
+    let excluida = false;
+    let chamadasDelete = 0;
+
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+        return;
+      }
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'POST') {
+        // Depois do DELETE o registro sumiu — um novo cálculo cria outro
+        // rascunho em vez de esbarrar no 409 de duplicata.
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify(excluida ? { ...apuracao, id: 'apuracao-recriada' } : apuracao),
+        });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}` && requisicao.method() === 'DELETE') {
+        chamadasDelete += 1;
+        excluida = true;
+        await route.fulfill({ status: 204, body: '' });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.reload();
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+
+    // Cancelar não remove nada.
+    await page.getByRole('button', { name: 'Excluir rascunho' }).click();
+    await expect(page.getByRole('heading', { name: 'Excluir rascunho' })).toBeVisible();
+    await page.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(page.getByRole('heading', { name: 'Excluir rascunho' })).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+    expect(chamadasDelete).toBe(0);
+
+    await page.getByRole('button', { name: 'Excluir rascunho' }).click();
+    await expect(page.getByText(/O cálculo e o histórico de edições serão perdidos/)).toBeVisible();
+    await page.getByRole('button', { name: 'Confirmar exclusão' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Excluir rascunho' })).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Editar valor' })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Aprovar DAS' })).toHaveCount(0);
+    expect(chamadasDelete).toBe(1);
+
+    // A mesma competência pode ser recalculada do zero.
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+  });
+
+  test('apuração aprovada não oferece exclusão', async ({ page }) => {
+    const apuracao = apuracaoDetalhada({
+      id: 'apuracao-aprovada',
+      status: 'aprovado',
+      aprovado_por: 'contador@teste.local',
+      aprovado_em: '2026-08-21T18:05:00.000Z',
+    });
+
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+        return;
+      }
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'POST') {
+        await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(apuracao) });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.reload();
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+    await expect(page.getByText(/Aprovado por contador@teste.local em/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Excluir rascunho' })).toHaveCount(0);
+  });
+
+  test('erro do backend aparece no modal e o rascunho continua na tela', async ({ page }) => {
+    const apuracao = apuracaoDetalhada({ id: 'apuracao-conflito' });
+
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+        return;
+      }
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'POST') {
+        await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(apuracao) });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}` && requisicao.method() === 'DELETE') {
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({ erro: 'Apuração já aprovada não pode ser excluída' }),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.reload();
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Excluir rascunho' }).click();
+    await page.getByRole('button', { name: 'Confirmar exclusão' }).click();
+
+    await expect(page.getByText('Apuração já aprovada não pode ser excluída')).toBeVisible();
+    await page.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
   });
 });

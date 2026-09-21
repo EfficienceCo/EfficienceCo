@@ -98,7 +98,8 @@ export async function listarRegras(req, res) {
   const { data, error } = await supabase
     .from("regras")
     .select("*")
-    .eq("cliente_id", clienteId);
+    .eq("cliente_id", clienteId)
+    .order("criado_em", { ascending: false });
 
   if (error) {
     console.error("[regras.controller] Erro ao listar regras:", error.message);
