@@ -136,7 +136,7 @@ function dataEmissaoISO(nota) {
   return typeof nota?.data_emissao === "string" ? nota.data_emissao.slice(0, 10) : "";
 }
 
-function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO = dataLocalISO() }) {
+export function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO = dataLocalISO() }) {
   const janelaRbt12 = calcularJanela12MesesAnteriores(mes, ano);
   // BUG-APUR-08 / QA-F §F8: só meses já fechados no calendário entram na RBT12 —
   // competência futura ou mês corrente parcial não podem inflar/subestimar a base.

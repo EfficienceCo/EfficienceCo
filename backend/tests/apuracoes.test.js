@@ -5,6 +5,7 @@ import { PERFIS } from "../src/config/perfis.js";
 import { ultimaCompetenciaFechada } from "../src/utils/periodo.util.js";
 import {
   dispararApuracao,
+  montarBasesCalculo,
   listarApuracoes,
   detalharApuracao,
   editarApuracao,
@@ -329,9 +330,8 @@ describe("POST /apuracoes", () => {
     const refFechado = `${mesFechadoDate.getFullYear()}-${String(mesFechadoDate.getMonth() + 1).padStart(2, "0")}`;
     const dataFechada = `${refFechado}-10`;
 
-    queueSemDuplicata();
-    queueCliente("I");
-    queueNotas([
+    const bases = montarBasesCalculo({
+      notas: [
       {
         id: "nfe-mes-aberto",
         chave_nfe: "35260900000000000000550010000000041000000040",
@@ -346,24 +346,21 @@ describe("POST /apuracoes", () => {
         valor_total: 40000,
         data_emissao: dataFechada,
       },
-    ]);
-    queue("apuracoes", "single", { data: { id: "apuracao-rbt12-filtro" }, error: null });
+      ],
+      historicoReceita: [],
+      mes: mesCompetencia,
+      ano: anoCompetencia,
+      hojeISO: dataNoMesAberto,
+    });
 
-    const res = criarResposta();
-    await dispararApuracao(
-      reqAdmin({ body: payloadValido({ mes: mesCompetencia, ano: anoCompetencia }) }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.rbt12, 40000);
-    const linhaAberta = res.body.rbt12_mensal.find((item) => item.referencia === mesCorrente);
+    assert.equal(bases.rbt12, 40000);
+    const linhaAberta = bases.rbt12Mensal.find((item) => item.referencia === mesCorrente);
     assert.ok(linhaAberta, `esperava linha RBT12 para ${mesCorrente}`);
     assert.equal(linhaAberta.periodo_fechado, false);
     assert.equal(linhaAberta.total, 0);
-    assert.equal(res.body.notas_fiscais.consideradas.length, 1);
-    assert.equal(res.body.notas_fiscais.consideradas[0].id, "nfe-mes-fechado");
-    const excluida = res.body.notas_fiscais.excluidas.find((n) => n.id === "nfe-mes-aberto");
+    assert.equal(bases.notasFiscais.consideradas.length, 1);
+    assert.equal(bases.notasFiscais.consideradas[0].id, "nfe-mes-fechado");
+    const excluida = bases.notasFiscais.excluidas.find((n) => n.id === "nfe-mes-aberto");
     assert.match(excluida.motivo, /não fechado/i);
   });
 
@@ -374,12 +371,12 @@ describe("POST /apuracoes", () => {
     // Competência = mês de amanhã (ainda aberto / futuro civil).
     const mesCompetencia = amanha.getMonth() + 1;
     const anoCompetencia = amanha.getFullYear();
+    const hojeISO = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
     const mesFechadoDate = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
     const dataFechada = `${mesFechadoDate.getFullYear()}-${String(mesFechadoDate.getMonth() + 1).padStart(2, "0")}-15`;
 
-    queueSemDuplicata();
-    queueCliente("I");
-    queueNotas([
+    const bases = montarBasesCalculo({
+      notas: [
       {
         id: "nfe-futura",
         chave_nfe: "35261200000000000000550010000000061000000060",
@@ -394,19 +391,16 @@ describe("POST /apuracoes", () => {
         valor_total: 40000,
         data_emissao: dataFechada,
       },
-    ]);
-    queue("apuracoes", "single", { data: { id: "apuracao-data-futura" }, error: null });
+      ],
+      historicoReceita: [],
+      mes: mesCompetencia,
+      ano: anoCompetencia,
+      hojeISO,
+    });
 
-    const res = criarResposta();
-    await dispararApuracao(
-      reqAdmin({ body: payloadValido({ mes: mesCompetencia, ano: anoCompetencia }) }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.receita_mes, 0);
-    assert.equal(res.body.rbt12, 40000);
-    const excluida = res.body.notas_fiscais.excluidas.find((n) => n.id === "nfe-futura");
+    assert.equal(bases.receitaMes, 0);
+    assert.equal(bases.rbt12, 40000);
+    const excluida = bases.notasFiscais.excluidas.find((n) => n.id === "nfe-futura");
     assert.match(excluida.motivo, /data de emissão futura/i);
   });
 
