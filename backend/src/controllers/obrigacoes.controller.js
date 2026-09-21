@@ -1,5 +1,6 @@
 ﻿import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
+import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { aplicarFiltroPeriodo, hojeNoBrasil } from "../utils/periodo.util.js";
 
 function sanitizarNome(nome) {
@@ -29,13 +30,6 @@ function construirNomeArquivo(nomeObrigacao, obrigacaoId, mimetype) {
   const hoje = new Date().toISOString().slice(0, 10);
   const ext = extDeMime(mimetype);
   return `${nomeSanitizado}_${obrigacaoId}_${hoje}_comprovante.${ext}`;
-}
-
-function resolverClienteId(req) {
-  if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
-    return req.body.cliente_id || req.query.cliente_id;
-  }
-  return req.usuario?.cliente_id;
 }
 
 // Bug #505 — o atraso é derivado da data, não só da coluna.
@@ -77,7 +71,6 @@ function obrigacaoPertenceAoCliente(req, obrigacao) {
     obrigacao?.cliente_id === req.usuario?.cliente_id
   );
 }
-
 export async function listarObrigacoes(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
