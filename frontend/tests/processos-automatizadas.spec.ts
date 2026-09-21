@@ -342,6 +342,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await expect(
       contrato.getByRole('link', { name: 'contrato-social.docx' }),
     ).toHaveAttribute('href', 'https://arquivos.exemplo.test/contrato-social.docx');
+    await expect(contrato.getByText('Próximo passo: Criar estrutura de pastas.')).toBeVisible();
     await expect(page.getByText('1 de 3 etapas')).toBeVisible();
   });
 
@@ -357,6 +358,26 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
 
     await expect(contrato.getByText('contrato-social-v1.docx')).toBeVisible();
     await expect(contrato.getByRole('link')).toHaveCount(0);
+    await expect(contrato.getByText('Salvo em: C:\\Clientes\\Empresa')).toBeVisible();
+    await expect(contrato.getByText('Próximo passo: Criar estrutura de pastas.')).toBeVisible();
+  });
+
+  test('última etapa concluída indica que o processo terminou, sem próximo passo', async ({ page }) => {
+    const estado = criarEstadoApi();
+    localizarEtapa(estado, 'etapa-manual').concluida = true;
+    localizarEtapa(estado, 'etapa-manual').status = 'concluida';
+    localizarEtapa(estado, 'etapa-contrato').concluida = true;
+    localizarEtapa(estado, 'etapa-contrato').status = 'concluida';
+    const etapa = localizarEtapa(estado, 'etapa-pastas');
+    etapa.status = 'concluida';
+    etapa.concluida = true;
+
+    await prepararPagina(page, estado);
+    const pastas = etapaPorTexto(page, 'Criar estrutura de pastas');
+
+    await expect(
+      pastas.getByText('Todas as etapas deste processo foram concluídas.'),
+    ).toBeVisible();
   });
 
   test('criar pastas confirma sem campos e envia objeto vazio', async ({ page }) => {
