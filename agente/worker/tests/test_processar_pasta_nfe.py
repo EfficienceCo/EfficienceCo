@@ -213,7 +213,7 @@ def test_dois_clientes_licenca_dest_posta_entrada(pasta_nfe):
     assert payload["cliente_id"] == CLIENTE_ID
     assert payload["chave_nfe"] == CHAVE_DOIS_CLIENTES
     assert not (inbox / "dois-clientes.xml").exists()
-    assert _arquivo_nfe(base, NOME_EMPRESA, "dois-clientes.xml", mes="2026-12").is_file()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "dois-clientes.xml", mes="2026-06").is_file()
 
 
 def test_dois_clientes_licenca_emit_posta_saida(pasta_nfe, monkeypatch):
@@ -237,7 +237,7 @@ def test_dois_clientes_licenca_emit_posta_saida(pasta_nfe, monkeypatch):
     assert payload["tipo"] == "saida"
     assert payload["cliente_id"] == CLIENTE_ID_EMIT
     assert payload["chave_nfe"] == CHAVE_DOIS_CLIENTES
-    assert _arquivo_nfe(base, NOME_FORNECEDOR, "dois-clientes.xml", mes="2026-12").is_file()
+    assert _arquivo_nfe(base, NOME_FORNECEDOR, "dois-clientes.xml", mes="2026-06").is_file()
 
 
 def test_dois_clientes_reprocesso_idempotente(pasta_nfe):
@@ -266,7 +266,7 @@ def test_dois_clientes_reprocesso_idempotente(pasta_nfe):
 
     assert mock_post2.call_count == 1
     assert not (inbox / "dois-clientes.xml").exists()
-    pasta_dest = base / NOME_EMPRESA / "Notas Fiscais" / "2026-12"
+    pasta_dest = base / NOME_EMPRESA / "Notas Fiscais" / "2026-06"
     assert any(pasta_dest.glob("dois-clientes*.xml"))
 
 
@@ -457,6 +457,27 @@ def test_nao_identificado_loga_sem_falha_em_cp1252(pasta_nfe, stdout_cp1252):
     assert "falha ao mover" not in log
     mock_post.assert_not_called()
     assert (inbox / "nao_identificado" / "entrada.xml").is_file()
+
+
+def test_nfe_data_emissao_futura_vai_para_nao_identificado(pasta_nfe):
+    """BUG-APUR-08: NF-e com dhEmi futura não entra no ledger."""
+    inbox, _base = pasta_nfe
+    xml = _copiar_fixture("entrada.xml", inbox)
+    texto = xml.read_text(encoding="utf-8")
+    xml.write_text(
+        texto.replace("2026-07-15T14:30:00-03:00", "2099-12-08T14:30:00-03:00"),
+        encoding="utf-8",
+    )
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+
+    mock_post.assert_not_called()
+    assert (inbox / "nao_identificado" / "entrada.xml").is_file()
+    assert not (inbox / "entrada.xml").exists()
 
 
 def test_processar_nfe_sem_seta_unicode_nos_prints():

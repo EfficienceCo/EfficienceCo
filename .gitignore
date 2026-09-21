@@ -2,7 +2,6 @@ node_modules/
 .env
 .env.local
 .env*.local
-backend/scripts/seed-dev.js
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -11,6 +10,7 @@ dist/
 build/
 .next/
 .claude/
+.codex/
 CLAUDE.md
 _CLAUDE.md
 .postman/

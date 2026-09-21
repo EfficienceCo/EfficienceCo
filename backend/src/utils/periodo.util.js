@@ -17,6 +17,23 @@ export function ultimoDiaDoMes(ano, mes) {
   return new Date(Date.UTC(ano, mes, 0)).toISOString().slice(0, 10);
 }
 
+// Data civil local YYYY-MM-DD — evita o salto de UTC de toISOString() à noite no BR.
+export function dataLocalISO(agora = new Date()) {
+  const ano = agora.getFullYear();
+  const mes = String(agora.getMonth() + 1).padStart(2, "0");
+  const dia = String(agora.getDate()).padStart(2, "0");
+  return `${ano}-${mes}-${dia}`;
+}
+
+// Mês YYYY-MM está fechado quando o calendário já passou do último dia dele.
+export function mesJaFechado(referenciaAnoMes, hojeISO = dataLocalISO()) {
+  if (typeof referenciaAnoMes !== "string" || !/^\d{4}-\d{2}$/.test(referenciaAnoMes)) {
+    return false;
+  }
+  const [ano, mes] = referenciaAnoMes.split("-").map(Number);
+  return hojeISO > ultimoDiaDoMes(ano, mes);
+}
+
 // Aplica filtro de mes/ano a uma query Supabase sobre uma coluna de data.
 // Compartilhado entre controllers que filtram listagens por mes+ano (obrigacoes,
 // lancamentos-fiscais) pra não duplicar o cálculo de início/fim do período.

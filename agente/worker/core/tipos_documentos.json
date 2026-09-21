@@ -2,7 +2,11 @@
   "cartao_cnpj",
   "contrato_social",
   "extrato_bancario",
-  "holerite",
   "folha_pagamento",
+  "holerite",
+  "nota_fiscal",
+  "declaracao",
+  "recibo",
+  "nf",
   "nao_identificado"
 ]

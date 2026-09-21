@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 
 TIPOS_PATH = Path(__file__).parent / "tipos_documentos.json"
@@ -17,7 +18,10 @@ def identificar_tipo_no_nome(nome_arquivo):
     nome_normalizado = os.path.splitext(nome_arquivo)[0].lower().replace("_", "").replace(" ", "")
     
     return next(
-        (t for t in tipos if t.replace("_", "") in nome_normalizado),
+        (t for t in tipos if (
+            re.search(r"(?<![^\W_])nf(?![^\W_])", os.path.splitext(nome_arquivo)[0], re.IGNORECASE)
+            if t == "nf" else t.replace("_", "") in nome_normalizado
+        )),
         None
     )
 
