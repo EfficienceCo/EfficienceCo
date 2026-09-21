@@ -339,8 +339,36 @@ function obterArquivoGerado(etapa) {
     (typeof arquivo === 'string' && /^https?:\/\//i.test(arquivo) ? arquivo : '');
   const url = String(urlDeclarada || '');
   const possuiLinkSeguro = /^(https?:\/\/|\/(?!\/))/i.test(url);
+  const localInformado =
+    typeof arquivo === 'object' ? arquivo.pasta || arquivo.diretorio || arquivo.local : '';
+  const ehCaminhoLocal =
+    !localInformado &&
+    !/^https?:\/\//i.test(caminhoSemQuery) &&
+    /^([a-zA-Z]:[\\/]|\/)/.test(caminhoSemQuery);
+  let diretorio = '';
 
-  return { nome, url: possuiLinkSeguro ? url : '' };
+  if (ehCaminhoLocal) {
+    const segmentosCaminho = caminhoSemQuery.split(/[\\/]/).filter(Boolean);
+    segmentosCaminho.pop();
+    const separador = caminhoSemQuery.includes('\\') ? '\\' : '/';
+    diretorio = (caminhoSemQuery.startsWith('/') ? '/' : '') + segmentosCaminho.join(separador);
+  }
+
+  return {
+    nome,
+    url: possuiLinkSeguro ? url : '',
+    local: String(localInformado || diretorio || ''),
+  };
+}
+
+function obterProximaEtapaPendente(etapas, indiceAtual) {
+  for (let indice = indiceAtual + 1; indice < etapas.length; indice += 1) {
+    if (!etapaConcluida(etapas[indice])) {
+      return obterTituloEtapa(etapas[indice], indice);
+    }
+  }
+
+  return null;
 }
 
 function obterResumoEtapas(processo) {
@@ -795,6 +823,7 @@ function EtapaAutomatizada({
   processando,
   titulo,
   arquivo,
+  proximaEtapa,
   onAdicionarSocio,
   onAlterarCampo,
   onAlterarSocio,
@@ -824,21 +853,35 @@ function EtapaAutomatizada({
 
         {arquivo ? (
           <div className="ml-8 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-            <span className="font-medium">Arquivo gerado: </span>
-            {arquivo.url ? (
-              <a
-                href={arquivo.url}
-                target="_blank"
-                rel="noreferrer"
-                className="underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700"
-              >
-                {arquivo.nome}
-              </a>
-            ) : (
-              <span>{arquivo.nome}</span>
-            )}
+            <p>
+              <span className="font-medium">Arquivo gerado: </span>
+              {arquivo.url ? (
+                <a
+                  href={arquivo.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700"
+                >
+                  {arquivo.nome}
+                </a>
+              ) : (
+                <span>{arquivo.nome}</span>
+              )}
+            </p>
+            {arquivo.local ? (
+              <p className="mt-1 text-xs text-emerald-800">
+                <span className="font-medium">Salvo em: </span>
+                {arquivo.local}
+              </p>
+            ) : null}
           </div>
         ) : null}
+
+        <p className="ml-8 text-xs text-zinc-600">
+          {proximaEtapa
+            ? `Próximo passo: ${proximaEtapa}.`
+            : 'Todas as etapas deste processo foram concluídas.'}
+        </p>
       </div>
     );
   }
@@ -1631,6 +1674,9 @@ export default function ProcessosPage() {
                                   idBase={idBase}
                                   processando={etapaEmProcessamento(etapa)}
                                   titulo={tituloEtapa}
+                                  proximaEtapa={
+                                    concluida ? obterProximaEtapaPendente(etapas, etapaIndex) : null
+                                  }
                                   onAdicionarSocio={() =>
                                     adicionarSocioFormulario(chaveEtapa, etapa, processo)
                                   }
