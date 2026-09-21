@@ -12,9 +12,11 @@ import {
   listar as listarObrigacoes,
 } from '../../../services/obrigacoes.service';
 import { listarCertificados } from '../../../services/certificados.service';
+import { listarClientes } from '../../../services/clientes.service';
 import { calcularDiasRestantes, calcularFaixaPrazo, CLASSE_BADGE_FAIXA } from '../../../lib/prazoUrgencia';
 
 const PERFIS_AUTORIZADOS = new Set(['admin_cliente', 'admin_efficience']);
+const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
 
 // Certificado Digital (b3 / CD-6) é extensão do Calendário Fiscal: os
 // vencimentos de certificado entram na mesma lista de prazos das obrigações,
@@ -49,6 +51,50 @@ function obterMensagemErro(error, fallback = 'Não foi possível processar a sol
     error?.message ||
     fallback
   );
+}
+
+// O staff da Efficience não tem cliente_id no token; toda chamada de
+// obrigações precisa do cliente escolhido na tela (mesmo padrão do wizard do
+// eSocial em /dashboard/dp/esocial).
+function normalizarClientes(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.clientes)) return payload.clientes;
+  return [];
+}
+
+function obterIdCliente(cliente) {
+  return cliente?.id || cliente?.cliente_id || cliente?.clienteId || '';
+}
+
+function obterNomeCliente(cliente) {
+  return cliente?.nome || cliente?.razao_social || cliente?.email || obterIdCliente(cliente);
+}
+
+// O erro da lista aparece para o usuário final, então traduz o status HTTP em
+// uma frase acionável em vez de repassar o texto cru do backend (ex.:
+// "cliente_id é obrigatório", que não diz nada para quem está na tela).
+function mensagemErroLista(error) {
+  if (!error?.response) {
+    return 'Sem conexão com o servidor. Verifique a internet e tente novamente.';
+  }
+
+  const status = error.response.status;
+
+  if (status === 400) {
+    return 'Escolha um cliente para carregar os prazos deste mês.';
+  }
+
+  if (status === 401 || status === 403) {
+    return 'Você não tem acesso aos prazos deste cliente. Fale com o administrador do escritório.';
+  }
+
+  if (status >= 500) {
+    return 'O servidor não respondeu ao carregar os prazos. Tente de novo em instantes.';
+  }
+
+  return 'Não foi possível carregar os prazos deste mês. Tente novamente.';
 }
 
 function normalizarObrigacoes(payload) {
@@ -338,6 +384,14 @@ export default function ObrigacoesPage() {
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAuth();
 
+  const isAdminEfficience = user?.perfil === PERFIL_ADMIN_EFFICIENCE;
+  const [clientes, setClientes] = useState([]);
+  const [isLoadingClientes, setIsLoadingClientes] = useState(false);
+  const [erroClientes, setErroClientes] = useState('');
+  const [clienteId, setClienteId] = useState(null);
+  const clienteIdEfetivo = isAdminEfficience ? clienteId : user?.cliente_id || null;
+  const aguardandoCliente = isAdminEfficience && !clienteIdEfetivo;
+
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroMes, setFiltroMes] = useState(obterMesAtual);
   const [filtroOrigem, setFiltroOrigem] = useState('');
@@ -370,9 +424,21 @@ export default function ObrigacoesPage() {
   const filtroMesAno = useMemo(() => resolverMesAno(filtroMes), [filtroMes]);
 
   const carregarObrigacoes = useCallback(async () => {
+    // Staff sem cliente escolhido: nem chama o backend (a chamada voltaria 400)
+    // — a tela pede o cliente no seletor acima.
+    if (aguardandoCliente) {
+      setObrigacoes([]);
+      setCertificados([]);
+      setTotalAtrasadas(0);
+      setErroLista('');
+      setIsLoadingObrigacoes(false);
+      return;
+    }
+
     const paramsMes = {
       mes: filtroMesAno.mes,
       ano: filtroMesAno.ano,
+      clienteId: clienteIdEfetivo,
     };
 
     setIsLoadingObrigacoes(true);
@@ -388,7 +454,7 @@ export default function ObrigacoesPage() {
         // Vencimentos de certificado (CD-6). Falha silenciosa: se o CRUD de
         // certificados ainda não estiver no ambiente, o calendário fiscal
         // segue mostrando as obrigações normalmente.
-        listarCertificados().catch(() => []),
+        listarCertificados({ clienteId: clienteIdEfetivo }).catch(() => []),
       ]);
 
       const obrigacoesFiltradas = normalizarObrigacoes(listaFiltrada);
@@ -401,11 +467,31 @@ export default function ObrigacoesPage() {
       setCertificados(normalizarCertificados(listaCertificados));
       setTotalAtrasadas(atrasadasDoMes);
     } catch (error) {
-      setErroLista(obterMensagemErro(error, 'Não foi possível carregar as obrigações.'));
+      setErroLista(mensagemErroLista(error));
     } finally {
       setIsLoadingObrigacoes(false);
     }
-  }, [filtroMesAno.ano, filtroMesAno.mes, filtroStatus]);
+  }, [aguardandoCliente, clienteIdEfetivo, filtroMesAno.ano, filtroMesAno.mes, filtroStatus]);
+
+  const carregarClientes = useCallback(async () => {
+    setIsLoadingClientes(true);
+    setErroClientes('');
+
+    try {
+      const data = await listarClientes();
+      setClientes(normalizarClientes(data));
+    } catch (error) {
+      setErroClientes(obterMensagemErro(error, 'Não foi possível carregar os clientes.'));
+    } finally {
+      setIsLoadingClientes(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && isAdminEfficience) {
+      carregarClientes();
+    }
+  }, [carregarClientes, isAdminEfficience, isAuthenticated, isLoading]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -586,6 +672,8 @@ export default function ObrigacoesPage() {
       tipo: formData.tipo,
       data_vencimento: formData.data_vencimento,
       recorrente: tipoPermiteRecorrencia(formData.tipo) && Boolean(formData.recorrente),
+      // POST /obrigacoes também resolve o cliente pelo corpo quando é staff.
+      ...(isAdminEfficience && clienteIdEfetivo ? { clienteId: clienteIdEfetivo } : {}),
     };
 
     try {
@@ -683,6 +771,7 @@ export default function ObrigacoesPage() {
     return null;
   }
 
+  const mostrarPrazos = !erroLista && !aguardandoCliente;
   const tipoSelecionadoPermiteRecorrencia = tipoPermiteRecorrencia(formData.tipo);
   const recorrenciaAtiva =
     tipoSelecionadoPermiteRecorrencia && Boolean(formData.recorrente);
@@ -703,7 +792,8 @@ export default function ObrigacoesPage() {
               <button
                 type="button"
                 onClick={abrirModalCriacao}
-                className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700"
+                disabled={aguardandoCliente}
+                className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Nova obrigação
               </button>
@@ -712,13 +802,43 @@ export default function ObrigacoesPage() {
             <button
               type="button"
               onClick={carregarObrigacoes}
-              disabled={isLoadingObrigacoes}
+              disabled={isLoadingObrigacoes || aguardandoCliente}
               className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isLoadingObrigacoes ? 'Atualizando...' : 'Atualizar lista'}
             </button>
           </div>
         </header>
+
+        {/* Seletor de cliente (admin_efficience) */}
+        {isAdminEfficience ? (
+          <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+            <label className="min-w-[240px] max-w-md space-y-2">
+              <span className="text-sm font-medium text-zinc-700">Cliente</span>
+              <select
+                value={clienteId || ''}
+                onChange={(event) => setClienteId(event.target.value || null)}
+                disabled={isLoadingClientes || Boolean(erroClientes)}
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <option value="">
+                  {isLoadingClientes ? 'Carregando clientes...' : 'Selecione um cliente'}
+                </option>
+                {[...clientes]
+                  .sort((a, b) => obterNomeCliente(a).localeCompare(obterNomeCliente(b), 'pt-BR'))
+                  .map((cliente) => {
+                    const id = obterIdCliente(cliente);
+                    return (
+                      <option key={id} value={id}>
+                        {obterNomeCliente(cliente)}
+                      </option>
+                    );
+                  })}
+              </select>
+            </label>
+            {erroClientes ? <p className="mt-2 text-sm text-rose-700">{erroClientes}</p> : null}
+          </section>
+        ) : null}
 
         {!podeGerenciarObrigacoes ? (
           <section className="rounded-xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
@@ -729,6 +849,7 @@ export default function ObrigacoesPage() {
           </section>
         ) : null}
 
+        {!aguardandoCliente ? (
         <section className="grid gap-4 lg:grid-cols-3">
           <article className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Filtros</p>
@@ -784,14 +905,31 @@ export default function ObrigacoesPage() {
             <p className="mt-2 text-xs text-rose-700">No mês selecionado.</p>
           </article>
         </section>
+        ) : null}
 
-        {erroLista ? (
-          <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
-            <p className="text-sm font-medium text-rose-800">{erroLista}</p>
+        {aguardandoCliente ? (
+          <section className="rounded-xl border border-sky-200 bg-sky-50 p-5 shadow-sm">
+            <p className="text-sm text-sky-900">
+              Selecione um cliente para ver os prazos do calendário fiscal.
+            </p>
           </section>
         ) : null}
 
-        {!erroLista ? (
+        {erroLista ? (
+          <section className="space-y-3 rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+            <p className="text-sm font-medium text-rose-800">{erroLista}</p>
+            <button
+              type="button"
+              onClick={carregarObrigacoes}
+              disabled={isLoadingObrigacoes}
+              className="rounded-md bg-rose-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Tentar novamente
+            </button>
+          </section>
+        ) : null}
+
+        {mostrarPrazos ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <header className="mb-4 flex items-center justify-between">
               <div>
@@ -852,7 +990,7 @@ export default function ObrigacoesPage() {
           </section>
         ) : null}
 
-        {!erroLista && isLoadingObrigacoes ? (
+        {mostrarPrazos && isLoadingObrigacoes ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-3 text-sm text-zinc-600">
               <Spinner />
@@ -861,7 +999,7 @@ export default function ObrigacoesPage() {
           </section>
         ) : null}
 
-        {!erroLista && !isLoadingObrigacoes && prazos.length === 0 ? (
+        {mostrarPrazos && !isLoadingObrigacoes && prazos.length === 0 ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-zinc-600">
               Nenhum prazo encontrado para os filtros ativos.
@@ -869,7 +1007,7 @@ export default function ObrigacoesPage() {
           </section>
         ) : null}
 
-        {!erroLista && !isLoadingObrigacoes && prazos.length > 0 ? (
+        {mostrarPrazos && !isLoadingObrigacoes && prazos.length > 0 ? (
           <section className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
             <table className="min-w-full divide-y divide-zinc-200 text-sm">
               <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
