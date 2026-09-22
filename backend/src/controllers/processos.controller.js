@@ -15,6 +15,9 @@ const STATUS_ETAPA = {
   CONCLUIDA: "concluida",
 };
 const LEASE_EXECUCAO_MS = 15 * 60 * 1000;
+// Espelha TIMEOUT_ETAPA_PROCESSANDO_MS do frontend (page.jsx) — o servidor precisa
+// da mesma janela para recusar um expirar-execucao chamado cedo demais.
+const TIMEOUT_ETAPA_PROCESSANDO_MS = 90 * 1000;
 const LIMITE_ETAPAS_POR_POLLING = 20;
 const MENSAGEM_TIMEOUT_EXECUCAO =
   "O agente não respondeu em tempo hábil. Verifique se ele está ligado e tente novamente.";
@@ -460,7 +463,7 @@ async function _expirarExecucaoEtapa(processoId, etapaId, clienteId) {
 
   const { data: etapa, error: erroEtapa } = await supabase
     .from("etapas")
-    .select("id, processo_id, tipo, status, concluida")
+    .select("id, processo_id, tipo, status, concluida, execucao_iniciada_em")
     .eq("id", etapaId)
     .eq("processo_id", processoId)
     .single();
@@ -475,6 +478,13 @@ async function _expirarExecucaoEtapa(processoId, etapaId, clienteId) {
 
   if (etapa.status !== STATUS_ETAPA.PRONTA && etapa.status !== STATUS_ETAPA.PROCESSANDO) {
     return { status: 400, body: { erro: "Etapa não está em execução" } };
+  }
+
+  if (etapa.status === STATUS_ETAPA.PROCESSANDO && etapa.execucao_iniciada_em) {
+    const decorrido = Date.now() - new Date(etapa.execucao_iniciada_em).getTime();
+    if (decorrido < TIMEOUT_ETAPA_PROCESSANDO_MS) {
+      return { status: 409, body: { erro: "Claim de execução ainda é válido" } };
+    }
   }
 
   const { data: etapaExpirada, error: erroUpdate } = await supabase

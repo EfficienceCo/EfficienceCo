@@ -409,7 +409,7 @@ describe("processos.controller — expirarExecucaoEtapaJwt (bug #487, timeout de
     assert.equal(update.args[0].execucao_iniciada_em, null);
   });
 
-  it("200 volta a etapa 'pronta_para_execucao' quando o agente reivindicou e travou (processando)", async () => {
+  it("200 volta a etapa 'pronta_para_execucao' quando o agente reivindicou e travou (processando há mais de 90s)", async () => {
     queue("processos", "single", {
       data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
       error: null,
@@ -421,6 +421,7 @@ describe("processos.controller — expirarExecucaoEtapaJwt (bug #487, timeout de
         tipo: "automatizada",
         status: "processando",
         concluida: false,
+        execucao_iniciada_em: new Date(Date.now() - 91 * 1000).toISOString(),
       },
       error: null,
     });
@@ -433,6 +434,33 @@ describe("processos.controller — expirarExecucaoEtapaJwt (bug #487, timeout de
     await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
 
     assert.equal(res.statusCode, 200);
+  });
+
+  it("409 quando a etapa está processando há menos de 90s — claim do agente ainda é válido", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        status: "processando",
+        concluida: false,
+        execucao_iniciada_em: new Date(Date.now() - 5 * 1000).toISOString(),
+      },
+      error: null,
+    });
+
+    const res = criarRes();
+    await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+
+    assert.equal(res.statusCode, 409);
+    const update = chamadas.find(
+      (chamada) => chamada.tabela === "etapas" && chamada.metodo === "update",
+    );
+    assert.equal(update, undefined);
   });
 
   it("409 quando a etapa foi alterada por outra solicitação entre a leitura e o update", async () => {
