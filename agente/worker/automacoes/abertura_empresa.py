@@ -1,6 +1,6 @@
 import os
 from comunicacao.reportar_evento import reportar_evento
-from core.estrutura_pastas import SUBPASTAS, criar_estrutura_empresa_em
+from core.estrutura_pastas import SUBPASTAS, criar_estrutura_empresa_em, pasta_empresa_em_abertura
 from core.utils import validar_caminho, validar_nome
 
 
@@ -33,7 +33,7 @@ def criar_estrutura_empresa(regra):
 
     validar_nome(nome_empresa)
     validar_caminho(pasta_base)
-    pasta_empresa = os.path.join(pasta_base, nome_empresa)
+    pasta_empresa = pasta_empresa_em_abertura(pasta_base, nome_empresa)
 
     try:
         criadas = criar_estrutura_empresa_em(pasta_empresa)
