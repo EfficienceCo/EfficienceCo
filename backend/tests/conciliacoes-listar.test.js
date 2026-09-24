@@ -224,6 +224,30 @@ describe("GET /conciliacoes/:id", () => {
     assert.equal(semParLancamentoSemTransacao.lancamento.id, "l4");
   });
 
+  it("200: provável confirmado expõe confirmado_em para o cliente não tratá-lo como pendente (#554)", async () => {
+    queueConciliacaoValida();
+    queue("pares_conciliacao", "await", {
+      data: [
+        { id: "par-1", transacao_id: "t1", lancamento_id: "l1", confianca: "provavel", confirmado_por: USUARIO_ID, confirmado_em: "2026-09-20T12:00:00.000Z" },
+        { id: "par-2", transacao_id: "t2", lancamento_id: "l2", confianca: "provavel", confirmado_por: null, confirmado_em: null },
+      ],
+      error: null,
+    });
+    queue("transacoes_extrato", "await", { data: [{ id: "t1" }, { id: "t2" }], error: null });
+    queue("lancamentos_contabeis", "await", { data: [{ id: "l1" }, { id: "l2" }], error: null });
+
+    const res = criarResposta();
+    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    const confirmado = res.body.pares.provavel.find((p) => p.id === "par-1");
+    const pendente = res.body.pares.provavel.find((p) => p.id === "par-2");
+    assert.equal(confirmado.confirmado_por, USUARIO_ID);
+    assert.equal(confirmado.confirmado_em, "2026-09-20T12:00:00.000Z");
+    assert.equal(pendente.confirmado_em, null);
+    assert.equal(res.body.pares.automatico.length, 0);
+  });
+
   it("200: inclui mes, ano e extrato (banco/conta) quando a conciliação tem extrato_id", async () => {
     queueConciliacaoValida({ mes: 8, ano: 2026, extrato_id: "extrato-1" });
     queue("pares_conciliacao", "await", { data: [], error: null });
