@@ -35,6 +35,11 @@ export function caminhoWindowsAbsolutoValido(caminho) {
   return CAMINHO_WINDOWS_ABSOLUTO.test(String(caminho).trim());
 }
 
+// a validação de formato roda sobre o valor trimado, então persiste o trimado também
+function normalizarOrigem(pasta_origem) {
+  return typeof pasta_origem === "string" ? pasta_origem.trim() : pasta_origem;
+}
+
 function parseCondicao(condicao) {
   if (condicao === undefined || condicao === null || typeof condicao === "object") {
     return { valor: condicao };
@@ -156,7 +161,7 @@ export async function criarRegra(req, res) {
     .from("regras")
     .insert({
       cliente_id: clienteId,
-      pasta_origem,
+      pasta_origem: normalizarOrigem(pasta_origem),
       pasta_destino: destinoNormalizado,
       condicao: condicaoParseada,
       acao,
@@ -195,7 +200,7 @@ export async function atualizarRegra(req, res) {
 
   const { pasta_origem, pasta_destino, condicao, acao, ativa } = req.body;
   const updates = {};
-  if (pasta_origem !== undefined) updates.pasta_origem = pasta_origem;
+  if (pasta_origem !== undefined) updates.pasta_origem = normalizarOrigem(pasta_origem);
   if (pasta_destino !== undefined) updates.pasta_destino = pasta_destino ?? "";
   if (condicao !== undefined) {
     const { valor: condicaoParseada, erro: erroCondicao } = parseCondicao(condicao);

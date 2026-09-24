@@ -71,3 +71,53 @@ test.describe('Regras de automação — pasta_origem validada (issue #484)', ()
     await expect.poll(() => corpo?.pasta_origem).toBe('C:\\Souza\\ENTRADA');
   });
 });
+
+test.describe('Regras de automação — edição de regra legada (issue #484)', () => {
+  const regraLegada = {
+    id: 'legada-484',
+    cliente_id: 'c1',
+    acao: 'mover',
+    pasta_origem: 'ENTRADA',
+    pasta_destino: 'C:\\Souza\\SAIDA',
+    condicao: {},
+    ativa: true,
+  };
+
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+    // só a API (pathname exato): não intercepta a página /dashboard/regras nem os fetches RSC dela
+    await page.route((url) => url.pathname === '/regras', (route) =>
+      route.request().method() === 'GET'
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([regraLegada]) })
+        : route.continue(),
+    );
+    await page.goto('/dashboard/regras');
+    await page.getByRole('row', { name: /ENTRADA/ }).getByRole('button', { name: 'Editar' }).click();
+  });
+
+  test('editar só o destino não revalida nem reenvia a origem legada', async ({ page }) => {
+    let corpo: Record<string, unknown> | null = null;
+    await page.route('**/regras/legada-484**', (route) => {
+      corpo = route.request().postDataJSON();
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...regraLegada, ...corpo }),
+      });
+    });
+
+    await page.locator('#pasta_destino').fill('C:\\Souza\\NOVO');
+    await page.getByRole('button', { name: 'Salvar alterações' }).click();
+
+    await expect(page.getByText(/Pasta origem inválida/)).toHaveCount(0);
+    await expect.poll(() => corpo?.pasta_destino).toBe('C:\\Souza\\NOVO');
+    expect(corpo).not.toHaveProperty('pasta_origem');
+  });
+
+  test('alterar a origem para valor malformado continua sendo barrado', async ({ page }) => {
+    await page.locator('#pasta_origem').fill('C;\\Souza');
+    await page.getByRole('button', { name: 'Salvar alterações' }).click();
+
+    await expect(page.getByText(/Pasta origem inválida/)).toBeVisible();
+  });
+});

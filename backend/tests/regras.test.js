@@ -405,6 +405,34 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.equal(res.statusCode, 200);
   });
 
+  it("criarRegra: persiste pasta_origem trimada (#484)", async () => {
+    queue("regras", "single", { data: { id: REGRA_ID, cliente_id: CLIENTE_A }, error: null });
+    const antes = chamadasInsert.length;
+    const res = criarRes();
+    await criarRegra(
+      reqAdmin({ condicao: {}, acao: "mover", pasta_origem: "  C:\\Docs\\Entrada  ", pasta_destino: "C:/out" }),
+      res,
+    );
+    assert.equal(res.statusCode, 201);
+    assert.equal(chamadasInsert[antes].payload.pasta_origem, "C:\\Docs\\Entrada");
+  });
+
+  it("atualizarRegra: persiste pasta_origem trimada (#484)", async () => {
+    queue("regras", "single", {
+      data: { id: REGRA_ID, cliente_id: CLIENTE_A, acao: "mover", pasta_origem: "C:/in", pasta_destino: "C:/out" },
+      error: null,
+    });
+    queue("regras", "single", { data: { id: REGRA_ID }, error: null });
+    const antes = chamadasUpdate.length;
+    const res = criarRes();
+    await atualizarRegra(
+      reqAdmin({ pasta_origem: " C:\\Docs\\Entrada " }, { params: { id: REGRA_ID } }),
+      res,
+    );
+    assert.equal(res.statusCode, 200);
+    assert.equal(chamadasUpdate[antes].payload.pasta_origem, "C:\\Docs\\Entrada");
+  });
+
   it("atualizarRegra: 403 quando admin_cliente tenta alterar regra de outro cliente", async () => {
     queue("regras", "single", {
       data: { id: REGRA_ID, cliente_id: CLIENTE_B, acao: "mover" },

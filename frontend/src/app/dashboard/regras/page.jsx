@@ -614,7 +614,14 @@ export default function Regras() {
       return;
     }
 
-    if (schema.pastaOrigem.visivel && pastaOrigem && !CAMINHO_WINDOWS_ABSOLUTO.test(pastaOrigem)) {
+    // na edição, regra legada (origem relativa) só é revalidada se a origem foi alterada
+    const origemOriginal =
+      modoFormulario === 'criar'
+        ? undefined
+        : regras.find((item) => item.id === regraEditandoId)?.pasta_origem;
+    const origemAlterada = modoFormulario === 'criar' || pastaOrigem !== (origemOriginal ?? '').trim();
+
+    if (schema.pastaOrigem.visivel && pastaOrigem && origemAlterada && !CAMINHO_WINDOWS_ABSOLUTO.test(pastaOrigem)) {
       setErroFormulario('Pasta origem inválida: informe um caminho absoluto do Windows (ex.: C:\\Docs\\Entrada).');
       return;
     }
@@ -666,6 +673,11 @@ export default function Regras() {
     // abertura_empresa não usa pasta_origem no formulário — espelha a base para a regra existir no agente
     if (formData.acao === 'abertura_empresa' && !payload.pasta_origem) {
       payload.pasta_origem = payload.pasta_destino;
+    }
+
+    // origem inalterada não vai no PATCH: o backend não revalida regras legadas
+    if (modoFormulario !== 'criar' && !origemAlterada) {
+      delete payload.pasta_origem;
     }
 
     try {
