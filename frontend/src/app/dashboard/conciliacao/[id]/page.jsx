@@ -205,9 +205,16 @@ function ConciliacaoDetalheContent({ id }) {
         extrato: data?.extrato ?? null,
         totalTransacoes: data?.total_transacoes ?? 0,
       });
+      // Provável já confirmado conta como conciliado — mesmo tratamento que
+      // handleConfirmar dá na hora; sem isso um reload devolve o par para
+      // "sem decisão" e a sessão trava (confirmar de novo dá 409).
+      const provaveis = data?.pares?.provavel ?? [];
       setPares({
-        automatico: data?.pares?.automatico ?? [],
-        provavel: data?.pares?.provavel ?? [],
+        automatico: [
+          ...(data?.pares?.automatico ?? []),
+          ...provaveis.filter((par) => par.confirmado_em),
+        ],
+        provavel: provaveis.filter((par) => !par.confirmado_em),
         semPar: data?.pares?.sem_par ?? [],
       });
     } catch (error) {
@@ -493,7 +500,7 @@ function ConciliacaoDetalheContent({ id }) {
               {pares.provavel.length > 0 ? (
                 <TabelaPares
                   pares={pares.provavel}
-                  mostrarAcoes
+                  mostrarAcoes={conciliacao?.status === 'em_andamento'}
                   onConfirmar={handleConfirmar}
                   onRejeitar={handleRejeitar}
                   pareEmAcao={pareEmAcao}

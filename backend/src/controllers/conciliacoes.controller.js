@@ -462,8 +462,13 @@ export async function buscarConciliacao(req, res) {
       transacao: par.transacao_id ? transacoesPorId[par.transacao_id] ?? null : null,
       lancamento: par.lancamento_id ? lancamentosPorId[par.lancamento_id] ?? null : null,
     };
+    // Confirmar um provável não muda a confianca — só seta confirmado_em. O
+    // cliente precisa do confirmado_em para distinguir pendente de já decidido
+    // ao recarregar a sessão (rejeitados já viram 'sem_par' no próprio registro).
     paresAgrupados[par.confianca].push(
-      par.confianca === "provavel" ? { ...base, confirmado_por: par.confirmado_por } : base,
+      par.confianca === "provavel"
+        ? { ...base, confirmado_por: par.confirmado_por, confirmado_em: par.confirmado_em }
+        : base,
     );
   }
 

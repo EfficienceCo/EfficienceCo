@@ -30,14 +30,20 @@ const DESCRICOES_CRIADAS_PELO_TESTE = [
   `SEM PAR LANC ${RUN_TAG}`,
 ];
 
-async function limparLancamentosDoTeste() {
+async function obterToken(): Promise<string | null> {
   const loginRes = await fetch(`${API_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: TEST_EMAIL, senha: TEST_PASSWORD }),
   });
-  if (!loginRes.ok) return;
+  if (!loginRes.ok) return null;
   const { token } = await loginRes.json();
+  return token;
+}
+
+async function limparLancamentosDoTeste() {
+  const token = await obterToken();
+  if (!token) return;
 
   const listRes = await fetch(`${API_URL}/lancamentos-contabeis?mes=${MES}&ano=${ANO}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -169,6 +175,18 @@ test.describe('Conciliação bancária — tela de revisão (/dashboard/concilia
     // Barra de progresso atualiza a cada decisão.
     await expect(page.getByText(new RegExp(`^${conciliadasAntes + 1} de \\d+ transações conciliadas`))).toBeVisible();
 
+    // F5 depois de confirmar (#554): a decisão vem do estado persistido — o par
+    // continua conciliado, não volta como "sem decisão" com Confirmar ativo.
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Revisão da conciliação' })).toBeVisible();
+    await expect(page.getByText(new RegExp(`^${conciliadasAntes + 1} de \\d+ transações conciliadas`))).toBeVisible();
+    await expect(secaoProvavel.getByRole('row', { name: /PROVAVEL TRANSACAO A 332/ })).not.toBeVisible();
+    await expect(secaoProvavel.getByText('1 sem decisão')).toBeVisible();
+    await secaoAutomatico.getByRole('button', { name: 'Ver matches' }).click();
+    await expect(
+      secaoAutomatico.getByRole('row', { name: /PROVAVEL TRANSACAO A 332/ }),
+    ).toBeVisible();
+
     const linhaProvavelB = secaoProvavel.getByRole('row', { name: /PROVAVEL TRANSACAO B 332/ });
     await expect(linhaProvavelB).toBeVisible();
     await linhaProvavelB.getByRole('button', { name: 'Rejeitar' }).click();
@@ -187,6 +205,15 @@ test.describe('Conciliação bancária — tela de revisão (/dashboard/concilia
     // Todos os prováveis decididos — "Concluir" libera.
     const botaoConcluir = page.getByRole('button', { name: 'Concluir conciliação' });
     await expect(botaoConcluir).toBeEnabled();
+
+    // F5 com todas as decisões tomadas (#554): progresso e "Concluir" preservados.
+    await page.reload();
+    await expect(page.getByText(new RegExp(`^${conciliadasAntes + 1} de \\d+ transações conciliadas`))).toBeVisible();
+    await expect(secaoProvavel.getByText('0 sem decisão')).toBeVisible();
+    await expect(
+      secaoSemPar.getByRole('row', { name: /PROVAVEL TRANSACAO B 332/ }),
+    ).toBeVisible();
+    await expect(botaoConcluir).toBeEnabled();
     await botaoConcluir.click();
 
     await expect(page.getByRole('heading', { name: 'Concluir conciliação' })).toBeVisible();
@@ -198,6 +225,29 @@ test.describe('Conciliação bancária — tela de revisão (/dashboard/concilia
 
     await expect(page.getByRole('heading', { name: 'Concluir conciliação' })).not.toBeVisible();
     await expect(page.getByText('Concluída')).toBeVisible();
+
+    // F5 em sessão concluída (#554): sem botões de decisão e progresso igual ao
+    // total_conciliadas que a lista de sessões exibe.
+    await page.reload();
+    await expect(page.getByText('Concluída')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Confirmar' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Rejeitar' })).toHaveCount(0);
+    const progressoDetalhe = await page.getByText(/de \d+ transações conciliadas/).textContent();
+    const [, conciliadasDetalhe, totalDetalhe] = progressoDetalhe?.match(/^(\d+) de (\d+)/) ?? [];
+    expect(Number(conciliadasDetalhe)).toBe(conciliadasAntes + 1);
+
+    const conciliacaoId = new URL(page.url()).pathname.split('/').pop();
+    const token = await obterToken();
+    const listaRes = await fetch(`${API_URL}/conciliacoes?mes=${MES}&ano=${ANO}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const sessoes: Array<{ id: string; total_conciliadas: number; total_transacoes: number }> =
+      await listaRes.json();
+    const sessao = sessoes.find((item) => item.id === conciliacaoId);
+    expect(sessao).toBeTruthy();
+    expect(`${sessao?.total_conciliadas}/${sessao?.total_transacoes}`).toBe(
+      `${conciliadasDetalhe}/${totalDetalhe}`,
+    );
 
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Download Relatório' }).click();
