@@ -242,30 +242,98 @@ describe("PATCH /conciliacoes/:id/pares/:pareId/confirmar", () => {
 // ---------------------------------------------------------------------------
 
 describe("PATCH /conciliacoes/:id/pares/:pareId/rejeitar", () => {
-  it("200: descarta o par (lancamento_id=null, confianca=sem_par)", async () => {
-    queueConciliacaoValida();
-    queueParValido();
-
-    let parAtualizado = null;
+  // Espiona insert/update/delete de pares_conciliacao e conciliacoes na ordem em que ocorrem.
+  function espionarEscritas() {
+    const escritas = [];
     const originalFromLocal = supabase.from;
     supabase.from = function (tabela) {
       const b = originalFromLocal(tabela);
-      if (tabela === "pares_conciliacao") {
-        const updateOriginal = b.update.bind(b);
-        b.update = (campos) => { parAtualizado = campos; return updateOriginal(campos); };
+      for (const metodo of ["insert", "update", "delete"]) {
+        const original = b[metodo].bind(b);
+        b[metodo] = (campos) => { escritas.push({ tabela, metodo, campos }); return original(campos); };
       }
       return b;
     };
-    queue("pares_conciliacao", "await", { data: null, error: null });
+    return { escritas, restaurar: () => { supabase.from = originalFromLocal; } };
+  }
 
+  it("200: separa o par em transação sem par + lançamento sem par (lançamento não some)", async () => {
+    queueConciliacaoValida();
+    queueParValido();
+    queue("pares_conciliacao", "single", { data: { id: "novo-par" }, error: null });
+    queue("pares_conciliacao", "await", { data: null, error: null });
+    queue("conciliacoes", "maybeSingle", { data: { total_pendentes: 2 }, error: null });
+    queue("conciliacoes", "await", { data: null, error: null });
+
+    const espiao = espionarEscritas();
     const res = criarResposta();
     await rejeitarPar(reqBase(), res);
-    supabase.from = originalFromLocal;
+    espiao.restaurar();
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.confianca, "sem_par");
-    assert.equal(parAtualizado.lancamento_id, null);
-    assert.equal(parAtualizado.confianca, "sem_par");
+    assert.deepEqual(res.body.par_lancamento, { id: "novo-par", lancamento_id: "l1", confianca: "sem_par" });
+
+    const insert = espiao.escritas.find((e) => e.tabela === "pares_conciliacao" && e.metodo === "insert");
+    assert.deepEqual(insert.campos, {
+      conciliacao_id: CONCILIACAO_ID,
+      transacao_id: null,
+      lancamento_id: "l1",
+      confianca: "sem_par",
+    });
+    const update = espiao.escritas.find((e) => e.tabela === "pares_conciliacao" && e.metodo === "update");
+    assert.deepEqual(update.campos, { lancamento_id: null, confianca: "sem_par" });
+    const totais = espiao.escritas.find((e) => e.tabela === "conciliacoes" && e.metodo === "update");
+    assert.deepEqual(totais.campos, { total_pendentes: 3 });
+  });
+
+  it("500 sem alterar o par quando o insert do lançamento falha", async () => {
+    queueConciliacaoValida();
+    queueParValido();
+    queue("pares_conciliacao", "single", { data: null, error: { message: "falha" } });
+
+    const espiao = espionarEscritas();
+    const res = criarResposta();
+    await rejeitarPar(reqBase(), res);
+    espiao.restaurar();
+
+    assert.equal(res.statusCode, 500);
+    assert.equal(espiao.escritas.filter((e) => e.metodo === "update").length, 0);
+  });
+
+  it("500 e remove o par do lançamento quando o update do par original falha", async () => {
+    queueConciliacaoValida();
+    queueParValido();
+    queue("pares_conciliacao", "single", { data: { id: "novo-par" }, error: null });
+    queue("pares_conciliacao", "await", { data: null, error: { message: "falha" } });
+
+    const espiao = espionarEscritas();
+    const res = criarResposta();
+    await rejeitarPar(reqBase(), res);
+    espiao.restaurar();
+
+    assert.equal(res.statusCode, 500);
+    assert.ok(espiao.escritas.some((e) => e.tabela === "pares_conciliacao" && e.metodo === "delete"));
+    assert.ok(!espiao.escritas.some((e) => e.tabela === "conciliacoes"));
+  });
+
+  it("500 e restaura o par provável quando a atualização dos totais falha", async () => {
+    queueConciliacaoValida();
+    queueParValido();
+    queue("pares_conciliacao", "single", { data: { id: "novo-par" }, error: null });
+    queue("pares_conciliacao", "await", { data: null, error: null });
+    queue("conciliacoes", "maybeSingle", { data: { total_pendentes: 2 }, error: null });
+    queue("conciliacoes", "await", { data: null, error: { message: "falha" } });
+
+    const espiao = espionarEscritas();
+    const res = criarResposta();
+    await rejeitarPar(reqBase(), res);
+    espiao.restaurar();
+
+    assert.equal(res.statusCode, 500);
+    const updatesPar = espiao.escritas.filter((e) => e.tabela === "pares_conciliacao" && e.metodo === "update");
+    assert.deepEqual(updatesPar.at(-1).campos, { lancamento_id: "l1", confianca: "provavel" });
+    assert.ok(espiao.escritas.some((e) => e.tabela === "pares_conciliacao" && e.metodo === "delete"));
   });
 
   it("404 quando a conciliação pertence a outro cliente", async () => {
