@@ -269,12 +269,19 @@ function ConciliacaoDetalheContent({ id }) {
     setErroAcaoPar('');
 
     try {
-      await rejeitarPar(id, par.id, { clienteId });
+      const resultado = await rejeitarPar(id, par.id, { clienteId });
+
+      // O backend separa o par rejeitado em dois 'sem_par': a transação fica no par
+      // original e o lançamento ganha um par próprio (resultado.par_lancamento).
+      const novosSemPar = [{ ...par, lancamento: null }];
+      if (par.lancamento && resultado?.par_lancamento?.id) {
+        novosSemPar.push({ id: resultado.par_lancamento.id, transacao: null, lancamento: par.lancamento });
+      }
 
       setPares((atual) => ({
         ...atual,
         provavel: atual.provavel.filter((item) => item.id !== par.id),
-        semPar: [...atual.semPar, { ...par, lancamento: null }],
+        semPar: [...atual.semPar, ...novosSemPar],
       }));
     } catch (error) {
       setErroAcaoPar(obterMensagemErro(error, 'Não foi possível rejeitar o par.'));

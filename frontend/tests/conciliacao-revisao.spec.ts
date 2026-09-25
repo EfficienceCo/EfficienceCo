@@ -179,6 +179,26 @@ test.describe('Conciliação bancária — tela de revisão (/dashboard/concilia
     await expect(
       secaoSemPar.getByRole('row', { name: /PROVAVEL TRANSACAO B 332/ }),
     ).toBeVisible();
+    // ...e o lançamento rejeitado continua visível em "Lançamentos sem transação" (#555).
+    await expect(
+      secaoSemPar.getByRole('row', { name: new RegExp(`PROVAVEL LANC B ${RUN_TAG}`) }),
+    ).toBeVisible();
+
+    // O backend persiste o lançamento rejeitado como par próprio em sem_par
+    // (é essa lista que alimenta a revisão recarregada e o PDF).
+    const urlRevisao = new URL(page.url());
+    const conciliacaoId = urlRevisao.pathname.split('/').pop();
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+    const detalheRes = await fetch(
+      `${API_URL}/conciliacoes/${conciliacaoId}?cliente_id=${urlRevisao.searchParams.get('clienteId')}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    expect(detalheRes.ok).toBeTruthy();
+    const detalhe = await detalheRes.json();
+    const lancamentosSemTransacaoApi = detalhe.pares.sem_par
+      .filter((par: { transacao: unknown; lancamento: { descricao: string } | null }) => !par.transacao && par.lancamento)
+      .map((par: { lancamento: { descricao: string } }) => par.lancamento.descricao);
+    expect(lancamentosSemTransacaoApi).toContain(`PROVAVEL LANC B ${RUN_TAG}`);
 
     // Sem par: transação e lançamento que nunca tiveram correspondência.
     await expect(secaoSemPar.getByRole('row', { name: /SEM PAR TRANSACAO 332/ })).toBeVisible();
