@@ -371,7 +371,7 @@ describe("GET /conciliacoes/extrato/:id/transacoes", () => {
     assert.equal(res.statusCode, 404);
   });
 
-  it("403 quando o extrato pertence a outro cliente", async () => {
+  it("404 (nunca 403) quando o extrato pertence a outro cliente", async () => {
     queue("extratos_bancarios", "maybeSingle", {
       data: { id: EXTRATO_ID, cliente_id: CLIENTE_B },
       error: null,
@@ -380,6 +380,7 @@ describe("GET /conciliacoes/extrato/:id/transacoes", () => {
     const res = criarResposta();
     await listarTransacoesExtrato(reqBase(), res);
 
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, { erro: "Extrato bancário não encontrado" });
   });
 });
