@@ -151,6 +151,55 @@ describe("POST /conciliacoes", () => {
     assert.ok(paresInseridos.some((p) => p.transacao_id === "t3" && p.lancamento_id === null && p.confianca === "sem_par"));
   });
 
+  it("201: total_pendentes conta só transações — lançamento sem transação não entra (#559)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", {
+      data: [
+        { id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" },
+        { id: "t2", tipo: "credito", valor: 999, data_lancamento: "2026-07-15" },
+      ],
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [
+        { id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }, // automatico com t1
+        { id: "l2", tipo: "debito", valor: 40, data_lancamento: "2026-07-20" }, // sem par (sem transação)
+        { id: "l3", tipo: "debito", valor: 70, data_lancamento: "2026-07-25" }, // sem par (sem transação)
+      ],
+      error: null,
+    });
+
+    let conciliacaoInserida = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "conciliacoes") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (campos) => { conciliacaoInserida = campos; return insertOriginal(campos); };
+      }
+      return b;
+    };
+
+    queue("conciliacoes", "single", {
+      data: { id: CONCILIACAO_ID, cliente_id: CLIENTE_A, extrato_id: EXTRATO_ID },
+      error: null,
+    });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(conciliacaoInserida.total_transacoes, 2);
+    assert.equal(conciliacaoInserida.total_conciliadas, 1);
+    assert.equal(conciliacaoInserida.total_pendentes, 1);
+    assert.equal(
+      conciliacaoInserida.total_conciliadas + conciliacaoInserida.total_pendentes,
+      conciliacaoInserida.total_transacoes,
+    );
+  });
+
   it("400 quando extrato_id não é informado", async () => {
     const res = criarResposta();
     await criarConciliacao(reqBase({ body: { mes: 7, ano: 2026 } }), res);
