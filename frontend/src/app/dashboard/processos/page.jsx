@@ -543,51 +543,6 @@ function extrairEtapaAtualizada(payload) {
   );
 }
 
-function extrairProcessoAtualizado(payload) {
-  if (!payload || typeof payload !== 'object') {
-    return null;
-  }
-
-  if (payload.processo && typeof payload.processo === 'object') {
-    return payload.processo;
-  }
-
-  if (payload.data && typeof payload.data === 'object') {
-    if (payload.data.processo && typeof payload.data.processo === 'object') {
-      return payload.data.processo;
-    }
-
-    if (
-      payload.data.id ||
-      payload.data.status ||
-      payload.data.situacao ||
-      Array.isArray(payload.data.etapas) ||
-      Array.isArray(payload.data.checklist)
-    ) {
-      return payload.data;
-    }
-  }
-
-  if (payload.id || payload.status || payload.situacao || Array.isArray(payload.etapas)) {
-    return payload;
-  }
-
-  return null;
-}
-
-function atualizarProcessoNaLista(lista, processoId, processoAtualizado) {
-  return lista.map((processo) => {
-    if (String(obterIdProcesso(processo)) !== String(processoId)) {
-      return processo;
-    }
-
-    return {
-      ...processo,
-      ...processoAtualizado,
-    };
-  });
-}
-
 const PERFIS_PODEM_MARCAR_ETAPA = new Set(['funcionario', 'admin_cliente', 'admin_efficience']);
 const PERFIL_PODE_CRIAR_PROCESSO = 'admin_cliente';
 const INTERVALO_POLLING_ETAPAS_MS = 3000;
@@ -1133,6 +1088,7 @@ export default function ProcessosPage() {
     }
 
     const chaveAtualizacao = `${processoId}::${etapaId}`;
+
     setEtapasEmAtualizacao((valorAtual) => ({
       ...valorAtual,
       [chaveAtualizacao]: true,
