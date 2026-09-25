@@ -20,6 +20,7 @@ const CNPJ_ALHEIO = "11111111000191";
 
 const originalFrom = supabase.from;
 const filas = new Map();
+const insercoes = [];
 function chave(t, m) { return `${t}:${m}`; }
 function queue(tabela, metodo, resultado) {
   const k = chave(tabela, metodo);
@@ -36,7 +37,7 @@ supabase.from = function (tabela) {
   };
   const builder = {
     select() { return builder; },
-    insert() { return builder; },
+    insert(payload) { insercoes.push(payload); return builder; },
     eq() { return builder; },
     gte() { return builder; },
     lte() { return builder; },
@@ -54,7 +55,10 @@ after(() => {
   supabase.from = originalFrom;
 });
 
-beforeEach(() => filas.clear());
+beforeEach(() => {
+  filas.clear();
+  insercoes.length = 0;
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -113,9 +117,16 @@ describe("POST /lancamentos-fiscais", () => {
 
     assert.equal(res.statusCode, 201);
     assert.equal(res.body.id, "novo-id");
+    assert.equal(insercoes.length, 1);
+    assert.equal(insercoes[0].valor_total, "1000.50");
+    assert.equal(insercoes[0].icms, "0.00");
+    assert.equal(insercoes[0].pis, "0.00");
+    assert.equal(insercoes[0].cofins, "0.00");
+    assert.equal(insercoes[0].ipi, "0.00");
+    assert.equal(insercoes[0].arquivo_xml, null);
   });
 
-  it("400 quando data_emissao é futura (BUG-APUR-08)", async () => {
+  it("422 quando data_emissao é futura (BUG-APUR-08)", async () => {
     tokenValido();
     const req = {
       headers: { "x-licenca-token": "tok" },
@@ -124,8 +135,9 @@ describe("POST /lancamentos-fiscais", () => {
     const res = criarResposta();
     await criarLancamentoFiscal(req, res);
 
-    assert.equal(res.statusCode, 400);
-    assert.match(res.body.erro, /não pode ser futura/i);
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.campos.data_emissao, /não pode ser futura/i);
+    assert.equal(insercoes.length, 0);
   });
 
   it("403 quando cliente_id do payload não pertence ao token", async () => {
@@ -218,6 +230,166 @@ describe("POST /lancamentos-fiscais", () => {
 
     assert.equal(res.statusCode, 403);
     assert.match(res.body.erro, /CNPJ/i);
+  });
+
+  it("422 com mensagem por campo e sem insert (BUG-NFE-08 / #568)", async () => {
+    const casos = [
+      ["valor_total texto", { valor_total: "abc" }, "valor_total", /deve ser um número/i],
+      ["valor_total negativo", { valor_total: "-10.00" }, "valor_total", /não pode ser negativo/i],
+      ["valor_total estoura numeric(14,2)", { valor_total: "123456789012345.67" }, "valor_total", /numeric\(14,2\)/i],
+      ["valor_total com 3 casas decimais", { valor_total: "10.999" }, "valor_total", /2 casas decimais/i],
+      ["valor_total numérico com 3 casas", { valor_total: 10.999 }, "valor_total", /2 casas decimais/i],
+      ["icms negativo", { icms: "-5" }, "icms", /não pode ser negativo/i],
+      ["pis negativo", { pis: -1 }, "pis", /não pode ser negativo/i],
+      ["data inexistente", { data_emissao: "2026-02-30" }, "data_emissao", /data existente/i],
+      ["data em dd/mm/aaaa", { data_emissao: "31/03/2026" }, "data_emissao", /YYYY-MM-DD/i],
+      ["data futura", { data_emissao: "2027-01-01" }, "data_emissao", /não pode ser futura/i],
+      ["chave com 44 letras", { chave_nfe: "A".repeat(44) }, "chave_nfe", /44 dígitos/i],
+      ["chave com 45 caracteres", { chave_nfe: "1".repeat(45) }, "chave_nfe", /44 dígitos/i],
+      ["chave com 10 caracteres", { chave_nfe: "1234567890" }, "chave_nfe", /44 dígitos/i],
+      ["cnpj_emitente com 15 caracteres", { cnpj_emitente: "112223330001811" }, "cnpj_emitente", /14 dígitos/i],
+      ["cnpj_destinatario com 15 caracteres", { cnpj_destinatario: "112223330001811" }, "cnpj_destinatario", /14 dígitos|11 dígitos/i],
+      [
+        "arquivo_xml absoluto no Windows",
+        { arquivo_xml: "C:\\Users\\joao\\x.xml" },
+        "arquivo_xml",
+        /caminho relativo/i,
+      ],
+      ["arquivo_xml absoluto POSIX", { arquivo_xml: "/var/nfe/x.xml" }, "arquivo_xml", /caminho relativo/i],
+      ["arquivo_xml com ..", { arquivo_xml: "empresa/../../segredo.xml" }, "arquivo_xml", /caminho relativo/i],
+      [
+        "arquivo_xml UNC",
+        { arquivo_xml: "\\\\servidor\\share\\x.xml" },
+        "arquivo_xml",
+        /caminho relativo/i,
+      ],
+    ];
+
+    for (const [nome, over, campo, mensagem] of casos) {
+      tokenValido();
+      const req = { headers: { "x-licenca-token": "tok" }, body: payloadValido(over) };
+      const res = criarResposta();
+      await criarLancamentoFiscal(req, res);
+
+      assert.equal(res.statusCode, 422, nome);
+      assert.equal(res.body.erro, "Dados do lançamento fiscal inválidos", nome);
+      assert.match(res.body.campos[campo], mensagem, `${nome}: ${res.body.campos?.[campo]}`);
+      assert.equal(insercoes.length, 0, nome);
+    }
+  });
+
+  it("422 lista todos os campos inválidos do mesmo payload", async () => {
+    tokenValido();
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: payloadValido({
+        valor_total: "abc",
+        data_emissao: "2026-02-30",
+        chave_nfe: "123",
+      }),
+    };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.campos.valor_total, /número/i);
+    assert.match(res.body.campos.data_emissao, /YYYY-MM-DD/i);
+    assert.match(res.body.campos.chave_nfe, /44 dígitos/i);
+    assert.equal(insercoes.length, 0);
+  });
+
+  it("201 quando valor_total é zero e grava escala 2 sem arredondar outra casa", async () => {
+    const corpo = payloadValido({
+      valor_total: "0",
+      icms: "1.80",
+      arquivo_xml: "Cliente Teste/Notas Fiscais/2026-03/x.xml",
+    });
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "zero", ...corpo }, error: null });
+
+    const req = { headers: { "x-licenca-token": "tok" }, body: corpo };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(insercoes.length, 1);
+    assert.equal(insercoes[0].valor_total, "0.00");
+    assert.equal(insercoes[0].icms, "1.80");
+    assert.equal(insercoes[0].arquivo_xml, "Cliente Teste/Notas Fiscais/2026-03/x.xml");
+  });
+
+  it("201 no teto de numeric(14,2) e 422 um dígito acima", async () => {
+    const noTeto = payloadValido({ valor_total: "999999999999.99" });
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "teto" }, error: null });
+
+    const aceito = criarResposta();
+    await criarLancamentoFiscal({ headers: { "x-licenca-token": "tok" }, body: noTeto }, aceito);
+    assert.equal(aceito.statusCode, 201);
+    assert.equal(insercoes[0].valor_total, "999999999999.99");
+
+    tokenValido();
+    const estoura = criarResposta();
+    await criarLancamentoFiscal(
+      {
+        headers: { "x-licenca-token": "tok" },
+        body: payloadValido({ valor_total: "1000000000000.00" }),
+      },
+      estoura,
+    );
+    assert.equal(estoura.statusCode, 422);
+    assert.match(estoura.body.campos.valor_total, /numeric\(14,2\)/i);
+    assert.equal(insercoes.length, 1);
+  });
+
+  it("422 quando o banco recusa numeric overflow em vez de 500 genérico", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", {
+      data: null,
+      error: { code: "22003", message: "numeric field overflow" },
+    });
+
+    const req = { headers: { "x-licenca-token": "tok" }, body: payloadValido() };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.detalhe, /faixa numérica/i);
+    assert.notEqual(res.body.erro, "Erro ao registrar lançamento fiscal");
+  });
+
+  it("422 quando o banco recusa formato ou check, sem gravar 500 genérico", async () => {
+    const codigos = [
+      ["22P02", /formato inválido/i],
+      ["22008", /data_emissao inválida/i],
+      ["23514", /regra de integridade/i],
+      ["22001", /tamanho aceito/i],
+    ];
+
+    for (const [code, mensagem] of codigos) {
+      tokenValido();
+      clienteComCnpj(CNPJ_EMIT);
+      queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+      queue("lancamentos_fiscais", "single", {
+        data: null,
+        error: { code, message: `postgres ${code}` },
+      });
+
+      const res = criarResposta();
+      await criarLancamentoFiscal(
+        { headers: { "x-licenca-token": "tok" }, body: payloadValido() },
+        res,
+      );
+
+      assert.equal(res.statusCode, 422, code);
+      assert.match(res.body.detalhe, mensagem, code);
+    }
   });
 });
 
