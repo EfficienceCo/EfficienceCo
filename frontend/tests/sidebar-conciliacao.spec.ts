@@ -46,7 +46,7 @@ test.describe('Sidebar — Conciliação nested em Contábil (issue #333, atuali
     await expect(sidebar.getByRole('link', { name: 'Home' })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'Logs', exact: true })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'Efficience' })).toBeVisible();
-    await expect(sidebar.getByRole('link', { name: 'Fiscal' })).toBeVisible();
+    await expect(sidebar.getByRole('link', { name: 'Fiscal', exact: true })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'Contábil' })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'DP', exact: true })).toBeVisible();
     await expect(sidebar.getByRole('link', { name: 'Societário' })).toBeVisible();
@@ -60,7 +60,9 @@ test.describe('Sidebar — Conciliação nested em Contábil (issue #333, atuali
     await expect(sidebar.getByRole('link', { name: 'Comunicação' })).toHaveCount(0);
 
     await page.goto('/dashboard/fiscal');
-    await expect(sidebar.getByRole('link', { name: 'Fiscal' })).toHaveClass(/bg-sky-400\/10/);
+    await expect(sidebar.getByRole('link', { name: 'Fiscal', exact: true })).toHaveClass(
+      /bg-sky-400\/10/,
+    );
     await expect(sidebar.getByRole('link', { name: 'Contábil' })).not.toHaveClass(/bg-sky-400\/10/);
   });
 });
