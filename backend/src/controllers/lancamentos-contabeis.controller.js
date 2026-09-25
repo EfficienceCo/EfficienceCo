@@ -1,6 +1,7 @@
 import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
+import { dataIsoValida } from "../utils/data.util.js";
 
 const TIPOS_VALIDOS = new Set(["credito", "debito"]);
 
@@ -18,6 +19,76 @@ function camposFaltando(body) {
   );
 }
 
+// valor é NUMERIC(15,2) (migration 67): 13 dígitos inteiros. Acima disso o
+// Postgres estoura com "numeric field overflow" e o insert vira 500.
+const VALOR_MAXIMO = 9999999999999.99;
+
+function validarValor(valor) {
+  const numero =
+    typeof valor === "number"
+      ? valor
+      : typeof valor === "string" && /^\s*\d+(\.\d+)?\s*$/.test(valor)
+        ? Number(valor)
+        : NaN;
+
+  if (!Number.isFinite(numero)) {
+    return { erro: "valor deve ser um número" };
+  }
+  // Compara já arredondado a centavos: 0.001 viraria 0.00 no banco.
+  const centavos = Math.round(numero * 100);
+  if (centavos <= 0) {
+    return { erro: "valor deve ser maior que zero" };
+  }
+  if (centavos / 100 > VALOR_MAXIMO) {
+    return { erro: "valor excede o máximo permitido (9.999.999.999.999,99)" };
+  }
+  return { valor: numero };
+}
+
+// Só aceita AAAA-MM-DD: "05/02/2022" era gravado pelo Postgres como 2 de maio
+// (DateStyle MDY), invertendo dia e mês em silêncio.
+function validarDataLancamento(data) {
+  if (!dataIsoValida(data)) {
+    return { erro: "data_lancamento deve ser uma data válida no formato AAAA-MM-DD" };
+  }
+  return { valor: data };
+}
+
+function validarDescricao(descricao) {
+  if (typeof descricao !== "string" || descricao.trim() === "") {
+    return { erro: "descricao não pode ser vazia" };
+  }
+  return { valor: descricao.trim() };
+}
+
+const VALIDADORES = {
+  data_lancamento: validarDataLancamento,
+  valor: validarValor,
+  descricao: validarDescricao,
+};
+
+// Valida só os campos presentes em body (PATCH é parcial; no POST os
+// obrigatórios já foram checados por camposFaltando). Devolve os valores
+// normalizados e, se houver, a mensagem de erro de cada campo.
+function validarCampos(body) {
+  const valores = {};
+  const campos = {};
+  for (const [campo, validar] of Object.entries(VALIDADORES)) {
+    if (body[campo] === undefined) continue;
+    const resultado = validar(body[campo]);
+    if (resultado.erro) {
+      campos[campo] = resultado.erro;
+    } else {
+      valores[campo] = resultado.valor;
+    }
+  }
+  return { valores, campos };
+}
+
+function responderCamposInvalidos(res, campos) {
+  return res.status(400).json({ erro: Object.values(campos).join("; "), campos });
+}
+
 // GET usa clienteId (camelCase) — mesmo padrão do dashboard em lancamentos-fiscais.controller.js.
 function resolverClienteIdQuery(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
@@ -32,11 +103,17 @@ export async function criarLancamentoContabil(req, res) {
     return res.status(400).json({ erro: "Campos obrigatórios faltando", faltando });
   }
 
-  const { cliente_id, data_lancamento, valor, tipo, descricao, categoria } = req.body;
+  const { cliente_id, tipo, categoria } = req.body;
 
   if (!TIPOS_VALIDOS.has(tipo)) {
     return res.status(400).json({ erro: "tipo deve ser 'credito' ou 'debito'" });
   }
+
+  const { valores, campos } = validarCampos(req.body);
+  if (Object.keys(campos).length > 0) {
+    return responderCamposInvalidos(res, campos);
+  }
+  const { data_lancamento, valor, descricao } = valores;
 
   if (req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE && cliente_id !== req.usuario.cliente_id) {
     return res.status(403).json({ erro: "cliente_id não corresponde ao usuário autenticado" });
@@ -114,17 +191,19 @@ export async function atualizarLancamentoContabil(req, res) {
     return res.status(409).json({ erro: "Lançamento já conciliado não pode ser alterado" });
   }
 
-  const { data_lancamento, valor, tipo, descricao, categoria } = req.body;
+  const { tipo, categoria } = req.body;
 
   if (tipo !== undefined && !TIPOS_VALIDOS.has(tipo)) {
     return res.status(400).json({ erro: "tipo deve ser 'credito' ou 'debito'" });
   }
 
-  const updates = {};
-  if (data_lancamento !== undefined) updates.data_lancamento = data_lancamento;
-  if (valor !== undefined) updates.valor = valor;
+  const { valores, campos } = validarCampos(req.body);
+  if (Object.keys(campos).length > 0) {
+    return responderCamposInvalidos(res, campos);
+  }
+
+  const updates = { ...valores };
   if (tipo !== undefined) updates.tipo = tipo;
-  if (descricao !== undefined) updates.descricao = descricao;
   if (categoria !== undefined) updates.categoria = categoria;
 
   if (Object.keys(updates).length === 0) {
