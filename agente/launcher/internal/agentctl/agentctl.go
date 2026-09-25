@@ -25,6 +25,8 @@ type Controller struct {
 	Token      string
 	ClienteID  string
 	PastaBase  string
+	// PacoteDir is the folder shipped to the office (launcher exe dir): contains modelos/.
+	PacoteDir string
 }
 
 func New(cfg *config.Config) *Controller {
@@ -35,6 +37,7 @@ func New(cfg *config.Config) *Controller {
 		Token:      cfg.LicencaToken,
 		ClienteID:  cfg.ClienteID,
 		PastaBase:  cfg.PastaBase,
+		PacoteDir:  cfg.LauncherDir,
 	}
 }
 
@@ -90,7 +93,7 @@ func (c *Controller) Start() error {
 
 	cmd := commandForAgent(c.AgenteExe)
 	cmd.Dir = workDirForAgent(c.AgenteExe)
-	cmd.Env = agentEnv(c.BackendURL, c.Token, c.ClienteID, c.PastaBase)
+	cmd.Env = agentEnv(c.BackendURL, c.Token, c.ClienteID, c.PastaBase, c.PacoteDir)
 	hideWindow(cmd)
 
 	if err := cmd.Start(); err != nil {
@@ -245,8 +248,10 @@ func (c *Controller) writeLock(pid int, tracked string) error {
 // agentEnv builds the worker process environment.
 // PYTHONUTF8 / PYTHONIOENCODING evitam UnicodeEncodeError em console Windows
 // cp1252 (BUG-NFE-01) quando o launcher sobe o worker com janela oculta.
-func agentEnv(backendURL, token, clienteID, pastaBase string) []string {
-	return append(os.Environ(),
+// CLASSIFICADOR_ARTEFATOS_DIR / EFFICIENCE_PACOTE_DIR apontam os pesos ML do
+// pacote (modelos/classificador_documentos) — #509 / BUG-ML-01.
+func agentEnv(backendURL, token, clienteID, pastaBase, pacoteDir string) []string {
+	env := append(os.Environ(),
 		"API_URL="+backendURL,
 		"LICENSE_TOKEN="+token,
 		"CLIENTE_ID="+clienteID,
@@ -254,6 +259,14 @@ func agentEnv(backendURL, token, clienteID, pastaBase string) []string {
 		"PYTHONUTF8=1",
 		"PYTHONIOENCODING=utf-8",
 	)
+	if pacoteDir != "" {
+		artefatos := filepath.Join(pacoteDir, "modelos", "classificador_documentos")
+		env = append(env,
+			"EFFICIENCE_PACOTE_DIR="+pacoteDir,
+			"CLASSIFICADOR_ARTEFATOS_DIR="+artefatos,
+		)
+	}
+	return env
 }
 
 // commandForAgent runs .cmd/.bat via cmd.exe (CreateProcess cannot launch them directly).

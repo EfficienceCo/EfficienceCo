@@ -56,6 +56,29 @@ def _digitos(valor: str | None, campo: str) -> str:
     return so
 
 
+def _documento_destinatario(inf: ET.Element) -> str:
+    """CNPJ (14) ou CPF (11) do destinatário.
+
+    Venda a pessoa física é NF-e legítima. O CPF entra em cnpj_destinatario:
+    a coluna é VARCHAR(14), então 11 dígitos cabem sem migration. Só dígitos,
+    no mesmo formato do CNPJ.
+    """
+    cnpj_bruto = _text(inf, "nfe:dest/nfe:CNPJ")
+    cpf_bruto = _text(inf, "nfe:dest/nfe:CPF")
+    cnpj = _somente_digitos(cnpj_bruto) if cnpj_bruto else ""
+    cpf = _somente_digitos(cpf_bruto) if cpf_bruto else ""
+
+    if len(cnpj) == 14:
+        return cnpj
+    if len(cpf) == 11:
+        return cpf
+    if cnpj:
+        raise ValueError(f"dest/CNPJ inválido (esperado 14 dígitos): {cnpj_bruto!r}")
+    if cpf_bruto is not None:
+        raise ValueError(f"dest/CPF inválido (esperado 11 dígitos): {cpf_bruto!r}")
+    raise ValueError("campo obrigatório ausente: dest/CNPJ ou dest/CPF")
+
+
 def _dec(texto: str | None, campo: str, obrigatorio: bool = True) -> Decimal:
     if texto is None or texto.strip() == "":
         if obrigatorio:
@@ -103,7 +126,7 @@ def parsear_nfe(caminho_xml: str) -> dict:
         raise ValueError(f"chave_nfe inválida no atributo Id: {id_attr!r}")
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
-    cnpj_dest = _digitos(_text(inf, "nfe:dest/nfe:CNPJ"), "dest/CNPJ")
+    cnpj_dest = _documento_destinatario(inf)
 
     return {
         "chave_nfe": chave,

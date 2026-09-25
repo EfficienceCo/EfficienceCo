@@ -24,14 +24,14 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
       if (pathname.endsWith('/resumo')) {
         await route.fulfill({
           json: {
-            total_nfe: 2,
-            valor_total: 2_500,
+            total_nfe: 3,
+            valor_total: 2_750,
             icms: 180,
             pis: 20,
             cofins: 90,
             ipi: 0,
             entradas: 1,
-            saidas: 1,
+            saidas: 2,
           },
         });
         return;
@@ -57,6 +57,15 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
             cnpj_destinatario: '12345678000190',
             valor_total: 1_000,
           },
+          {
+            id: 'saida-cpf',
+            data_emissao: '2026-08-19',
+            chave_nfe: '35260712345678000199550010000000041000000044',
+            tipo: 'saida',
+            cnpj_emitente: '12345678000190',
+            cnpj_destinatario: '12345678909',
+            valor_total: 250,
+          },
         ],
       });
     });
@@ -68,7 +77,7 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await page.goto('/dashboard/fiscal/escrituracao');
 
     const entrada = page.getByText('Entrada', { exact: true });
-    const saida = page.getByText('Saída', { exact: true });
+    const saida = page.getByText('Saída', { exact: true }).first();
 
     await expect(entrada).toBeVisible();
     await expect(entrada).toHaveClass(/bg-emerald-100/);
@@ -77,6 +86,8 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(saida).toBeVisible();
     await expect(saida).toHaveClass(/bg-rose-100/);
     await expect(saida).toHaveClass(/text-rose-700/);
+    await expect(page.getByText('123.456.789-09')).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'CNPJ/CPF destinatário' })).toBeVisible();
 
     const sidebar = page.locator('aside.nova-sidebar');
     const fiscalLink = sidebar.getByRole('link', { name: 'Fiscal', exact: true });

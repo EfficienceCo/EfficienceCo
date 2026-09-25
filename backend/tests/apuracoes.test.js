@@ -367,6 +367,33 @@ describe("POST /apuracoes", () => {
     assert.match(excluida.motivo, /não fechado/i);
   });
 
+  it("inclui saída para CPF na receita do mês (destinatário pessoa física)", () => {
+    const bases = montarBasesCalculo({
+      notas: [
+        {
+          id: "nfe-cpf",
+          chave_nfe: "35260712345678000199550010000000041000000044",
+          tipo: "saida",
+          cnpj_destinatario: "12345678909",
+          valor_total: 250,
+          data_emissao: "2026-07-15",
+        },
+        {
+          id: "nfe-entrada",
+          tipo: "entrada",
+          valor_total: 999,
+          data_emissao: "2026-07-15",
+        },
+      ],
+      historicoReceita: [],
+      mes: 7,
+      ano: 2026,
+      hojeISO: "2026-09-25",
+    });
+
+    assert.equal(bases.receitaMes, 250);
+  });
+
   it("exclui NF-e com data de emissão futura da RBT12 e da receita (BUG-APUR-08)", async () => {
     const agora = new Date();
     const amanha = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1);
