@@ -621,6 +621,22 @@ export async function rejeitarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
+  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e
+  // outro só com o lançamento — no mesmo formato que o matching gera para sobras.
+  // Assim o lançamento continua visível em "Lançamentos sem transação" e no PDF.
+  const { data: parLancamento, error: erroInsertPar } = await supabase
+    .from("pares_conciliacao")
+    .insert({ conciliacao_id: id, transacao_id: null, lancamento_id: par.lancamento_id, confianca: "sem_par" })
+    .select("id")
+    .single();
+
+  if (erroInsertPar) {
+    console.error("[conciliacoes.controller] Erro ao separar lançamento do par rejeitado:", erroInsertPar.message);
+    return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
+  }
+
+  const desfazerInsert = () => supabase.from("pares_conciliacao").delete().eq("id", parLancamento.id);
+
   const { error: erroUpdatePar } = await supabase
     .from("pares_conciliacao")
     .update({ lancamento_id: null, confianca: "sem_par" })
@@ -628,10 +644,46 @@ export async function rejeitarPar(req, res) {
 
   if (erroUpdatePar) {
     console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroUpdatePar.message);
+    await desfazerInsert();
     return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
   }
 
-  return res.status(200).json({ id: pareId, confianca: "sem_par" });
+  // O par provável já contava como 1 pendente; agora são 2 pares 'sem_par'.
+  // Mesmo padrão de re-busca + update do confirmarPar (sem update atômico no client).
+  const { data: conciliacaoAtual, error: erroConciliacaoAtual } = await supabase
+    .from("conciliacoes")
+    .select("total_pendentes")
+    .eq("id", id)
+    .maybeSingle();
+
+  const erroUpdateConciliacao =
+    erroConciliacaoAtual ??
+    (
+      await supabase
+        .from("conciliacoes")
+        .update({ total_pendentes: conciliacaoAtual.total_pendentes + 1 })
+        .eq("id", id)
+    ).error;
+
+  if (erroUpdateConciliacao) {
+    console.error(
+      "[conciliacoes.controller] Erro ao atualizar totais da conciliação:",
+      erroUpdateConciliacao.message,
+    );
+    // Volta o par ao estado provável para permitir uma nova tentativa consistente.
+    await supabase
+      .from("pares_conciliacao")
+      .update({ lancamento_id: par.lancamento_id, confianca: "provavel" })
+      .eq("id", pareId);
+    await desfazerInsert();
+    return res.status(500).json({ erro: "Erro ao atualizar totais da conciliação" });
+  }
+
+  return res.status(200).json({
+    id: pareId,
+    confianca: "sem_par",
+    par_lancamento: { id: parLancamento.id, lancamento_id: par.lancamento_id, confianca: "sem_par" },
+  });
 }
 
 export async function concluirConciliacao(req, res) {
