@@ -162,12 +162,9 @@ export async function listarTransacoesExtrato(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar extrato bancário" });
   }
 
-  if (!extrato) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!extrato || extrato.cliente_id !== clienteId) {
     return res.status(404).json({ erro: "Extrato bancário não encontrado" });
-  }
-
-  if (extrato.cliente_id !== clienteId) {
-    return res.status(403).json({ erro: "Sem permissão para acessar este extrato" });
   }
 
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
@@ -225,12 +222,9 @@ export async function criarConciliacao(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar extrato bancário" });
   }
 
-  if (!extrato) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!extrato || extrato.cliente_id !== clienteId) {
     return res.status(404).json({ erro: "Extrato bancário não encontrado" });
-  }
-
-  if (extrato.cliente_id !== clienteId) {
-    return res.status(403).json({ erro: "Sem permissão para acessar este extrato" });
   }
 
   if (extrato.status !== STATUS_EXTRATO.PROCESSADO) {

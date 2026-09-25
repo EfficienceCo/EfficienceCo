@@ -179,11 +179,12 @@ describe("POST /conciliacoes", () => {
     assert.equal(res.statusCode, 404);
   });
 
-  it("403 quando o extrato pertence a outro cliente", async () => {
+  it("404 (nunca 403) quando o extrato pertence a outro cliente", async () => {
     queueExtratoValido({ cliente_id: CLIENTE_B });
     const res = criarResposta();
     await criarConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, { erro: "Extrato bancário não encontrado" });
   });
 
   it("409 quando o extrato ainda não foi processado com sucesso", async () => {

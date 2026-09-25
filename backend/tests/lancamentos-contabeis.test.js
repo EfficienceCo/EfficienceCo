@@ -124,11 +124,12 @@ describe("POST /lancamentos-contabeis", () => {
     assert.equal(res.statusCode, 400);
   });
 
-  it("403 quando cliente_id do payload não corresponde ao usuário autenticado", async () => {
+  it("404 (nunca 403) quando cliente_id do payload é de outro cliente", async () => {
     const res = criarResposta();
     await criarLancamentoContabil(reqAdmin(payloadValido({ cliente_id: CLIENTE_B })), res);
 
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, { erro: "Cliente não encontrado" });
   });
 
   it("500 quando o Supabase retorna erro no insert", async () => {
@@ -234,7 +235,7 @@ describe("PATCH /lancamentos-contabeis/:id", () => {
     assert.equal(res.statusCode, 409);
   });
 
-  it("403 quando admin_cliente tenta alterar lançamento de outro cliente", async () => {
+  it("404 (nunca 403) quando admin_cliente tenta alterar lançamento de outro cliente", async () => {
     queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_B }, error: null });
 
     const res = criarResposta();
@@ -243,7 +244,8 @@ describe("PATCH /lancamentos-contabeis/:id", () => {
       res,
     );
 
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, { erro: "Lançamento contábil não encontrado" });
   });
 
   it("404 quando lançamento não existe", async () => {
@@ -299,7 +301,7 @@ describe("DELETE /lancamentos-contabeis/:id", () => {
     assert.equal(res.statusCode, 409);
   });
 
-  it("403 quando admin_cliente tenta remover lançamento de outro cliente", async () => {
+  it("404 (nunca 403) quando admin_cliente tenta remover lançamento de outro cliente", async () => {
     queue("lancamentos_contabeis", "single", {
       data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_B, conciliado: false },
       error: null,
@@ -308,7 +310,8 @@ describe("DELETE /lancamentos-contabeis/:id", () => {
     const res = criarResposta();
     await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
 
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, { erro: "Lançamento contábil não encontrado" });
   });
 
   it("404 quando lançamento não existe", async () => {
