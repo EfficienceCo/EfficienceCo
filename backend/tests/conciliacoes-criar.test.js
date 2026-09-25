@@ -151,6 +151,62 @@ describe("POST /conciliacoes", () => {
     assert.ok(paresInseridos.some((p) => p.transacao_id === "t3" && p.lancamento_id === null && p.confianca === "sem_par"));
   });
 
+  it("lançamento já conciliado NÃO deve ser re-casado", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", {
+      data: [
+        { id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: false },
+        // já conciliada numa sessão anterior do mesmo extrato
+        { id: "t0", tipo: "debito", valor: 30, data_lancamento: "2026-07-02", conciliado: true },
+      ],
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [
+        // idêntico a t1, mas já conciliado em outra conciliação
+        { id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: true },
+      ],
+      error: null,
+    });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+
+    // O mock padrão ignora .eq(); aqui os filtros são aplicados de verdade
+    // sobre os dados enfileirados, para refletir o que o banco devolveria.
+    let paresInseridos = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato" || tabela === "lancamentos_contabeis") {
+        const filtros = [];
+        const eqOriginal = b.eq.bind(b);
+        b.eq = (campo, valor) => { filtros.push([campo, valor]); eqOriginal(campo, valor); return b; };
+        const thenOriginal = b.then.bind(b);
+        b.then = (resolve, reject) => thenOriginal((r) => resolve(
+          r.data
+            ? { ...r, data: r.data.filter((linha) => filtros.every(([c, v]) => !(c in linha) || linha[c] === v)) }
+            : r,
+        ), reject);
+      }
+      if (tabela === "pares_conciliacao") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { paresInseridos = linhas; return insertOriginal(linhas); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.automaticos, 0);
+    assert.equal(res.body.total_transacoes, 1);
+    assert.equal(res.body.sem_par, 1);
+    assert.ok(paresInseridos.every((p) => p.lancamento_id !== "l1"));
+    assert.ok(paresInseridos.every((p) => p.transacao_id !== "t0"));
+  });
+
   it("400 quando extrato_id não é informado", async () => {
     const res = criarResposta();
     await criarConciliacao(reqBase({ body: { mes: 7, ano: 2026 } }), res);

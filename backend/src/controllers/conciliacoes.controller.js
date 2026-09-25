@@ -262,10 +262,13 @@ export async function criarConciliacao(req, res) {
     return res.status(409).json({ erro: "Já existe uma conciliação em andamento para este extrato" });
   }
 
+  // Itens já conciliados (conciliado=true, marcados em concluirConciliacao)
+  // ficam fora do matching — senão seriam casados de novo em outra conciliação.
   const { data: transacoes, error: erroTransacoes } = await supabase
     .from("transacoes_extrato")
     .select("*")
-    .eq("extrato_id", extratoId);
+    .eq("extrato_id", extratoId)
+    .eq("conciliado", false);
 
   if (erroTransacoes) {
     console.error("[conciliacoes.controller] Erro ao buscar transações do extrato:", erroTransacoes.message);
@@ -273,7 +276,11 @@ export async function criarConciliacao(req, res) {
   }
 
   const { data: lancamentos, error: erroLancamentos } = await aplicarFiltroPeriodo(
-    supabase.from("lancamentos_contabeis").select("*").eq("cliente_id", clienteId),
+    supabase
+      .from("lancamentos_contabeis")
+      .select("*")
+      .eq("cliente_id", clienteId)
+      .eq("conciliado", false),
     "data_lancamento",
     mes,
     ano,
