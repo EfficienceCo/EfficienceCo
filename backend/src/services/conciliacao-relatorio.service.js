@@ -1,7 +1,11 @@
 import PDFDocument from "pdfkit";
 
-function formatarMoeda(valor) {
-  return Number(valor ?? 0).toFixed(2).replace(".", ",");
+// Mesmo formato da UI (Intl pt-BR/BRL): "R$ 6.562,01". O Intl separa "R$" do número
+// com NBSP; troca por espaço comum para o texto extraído do PDF bater com a tela.
+const FORMATADOR_MOEDA = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+
+export function formatarMoeda(valor) {
+  return FORMATADOR_MOEDA.format(Number(valor ?? 0)).replace(/\s/g, " ");
 }
 
 function formatarData(dataIso) {
@@ -130,9 +134,71 @@ const COLUNAS_SEM_PAR = (larguraUtil) => [
   { chave: "origem", largura: larguraUtil * 0.22, rotulo: "ORIGEM" },
 ];
 
+// Par "conciliado" = automático ou provável já confirmado — mesmo critério usado em
+// concluirConciliacao (conciliacoes.controller) para marcar conciliado=true. Como o
+// relatório só existe para sessões com status='concluida', todo par 'provavel' aqui já
+// tem confirmado_em setado (concluirConciliacao bloqueia com 409 se restar algum pendente).
+function parConciliado(par) {
+  return par.confianca === "automatico" || (par.confianca === "provavel" && par.confirmado_em);
+}
+
+// Monta as linhas das duas seções do relatório e os totais a partir dos pares da sessão.
+export function montarConteudoRelatorio(paresTodos, transacoesPorId, lancamentosPorId) {
+  const matches = [];
+  const semPar = [];
+  let valorTotalConciliado = 0;
+  for (const par of paresTodos) {
+    const transacao = par.transacao_id ? transacoesPorId[par.transacao_id] ?? null : null;
+    const lancamento = par.lancamento_id ? lancamentosPorId[par.lancamento_id] ?? null : null;
+    const valor = transacao?.valor ?? lancamento?.valor ?? 0;
+
+    if (parConciliado(par)) {
+      matches.push({
+        data: transacao?.data_lancamento ?? lancamento?.data_lancamento ?? null,
+        descricaoBanco: transacao?.descricao ?? null,
+        descricaoLancamento: lancamento?.descricao ?? null,
+        valor,
+      });
+      valorTotalConciliado += Number(valor);
+    } else {
+      semPar.push({
+        data: (transacao ?? lancamento)?.data_lancamento ?? null,
+        descricao: (transacao ?? lancamento)?.descricao ?? null,
+        valor,
+        origem: transacao ? "banco" : "lancamento_interno",
+      });
+    }
+  }
+
+  // Ordem cronológica em ambas as seções (data ISO compara como string; sem data
+  // vai pro fim). Em "sem par" as duas origens ficam intercaladas por data.
+  const porData = (a, b) => {
+    if (a.data === b.data) return 0;
+    if (!a.data) return 1;
+    if (!b.data) return -1;
+    return String(a.data).localeCompare(String(b.data));
+  };
+  matches.sort(porData);
+  semPar.sort(porData);
+
+  // Totais derivados dos pares (e não de conciliacao.total_pendentes): sessões antigas
+  // gravaram "pendentes" somando transações e lançamentos sem par, o que não fecha
+  // com total_transacoes. Aqui cada transação cai em exatamente um par.
+  const transacoesPendentes = semPar.filter((item) => item.origem === "banco").length;
+  const totais = {
+    totalTransacoes: matches.length + transacoesPendentes,
+    totalConciliadas: matches.length,
+    totalTransacoesPendentes: transacoesPendentes,
+    totalLancamentosSemPar: semPar.length - transacoesPendentes,
+    valorTotalConciliado,
+  };
+
+  return { matches, semPar, totais };
+}
+
 // Relatório final de uma conciliação concluída — cabeçalho com cliente/banco/período,
-// resumo com os totais já persistidos na sessão, e as duas tabelas exigidas pelo
-// critério de aceite (matches confirmados, itens sem par).
+// resumo com os totais derivados dos pares, e as duas tabelas exigidas pelo critério
+// de aceite (matches confirmados, itens sem par), já em ordem cronológica.
 export function gerarRelatorioConciliacaoPDF({ cliente, banco, conta, mes, ano, geradoEm, totais, matches, semPar }) {
   return documentoParaBuffer((doc) => {
     const x0 = doc.page.margins.left;
@@ -160,15 +226,18 @@ export function gerarRelatorioConciliacaoPDF({ cliente, banco, conta, mes, ano, 
     doc.lineWidth(0.5).moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 
     const alturaTotais = 26;
-    const larguraCelulaTotal = larguraUtil / 4;
+    const larguraCelulaTotal = larguraUtil / 5;
+    // Conciliadas + transações pendentes = total de transações; lançamentos internos
+    // sem transação são contados à parte (não são "transações pendentes").
     desenharLinhaCelulas(doc, x0, y, alturaTotais, [
       { largura: larguraCelulaTotal, rotulo: "TOTAL TRANSAÇÕES", texto: String(totais.totalTransacoes), alinhamento: "right" },
-      { largura: larguraCelulaTotal, rotulo: "TOTAL CONCILIADAS", texto: String(totais.totalConciliadas), alinhamento: "right" },
-      { largura: larguraCelulaTotal, rotulo: "TOTAL PENDENTES", texto: String(totais.totalPendentes), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "CONCILIADAS", texto: String(totais.totalConciliadas), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "TRANSAÇÕES PENDENTES", texto: String(totais.totalTransacoesPendentes), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "LANÇAMENTOS SEM PAR", texto: String(totais.totalLancamentosSemPar), alinhamento: "right" },
       {
         largura: larguraCelulaTotal,
         rotulo: "VALOR TOTAL CONCILIADO",
-        texto: `R$ ${formatarMoeda(totais.valorTotalConciliado)}`,
+        texto: formatarMoeda(totais.valorTotalConciliado),
         alinhamento: "right",
         negrito: true,
       },
