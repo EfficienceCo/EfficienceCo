@@ -123,17 +123,21 @@ function formatarValor(valor) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(numero);
 }
 
-function formatarCnpj(cnpj) {
-  const digitos = String(cnpj || '').replace(/\D/g, '');
+function formatarDocumentoFiscal(valor) {
+  const digitos = String(valor || '').replace(/\D/g, '');
 
-  if (digitos.length !== 14) {
-    return cnpj || '-';
+  if (digitos.length === 14) {
+    return digitos.replace(
+      /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,
+      '$1.$2.$3/$4-$5',
+    );
   }
 
-  return digitos.replace(
-    /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,
-    '$1.$2.$3/$4-$5',
-  );
+  if (digitos.length === 11) {
+    return digitos.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+  }
+
+  return valor || '-';
 }
 
 function truncarChaveNfe(chave) {
@@ -508,7 +512,7 @@ export default function FiscalPage() {
                 <th className="px-4 py-3">Chave NFe</th>
                 <th className="px-4 py-3">Tipo</th>
                 <th className="px-4 py-3">CNPJ emitente</th>
-                <th className="px-4 py-3">CNPJ destinatário</th>
+                <th className="px-4 py-3">CNPJ/CPF destinatário</th>
                 <th className="px-4 py-3">Valor total</th>
               </tr>
             </thead>
@@ -535,10 +539,10 @@ export default function FiscalPage() {
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                    {formatarCnpj(lancamento?.cnpj_emitente)}
+                    {formatarDocumentoFiscal(lancamento?.cnpj_emitente)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                    {formatarCnpj(lancamento?.cnpj_destinatario)}
+                    {formatarDocumentoFiscal(lancamento?.cnpj_destinatario)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
                     {formatarValor(lancamento?.valor_total)}

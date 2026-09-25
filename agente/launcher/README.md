@@ -21,7 +21,7 @@ Token e URL do backend **nunca** vão no binário — só em `config.yaml`.
 - Go 1.25+ (módulo pede 1.25 por `golang.org/x/sys`; testado com Go 1.26)
 - Windows (alvo de produção). Build cross a partir de Linux/macOS é possível.
 - Tray: [`fyne.io/systray`](https://fyne.io/systray) (sem CGO no Windows)
-- Worker PyInstaller: veja [`../worker/build/build.sh`](../worker/build/build.sh)
+- Worker PyInstaller: veja [`../worker/scripts/build.sh`](../worker/scripts/build.sh)
 
 ## Configuração
 
@@ -41,16 +41,18 @@ Coloque `config.yaml` **ao lado** do `EfficienceLauncher.exe`, ou em `%APPDATA%\
 
 Ordem de load: (1) ao lado do exe, (2) AppData.
 
-Ao iniciar o worker, o launcher injeta no processo filho (a partir do YAML):
+Ao iniciar o worker, o launcher injeta no processo filho (a partir do YAML + pasta do pacote):
 
-| Env | Campo YAML | Uso no worker |
+| Env | Campo YAML / origem | Uso no worker |
 |-----|------------|---------------|
 | `API_URL` | `backend_url` | HTTP client |
 | `LICENSE_TOKEN` | `licenca_token` | auth agente |
 | `CLIENTE_ID` | `cliente_id` | `GET /regras/{id}` — **obrigatório** |
 | `PASTA_BASE` | `pasta_base` | base de pastas (opcional) |
+| `EFFICIENCE_PACOTE_DIR` | pasta do launcher `.exe` | raiz do pacote (contém `modelos/`) |
+| `CLASSIFICADOR_ARTEFATOS_DIR` | `<pacote>/modelos/classificador_documentos` | pesos TF-IDF (#509) |
 
-Não dependa de um `.env` separado no pacote de produção: esses valores vêm do `config.yaml` do launcher.
+Não dependa de um `.env` separado no pacote de produção: esses valores vêm do `config.yaml` do launcher (e, para ML, da pasta do instalador).
 
 Logs legíveis:
 - Launcher: `%APPDATA%\Efficience\launcher.log`
@@ -81,11 +83,21 @@ Efficience/
   EfficienceLauncher.exe
   efficience-agente.exe      # saída do PyInstaller do worker
   config.yaml                # backend_url, licenca_token, cliente_id, pasta_base, agente_exe
+  modelos/
+    classificador_documentos/
+      manifest.json          # sempre (versionado no repo)
+      modelo.pt              # após treino publicado (#509)
+      vetorizador.joblib
+      indice_para_rotulo.joblib
 ```
 
-1. Build do worker: `cd agente/worker && bash build/build.sh` (ou PyInstaller equivalente no Windows).
+Quem instala por este pacote **já recebe** a pasta `modelos/classificador_documentos/` (mesmo vazia de pesos, com o manifest). Quem roda o worker sem o instalador (QA/dev) instala os artefatos na mão — ver [`../worker/automacoes/classificador_documentos/README.md`](../worker/automacoes/classificador_documentos/README.md).
+
+1. Build do worker: `cd agente/worker && bash scripts/build.sh` (ou PyInstaller equivalente no Windows).
 2. Build do launcher (acima).
-3. Copie os dois `.exe` + `config.yaml` preenchido para a pasta do cliente.
+3. Monte a pasta do cliente com o script:
+   `powershell -File agente/worker/scripts/empacotar.ps1 -SaidaDir C:\dist\Efficience [-ArtefatosFonte C:\caminho\pesos]`
+   Ou copie manualmente os dois `.exe` + `config.yaml` + `modelos/classificador_documentos/`.
 4. Execute `EfficienceLauncher.exe` uma vez (instala atalho no Startup automaticamente).
 
 ### Startup manual

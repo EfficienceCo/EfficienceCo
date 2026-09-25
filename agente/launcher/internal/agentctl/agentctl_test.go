@@ -68,14 +68,16 @@ func TestImagesMatch(t *testing.T) {
 }
 
 func TestAgentEnv_InjetaPythonUTF8(t *testing.T) {
-	env := agentEnv("http://localhost:3000", "tok", "cli", `C:\base`)
+	env := agentEnv("http://localhost:3000", "tok", "cli", `C:\base`, `C:\Efficience`)
 	want := map[string]string{
-		"API_URL":           "http://localhost:3000",
-		"LICENSE_TOKEN":     "tok",
-		"CLIENTE_ID":        "cli",
-		"PASTA_BASE":        `C:\base`,
-		"PYTHONUTF8":        "1",
-		"PYTHONIOENCODING":  "utf-8",
+		"API_URL":                     "http://localhost:3000",
+		"LICENSE_TOKEN":               "tok",
+		"CLIENTE_ID":                  "cli",
+		"PASTA_BASE":                  `C:\base`,
+		"PYTHONUTF8":                  "1",
+		"PYTHONIOENCODING":            "utf-8",
+		"EFFICIENCE_PACOTE_DIR":       `C:\Efficience`,
+		"CLASSIFICADOR_ARTEFATOS_DIR": filepath.Join(`C:\Efficience`, "modelos", "classificador_documentos"),
 	}
 	got := map[string]string{}
 	for _, entry := range env {

@@ -145,6 +145,8 @@ export async function criarLancamentoFiscal(req, res) {
       chave_nfe,
       tipo,
       cnpj_emitente,
+      // CNPJ (14) ou CPF (11). A coluna é VARCHAR(14); não exigir 14 dígitos
+      // senão a NF-e de venda para pessoa física sai da escrituração (#566).
       cnpj_destinatario,
       valor_total,
       icms: icms ?? 0,

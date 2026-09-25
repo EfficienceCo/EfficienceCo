@@ -205,6 +205,23 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(res.statusCode, 400);
   });
 
+  it("201 quando a saída tem destinatário CPF (11 dígitos) em cnpj_destinatario", async () => {
+    const cpf = "12345678909";
+    const corpo = payloadValido({ cnpj_destinatario: cpf, valor_total: 250 });
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "saida-cpf", ...corpo }, error: null });
+
+    const req = { headers: { "x-licenca-token": "tok" }, body: corpo };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.cnpj_destinatario, cpf);
+    assert.equal(res.body.tipo, "saida");
+  });
+
   it("403 quando CNPJ do cliente da licença não corresponde ao tipo da nota", async () => {
     tokenValido();
     clienteComCnpj(CNPJ_ALHEIO);
@@ -305,6 +322,32 @@ describe("GET /lancamentos-fiscais/resumo", () => {
       entradas: 1,
       saidas: 2,
     });
+  });
+
+  it("soma a saída para CPF no resumo (receita da apuração lê essas saídas)", async () => {
+    queue("lancamentos_fiscais", "await", {
+      data: [
+        {
+          tipo: "saida",
+          cnpj_destinatario: "12345678909",
+          valor_total: 250,
+          icms: 0,
+          pis: 0,
+          cofins: 0,
+          ipi: 0,
+        },
+      ],
+      error: null,
+    });
+
+    const res = criarResposta();
+    await resumoLancamentosFiscais(reqBase(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.total_nfe, 1);
+    assert.equal(res.body.saidas, 1);
+    assert.equal(res.body.entradas, 0);
+    assert.equal(res.body.valor_total, 250);
   });
 
   it("200 com zeros quando não há lançamentos no período", async () => {

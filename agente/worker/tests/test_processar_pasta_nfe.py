@@ -152,6 +152,46 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
         assert (base / NOME_EMPRESA / sub).is_dir()
 
 
+def _xml_saida_cpf(valor: str = "250.00") -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+    <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+      <infNFe Id="NFe35260712345678000199550010000000041000000044" versao="4.00">
+        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <emit><CNPJ>{CNPJ_CLIENTE}</CNPJ></emit>
+        <dest><CPF>12345678909</CPF></dest>
+        <total><ICMSTot>
+          <vNF>{valor}</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+        </ICMSTot></total>
+      </infNFe>
+    </NFe>
+    """
+
+
+def test_processar_pasta_saida_dest_cpf_posta_e_nao_quarentena(pasta_nfe):
+    """NF-e de saída para CPF vira lançamento (não vai para nao_identificado)."""
+    inbox, base = pasta_nfe
+    xml_path = inbox / "saida-cpf.xml"
+    xml_path.write_text(_xml_saida_cpf(), encoding="utf-8")
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        mock_post.return_value = MagicMock()
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 1
+    payload = mock_post.call_args.args[1]
+    assert payload["tipo"] == "saida"
+    assert payload["cnpj_emitente"] == CNPJ_CLIENTE
+    assert payload["cnpj_destinatario"] == "12345678909"
+    assert payload["valor_total"] == "250.00"
+    assert payload["cliente_id"] == CLIENTE_ID
+    assert not (inbox / "saida-cpf.xml").exists()
+    assert not (inbox / "nao_identificado" / "saida-cpf.xml").exists()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "saida-cpf.xml").is_file()
+
+
 def test_processar_pasta_saida(pasta_nfe):
     inbox, base = pasta_nfe
     _copiar_fixture("saida.xml", inbox)
