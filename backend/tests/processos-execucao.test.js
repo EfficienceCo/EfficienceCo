@@ -5,6 +5,7 @@ import supabase from "../src/config/database.js";
 import {
   concluirEtapaJwt,
   executarAcaoEtapaJwt,
+  expirarExecucaoEtapaJwt,
   listarEtapasProntasAgente,
   concluirExecucaoEtapaAgente,
 } from "../src/controllers/processos.controller.js";
@@ -447,6 +448,188 @@ describe("processos.controller — executarAcaoEtapaJwt (issue #266)", () => {
     );
     assert.equal(update.args[0].erro_execucao, null);
     assert.equal(update.args[0].status, "pronta_para_execucao");
+  });
+});
+
+describe("processos.controller — expirarExecucaoEtapaJwt (bug #487, timeout de ~90s)", () => {
+  beforeEach(() => {
+    filas.clear();
+    chamadas.length = 0;
+  });
+
+  it("404 quando processo não existe", async () => {
+    const res = criarRes();
+    await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+    assert.equal(res.statusCode, 404);
+  });
+
+  it("403 quando processo pertence a outro cliente", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_B, status: "em_andamento" },
+      error: null,
+    });
+
+    const res = criarRes();
+    await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+    assert.equal(res.statusCode, 403);
+  });
+
+  it("400 quando etapa já está concluída", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        status: "concluida",
+        concluida: true,
+      },
+      error: null,
+    });
+
+    const res = criarRes();
+    await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+
+    assert.equal(res.statusCode, 400);
+  });
+
+  it("400 quando etapa ainda está pendente (nunca foi disparada)", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        status: "pendente",
+        concluida: false,
+      },
+      error: null,
+    });
+
+    const res = criarRes();
+    await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+
+    assert.equal(res.statusCode, 400);
+  });
+
+  it("200 volta a etapa 'pronta_para_execucao' com erro_execucao quando o agente nunca reivindicou (desligado)", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        status: "pronta_para_execucao",
+        concluida: false,
+      },
+      error: null,
+    });
+    queue("etapas", "maybeSingle", {
+      data: {
+        id: ETAPA_ID,
+        status: "pronta_para_execucao",
+        erro_execucao: "O agente não respondeu em tempo hábil. Verifique se ele está ligado e tente novamente.",
+      },
+      error: null,
+    });
+
+    const res = criarRes();
+    await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.status, "pronta_para_execucao");
+    assert.match(res.body.erro_execucao, /não respondeu/);
+    const update = chamadas.find(
+      (chamada) => chamada.tabela === "etapas" && chamada.metodo === "update",
+    );
+    assert.equal(update.args[0].execucao_token, null);
+    assert.equal(update.args[0].execucao_iniciada_em, null);
+  });
+
+  it("200 volta a etapa 'pronta_para_execucao' quando o agente reivindicou e travou (processando há mais de 90s)", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        status: "processando",
+        concluida: false,
+        execucao_iniciada_em: new Date(Date.now() - 91 * 1000).toISOString(),
+      },
+      error: null,
+    });
+    queue("etapas", "maybeSingle", {
+      data: { id: ETAPA_ID, status: "pronta_para_execucao", erro_execucao: "timeout" },
+      error: null,
+    });
+
+    const res = criarRes();
+    await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+
+    assert.equal(res.statusCode, 200);
+  });
+
+  it("409 quando a etapa está processando há menos de 90s — claim do agente ainda é válido", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        status: "processando",
+        concluida: false,
+        execucao_iniciada_em: new Date(Date.now() - 5 * 1000).toISOString(),
+      },
+      error: null,
+    });
+
+    const res = criarRes();
+    await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+
+    assert.equal(res.statusCode, 409);
+    const update = chamadas.find(
+      (chamada) => chamada.tabela === "etapas" && chamada.metodo === "update",
+    );
+    assert.equal(update, undefined);
+  });
+
+  it("409 quando a etapa foi alterada por outra solicitação entre a leitura e o update", async () => {
+    queue("processos", "single", {
+      data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, status: "em_andamento" },
+      error: null,
+    });
+    queue("etapas", "single", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        status: "pronta_para_execucao",
+        concluida: false,
+      },
+      error: null,
+    });
+    queue("etapas", "maybeSingle", { data: null, error: null });
+
+    const res = criarRes();
+    await expirarExecucaoEtapaJwt(reqAdmin({ id: PROCESSO_ID, etapaId: ETAPA_ID }), res);
+
+    assert.equal(res.statusCode, 409);
   });
 });
 

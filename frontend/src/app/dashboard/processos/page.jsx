@@ -8,6 +8,7 @@ import {
   concluirEtapa,
   criar,
   executarAcaoEtapa,
+  expirarExecucaoEtapa,
   listar,
 } from '../../../services/processos.service';
 
@@ -229,6 +230,23 @@ function etapaEmProcessamento(etapa) {
     status === 'em_processamento' ||
     status === 'aguardando_execucao'
   );
+}
+
+function obterChaveEtapa(processo, processoIndex, etapa, etapaIndex) {
+  const processoId = obterIdProcesso(processo);
+  const chaveProcesso = processoId ? String(processoId) : `idx-${processoIndex}`;
+  const etapaId = obterIdEtapa(etapa);
+  return `${chaveProcesso}::${etapaId || `etapa-${etapaIndex}`}`;
+}
+
+function obterInicioProcessamentoServidor(etapa) {
+  const iniciadaEm = etapa?.execucao_iniciada_em || etapa?.execucaoIniciadaEm;
+  if (!iniciadaEm) {
+    return null;
+  }
+
+  const timestamp = new Date(iniciadaEm).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function obterPayloadExecucao(etapa) {
@@ -663,6 +681,9 @@ function atualizarProcessoNaLista(lista, processoId, processoAtualizado) {
 const PERFIS_PODEM_MARCAR_ETAPA = new Set(['funcionario', 'admin_cliente', 'admin_efficience']);
 const PERFIL_PODE_CRIAR_PROCESSO = 'admin_cliente';
 const INTERVALO_POLLING_ETAPAS_MS = 3000;
+// BUG-ABERT-01 (#487): se o agente ficar desligado/travado, sem isso a etapa
+// automatizada fica em "Processando..." pra sempre e sem nenhum jeito de tentar de novo.
+const TIMEOUT_ETAPA_PROCESSANDO_MS = 90 * 1000;
 const STATUS_OPCOES = [
   { value: '', label: 'Todos' },
   { value: 'em_andamento', label: 'Em andamento' },
@@ -1033,6 +1054,8 @@ export default function ProcessosPage() {
   const [etapasEmExecucao, setEtapasEmExecucao] = useState({});
   const [errosExecucaoEtapa, setErrosExecucaoEtapa] = useState({});
   const [formulariosEtapa, setFormulariosEtapa] = useState({});
+  const [etapasProcessandoDesde, setEtapasProcessandoDesde] = useState({});
+  const etapasExpirandoRef = useRef(new Set());
 
   const [isNovoModalAberto, setIsNovoModalAberto] = useState(false);
   const [novoTipoProcesso, setNovoTipoProcesso] = useState(TIPOS_PADRAO[0]);
@@ -1096,6 +1119,92 @@ export default function ProcessosPage() {
       ),
     [processos],
   );
+
+  // Marca desde quando cada etapa está esperando o agente — usa o timestamp do
+  // servidor quando ele existe (etapa já reivindicada) e cai pro relógio local só
+  // pra etapa "pronta_para_execucao" que ainda não foi reivindicada (o servidor não
+  // guarda esse instante). Sem isso não dá pra saber quando os 90s do timeout passaram.
+  useEffect(() => {
+    setEtapasProcessandoDesde((valorAtual) => {
+      const chavesAtivas = new Set();
+      let alterado = false;
+      const proximo = { ...valorAtual };
+
+      processos.forEach((processo, processoIndex) => {
+        obterEtapas(processo).forEach((etapa, etapaIndex) => {
+          if (!etapaEmProcessamento(etapa)) {
+            return;
+          }
+
+          const chave = obterChaveEtapa(processo, processoIndex, etapa, etapaIndex);
+          chavesAtivas.add(chave);
+
+          const inicioServidor = obterInicioProcessamentoServidor(etapa);
+          if (inicioServidor) {
+            if (proximo[chave] !== inicioServidor) {
+              proximo[chave] = inicioServidor;
+              alterado = true;
+            }
+          } else if (!proximo[chave]) {
+            proximo[chave] = Date.now();
+            alterado = true;
+          }
+        });
+      });
+
+      Object.keys(proximo).forEach((chave) => {
+        if (!chavesAtivas.has(chave)) {
+          delete proximo[chave];
+          alterado = true;
+        }
+      });
+
+      return alterado ? proximo : valorAtual;
+    });
+  }, [processos]);
+
+  // Quando uma etapa passa de 90s esperando o agente, reporta o timeout pro backend
+  // (mesmo caminho que o agente usa ao reportar falha) em vez de deixar a UI travada
+  // em "Processando..." pra sempre — a etapa volta com erro_execucao preenchido e o
+  // formulário de execução reaparece pronto pra nova tentativa.
+  useEffect(() => {
+    processos.forEach((processo, processoIndex) => {
+      obterEtapas(processo).forEach((etapa, etapaIndex) => {
+        if (!etapaEmProcessamento(etapa)) {
+          return;
+        }
+
+        const chave = obterChaveEtapa(processo, processoIndex, etapa, etapaIndex);
+        const inicio = obterInicioProcessamentoServidor(etapa) ?? etapasProcessandoDesde[chave];
+
+        if (!inicio || Date.now() - inicio < TIMEOUT_ETAPA_PROCESSANDO_MS) {
+          return;
+        }
+
+        if (etapasExpirandoRef.current.has(chave)) {
+          return;
+        }
+
+        const processoId = obterIdProcesso(processo);
+        const etapaId = obterIdEtapa(etapa);
+        if (!processoId || !etapaId) {
+          return;
+        }
+
+        const clienteId = processo?.cliente_id || processo?.clienteId;
+        const dados = perfilUsuario === 'admin_efficience' && clienteId ? { cliente_id: clienteId } : {};
+
+        etapasExpirandoRef.current.add(chave);
+
+        expirarExecucaoEtapa(processoId, etapaId, dados)
+          .catch(() => {})
+          .finally(() => {
+            etapasExpirandoRef.current.delete(chave);
+            carregarProcessos({ silencioso: true, reportarErro: false });
+          });
+      });
+    });
+  }, [processos, etapasProcessandoDesde, perfilUsuario, carregarProcessos]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
