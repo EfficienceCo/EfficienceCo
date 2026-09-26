@@ -839,6 +839,18 @@ function FormularioContratoSocial({
   );
 }
 
+function obterRotuloAcaoEtapa(acao) {
+  if (acao === 'gerar_contrato_social') {
+    return 'Gerar contrato social';
+  }
+
+  if (acao === 'criar_pastas') {
+    return 'Criar pastas';
+  }
+
+  return 'Executar';
+}
+
 function EtapaAutomatizada({
   acao,
   bloqueada,
@@ -997,7 +1009,7 @@ function EtapaAutomatizada({
           disabled={bloqueada}
           className="inline-flex items-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Concluir
+          {obterRotuloAcaoEtapa(acao)}
         </button>
       </div>
     </form>
