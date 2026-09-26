@@ -68,6 +68,17 @@ export async function listarTransacoesExtrato(extratoId) {
   return response.data;
 }
 
+// Recupera o extrato já enviado (e ainda sem conciliação em andamento) para o
+// cliente/período atual — usado para restaurar a tela após F5, troca de
+// mês/ano ou volta da revisão, em vez de depender só do estado em memória
+// setado logo após o upload.
+export async function buscarExtratoAtual({ clienteId, mes, ano } = {}) {
+  const response = await api.get('/conciliacoes/extrato', {
+    params: limparParams({ cliente_id: clienteId, mes, ano }),
+  });
+  return response.data;
+}
+
 export async function iniciarConciliacao({ clienteId, extratoId, mes, ano } = {}) {
   const response = await api.post('/conciliacoes', {
     cliente_id: clienteId,
