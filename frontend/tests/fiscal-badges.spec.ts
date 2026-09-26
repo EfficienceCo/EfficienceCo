@@ -87,3 +87,27 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(sidebar.getByRole('link', { name: 'Home' })).not.toHaveClass(/bg-sky-400\/10/);
   });
 });
+
+test.describe('Fiscal — erro de rede em pt-BR e sem duplicação (issue #572)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
+    await page.route('**/lancamentos-fiscais**', (route) => route.abort('failed'));
+    await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
+  });
+
+  test('mostra um único banner em pt-BR com Tentar novamente, sem duplicar em inglês', async ({
+    page,
+  }) => {
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    const mensagemRede = page.getByText(
+      'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.',
+    );
+
+    await expect(mensagemRede).toBeVisible();
+    await expect(mensagemRede).toHaveCount(1);
+    await expect(page.getByText('Network Error')).toHaveCount(0);
+
+    await expect(page.getByRole('button', { name: 'Tentar novamente' })).toBeVisible();
+  });
+});

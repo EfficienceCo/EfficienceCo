@@ -23,7 +23,22 @@ const MESES = [
   { value: 12, label: 'Dezembro' },
 ];
 
+// Sem error.response o axios não recebeu resposta nenhuma do backend (API fora
+// do ar, DNS falhou, timeout etc.) — nesse caso error.message vem cru e em
+// inglês ("Network Error"), então tratamos à parte com uma mensagem em pt-BR.
+function ehErroDeRede(error) {
+  if (!error || error.response) {
+    return false;
+  }
+
+  return Boolean(error.request) || error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED';
+}
+
 function obterMensagemErro(error, fallback = 'Não foi possível processar a solicitação.') {
+  if (ehErroDeRede(error)) {
+    return 'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.';
+  }
+
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
@@ -215,6 +230,9 @@ export default function FiscalPage() {
   const [resumo, setResumo] = useState(null);
   const [isLoadingResumo, setIsLoadingResumo] = useState(true);
   const [erroResumo, setErroResumo] = useState('');
+  // Quando resumo e lista falham pelo mesmo motivo de rede, o card de resumo
+  // não duplica o aviso: só a seção da lista exibe o banner com "Tentar novamente".
+  const [erroResumoEhRede, setErroResumoEhRede] = useState(false);
 
   const anosDisponiveis = useMemo(obterAnosDisponiveis, []);
 
@@ -251,6 +269,7 @@ export default function FiscalPage() {
     setErroLista('');
     setIsLoadingResumo(true);
     setErroResumo('');
+    setErroResumoEhRede(false);
 
     try {
       const parametros = {
@@ -286,12 +305,14 @@ export default function FiscalPage() {
         setErroResumo(
           obterMensagemErro(resultadoResumo.reason, 'Não foi possível carregar o resumo fiscal.'),
         );
+        setErroResumoEhRede(ehErroDeRede(resultadoResumo.reason));
         setResumo(null);
       }
     } catch (error) {
       if (idRequisicao === requisicaoIdRef.current) {
         setErroLista(obterMensagemErro(error, 'Não foi possível carregar os lançamentos fiscais.'));
         setErroResumo(obterMensagemErro(error, 'Não foi possível carregar o resumo fiscal.'));
+        setErroResumoEhRede(ehErroDeRede(error));
         setLancamentos([]);
         setResumo(null);
       }
@@ -364,7 +385,10 @@ export default function FiscalPage() {
         </button>
       </header>
 
-      {!aguardandoSelecaoCliente && erroResumo ? (
+      {/* Falha de rede: a lista (abaixo) já mostra um único banner cobrindo
+          resumo + lista, então o card de resumo não duplica o aviso — ele
+          só fica oculto até a próxima tentativa. */}
+      {!aguardandoSelecaoCliente && erroResumo && !erroResumoEhRede ? (
         <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
           <p className="text-sm font-medium text-rose-800">{erroResumo}</p>
         </section>
@@ -479,8 +503,16 @@ export default function FiscalPage() {
       ) : null}
 
       {!aguardandoSelecaoCliente && erroLista ? (
-        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+        <section className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-rose-800">{erroLista}</p>
+          <button
+            type="button"
+            onClick={carregarDados}
+            disabled={isLoadingLancamentos}
+            className="shrink-0 rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoadingLancamentos ? 'Tentando...' : 'Tentar novamente'}
+          </button>
         </section>
       ) : null}
 
