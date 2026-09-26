@@ -1,7 +1,8 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
-import { aplicarFiltroPeriodo, dataLocalISO } from "../utils/periodo.util.js";
+import { aplicarFiltroPeriodo, dataLocalISO, erroPeriodoConsulta } from "../utils/periodo.util.js";
+import { ehUuid } from "../utils/uuid.util.js";
 
 const TIPOS_VALIDOS = new Set(["entrada", "saida"]);
 
@@ -44,6 +45,15 @@ function resolverClienteIdQuery(req) {
     return req.query.clienteId || req.query.cliente_id;
   }
   return req.usuario?.cliente_id;
+}
+
+// 400 antes do Postgres: id não-UUID vira 22P02 (500 genérico) e período
+// inválido era ignorado, devolvendo o ano ou o histórico inteiro.
+function erroConsultaLancamentos(clienteId, mes, ano) {
+  if (!ehUuid(clienteId)) {
+    return "clienteId deve ser um UUID";
+  }
+  return erroPeriodoConsulta(mes, ano);
 }
 
 // Agente local envia o payload do XML da NFe já parseado, autenticado via
@@ -178,6 +188,10 @@ export async function listarLancamentosFiscais(req, res) {
   }
 
   const { mes, ano } = req.query;
+  const erroConsulta = erroConsultaLancamentos(clienteId, mes, ano);
+  if (erroConsulta) {
+    return res.status(400).json({ erro: erroConsulta });
+  }
 
   let query = supabase
     .from("lancamentos_fiscais")
@@ -205,6 +219,10 @@ export async function resumoLancamentosFiscais(req, res) {
   }
 
   const { mes, ano } = req.query;
+  const erroConsulta = erroConsultaLancamentos(clienteId, mes, ano);
+  if (erroConsulta) {
+    return res.status(400).json({ erro: erroConsulta });
+  }
 
   let query = supabase
     .from("lancamentos_fiscais")
