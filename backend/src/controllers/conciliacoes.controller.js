@@ -188,6 +188,91 @@ export async function listarTransacoesExtrato(req, res) {
   return res.status(200).json({ data, total: count, limit, offset });
 }
 
+// Recupera o extrato processado mais recente do cliente/período que ainda não
+// foi usado para iniciar uma conciliação em andamento — permite à tela de
+// conciliação restaurar "N transações importadas" e o botão "Nova conciliação"
+// após F5, troca de mês/ano ou volta da revisão, sem depender apenas do estado
+// em memória do componente (ver comentário removido em conciliacao/page.jsx).
+export async function buscarExtratoAtual(req, res) {
+  const clienteId = resolverClienteId(req);
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const mes = Number(req.query.mes);
+  const ano = Number(req.query.ano);
+  if (!Number.isInteger(mes) || mes < 1 || mes > 12 || !Number.isInteger(ano) || ano <= 0) {
+    return res.status(400).json({ erro: "mes e ano são obrigatórios e devem ser válidos" });
+  }
+
+  const { data: extratos, error: erroExtrato } = await supabase
+    .from("extratos_bancarios")
+    .select("id, banco, conta, criado_em")
+    .eq("cliente_id", clienteId)
+    .eq("mes", mes)
+    .eq("ano", ano)
+    .eq("status", STATUS_EXTRATO.PROCESSADO)
+    .order("criado_em", { ascending: false })
+    .limit(1);
+
+  if (erroExtrato) {
+    console.error("[conciliacoes.controller] Erro ao buscar extrato do período:", erroExtrato.message);
+    return res.status(500).json({ erro: "Erro ao buscar extrato bancário do período" });
+  }
+
+  const extrato = extratos?.[0];
+  if (!extrato) {
+    return res.status(200).json({ extrato: null });
+  }
+
+  // Extrato já usado para iniciar uma conciliação em andamento: essa sessão já
+  // aparece em "Sessões de Conciliação" — não reexibe no painel de upload nem
+  // reabilita "Nova conciliação", pra não permitir iniciar duas sessões ao
+  // mesmo tempo pro mesmo extrato (criarConciliacao já bloqueia isso com 409,
+  // mas evita o usuário nem precisar esbarrar no erro).
+  const { data: conciliacaoEmAndamento, error: erroConciliacao } = await supabase
+    .from("conciliacoes")
+    .select("id")
+    .eq("extrato_id", extrato.id)
+    .eq("status", "em_andamento")
+    .maybeSingle();
+
+  if (erroConciliacao) {
+    console.error(
+      "[conciliacoes.controller] Erro ao verificar conciliação em andamento do extrato:",
+      erroConciliacao.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar extrato bancário do período" });
+  }
+
+  if (conciliacaoEmAndamento) {
+    return res.status(200).json({ extrato: null });
+  }
+
+  const { data: transacoes, error: erroTransacoes } = await supabase
+    .from("transacoes_extrato")
+    .select("id")
+    .eq("extrato_id", extrato.id);
+
+  if (erroTransacoes) {
+    console.error(
+      "[conciliacoes.controller] Erro ao contar transações do extrato:",
+      erroTransacoes.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar extrato bancário do período" });
+  }
+
+  return res.status(200).json({
+    extrato: {
+      extrato_id: extrato.id,
+      banco: extrato.banco,
+      conta: extrato.conta,
+      total_transacoes: transacoes?.length ?? 0,
+      enviado_em: extrato.criado_em,
+    },
+  });
+}
+
 function periodoObrigatorioDoBody(body) {
   const mes = Number(body?.mes);
   const ano = Number(body?.ano);
