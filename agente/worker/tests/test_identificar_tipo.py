@@ -1,8 +1,7 @@
 """Regressão do matcher por nome (BUG-ORG-05 / #483) + diagnóstico ML (#514)."""
 
 import sys
-from types import ModuleType
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from core.identificar_tipo import classificar_arquivo, identificar_tipo_no_nome
 from core.estrutura_pastas import subpasta_para_tipo
@@ -37,72 +36,20 @@ def test_alias_nf_com_separadores(nome):
     assert identificar_tipo_no_nome(nome) == "nf"
 
 
-# ---------------------------------------------------------------------------
-# BUG-ML-06 / #514 — mensagem distingue módulo × deps × pesos
-# ---------------------------------------------------------------------------
-
-
-def _instalar_fake_classificador(classificar_documento):
-    """Injeta automacoes.rede.classificador no sys.modules pra o from-import."""
-    automacoes = ModuleType("automacoes")
-    rede = ModuleType("automacoes.rede")
-    classificador = ModuleType("automacoes.rede.classificador")
-    classificador.classificar_documento = classificar_documento
-    rede.classificador = classificador
-    automacoes.rede = rede
-    return {
-        "automacoes": automacoes,
-        "automacoes.rede": rede,
-        "automacoes.rede.classificador": classificador,
-    }
-
-
 def test_modulo_classificador_ausente_nao_acusa_deps(capsys):
-    import builtins
-    original = builtins.__import__
-
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "automacoes.rede.classificador" or (
-            name == "automacoes.rede" and fromlist
-        ):
-            raise ModuleNotFoundError(
-                "No module named 'automacoes.rede.classificador'",
-                name="automacoes.rede.classificador",
-            )
-        return original(name, globals, locals, fromlist, level)
-
-    # Remove qualquer cache do pacote pra forçar o import.
-    for chave in list(sys.modules):
-        if chave == "automacoes" or chave.startswith("automacoes."):
-            sys.modules.pop(chave, None)
-
-    with patch("builtins.__import__", fake_import):
+    with patch.dict(sys.modules, {"automacoes.rede.classificador": None}):
         assert classificar_arquivo("doc.pdf") == "nao_identificado"
 
     log = capsys.readouterr().out
     assert "Módulo do classificador ausente" in log
     assert "Dependência da rede neural ausente" not in log
-    assert "Dependências da rede neural não instaladas" not in log
 
 
 def test_dep_torch_ausente_acusa_deps(capsys):
-    import builtins
-    original = builtins.__import__
-
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "automacoes.rede.classificador" or (
-            name == "automacoes.rede" and fromlist
-        ):
-            # Espelha o que acontece quando classificador.py importa torch
-            # no load do módulo e torch não está instalado.
-            raise ModuleNotFoundError("No module named 'torch'", name="torch")
-        return original(name, globals, locals, fromlist, level)
-
-    for chave in list(sys.modules):
-        if chave == "automacoes" or chave.startswith("automacoes."):
-            sys.modules.pop(chave, None)
-
-    with patch("builtins.__import__", fake_import):
+    # None em torch faz o import real do classificador levantar ModuleNotFoundError.
+    # O pop fica dentro do patch.dict, que devolve o módulo em cache ao sair.
+    with patch.dict(sys.modules, {"torch": None}):
+        sys.modules.pop("automacoes.rede.classificador", None)
         assert classificar_arquivo("doc.pdf") == "nao_identificado"
 
     log = capsys.readouterr().out
@@ -111,34 +58,18 @@ def test_dep_torch_ausente_acusa_deps(capsys):
     assert "Módulo do classificador ausente" not in log
 
 
-def test_pesos_ausentes_via_dict_de_erro(capsys):
-    mock_fn = MagicMock(
-        return_value={
-            "erro": (
-                "O arquivo de modelo '/tmp/classificador_documentos.pth' não existe. "
-                "Execute o treinamento primeiro."
-            )
-        }
+def test_pesos_ausentes_repassa_causa_do_dict(capsys):
+    erro = (
+        "O arquivo de modelo 'classificador_documentos.pth' não existe. "
+        "Execute o treinamento primeiro."
     )
-    fakes = _instalar_fake_classificador(mock_fn)
-
-    with patch.dict(sys.modules, fakes):
+    with patch(
+        "automacoes.rede.classificador.classificar_documento",
+        return_value={"erro": erro},
+    ):
         assert classificar_arquivo("doc.pdf") == "nao_identificado"
 
     log = capsys.readouterr().out
-    assert "Pesos do classificador ausentes" in log
-    assert "Dependências da rede neural não instaladas" not in log
-
-
-def test_erro_de_extensao_nao_vira_pesos_ausentes(capsys):
-    mock_fn = MagicMock(
-        return_value={"erro": "Extensão '.txt' não suportada. Use PDF, XLSX, XLS ou imagens."}
-    )
-    fakes = _instalar_fake_classificador(mock_fn)
-
-    with patch.dict(sys.modules, fakes):
-        assert classificar_arquivo("notas.txt") == "nao_identificado"
-
-    log = capsys.readouterr().out
-    assert "Classificador:" in log
-    assert "Pesos do classificador ausentes" not in log
+    assert erro in log
+    assert "Dependência da rede neural ausente" not in log
+    assert "Módulo do classificador ausente" not in log

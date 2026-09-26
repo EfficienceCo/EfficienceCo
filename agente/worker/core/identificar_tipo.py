@@ -5,19 +5,6 @@ from pathlib import Path
 
 TIPOS_PATH = Path(__file__).parent / "tipos_documentos.json"
 
-# Pacotes importados pelo classificador de produção (nível de módulo ou lazy).
-# ModuleNotFoundError com esses nomes = deps ausentes, não módulo apagado.
-_DEPS_REDE = frozenset({
-    "torch",
-    "torchvision",
-    "pypdfium2",
-    "PIL",
-    "Pillow",
-    "pandas",
-    "matplotlib",
-    "openpyxl",
-})
-
 
 def _carregar_tipos():
     try:
@@ -40,68 +27,26 @@ def identificar_tipo_no_nome(nome_arquivo):
     )
 
 
-def _eh_modulo_classificador_ausente(nome_modulo):
-    """True quando o .py do classificador (ou o pacote rede) sumiu do tree."""
-    if not nome_modulo:
-        return False
-    return (
-        nome_modulo == "automacoes.rede"
-        or nome_modulo == "automacoes.rede.classificador"
-        or nome_modulo.startswith("automacoes.rede.")
-    )
-
-
-def _eh_erro_de_pesos(mensagem):
-    texto = (mensagem or "").lower()
-    return (
-        ".pth" in texto
-        or "arquivo de modelo" in texto
-        or ("modelo" in texto and "não existe" in texto)
-        or ("pesos" in texto and ("ausente" in texto or "não encontr" in texto))
-    )
-
-
 def classificar_arquivo(caminho):
     try:
         from automacoes.rede.classificador import classificar_documento
         resultado = classificar_documento(caminho, threshold=0.75)
         if isinstance(resultado, dict) and resultado.get("erro"):
-            erro = resultado["erro"]
-            # classificar_documento devolve dict (não levanta) quando o .pth falta —
-            # distinguir de erro de extensão/PDF pra quem for debugar (BUG-ML-06 / #514).
-            if _eh_erro_de_pesos(erro):
-                print(f"[identificar_tipo] Pesos do classificador ausentes: {erro}")
-            else:
-                print(f"[identificar_tipo] Classificador: {erro}")
+            # O dict já traz a causa (pesos .pth, extensão, PDF). Só prefixa o log.
+            print(f"[identificar_tipo] Classificador: {resultado['erro']}")
             return "nao_identificado"
         return resultado["classe"]
     except ModuleNotFoundError as e:
-        # ModuleNotFoundError ⊂ ImportError — tratar antes do ramo genérico.
+        # e.name com prefixo automacoes = o .py sumiu; qualquer outro nome = dep.
         nome = e.name or ""
-        raiz = nome.split(".", 1)[0] if nome else ""
-        if _eh_modulo_classificador_ausente(nome):
-            print(
-                f"[identificar_tipo] Módulo do classificador ausente ({nome}): {e}. "
-                "Restaure automacoes/rede/classificador.py (não é falta de torch)."
-            )
-        elif nome in _DEPS_REDE or raiz in _DEPS_REDE:
-            print(
-                f"[identificar_tipo] Dependência da rede neural ausente ({nome}): {e}. "
-                "Instale via requirements.txt do worker."
-            )
+        if nome.startswith("automacoes"):
+            causa = f"Módulo do classificador ausente ({nome})"
         else:
-            print(
-                f"[identificar_tipo] Módulo ou dependência ausente ao carregar o classificador "
-                f"({nome or 'desconhecido'}): {e}"
-            )
+            causa = f"Dependência da rede neural ausente ({nome})"
+        print(f"[identificar_tipo] {causa}: {e}")
         return "nao_identificado"
-    except ImportError as e:
-        print(
-            f"[identificar_tipo] Falha ao importar o classificador (deps ou pacote quebrado): {e}"
-        )
-        return "nao_identificado"
-    except FileNotFoundError as e:
-        print(f"[identificar_tipo] Pesos do classificador ausentes: {e}")
+    except FileNotFoundError:
+        print("[identificar_tipo] Arquivo de pesos não encontrado (classificador_documentos.pth)")
         return "nao_identificado"
     except Exception as e:
         print(f"[identificar_tipo] Falha ao classificar: {e}")
