@@ -137,6 +137,54 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(res.body.conta, "7890");
   });
 
+  it("upload do MESMO arquivo OFX 2x retorna 409 sem duplicar extrato ou transações", async () => {
+    const hashesInseridos = [];
+    let totalInsertsTransacoes = 0;
+    const originalFromLocal = supabase.from;
+
+    supabase.from = function (tabela) {
+      const builder = originalFromLocal(tabela);
+      const insertOriginal = builder.insert.bind(builder);
+
+      builder.insert = (dados) => {
+        if (tabela === "extratos_bancarios") hashesInseridos.push(dados.arquivo_hash);
+        if (tabela === "transacoes_extrato") totalInsertsTransacoes += 1;
+        return insertOriginal(dados);
+      };
+
+      return builder;
+    };
+
+    queue("extratos_bancarios", "single", {
+      data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
+      error: null,
+    });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("extratos_bancarios", "await", { data: null, error: null });
+    queue("extratos_bancarios", "single", {
+      data: null,
+      error: { code: "23505", message: "duplicate key value violates unique constraint" },
+    });
+
+    try {
+      const primeiraResposta = criarResposta();
+      await criarConciliacaoExtrato(reqUpload(), primeiraResposta);
+
+      const segundaResposta = criarResposta();
+      await criarConciliacaoExtrato(reqUpload(), segundaResposta);
+
+      assert.equal(primeiraResposta.statusCode, 201);
+      assert.equal(segundaResposta.statusCode, 409);
+      assert.match(segundaResposta.body.erro, /já foi importado/i);
+      assert.equal(totalInsertsTransacoes, 1);
+      assert.equal(hashesInseridos.length, 2);
+      assert.equal(hashesInseridos[0], hashesInseridos[1]);
+      assert.match(hashesInseridos[0], /^[0-9a-f]{64}$/);
+    } finally {
+      supabase.from = originalFromLocal;
+    }
+  });
+
   it("infere crédito/débito corretamente do sinal do TRNAMT", async () => {
     queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
 

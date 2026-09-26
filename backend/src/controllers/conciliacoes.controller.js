@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
@@ -44,6 +45,8 @@ export async function criarConciliacaoExtrato(req, res) {
     return res.status(400).json({ erro: "Arquivo OFX é obrigatório (campo 'arquivo')" });
   }
 
+  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
+
   const periodoInformado = periodoDoBody(req.body);
 
   // Registro criado antes do parsing para que uma falha de parsing tenha
@@ -58,12 +61,17 @@ export async function criarConciliacaoExtrato(req, res) {
       mes: periodoInformado?.mes ?? periodoAtual().mes,
       ano: periodoInformado?.ano ?? periodoAtual().ano,
       arquivo_nome: req.file.originalname,
+      arquivo_hash: arquivoHash,
       status: STATUS_EXTRATO.AGUARDANDO,
     })
     .select()
     .single();
 
   if (erroInsercao) {
+    if (erroInsercao.code === "23505") {
+      return res.status(409).json({ erro: "Este arquivo OFX já foi importado para este cliente" });
+    }
+
     console.error("[conciliacoes.controller] Erro ao criar registro de extrato:", erroInsercao.message);
     return res.status(500).json({ erro: "Erro ao registrar extrato bancário" });
   }
