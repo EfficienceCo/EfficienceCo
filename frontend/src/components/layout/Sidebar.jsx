@@ -72,6 +72,11 @@ const NAV_ITEMS = [
     icon: AtendimentoIcon,
   },
   {
+  href: '/dashboard/obrigacoes',
+  label: 'Obrigações',
+  icon: ObrigacoesIcon,
+  },
+  {
     type: 'separator',
     key: 'separador-admin',
   },
@@ -250,6 +255,18 @@ function DashboardIcon() {
       <rect x="13.5" y="3.5" width="7" height="5" rx="1.2" />
       <rect x="13.5" y="11.5" width="7" height="9" rx="1.2" />
       <rect x="3.5" y="13.5" width="7" height="7" rx="1.2" />
+    </IconBase>
+  );
+}
+
+function ObrigacoesIcon() {
+  return (
+    <IconBase>
+      <path d="M7 3.5v3" />
+      <path d="M17 3.5v3" />
+      <rect x="4" y="6.5" width="16" height="14" rx="2" />
+      <path d="M4 10.5h16" />
+      <path d="M12.5 14.5l-3 3-1.5-1.5" />
     </IconBase>
   );
 }
