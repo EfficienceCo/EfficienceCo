@@ -232,11 +232,17 @@ function montarPayload(form) {
     tpRegPrev: a.tpRegPrev,
     cadIni: a.cadIni,
     cargo: limparVazios(a.cargo),
-    remuneracao: limparVazios(a.remuneracao),
-    duracao: limparVazios(a.duracao),
     localTrabalho: limparVazios(a.localTrabalho),
     horContratual: limparVazios(a.horContratual),
   };
+
+  // remuneracao/duracao só existem para o regime celetista — o gerador
+  // (montarInfoContrato em esocial-xml.util.js) rejeita esses grupos quando
+  // tpRegTrab=2 (estatutário).
+  if (!estatutaria) {
+    dadosAdmissao.remuneracao = limparVazios(a.remuneracao);
+    dadosAdmissao.duracao = limparVazios(a.duracao);
+  }
 
   if (form.incluiFuncao) {
     const funcao = limparVazios(a.funcao);
@@ -366,18 +372,22 @@ function validarFormulario(form) {
   // infoContrato (sempre obrigatório)
   exigir(a.cargo.nome, 'Cargo — nome');
   exigir(a.cargo.cbo, 'Cargo — CBO');
-  const salarioFixo = parseValorMonetario(a.remuneracao.valorSalarioFixo);
-  if (!a.remuneracao.valorSalarioFixo || !Number.isFinite(salarioFixo) || salarioFixo <= 0) {
-    erros['Remuneração — salário fixo'] = 'Informe um valor válido maior que zero (ex.: 2500,00).';
-  }
-  exigir(a.remuneracao.unidadeSalarioFixo, 'Remuneração — unidade');
-  exigir(a.duracao.tpContr, 'Duração — tipo de contrato');
-  if (a.duracao.tpContr === '2' && (!a.duracao.dataTermino || !validarDataCivil(a.duracao.dataTermino))) {
-    erros['Duração — data de término'] =
-      'Obrigatória para contrato por prazo determinado com data (dd/mm/aaaa).';
-  }
-  if (a.duracao.tpContr === '3') {
-    exigir(a.duracao.objetoDeterminante, 'Duração — objeto determinante');
+  // remuneracao/duracao só se aplicam ao regime celetista — o backend
+  // (montarInfoContrato) rejeita esses grupos para tpRegTrab=2 (estatutário).
+  if (!estatutaria) {
+    const salarioFixo = parseValorMonetario(a.remuneracao.valorSalarioFixo);
+    if (!a.remuneracao.valorSalarioFixo || !Number.isFinite(salarioFixo) || salarioFixo <= 0) {
+      erros['Remuneração — salário fixo'] = 'Informe um valor válido maior que zero (ex.: 2500,00).';
+    }
+    exigir(a.remuneracao.unidadeSalarioFixo, 'Remuneração — unidade');
+    exigir(a.duracao.tpContr, 'Duração — tipo de contrato');
+    if (a.duracao.tpContr === '2' && (!a.duracao.dataTermino || !validarDataCivil(a.duracao.dataTermino))) {
+      erros['Duração — data de término'] =
+        'Obrigatória para contrato por prazo determinado com data (dd/mm/aaaa).';
+    }
+    if (a.duracao.tpContr === '3') {
+      exigir(a.duracao.objetoDeterminante, 'Duração — objeto determinante');
+    }
   }
   exigir(a.localTrabalho.tpInsc, 'Local de trabalho — tipo de inscrição');
   exigir(a.localTrabalho.nrInsc, 'Local de trabalho — número de inscrição');
@@ -1365,36 +1375,42 @@ function PassoFormulario({
         </Fieldset>
       </ToggleGrupo>
 
-      <Fieldset titulo="Remuneração">
-        <Campo label="Salário fixo" obrigatorio placeholder="Ex.: 2500,00" value={a.remuneracao.valorSalarioFixo} onChange={(v) => atualizarAdmissaoAninhado('remuneracao', 'valorSalarioFixo', v)} />
-        <CampoSelect label="Unidade do salário fixo" obrigatorio opcoes={UNIDADE_SALARIO} value={a.remuneracao.unidadeSalarioFixo} onChange={(v) => atualizarAdmissaoAninhado('remuneracao', 'unidadeSalarioFixo', v)} />
-        <Campo label="Descrição do salário variável" value={a.remuneracao.descricaoSalarioVariavel} onChange={(v) => atualizarAdmissaoAninhado('remuneracao', 'descricaoSalarioVariavel', v)} />
-      </Fieldset>
+      {/* Remuneração e duração só existem para o regime celetista — o gerador
+          rejeita esses grupos quando a categoria é estatutária (tpRegTrab=2). */}
+      {!estatutaria ? (
+        <>
+          <Fieldset titulo="Remuneração">
+            <Campo label="Salário fixo" obrigatorio placeholder="Ex.: 2500,00" value={a.remuneracao.valorSalarioFixo} onChange={(v) => atualizarAdmissaoAninhado('remuneracao', 'valorSalarioFixo', v)} />
+            <CampoSelect label="Unidade do salário fixo" obrigatorio opcoes={UNIDADE_SALARIO} value={a.remuneracao.unidadeSalarioFixo} onChange={(v) => atualizarAdmissaoAninhado('remuneracao', 'unidadeSalarioFixo', v)} />
+            <Campo label="Descrição do salário variável" value={a.remuneracao.descricaoSalarioVariavel} onChange={(v) => atualizarAdmissaoAninhado('remuneracao', 'descricaoSalarioVariavel', v)} />
+          </Fieldset>
 
-      <Fieldset titulo="Duração do contrato">
-        <CampoSelect
-          label="Tipo de contrato"
-          obrigatorio
-          opcoes={TP_CONTRATO}
-          value={a.duracao.tpContr}
-          onChange={(v) => {
-            atualizarAdmissaoAninhado('duracao', 'tpContr', v);
-            if (v === '1') {
-              // prazo indeterminado não tem campos de prazo determinado — limpa pra não sujar o payload
-              atualizarAdmissaoAninhado('duracao', 'dataTermino', '');
-              atualizarAdmissaoAninhado('duracao', 'clausulaAssecuratoria', '');
-              atualizarAdmissaoAninhado('duracao', 'objetoDeterminante', '');
-            }
-          }}
-        />
-        {a.duracao.tpContr !== '1' ? (
-          <>
-            <Campo label="Data de término" placeholder="dd/mm/aaaa" value={a.duracao.dataTermino} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'dataTermino', v)} />
-            <CampoSelect label="Cláusula assecuratória" opcoes={SIM_NAO} value={a.duracao.clausulaAssecuratoria} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'clausulaAssecuratoria', v)} />
-            <Campo label="Objeto determinante (contrato por obra)" value={a.duracao.objetoDeterminante} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'objetoDeterminante', v)} />
-          </>
-        ) : null}
-      </Fieldset>
+          <Fieldset titulo="Duração do contrato">
+            <CampoSelect
+              label="Tipo de contrato"
+              obrigatorio
+              opcoes={TP_CONTRATO}
+              value={a.duracao.tpContr}
+              onChange={(v) => {
+                atualizarAdmissaoAninhado('duracao', 'tpContr', v);
+                if (v === '1') {
+                  // prazo indeterminado não tem campos de prazo determinado — limpa pra não sujar o payload
+                  atualizarAdmissaoAninhado('duracao', 'dataTermino', '');
+                  atualizarAdmissaoAninhado('duracao', 'clausulaAssecuratoria', '');
+                  atualizarAdmissaoAninhado('duracao', 'objetoDeterminante', '');
+                }
+              }}
+            />
+            {a.duracao.tpContr !== '1' ? (
+              <>
+                <Campo label="Data de término" placeholder="dd/mm/aaaa" value={a.duracao.dataTermino} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'dataTermino', v)} />
+                <CampoSelect label="Cláusula assecuratória" opcoes={SIM_NAO} value={a.duracao.clausulaAssecuratoria} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'clausulaAssecuratoria', v)} />
+                <Campo label="Objeto determinante (contrato por obra)" value={a.duracao.objetoDeterminante} onChange={(v) => atualizarAdmissaoAninhado('duracao', 'objetoDeterminante', v)} />
+              </>
+            ) : null}
+          </Fieldset>
+        </>
+      ) : null}
 
       <Fieldset titulo="Local de trabalho">
         <CampoSelect label="Tipo de inscrição" obrigatorio opcoes={TP_INSC} value={a.localTrabalho.tpInsc} onChange={(v) => atualizarAdmissaoAninhado('localTrabalho', 'tpInsc', v)} />
