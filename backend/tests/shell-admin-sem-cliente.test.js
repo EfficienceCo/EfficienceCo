@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
+import { validarLicenca } from "../src/controllers/licenca.controller.js";
 import { listarNotificacoes } from "../src/controllers/notificacoes.controller.js";
 import { listarProcessos } from "../src/controllers/processos.controller.js";
 import { proximasObrigacoes } from "../src/controllers/obrigacoes.controller.js";
@@ -55,5 +57,42 @@ describe("Shell admin_efficience sem cliente_id (#501)", () => {
 
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body, []);
+  });
+});
+
+describe("Shell de tenant sem licença (#574)", () => {
+  it("GET /licenca/validar retorna 200 com estado sem licença", async () => {
+    const originalFrom = supabase.from;
+    supabase.from = function () {
+      const builder = {
+        select() { return builder; },
+        eq() { return builder; },
+        maybeSingle() { return Promise.resolve({ data: null, error: null }); },
+      };
+      return builder;
+    };
+
+    try {
+      const req = {
+        headers: {},
+        usuario: {
+          perfil: PERFIS.ADMIN_CLIENTE,
+          cliente_id: "11111111-1111-1111-1111-111111111111",
+        },
+      };
+      const res = criarResposta();
+
+      await validarLicenca(req, res);
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.body, {
+        ativa: false,
+        validade: null,
+        clienteId: "11111111-1111-1111-1111-111111111111",
+        status: "unlicensed",
+      });
+    } finally {
+      supabase.from = originalFrom;
+    }
   });
 });
