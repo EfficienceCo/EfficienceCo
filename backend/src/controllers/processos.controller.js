@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
+import { normalizarCpf, cpfValido } from "../utils/cpf.util.js";
 import {
   criarProcessoComEtapas,
   ETAPAS_PADRAO,
@@ -52,6 +53,14 @@ function validarPayloadExecucao(acao, payload) {
     return "Preencha nome, CPF e participação válida para todos os sócios";
   }
 
+  const cpfsNormalizados = socios.map((socio) => normalizarCpf(socio.cpf));
+  if (cpfsNormalizados.some((cpf) => !cpfValido(cpf))) {
+    return "Informe um CPF válido para todos os sócios";
+  }
+  if (new Set(cpfsNormalizados).size !== cpfsNormalizados.length) {
+    return "Não é possível repetir o CPF de um sócio";
+  }
+
   const participacaoTotal = socios.reduce(
     (total, socio) => total + Number(socio.participacao),
     0,
@@ -73,6 +82,42 @@ function validarPayloadExecucao(acao, payload) {
   }
 
   return null;
+}
+
+// O contrato social é gravado dentro de {pasta_empresa}/Contratos — a árvore de
+// pastas precisa existir antes. O agente tem fallback para criá-la, mas a ordem
+// das etapas é regra de produto e vale mesmo assim (#488).
+const DEPENDENCIAS_ACAO = { gerar_contrato_social: "criar_pastas" };
+
+async function _dependenciaPendente(processoId, acao) {
+  const acaoRequerida = DEPENDENCIAS_ACAO[acao];
+  if (!acaoRequerida) return null;
+
+  // (processo_id, acao) não é único — um processo pode repetir a mesma ação em
+  // etapas diferentes. Uma delas concluída já garante a pasta no disco.
+  const { data: etapasRequeridas, error } = await supabase
+    .from("etapas")
+    .select("descricao, concluida")
+    .eq("processo_id", processoId)
+    .eq("acao", acaoRequerida)
+    .order("ordem", { ascending: true });
+
+  if (error) {
+    console.error("[processos.controller] Erro ao verificar dependência:", error.message);
+    return { status: 500, body: { erro: "Erro ao verificar dependências da etapa" } };
+  }
+
+  const candidatas = etapasRequeridas || [];
+  if (candidatas.length === 0 || candidatas.some((etapa) => etapa.concluida)) {
+    return null;
+  }
+
+  return {
+    status: 409,
+    body: {
+      erro: `Conclua a etapa "${candidatas[0].descricao}" antes de executar esta etapa`,
+    },
+  };
 }
 
 function resolverClienteId(req) {
@@ -164,6 +209,28 @@ async function _criarAberturaEmpresa(req, res, clienteId) {
   }
   if (!cenario || !["nova", "cliente_existente"].includes(cenario)) {
     return res.status(400).json({ erro: "cenario deve ser 'nova' ou 'cliente_existente'" });
+  }
+
+  // Dados do contrato social são opcionais na criação (cliente_existente não os
+  // envia). Se vierem, valida com a mesma regra da execução da etapa — senão o
+  // processo nasce com sócios/CPF/participação inconsistentes que só seriam
+  // barrados depois, ao executar a etapa "gerar_contrato_social".
+  const dadosContratoInformados =
+    socios !== undefined ||
+    capital_social !== undefined ||
+    objeto_social !== undefined ||
+    endereco !== undefined;
+
+  if (dadosContratoInformados) {
+    const erroContrato = validarPayloadExecucao("gerar_contrato_social", {
+      socios,
+      capital_social,
+      objeto_social,
+      endereco,
+    });
+    if (erroContrato) {
+      return res.status(400).json({ erro: erroContrato });
+    }
   }
 
   // A raiz pertence à configuração da máquina do agente. O backend não deve
@@ -359,6 +426,11 @@ async function _executarAcaoEtapa(processoId, etapaId, clienteId, payload) {
 
   if (etapa.concluida) {
     return { status: 400, body: { erro: "Etapa já está concluída" } };
+  }
+
+  const dependenciaPendente = await _dependenciaPendente(processoId, etapa.acao);
+  if (dependenciaPendente) {
+    return dependenciaPendente;
   }
 
   const primeiraExecucao = etapa.status === STATUS_ETAPA.PENDENTE;

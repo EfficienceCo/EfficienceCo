@@ -49,7 +49,7 @@ def test_happy_path_cria_docx(tmp_path):
 
     assert resultado["sucesso"] is True
     assert resultado["erro"] is None
-    esperado = tmp_path / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
+    esperado = tmp_path / "CLIENTES" / "EM_ABERTURA" / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
     assert Path(resultado["arquivo_gerado"]) == esperado
     assert esperado.is_file()
 
@@ -122,7 +122,7 @@ def test_template_ausente(tmp_path, monkeypatch):
     assert resultado["sucesso"] is False
     assert resultado["codigo"] == "template_ausente"
     assert "ausente" in resultado["erro"].lower()
-    assert not (tmp_path / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA).exists()
+    assert not (tmp_path / "CLIENTES" / "EM_ABERTURA" / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA).exists()
 
 
 @pytest.mark.parametrize(
@@ -200,7 +200,7 @@ def test_pasta_base_ausente_usa_raiz_local(tmp_path, monkeypatch):
     resultado = gerar_contrato_social(dados)
 
     assert resultado["sucesso"] is True
-    esperado = tmp_path / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
+    esperado = tmp_path / "CLIENTES" / "EM_ABERTURA" / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
     assert Path(resultado["arquivo_gerado"]) == esperado
 
 
@@ -211,7 +211,7 @@ def test_pasta_base_relativa_legada_usa_raiz_local(tmp_path, monkeypatch):
     resultado = gerar_contrato_social(dados)
 
     assert resultado["sucesso"] is True
-    esperado = tmp_path / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
+    esperado = tmp_path / "CLIENTES" / "EM_ABERTURA" / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
     assert Path(resultado["arquivo_gerado"]) == esperado
 
 
@@ -223,7 +223,7 @@ def test_pasta_base_remota_nao_sobrescreve_raiz_local(tmp_path, monkeypatch):
     resultado = gerar_contrato_social(dados)
 
     assert resultado["sucesso"] is True
-    esperado = raiz_local / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
+    esperado = raiz_local / "CLIENTES" / "EM_ABERTURA" / "Padaria do Joao" / "Contratos" / NOME_ARQUIVO_SAIDA
     assert Path(resultado["arquivo_gerado"]) == esperado
     assert not raiz_remota.exists()
 
@@ -242,7 +242,7 @@ def test_falha_io_gravacao(tmp_path):
 
 def test_cria_contratos_se_ausente(tmp_path):
     dados = _payload_base(pasta_base=str(tmp_path), nome_empresa="Nova Empresa")
-    pasta_contratos = tmp_path / "Nova Empresa" / "Contratos"
+    pasta_contratos = tmp_path / "CLIENTES" / "EM_ABERTURA" / "Nova Empresa" / "Contratos"
     assert not pasta_contratos.exists()
 
     resultado = gerar_contrato_social(dados)

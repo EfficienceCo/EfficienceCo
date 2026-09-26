@@ -1,8 +1,98 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
+import {
+  ANEXOS_SIMPLES,
+  REGIMES_TRIBUTARIOS,
+  validarHistoricoReceita,
+} from "../utils/regime-tributario.util.js";
 
 function normalizarCnpj(valor) {
   return String(valor || "").replace(/\D/g, "");
+}
+
+function vazio(valor) {
+  return valor === null || (typeof valor === "string" && valor.trim() === "");
+}
+
+/**
+ * Traduz os campos tributários do body em colunas de `clientes` (#496).
+ *
+ * São os três campos que `dispararApuracao` lê para montar a apuração do
+ * Simples e que, até esta issue, só existiam no banco: sem tela nem endpoint
+ * que os gravasse, nenhuma apuração podia ser criada por um usuário real.
+ *
+ * Campo ausente no body é campo não tocado; `null` ou string vazia limpam a
+ * coluna. `atual` é o estado já persistido, necessário para validar a coerência
+ * entre regime e anexo quando o PATCH só manda um dos dois.
+ *
+ * @returns {{ updates: object } | { erro: string }}
+ */
+function montarCamposTributarios(body, atual = {}) {
+  const { regime_tributario, anexo_simples, historico_receita } = body;
+  const updates = {};
+
+  if (regime_tributario !== undefined) {
+    if (vazio(regime_tributario)) {
+      updates.regime_tributario = null;
+    } else if (!REGIMES_TRIBUTARIOS.includes(regime_tributario)) {
+      return { erro: `Regime tributário inválido. Use: ${REGIMES_TRIBUTARIOS.join(", ")}` };
+    } else {
+      updates.regime_tributario = regime_tributario;
+    }
+
+    // Sair do Simples sem dizer nada sobre o anexo deixaria a coluna pendurada
+    // num regime que não a usa — é o estado inverso do que o QA-F achou no dev
+    // (anexo preenchido, regime nulo). A tela já limpa; a API garante.
+    if (updates.regime_tributario !== "simples_nacional" && anexo_simples === undefined) {
+      updates.anexo_simples = null;
+    }
+  }
+
+  if (anexo_simples !== undefined) {
+    if (vazio(anexo_simples)) {
+      updates.anexo_simples = null;
+    } else {
+      // A coluna tem CHECK no banco; normalizar e validar aqui troca um 500 de
+      // constraint violation por um 400 com a lista de valores aceitos.
+      const normalizado = String(anexo_simples).trim().toUpperCase();
+      if (!ANEXOS_SIMPLES.includes(normalizado)) {
+        return { erro: `Anexo do Simples inválido. Use: ${ANEXOS_SIMPLES.join(", ")}` };
+      }
+      updates.anexo_simples = normalizado;
+    }
+  }
+
+  if (historico_receita !== undefined) {
+    const validado = validarHistoricoReceita(historico_receita);
+    if (validado.erro) {
+      return {
+        erro: "Histórico de receita inválido. Envie uma lista de { mes: 1-12, ano: >= 2020, receita: >= 0 }, sem competências repetidas",
+      };
+    }
+    updates.historico_receita = validado.entradas;
+  }
+
+  // Simples Nacional sem anexo é exatamente o estado que trava a apuração
+  // (`dispararApuracao` não acha a tabela do anexo). Só barra quando a própria
+  // requisição mexe em regime ou anexo — um PATCH de status não deve falhar
+  // por causa de um cadastro incoerente que já estava no banco.
+  const tocouRegimeOuAnexo = "regime_tributario" in updates || "anexo_simples" in updates;
+  if (tocouRegimeOuAnexo) {
+    const regimeFinal =
+      "regime_tributario" in updates ? updates.regime_tributario : (atual.regime_tributario ?? null);
+    const anexoFinal =
+      "anexo_simples" in updates ? updates.anexo_simples : (atual.anexo_simples ?? null);
+
+    if (regimeFinal === "simples_nacional" && anexoFinal === null) {
+      return { erro: `Cliente no Simples Nacional exige o anexo. Use: ${ANEXOS_SIMPLES.join(", ")}` };
+    }
+
+    if (anexoFinal !== null && regimeFinal !== "simples_nacional") {
+      return { erro: "Anexo do Simples só pode ser informado para cliente no Simples Nacional" };
+    }
+  }
+
+  return { updates };
 }
 
 // Lista todos os clientes ordenados do mais recente para o mais antigo.
@@ -109,9 +199,15 @@ export async function criarCliente(req, res) {
     }
   }
 
+  const tributarios = montarCamposTributarios(req.body);
+  if (tributarios.erro) {
+    console.log(`[clientes.controller] Criação rejeitada — ${tributarios.erro}`);
+    return res.status(400).json({ erro: tributarios.erro });
+  }
+
   const { data, error } = await supabase
     .from("clientes")
-    .insert({ nome, cnpj: cnpjNormalizado })
+    .insert({ nome, cnpj: cnpjNormalizado, ...tributarios.updates })
     .select()
     .single();
 
@@ -139,7 +235,7 @@ export async function atualizarCliente(req, res) {
 
   const { data: cliente, error: erroBusca } = await supabase
     .from("clientes")
-    .select("id")
+    .select("id, regime_tributario, anexo_simples")
     .eq("id", id)
     .single();
 
@@ -177,6 +273,15 @@ export async function atualizarCliente(req, res) {
     }
     updates.esocial_configurado = esocial_configurado;
   }
+
+  // Regime, anexo e histórico de receita — os campos que a apuração do Simples
+  // consome e que não tinham nenhuma via de escrita antes do #496.
+  const tributarios = montarCamposTributarios(req.body, cliente);
+  if (tributarios.erro) {
+    console.log(`[clientes.controller] Atualização rejeitada — ${tributarios.erro}`);
+    return res.status(400).json({ erro: tributarios.erro });
+  }
+  Object.assign(updates, tributarios.updates);
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ erro: "Nenhum campo para atualizar" });

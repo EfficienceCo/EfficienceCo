@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
+import { soDigitos, validarCpf } from '../../../lib/esocial-tabelas';
 import {
   concluirEtapa,
   criar,
@@ -155,6 +156,33 @@ function obterAcaoEtapa(etapa) {
     .toLowerCase();
 }
 
+// O contrato social é gravado dentro da árvore de pastas da empresa, então a
+// etapa só abre depois que "Criar estrutura de pastas" conclui (#488).
+const DEPENDENCIA_ETAPA = {
+  gerar_contrato_social: 'criar_pastas',
+};
+
+function obterDependenciaPendente(etapa, etapas) {
+  const acaoRequerida = DEPENDENCIA_ETAPA[obterAcaoEtapa(etapa)];
+
+  if (!acaoRequerida) {
+    return '';
+  }
+
+  const etapasRequeridas = etapas.filter(
+    (item) => obterAcaoEtapa(item) === acaoRequerida,
+  );
+
+  if (
+    etapasRequeridas.length === 0 ||
+    etapasRequeridas.some((item) => etapaConcluida(item))
+  ) {
+    return '';
+  }
+
+  return obterTituloEtapa(etapasRequeridas[0]);
+}
+
 function obterStatusEtapa(etapa) {
   if (!etapa || typeof etapa !== 'object') {
     return 'pendente';
@@ -247,7 +275,7 @@ function montarPayloadContratoSocial(formulario) {
   return {
     socios: formulario.socios.map((socio) => ({
       nome: socio.nome.trim(),
-      cpf: socio.cpf.trim(),
+      cpf: soDigitos(socio.cpf),
       participacao: Number(socio.participacao),
     })),
     capital_social: Number(formulario.capital_social),
@@ -272,6 +300,16 @@ function validarFormularioContratoSocial(formulario) {
 
   if (socioInvalido) {
     return 'Preencha nome, CPF e participação válida para todos os sócios.';
+  }
+
+  const cpfInvalido = formulario.socios.some((socio) => !validarCpf(socio.cpf));
+  if (cpfInvalido) {
+    return 'Informe um CPF válido para todos os sócios.';
+  }
+
+  const cpfsNormalizados = formulario.socios.map((socio) => soDigitos(socio.cpf));
+  if (new Set(cpfsNormalizados).size !== cpfsNormalizados.length) {
+    return 'Não é possível repetir o CPF de um sócio.';
   }
 
   const participacaoTotal = formulario.socios.reduce(
@@ -328,8 +366,36 @@ function obterArquivoGerado(etapa) {
     (typeof arquivo === 'string' && /^https?:\/\//i.test(arquivo) ? arquivo : '');
   const url = String(urlDeclarada || '');
   const possuiLinkSeguro = /^(https?:\/\/|\/(?!\/))/i.test(url);
+  const localInformado =
+    typeof arquivo === 'object' ? arquivo.pasta || arquivo.diretorio || arquivo.local : '';
+  const ehCaminhoLocal =
+    !localInformado &&
+    !/^https?:\/\//i.test(caminhoSemQuery) &&
+    /^([a-zA-Z]:[\\/]|\/)/.test(caminhoSemQuery);
+  let diretorio = '';
 
-  return { nome, url: possuiLinkSeguro ? url : '' };
+  if (ehCaminhoLocal) {
+    const segmentosCaminho = caminhoSemQuery.split(/[\\/]/).filter(Boolean);
+    segmentosCaminho.pop();
+    const separador = caminhoSemQuery.includes('\\') ? '\\' : '/';
+    diretorio = (caminhoSemQuery.startsWith('/') ? '/' : '') + segmentosCaminho.join(separador);
+  }
+
+  return {
+    nome,
+    url: possuiLinkSeguro ? url : '',
+    local: String(localInformado || diretorio || ''),
+  };
+}
+
+function obterProximaEtapaPendente(etapas, indiceAtual) {
+  for (let indice = indiceAtual + 1; indice < etapas.length; indice += 1) {
+    if (!etapaConcluida(etapas[indice])) {
+      return obterTituloEtapa(etapas[indice], indice);
+    }
+  }
+
+  return null;
 }
 
 function obterResumoEtapas(processo) {
@@ -423,7 +489,13 @@ function classeBadgeStatus(status) {
 }
 
 function tituloProcesso(processo, index) {
-  return processo?.titulo || processo?.nome || processo?.descricao || `Processo ${index + 1}`;
+  return (
+    processo?.titulo ||
+    processo?.nome_empresa ||
+    processo?.nome ||
+    processo?.descricao ||
+    `Processo ${index + 1}`
+  );
 }
 
 function calcularTotalProcessos(payload, processos) {
@@ -771,6 +843,7 @@ function EtapaAutomatizada({
   acao,
   bloqueada,
   concluida,
+  dependenciaPendente,
   enviando,
   erro,
   formulario,
@@ -778,6 +851,7 @@ function EtapaAutomatizada({
   processando,
   titulo,
   arquivo,
+  proximaEtapa,
   onAdicionarSocio,
   onAlterarCampo,
   onAlterarSocio,
@@ -807,21 +881,35 @@ function EtapaAutomatizada({
 
         {arquivo ? (
           <div className="ml-8 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-            <span className="font-medium">Arquivo gerado: </span>
-            {arquivo.url ? (
-              <a
-                href={arquivo.url}
-                target="_blank"
-                rel="noreferrer"
-                className="underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700"
-              >
-                {arquivo.nome}
-              </a>
-            ) : (
-              <span>{arquivo.nome}</span>
-            )}
+            <p>
+              <span className="font-medium">Arquivo gerado: </span>
+              {arquivo.url ? (
+                <a
+                  href={arquivo.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700"
+                >
+                  {arquivo.nome}
+                </a>
+              ) : (
+                <span>{arquivo.nome}</span>
+              )}
+            </p>
+            {arquivo.local ? (
+              <p className="mt-1 text-xs text-emerald-800">
+                <span className="font-medium">Salvo em: </span>
+                {arquivo.local}
+              </p>
+            ) : null}
           </div>
         ) : null}
+
+        <p className="ml-8 text-xs text-zinc-600">
+          {proximaEtapa
+            ? `Próximo passo: ${proximaEtapa}.`
+            : 'Todas as etapas deste processo foram concluídas.'}
+        </p>
       </div>
     );
   }
@@ -870,8 +958,16 @@ function EtapaAutomatizada({
               : 'Confirme para o agente criar a estrutura padrão de pastas.'}
           </p>
         </div>
-        <span className="text-xs font-medium text-amber-700">Pendente</span>
+        <span className="text-xs font-medium text-amber-700">
+          {dependenciaPendente ? 'Bloqueada' : 'Pendente'}
+        </span>
       </div>
+
+      {dependenciaPendente ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Disponível apenas após concluir a etapa &quot;{dependenciaPendente}&quot;.
+        </p>
+      ) : null}
 
       {erro ? (
         <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -1581,12 +1677,16 @@ export default function ProcessosPage() {
                             : null;
                           const erroEtapa =
                             errosExecucaoEtapa[chaveEtapa] || obterErroExecucaoEtapa(etapa);
+                          const dependenciaPendente = automatizada
+                            ? obterDependenciaPendente(etapa, etapas)
+                            : '';
                           const bloqueado =
                             !podeMarcarEtapa ||
                             !processoId ||
                             !etapaId ||
                             atualizandoEtapa ||
-                            enviandoEtapa;
+                            enviandoEtapa ||
+                            Boolean(dependenciaPendente);
                           const idBase = `etapa-${String(etapaId || etapaIndex).replace(
                             /[^a-zA-Z0-9_-]/g,
                             '-',
@@ -1608,12 +1708,16 @@ export default function ProcessosPage() {
                                   arquivo={obterArquivoGerado(etapa)}
                                   bloqueada={bloqueado}
                                   concluida={concluida}
+                                  dependenciaPendente={dependenciaPendente}
                                   enviando={enviandoEtapa}
                                   erro={erroEtapa}
                                   formulario={formulario}
                                   idBase={idBase}
                                   processando={etapaEmProcessamento(etapa)}
                                   titulo={tituloEtapa}
+                                  proximaEtapa={
+                                    concluida ? obterProximaEtapaPendente(etapas, etapaIndex) : null
+                                  }
                                   onAdicionarSocio={() =>
                                     adicionarSocioFormulario(chaveEtapa, etapa, processo)
                                   }

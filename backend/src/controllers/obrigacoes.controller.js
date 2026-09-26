@@ -1,7 +1,7 @@
 ﻿import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
-import { criar as criarNotificacao } from "../services/notificacoes.service.js";
-import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
+import { resolverClienteId } from "../middlewares/permissao.middleware.js";
+import { aplicarFiltroPeriodo, hojeNoBrasil } from "../utils/periodo.util.js";
 
 function sanitizarNome(nome) {
   return nome
@@ -32,13 +32,45 @@ function construirNomeArquivo(nomeObrigacao, obrigacaoId, mimetype) {
   return `${nomeSanitizado}_${obrigacaoId}_${hoje}_comprovante.${ext}`;
 }
 
-function resolverClienteId(req) {
-  if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
-    return req.body.cliente_id || req.query.cliente_id;
+// Bug #505 — o atraso é derivado da data, não só da coluna.
+//
+// O job diário (obrigacoes-atraso.job.js) persiste `atrasada`, mas entre a
+// virada do dia e a varredura — e para obrigações criadas já vencidas — a
+// coluna ainda diz `pendente`. Filtrar só por igualdade devolvia [] para
+// Status=Atrasada. Então:
+//   atrasada -> já marcadas + pendentes com vencimento anterior a hoje
+//   pendente -> só as que ainda estão no prazo (senão a mesma obrigação
+//               apareceria nos dois filtros, com a tela rotulando "Atrasada")
+// Demais status (concluida) seguem na comparação direta.
+function aplicarFiltroStatus(query, status, agora = new Date()) {
+  if (!status) return query;
+
+  const hoje = hojeNoBrasil(agora);
+
+  if (status === "atrasada") {
+    return query.or(
+      `status.eq.atrasada,and(status.eq.pendente,data_vencimento.lt.${hoje})`,
+    );
   }
-  return req.usuario?.cliente_id;
+
+  if (status === "pendente") {
+    return query.eq("status", "pendente").gte("data_vencimento", hoje);
+  }
+
+  return query.eq("status", status);
 }
 
+function aplicarIsolamentoCliente(query, req) {
+  if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) return query;
+  return query.eq("cliente_id", req.usuario?.cliente_id);
+}
+
+function obrigacaoPertenceAoCliente(req, obrigacao) {
+  return (
+    req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE ||
+    obrigacao?.cliente_id === req.usuario?.cliente_id
+  );
+}
 export async function listarObrigacoes(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -53,7 +85,7 @@ export async function listarObrigacoes(req, res) {
     .eq("cliente_id", clienteId)
     .order("data_vencimento", { ascending: true });
 
-  if (status) query = query.eq("status", status);
+  query = aplicarFiltroStatus(query, status);
 
   query = aplicarFiltroPeriodo(query, "data_vencimento", mes, ano);
 
@@ -152,21 +184,22 @@ export async function criarObrigacao(req, res) {
 export async function atualizarObrigacao(req, res) {
   const { id } = req.params;
 
-  const { data: obrigacao, error: erroBusca } = await supabase
+  let query = supabase
     .from("obrigacoes")
     .select("cliente_id, tipo, status, recorrente")
-    .eq("id", id)
-    .single();
+    .eq("id", id);
+  query = aplicarIsolamentoCliente(query, req);
 
-  if (erroBusca || !obrigacao) {
-    return res.status(404).json({ erro: "Obrigação não encontrada" });
+  const { data: obrigacao, error: erroBusca } = await query.maybeSingle();
+
+  if (erroBusca) {
+    console.error("[obrigacoes.controller] Erro ao buscar obrigação:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar obrigação" });
   }
 
-  if (
-    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-    obrigacao.cliente_id !== req.usuario.cliente_id
-  ) {
-    return res.status(403).json({ erro: "Sem permissão para alterar esta obrigação" });
+  // Isolamento multi-tenant: outro cliente é indistinguível de um id inexistente.
+  if (!obrigacao || !obrigacaoPertenceAoCliente(req, obrigacao)) {
+    return res.status(404).json({ erro: "Obrigação não encontrada" });
   }
 
   if (obrigacao.status === "concluida") {
@@ -188,7 +221,11 @@ export async function atualizarObrigacao(req, res) {
   const updates = {};
   if (nome !== undefined) updates.nome = nome;
   if (tipo !== undefined) updates.tipo = tipo;
-  if (data_vencimento !== undefined) updates.data_vencimento = data_vencimento;
+  if (data_vencimento !== undefined) {
+    updates.data_vencimento = data_vencimento;
+    // Vencimento novo, ciclo de alertas novo (#529).
+    updates.ultimo_marco_alertado = null;
+  }
   if (recorrente !== undefined) updates.recorrente = recorrente;
   if (status !== undefined) updates.status = status;
 
@@ -200,6 +237,7 @@ export async function atualizarObrigacao(req, res) {
     .from("obrigacoes")
     .update(updates)
     .eq("id", id)
+    .eq("cliente_id", obrigacao.cliente_id)
     .select()
     .single();
 
@@ -214,24 +252,29 @@ export async function atualizarObrigacao(req, res) {
 export async function deletarObrigacao(req, res) {
   const { id } = req.params;
 
-  const { data: obrigacao, error: erroBusca } = await supabase
+  let query = supabase
     .from("obrigacoes")
     .select("cliente_id, comprovante_path")
-    .eq("id", id)
-    .single();
+    .eq("id", id);
+  query = aplicarIsolamentoCliente(query, req);
 
-  if (erroBusca || !obrigacao) {
+  const { data: obrigacao, error: erroBusca } = await query.maybeSingle();
+
+  if (erroBusca) {
+    console.error("[obrigacoes.controller] Erro ao buscar obrigação:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar obrigação" });
+  }
+
+  // Isolamento multi-tenant: outro cliente é indistinguível de um id inexistente.
+  if (!obrigacao || !obrigacaoPertenceAoCliente(req, obrigacao)) {
     return res.status(404).json({ erro: "Obrigação não encontrada" });
   }
 
-  if (
-    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-    obrigacao.cliente_id !== req.usuario.cliente_id
-  ) {
-    return res.status(403).json({ erro: "Sem permissão para remover esta obrigação" });
-  }
-
-  const { error } = await supabase.from("obrigacoes").delete().eq("id", id);
+  const { error } = await supabase
+    .from("obrigacoes")
+    .delete()
+    .eq("id", id)
+    .eq("cliente_id", obrigacao.cliente_id);
 
   if (error) {
     console.error("[obrigacoes.controller] Erro ao deletar:", error.message);
@@ -287,34 +330,9 @@ export async function proximasObrigacoes(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar próximas obrigações" });
   }
 
-  // Gera notificações para vencimentos em ≤ 3 dias, sem duplicar por dia
-  const limite3Dias = new Date(hoje);
-  limite3Dias.setDate(limite3Dias.getDate() + 3);
-  const limite3Str = limite3Dias.toISOString().slice(0, 10);
-
-  const iminentes = data.filter((o) => o.data_vencimento <= limite3Str);
-
-  const hojeInicio = new Date(hoje);
-  hojeInicio.setHours(0, 0, 0, 0);
-
-  for (const obrigacao of iminentes) {
-    const msRestantes = new Date(obrigacao.data_vencimento) - hoje;
-    const diasRestantes = Math.ceil(msRestantes / (1000 * 60 * 60 * 24));
-    const mensagem = `Obrigação "${obrigacao.nome}" [${obrigacao.id}] vence em ${diasRestantes} dia(s).`;
-
-    const { data: existente } = await supabase
-      .from("notificacoes")
-      .select("id")
-      .eq("cliente_id", clienteId)
-      .eq("tipo", "obrigacao_vencendo")
-      .gte("criado_em", hojeInicio.toISOString())
-      .ilike("mensagem", `%${obrigacao.id}%`)
-      .maybeSingle();
-
-    if (!existente) {
-      await criarNotificacao(clienteId, "obrigacao_vencendo", mensagem);
-    }
-  }
+  // As notificações de vencimento saíram daqui (#529): o limiar fixo de <= 3 dias
+  // só disparava para quem abrisse o dashboard. Agora quem alerta é o job diário
+  // obrigacoes-alertas.job.js, nos marcos 60/30/7/3/0.
 
   return res.status(200).json(data);
 }
@@ -326,21 +344,22 @@ export async function concluirObrigacao(req, res) {
     return res.status(400).json({ erro: "Comprovante é obrigatório" });
   }
 
-  const { data: obrigacao, error: erroBusca } = await supabase
+  let query = supabase
     .from("obrigacoes")
     .select("id, cliente_id, nome, status")
-    .eq("id", id)
-    .single();
+    .eq("id", id);
+  query = aplicarIsolamentoCliente(query, req);
 
-  if (erroBusca || !obrigacao) {
-    return res.status(404).json({ erro: "Obrigação não encontrada" });
+  const { data: obrigacao, error: erroBusca } = await query.maybeSingle();
+
+  if (erroBusca) {
+    console.error("[obrigacoes.controller] Erro ao buscar obrigação:", erroBusca.message);
+    return res.status(500).json({ erro: "Erro ao buscar obrigação" });
   }
 
-  if (
-    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-    obrigacao.cliente_id !== req.usuario.cliente_id
-  ) {
-    return res.status(403).json({ erro: "Sem permissão para concluir esta obrigação" });
+  // Isolamento multi-tenant: outro cliente é indistinguível de um id inexistente.
+  if (!obrigacao || !obrigacaoPertenceAoCliente(req, obrigacao)) {
+    return res.status(404).json({ erro: "Obrigação não encontrada" });
   }
 
   if (obrigacao.status === "concluida") {
@@ -370,6 +389,7 @@ export async function concluirObrigacao(req, res) {
     .from("obrigacoes")
     .update({ status: "concluida", comprovante_path: publicUrl })
     .eq("id", id)
+    .eq("cliente_id", obrigacao.cliente_id)
     .select()
     .single();
 
