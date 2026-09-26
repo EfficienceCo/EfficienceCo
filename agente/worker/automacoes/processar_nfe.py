@@ -23,6 +23,12 @@ from core.utils import validar_caminho, validar_nome
 NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
 _ASCII_DIGITS = "0123456789"
 PASTA_NAO_IDENTIFICADO = "nao_identificado"
+# Erro 4xx do POST não some reenviando; fica fora do inbox (polling de 30s).
+PASTA_REJEITADOS = "rejeitados"
+# 409: a NF-e já está no ledger — não gera outra cópia em Notas Fiscais/.
+PASTA_DUPLICADAS = "duplicadas"
+# 408/429 são 4xx, mas transitórios (timeout / rate limit).
+_STATUS_4XX_TRANSITORIOS = frozenset({408, 429})
 ENDPOINT_LANCAMENTOS = "/lancamentos-fiscais"
 
 
@@ -330,15 +336,37 @@ def _postar_lancamento(payload: dict) -> str:
         raise
 
 
-def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> None:
+def _erro_post_permanente(exc: BaseException) -> bool:
+    """4xx de validação não se resolve no próximo ciclo. 5xx e rede, sim.
+
+    409 já volta como 'duplicata' em _postar_lancamento. 408 e 429 reenviam.
+    """
+    if not isinstance(exc, ApiError):
+        return False
+    codigo = exc.status_code
+    if not isinstance(codigo, int) or not (400 <= codigo < 500):
+        return False
+    if codigo == 409 or codigo in _STATUS_4XX_TRANSITORIOS:
+        return False
+    return True
+
+
+def _mover_para_subpasta(
+    xml_path: Path, pasta_path: Path, subpasta: str, rotulo: str, motivo: str
+) -> None:
     nome = xml_path.name
-    destino_nao = pasta_path / PASTA_NAO_IDENTIFICADO / nome
+    destino = pasta_path / subpasta / nome
     try:
-        movido = _mover_xml(xml_path, destino_nao)
-        print(f"[processar_nfe] não identificado ({nome}): {motivo} -> {movido}")
+        movido = _mover_xml(xml_path, destino)
+        detalhe = f": {motivo}" if motivo else ""
+        print(f"[processar_nfe] {rotulo} ({nome}){detalhe} -> {movido}")
     except Exception as move_err:
-        print(f"[processar_nfe] falha ao mover {nome} para nao_identificado/: {move_err}")
+        print(f"[processar_nfe] falha ao mover {nome} para {subpasta}/: {move_err}")
         raise
+
+
+def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> None:
+    _mover_para_subpasta(xml_path, pasta_path, PASTA_NAO_IDENTIFICADO, "não identificado", motivo)
 
 
 def processar_pasta_nfe(pasta: str) -> None:
@@ -428,7 +456,8 @@ def processar_pasta_nfe(pasta: str) -> None:
         # no banco aponta para onde o arquivo vai parar de fato.
         caminhos_reais = [_caminho_livre(d) for _, d in alvos]
 
-        falhou_post = False
+        # criado | duplicata | permanente | transitorio
+        resultados: list[str] = []
         pasta_base_path = Path(pasta_base)
         for (empresa, _destino), caminho_real in zip(alvos, caminhos_reais):
             relativo = _caminho_xml_relativo(Path(caminho_real), pasta_base_path)
@@ -444,11 +473,41 @@ def processar_pasta_nfe(pasta: str) -> None:
                     f"[processar_nfe] {resultado} {empresa['tipo']} "
                     f"{empresa['nome']} {dados['chave_nfe']}"
                 )
+                resultados.append(resultado)
             except Exception as e:
                 print(f"[processar_nfe] falha no POST ({nome}, {empresa['nome']}): {e}")
-                falhou_post = True
+                resultados.append("permanente" if _erro_post_permanente(e) else "transitorio")
 
-        if falhou_post:
+        # Rede/5xx/408/429: deixa no inbox para o próximo polling.
+        if "transitorio" in resultados:
+            continue
+
+        # 4xx permanente: sai do inbox (senão reenvia a cada 30s para sempre).
+        if "permanente" in resultados:
+            try:
+                _mover_para_subpasta(
+                    xml_path,
+                    pasta_path,
+                    PASTA_REJEITADOS,
+                    "rejeitado",
+                    "erro permanente do POST",
+                )
+            except Exception:
+                pass
+            continue
+
+        # Reenvio de NF-e já escriturada: sem cópia nova em Notas Fiscais/.
+        if resultados and all(r == "duplicata" for r in resultados):
+            try:
+                _mover_para_subpasta(
+                    xml_path,
+                    pasta_path,
+                    PASTA_DUPLICADAS,
+                    "duplicata",
+                    dados["chave_nfe"],
+                )
+            except Exception:
+                pass
             continue
 
         try:
