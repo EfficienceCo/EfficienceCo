@@ -5,6 +5,7 @@ from pathlib import Path
 
 TIPOS_PATH = Path(__file__).parent / "tipos_documentos.json"
 
+
 def _carregar_tipos():
     try:
         with open(TIPOS_PATH, "r", encoding="utf-8") as f:
@@ -25,19 +26,27 @@ def identificar_tipo_no_nome(nome_arquivo):
         None
     )
 
+
 def classificar_arquivo(caminho):
     try:
         from automacoes.rede.classificador import classificar_documento
         resultado = classificar_documento(caminho, threshold=0.75)
         if isinstance(resultado, dict) and resultado.get("erro"):
+            # O dict já traz a causa (pesos .pth, extensão, PDF). Só prefixa o log.
             print(f"[identificar_tipo] Classificador: {resultado['erro']}")
             return "nao_identificado"
         return resultado["classe"]
-    except ImportError as e:
-        print(f"[identificar_tipo] Dependências da rede neural não instaladas: {e}")
+    except ModuleNotFoundError as e:
+        # e.name com prefixo automacoes = o .py sumiu; qualquer outro nome = dep.
+        nome = e.name or ""
+        if nome.startswith("automacoes"):
+            causa = f"Módulo do classificador ausente ({nome})"
+        else:
+            causa = f"Dependência da rede neural ausente ({nome})"
+        print(f"[identificar_tipo] {causa}: {e}")
         return "nao_identificado"
     except FileNotFoundError:
-        print(f"[identificar_tipo] Arquivo de pesos não encontrado (classificador_documentos.pth)")
+        print("[identificar_tipo] Arquivo de pesos não encontrado (classificador_documentos.pth)")
         return "nao_identificado"
     except Exception as e:
         print(f"[identificar_tipo] Falha ao classificar: {e}")
