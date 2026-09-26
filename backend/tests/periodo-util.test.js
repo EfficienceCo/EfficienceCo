@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   aplicarFiltroPeriodo,
   competenciaEstaFechada,
+  erroPeriodoConsulta,
   hojeNoBrasil,
   ultimaCompetenciaFechada,
 } from "../src/utils/periodo.util.js";
@@ -109,6 +110,34 @@ describe("aplicarFiltroPeriodo", () => {
 
     assert.doesNotThrow(() => aplicarFiltroPeriodo(query, "data_emissao", "7", "2026xyz"));
     assert.deepEqual(chamadas, []);
+  });
+});
+
+describe("erroPeriodoConsulta", () => {
+  it("aceita ausência total, só ano e mês+ano válidos", () => {
+    assert.equal(erroPeriodoConsulta(undefined, undefined), null);
+    assert.equal(erroPeriodoConsulta("", "2026"), null);
+    assert.equal(erroPeriodoConsulta(undefined, 2026), null);
+    assert.equal(erroPeriodoConsulta("9", "2026"), null);
+    assert.equal(erroPeriodoConsulta(1, 2026), null);
+    assert.equal(erroPeriodoConsulta(12, "2026"), null);
+  });
+
+  it("rejeita mês fora de 1–12, decimal ou não numérico", () => {
+    assert.match(erroPeriodoConsulta(13, 2026), /mes/);
+    assert.match(erroPeriodoConsulta(0, 2026), /mes/);
+    assert.match(erroPeriodoConsulta("9.5", 2026), /mes/);
+    assert.match(erroPeriodoConsulta("abc", 2026), /mes/);
+  });
+
+  it("rejeita mês sem ano", () => {
+    assert.match(erroPeriodoConsulta(9, undefined), /ano/);
+    assert.match(erroPeriodoConsulta("9", ""), /ano/);
+  });
+
+  it("rejeita ano inválido", () => {
+    assert.match(erroPeriodoConsulta(undefined, "abc"), /ano/);
+    assert.match(erroPeriodoConsulta("7", "2026xyz"), /ano/);
   });
 });
 
