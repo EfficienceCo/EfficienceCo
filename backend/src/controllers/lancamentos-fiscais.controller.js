@@ -4,6 +4,7 @@ import { PERFIS } from "../config/perfis.js";
 import { aplicarFiltroPeriodo, dataLocalISO } from "../utils/periodo.util.js";
 
 const TIPOS_VALIDOS = new Set(["entrada", "saida"]);
+const CHAVE_NFE_REGEX = /^\d{44}$/;
 
 const CAMPOS_OBRIGATORIOS = [
   "chave_nfe",
@@ -170,6 +171,52 @@ export async function criarLancamentoFiscal(req, res) {
   return res.status(201).json(data);
 }
 
+// POST /lancamentos-fiscais/cancelar — chamado pelo agente ao receber um
+// procEventoNFe de cancelamento homologado. O registro é preservado para
+// auditoria, mas deixa de produzir efeito nos resumos e apurações.
+export async function cancelarLancamentoFiscal(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  const { chave_nfe, motivo, protocolo, data_evento } = req.body || {};
+  if (!CHAVE_NFE_REGEX.test(String(chave_nfe || ""))) {
+    return res.status(400).json({ erro: "chave_nfe deve conter 44 dígitos" });
+  }
+
+  const dataCancelamento = data_evento ? new Date(data_evento) : new Date();
+  if (Number.isNaN(dataCancelamento.getTime())) {
+    return res.status(400).json({ erro: "data_evento inválida" });
+  }
+
+  const { data, error } = await supabase
+    .from("lancamentos_fiscais")
+    .update({
+      status: "cancelada",
+      cancelado_em: dataCancelamento.toISOString(),
+      motivo_cancelamento: motivo || null,
+      protocolo_cancelamento: protocolo || null,
+    })
+    .eq("cliente_id", licenca.cliente_id)
+    .eq("chave_nfe", chave_nfe)
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error("[lancamentos-fiscais.controller] Erro ao cancelar lançamento:", error.message);
+    return res.status(500).json({ erro: "Erro ao cancelar lançamento fiscal" });
+  }
+
+  if (!data) {
+    return res.status(404).json({ erro: "Lançamento fiscal não encontrado para esta licença" });
+  }
+
+  return res.status(200).json(data);
+}
+
 export async function listarLancamentosFiscais(req, res) {
   const clienteId = resolverClienteIdQuery(req);
 
@@ -208,8 +255,9 @@ export async function resumoLancamentosFiscais(req, res) {
 
   let query = supabase
     .from("lancamentos_fiscais")
-    .select("tipo, valor_total, icms, pis, cofins, ipi")
-    .eq("cliente_id", clienteId);
+    .select("tipo, valor_total, icms, pis, cofins, ipi, status")
+    .eq("cliente_id", clienteId)
+    .eq("status", "ativa");
 
   query = aplicarFiltroPeriodo(query, "data_emissao", mes, ano);
 
@@ -220,7 +268,9 @@ export async function resumoLancamentosFiscais(req, res) {
     return res.status(500).json({ erro: "Erro ao calcular resumo dos lançamentos fiscais" });
   }
 
-  const linhas = data || [];
+  // O filtro local também protege integrações/mocks que retornem linhas além
+  // do filtro solicitado ao banco.
+  const linhas = (data || []).filter((lancamento) => lancamento.status !== "cancelada");
 
   const totais = linhas.reduce(
     (acc, lancamento) => ({

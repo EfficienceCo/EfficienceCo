@@ -192,3 +192,23 @@ def test_chave_com_digito_unicode_rejeitada(tmp_path):
     caminho.write_text(xml, encoding="utf-8")
     with pytest.raises(ValueError, match="chave_nfe inválida"):
         parsear_nfe(str(caminho))
+
+
+def test_nfe_proc_denegada_nao_tem_efeito_fiscal(tmp_path):
+    xml = (FIXTURES / "entrada.xml").read_text(encoding="utf-8")
+    xml = xml.replace("<cStat>100</cStat>", "<cStat>110</cStat>")
+    caminho = tmp_path / "denegada.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"sem autorização fiscal \(cStat=110\)"):
+        parsear_nfe(str(caminho))
+
+
+@pytest.mark.parametrize("cstat", ["100", "150"])
+def test_nfe_proc_autorizada_tem_efeito_fiscal(tmp_path, cstat):
+    xml = (FIXTURES / "entrada.xml").read_text(encoding="utf-8")
+    xml = xml.replace("<cStat>100</cStat>", f"<cStat>{cstat}</cStat>")
+    caminho = tmp_path / f"autorizada-{cstat}.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    assert parsear_nfe(str(caminho))["cstat"] == cstat

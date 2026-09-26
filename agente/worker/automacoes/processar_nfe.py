@@ -23,7 +23,11 @@ from core.utils import validar_caminho, validar_nome
 NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
 _ASCII_DIGITS = "0123456789"
 PASTA_NAO_IDENTIFICADO = "nao_identificado"
+PASTA_EVENTOS_CANCELAMENTO = "eventos_cancelamento"
 ENDPOINT_LANCAMENTOS = "/lancamentos-fiscais"
+ENDPOINT_CANCELAMENTO = "/lancamentos-fiscais/cancelar"
+_CSTAT_AUTORIZADOS = {"100", "150"}
+_CSTAT_CANCELAMENTO_AUTORIZADO = {"135", "155"}
 
 
 def _find(pai: ET.Element, path: str) -> ET.Element | None:
@@ -40,6 +44,39 @@ def _inf_nfe(root: ET.Element) -> ET.Element:
     if inf is None:
         raise ValueError("tag infNFe não encontrada (XML não é NF-e SEFAZ?)")
     return inf
+
+
+def _nome_local(elemento: ET.Element) -> str:
+    return elemento.tag.rsplit("}", 1)[-1]
+
+
+def _ler_xml(caminho_xml: str) -> ET.Element:
+    validar_caminho(caminho_xml)
+
+    path = Path(caminho_xml)
+    if not path.is_file():
+        raise ValueError(f"arquivo XML não encontrado: {caminho_xml}")
+
+    try:
+        return ET.parse(path).getroot()
+    except ET.ParseError as e:
+        raise ValueError(f"XML malformado: {e}") from e
+    except UnicodeDecodeError as e:
+        raise ValueError(f"encoding inválido no XML: {e}") from e
+    except OSError as e:
+        raise ValueError(f"falha ao ler XML: {e}") from e
+
+
+def _validar_protocolo_autorizacao(root: ET.Element) -> str | None:
+    """Valida o protocolo quando o documento é um nfeProc da SEFAZ."""
+    if _nome_local(root) != "nfeProc":
+        return None
+
+    cstat = (_text(root, ".//nfe:protNFe/nfe:infProt/nfe:cStat") or "").strip()
+    if cstat not in _CSTAT_AUTORIZADOS:
+        status = cstat or "ausente"
+        raise ValueError(f"NF-e sem autorização fiscal (cStat={status})")
+    return cstat
 
 
 def _somente_digitos(v: str) -> str:
@@ -79,21 +116,8 @@ def _data_emissao(inf: ET.Element) -> date:
 
 def parsear_nfe(caminho_xml: str) -> dict:
     """Lê XML de NF-e SEFAZ e retorna campos relevantes tipados."""
-    validar_caminho(caminho_xml)
-
-    path = Path(caminho_xml)
-    if not path.is_file():
-        raise ValueError(f"arquivo XML não encontrado: {caminho_xml}")
-
-    try:
-        tree = ET.parse(path)
-        root = tree.getroot()
-    except ET.ParseError as e:
-        raise ValueError(f"XML malformado: {e}") from e
-    except UnicodeDecodeError as e:
-        raise ValueError(f"encoding inválido no XML: {e}") from e
-    except OSError as e:
-        raise ValueError(f"falha ao ler XML: {e}") from e
+    root = _ler_xml(caminho_xml)
+    cstat = _validar_protocolo_autorizacao(root)
 
     inf = _inf_nfe(root)
 
@@ -115,6 +139,43 @@ def parsear_nfe(caminho_xml: str) -> dict:
         "cofins": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vCOFINS"), "total/ICMSTot/vCOFINS"),
         "ipi": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vIPI"), "total/ICMSTot/vIPI", obrigatorio=False),
         "data_emissao": _data_emissao(inf),
+        "cstat": cstat,
+    }
+
+
+def parsear_evento_cancelamento(caminho_xml: str) -> dict | None:
+    """Retorna os dados de um procEventoNFe de cancelamento, ou None para NF-e."""
+    root = _ler_xml(caminho_xml)
+    if _nome_local(root) != "procEventoNFe":
+        return None
+
+    inf_evento = root.find(".//nfe:evento/nfe:infEvento", NS)
+    if inf_evento is None:
+        raise ValueError("tag evento/infEvento não encontrada")
+
+    tipo_evento = (_text(inf_evento, "nfe:tpEvento") or "").strip()
+    if tipo_evento != "110111":
+        raise ValueError(f"evento de NF-e não suportado (tpEvento={tipo_evento or 'ausente'})")
+
+    inf_retorno = root.find(".//nfe:retEvento/nfe:infEvento", NS)
+    cstat = (_text(inf_retorno, "nfe:cStat") or "").strip() if inf_retorno is not None else ""
+    if cstat not in _CSTAT_CANCELAMENTO_AUTORIZADO:
+        raise ValueError(f"cancelamento sem homologação fiscal (cStat={cstat or 'ausente'})")
+
+    chave = _somente_digitos(_text(inf_evento, "nfe:chNFe") or "")
+    if len(chave) != 44:
+        raise ValueError("chNFe inválida no evento de cancelamento")
+
+    return {
+        "chave_nfe": chave,
+        "motivo": (_text(inf_evento, "nfe:detEvento/nfe:xJust") or "").strip() or None,
+        "protocolo": (_text(inf_retorno, "nfe:nProt") or "").strip() or None,
+        "data_evento": (
+            (_text(inf_retorno, "nfe:dhRegEvento") or "").strip()
+            or (_text(inf_evento, "nfe:dhEvento") or "").strip()
+            or None
+        ),
+        "cstat": cstat,
     }
 
 
@@ -330,6 +391,15 @@ def _postar_lancamento(payload: dict) -> str:
         raise
 
 
+def _postar_cancelamento(evento: dict) -> None:
+    client.post(
+        ENDPOINT_CANCELAMENTO,
+        evento,
+        timeout=30,
+        addToHeaders={"x-licenca-token": client.LICENSE_TOKEN},
+    )
+
+
 def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> None:
     nome = xml_path.name
     destino_nao = pasta_path / PASTA_NAO_IDENTIFICADO / nome
@@ -359,6 +429,30 @@ def processar_pasta_nfe(pasta: str) -> None:
 
     for xml_path in _listar_xmls(pasta_path):
         nome = xml_path.name
+        try:
+            evento = parsear_evento_cancelamento(str(xml_path))
+        except ValueError as e:
+            try:
+                _mover_nao_identificado(xml_path, pasta_path, str(e))
+            except Exception:
+                pass
+            continue
+
+        if evento is not None:
+            try:
+                _postar_cancelamento(evento)
+                destino = pasta_path / PASTA_EVENTOS_CANCELAMENTO / nome
+                movido = _mover_xml(xml_path, destino)
+                print(
+                    f"[processar_nfe] cancelada {evento['chave_nfe']} "
+                    f"e evento arquivado -> {movido}"
+                )
+            except Exception as e:
+                # Mantém na entrada para retentar, inclusive se o evento chegar
+                # antes da NF-e original ser escriturada.
+                print(f"[processar_nfe] falha no cancelamento ({nome}): {e}")
+            continue
+
         try:
             dados = parsear_nfe(str(xml_path))
         except ValueError as e:

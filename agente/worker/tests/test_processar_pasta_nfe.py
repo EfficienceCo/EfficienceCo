@@ -483,3 +483,62 @@ def test_nfe_data_emissao_futura_vai_para_nao_identificado(pasta_nfe):
 def test_processar_nfe_sem_seta_unicode_nos_prints():
     fonte = Path(__file__).resolve().parents[1] / "automacoes" / "processar_nfe.py"
     assert "\u2192" not in fonte.read_text(encoding="utf-8")
+
+
+def test_evento_cancelamento_cancela_e_arquiva(pasta_nfe):
+    inbox, _base = pasta_nfe
+    chave = "35260712345678000190550010000000011000000011"
+    evento = inbox / "cancelamento.xml"
+    evento.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+        <procEventoNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00">
+          <evento><infEvento Id="ID110111{chave}01">
+            <chNFe>{chave}</chNFe><dhEvento>2026-07-16T10:00:00-03:00</dhEvento>
+            <tpEvento>110111</tpEvento>
+            <detEvento versao="1.00"><descEvento>Cancelamento</descEvento><xJust>Operação não realizada</xJust></detEvento>
+          </infEvento></evento>
+          <retEvento><infEvento>
+            <cStat>135</cStat><chNFe>{chave}</chNFe>
+            <dhRegEvento>2026-07-16T10:00:01-03:00</dhRegEvento><nProt>135260000000001</nProt>
+          </infEvento></retEvento>
+        </procEventoNFe>""",
+        encoding="utf-8",
+    )
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj") as mock_lookup,
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        mock_post.return_value = MagicMock()
+        processar_pasta_nfe(str(inbox))
+
+    mock_lookup.assert_not_called()
+    assert mock_post.call_args.args[0] == "/lancamentos-fiscais/cancelar"
+    payload = mock_post.call_args.args[1]
+    assert payload["chave_nfe"] == chave
+    assert payload["motivo"] == "Operação não realizada"
+    assert payload["protocolo"] == "135260000000001"
+    assert not evento.exists()
+    assert (inbox / "eventos_cancelamento" / "cancelamento.xml").is_file()
+
+
+def test_evento_cancelamento_sem_nota_mantem_para_retentar(pasta_nfe):
+    inbox, _base = pasta_nfe
+    chave = "35260712345678000190550010000000011000000011"
+    evento = inbox / "cancelamento.xml"
+    evento.write_text(
+        f"""<procEventoNFe xmlns="http://www.portalfiscal.inf.br/nfe">
+          <evento><infEvento><chNFe>{chave}</chNFe><tpEvento>110111</tpEvento></infEvento></evento>
+          <retEvento><infEvento><cStat>135</cStat></infEvento></retEvento>
+        </procEventoNFe>""",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "automacoes.processar_nfe.client.post",
+        side_effect=ApiError(404, "lançamento não encontrado"),
+    ):
+        processar_pasta_nfe(str(inbox))
+
+    assert evento.is_file()
+    assert not (inbox / "eventos_cancelamento" / "cancelamento.xml").exists()

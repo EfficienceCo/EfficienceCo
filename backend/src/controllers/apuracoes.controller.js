@@ -432,6 +432,7 @@ export async function dispararApuracao(req, res) {
     .from("lancamentos_fiscais")
     .select("id, chave_nfe, tipo, valor_total, data_emissao")
     .eq("cliente_id", clienteId)
+    .eq("status", "ativa")
     .gte("data_emissao", janelaRbt12.inicio)
     .lte("data_emissao", fimMesAtual);
 
@@ -574,6 +575,7 @@ export async function detalharApuracao(req, res) {
       .from("lancamentos_fiscais")
       .select("id, chave_nfe, tipo, valor_total, data_emissao")
       .eq("cliente_id", data.cliente_id)
+      .eq("status", "ativa")
       .gte("data_emissao", janelaRbt12.inicio)
       .lte("data_emissao", fimMesAtual),
   ]);
@@ -854,6 +856,7 @@ export async function recalcularApuracao(req, res) {
     .from("lancamentos_fiscais")
     .select("id, chave_nfe, tipo, valor_total, data_emissao")
     .eq("cliente_id", apuracao.cliente_id)
+    .eq("status", "ativa")
     .gte("data_emissao", janelaRbt12.inicio)
     .lte("data_emissao", fimMesAtual);
 
