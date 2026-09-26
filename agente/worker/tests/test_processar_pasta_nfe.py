@@ -267,7 +267,9 @@ def test_dois_clientes_reprocesso_idempotente(pasta_nfe):
     assert mock_post2.call_count == 1
     assert not (inbox / "dois-clientes.xml").exists()
     pasta_dest = base / NOME_EMPRESA / "Notas Fiscais" / "2026-06"
-    assert any(pasta_dest.glob("dois-clientes*.xml"))
+    arquivados = list(pasta_dest.glob("dois-clientes*.xml"))
+    assert [p.name for p in arquivados] == ["dois-clientes.xml"]
+    assert (inbox / "duplicadas" / "dois-clientes.xml").is_file()
 
 
 def test_nao_identificado_move_sem_post(pasta_nfe):
@@ -326,7 +328,8 @@ def test_nome_empresa_invalido_nao_posta(pasta_nfe):
     assert (inbox / "nao_identificado" / "entrada.xml").is_file()
 
 
-def test_duplicata_409_ainda_move(pasta_nfe):
+def test_duplicata_409_vai_para_duplicadas_sem_copia(pasta_nfe):
+    """BUG-NFE-09: reenvio de NF-e já escriturada não cria cópia em Notas Fiscais/."""
     inbox, base = pasta_nfe
     _copiar_fixture("entrada.xml", inbox)
 
@@ -335,12 +338,16 @@ def test_duplicata_409_ainda_move(pasta_nfe):
         patch(
             "automacoes.processar_nfe.client.post",
             side_effect=ApiError(409, "já existe"),
-        ),
+        ) as mock_post,
     ):
         processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
 
+    assert mock_post.call_count == 1
     assert not (inbox / "entrada.xml").exists()
-    assert _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").is_file()
+    assert (inbox / "duplicadas" / "entrada.xml").is_file()
+    assert not _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").exists()
+    assert not any((base / NOME_EMPRESA / "Notas Fiscais").rglob("*.xml"))
 
 
 def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
@@ -366,12 +373,73 @@ def test_erro_api_nao_move(pasta_nfe):
         patch(
             "automacoes.processar_nfe.client.post",
             side_effect=ApiError(500, "falha"),
-        ),
+        ) as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 2
+    assert (inbox / "entrada.xml").is_file()
+    assert not (inbox / "rejeitados" / "entrada.xml").exists()
+    assert not _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").exists()
+
+
+def test_erro_4xx_permanente_sai_do_inbox(pasta_nfe):
+    """BUG-NFE-09: 4xx permanente vai para rejeitados e não é reenviado."""
+    inbox, base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=ApiError(422, "valor_total fora da faixa"),
+        ) as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 1
+    assert not (inbox / "entrada.xml").exists()
+    assert (inbox / "rejeitados" / "entrada.xml").is_file()
+    assert not _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").exists()
+
+
+def test_erro_rede_permanece_no_inbox(pasta_nfe):
+    inbox, base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=RuntimeError("Falha de conexão em POST /lancamentos-fiscais"),
+        ) as mock_post,
     ):
         processar_pasta_nfe(str(inbox))
 
+    assert mock_post.call_count == 1
     assert (inbox / "entrada.xml").is_file()
+    assert not (inbox / "rejeitados" / "entrada.xml").exists()
     assert not _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").exists()
+
+
+def test_erro_429_e_transitorio(pasta_nfe):
+    inbox, _base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=ApiError(429, "too many requests"),
+        ) as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 1
+    assert (inbox / "entrada.xml").is_file()
+    assert not (inbox / "rejeitados" / "entrada.xml").exists()
 
 
 def test_cliente_id_ausente_nao_trava_scan(pasta_nfe):
