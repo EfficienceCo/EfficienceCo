@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../../context/AuthContext';
 import { listarClientes } from '../../../../services/clientes.service';
@@ -194,6 +195,48 @@ function CardResumo({ titulo, valor, isLoading }) {
   );
 }
 
+function LancamentoCard({ lancamento }) {
+  return (
+    <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-zinc-900">
+            {formatarData(lancamento?.data_emissao)}
+          </p>
+          <p
+            className="mt-0.5 truncate font-mono text-xs text-zinc-500"
+            title={lancamento?.chave_nfe || ''}
+          >
+            {truncarChaveNfe(lancamento?.chave_nfe)}
+          </p>
+        </div>
+        <span
+          className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${classeBadgeTipo(
+            lancamento?.tipo,
+          )}`}
+        >
+          {formatarTipo(lancamento?.tipo)}
+        </span>
+      </div>
+
+      <dl className="mt-3 space-y-2 border-t border-zinc-100 pt-3 text-sm">
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-zinc-500">CNPJ emitente</dt>
+          <dd className="text-zinc-700">{formatarCnpj(lancamento?.cnpj_emitente)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-zinc-500">CNPJ destinatário</dt>
+          <dd className="text-zinc-700">{formatarCnpj(lancamento?.cnpj_destinatario)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="font-semibold text-zinc-500">Valor total</dt>
+          <dd className="font-semibold text-zinc-900">{formatarValor(lancamento?.valor_total)}</dd>
+        </div>
+      </dl>
+    </article>
+  );
+}
+
 export default function FiscalPage() {
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -348,7 +391,13 @@ export default function FiscalPage() {
     <main className="space-y-6 p-6">
       <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-900">Fiscal</h1>
+          <Link
+            href="/dashboard/fiscal"
+            className="text-sm font-medium text-sky-700 hover:underline"
+          >
+            ← Voltar para Fiscal
+          </Link>
+          <h1 className="mt-1 text-2xl font-semibold text-zinc-900">Escrituração fiscal (NF-e)</h1>
           <p className="mt-1 text-sm text-zinc-500">
             Lançamentos de NFe registrados automaticamente pelo agente.
           </p>
@@ -371,7 +420,11 @@ export default function FiscalPage() {
       ) : null}
 
       {!aguardandoSelecaoCliente && !erroResumo ? (
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <section
+          className={`grid gap-4 sm:grid-cols-2 ${
+            !isLoadingResumo && Number(resumo?.ipi) > 0 ? 'xl:grid-cols-5' : 'xl:grid-cols-4'
+          }`}
+        >
           <CardResumo
             titulo="Total de NFes processadas"
             valor={resumo?.total_nfe ?? 0}
@@ -500,54 +553,65 @@ export default function FiscalPage() {
       ) : null}
 
       {!aguardandoSelecaoCliente && !erroLista && !isLoadingLancamentos && lancamentos.length > 0 ? (
-        <section className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
-          <table className="min-w-full divide-y divide-zinc-200 text-sm">
-            <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
-              <tr>
-                <th className="px-4 py-3">Data emissão</th>
-                <th className="px-4 py-3">Chave NFe</th>
-                <th className="px-4 py-3">Tipo</th>
-                <th className="px-4 py-3">CNPJ emitente</th>
-                <th className="px-4 py-3">CNPJ destinatário</th>
-                <th className="px-4 py-3">Valor total</th>
-              </tr>
-            </thead>
+        <>
+          <section className="grid gap-3 lg:hidden">
+            {lancamentos.map((lancamento, index) => (
+              <LancamentoCard
+                key={lancamento?.id || `${lancamento?.chave_nfe}-${index}`}
+                lancamento={lancamento}
+              />
+            ))}
+          </section>
 
-            <tbody className="divide-y divide-zinc-100">
-              {lancamentos.map((lancamento, index) => (
-                <tr key={lancamento?.id || `${lancamento?.chave_nfe}-${index}`}>
-                  <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                    {formatarData(lancamento?.data_emissao)}
-                  </td>
-                  <td
-                    className="whitespace-nowrap px-4 py-3 font-mono text-xs text-zinc-700"
-                    title={lancamento?.chave_nfe || ''}
-                  >
-                    {truncarChaveNfe(lancamento?.chave_nfe)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <span
-                      className={`rounded-full px-2 py-1 text-xs font-semibold ${classeBadgeTipo(
-                        lancamento?.tipo,
-                      )}`}
-                    >
-                      {formatarTipo(lancamento?.tipo)}
-                    </span>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                    {formatarCnpj(lancamento?.cnpj_emitente)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                    {formatarCnpj(lancamento?.cnpj_destinatario)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
-                    {formatarValor(lancamento?.valor_total)}
-                  </td>
+          <section className="hidden overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm lg:block">
+            <table className="min-w-full divide-y divide-zinc-200 text-sm">
+              <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
+                <tr>
+                  <th className="px-4 py-3">Data emissão</th>
+                  <th className="px-4 py-3">Chave NFe</th>
+                  <th className="px-4 py-3">Tipo</th>
+                  <th className="px-4 py-3">CNPJ emitente</th>
+                  <th className="px-4 py-3">CNPJ destinatário</th>
+                  <th className="px-4 py-3">Valor total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+              </thead>
+
+              <tbody className="divide-y divide-zinc-100">
+                {lancamentos.map((lancamento, index) => (
+                  <tr key={lancamento?.id || `${lancamento?.chave_nfe}-${index}`}>
+                    <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                      {formatarData(lancamento?.data_emissao)}
+                    </td>
+                    <td
+                      className="whitespace-nowrap px-4 py-3 font-mono text-xs text-zinc-700"
+                      title={lancamento?.chave_nfe || ''}
+                    >
+                      {truncarChaveNfe(lancamento?.chave_nfe)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs font-semibold ${classeBadgeTipo(
+                          lancamento?.tipo,
+                        )}`}
+                      >
+                        {formatarTipo(lancamento?.tipo)}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                      {formatarCnpj(lancamento?.cnpj_emitente)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                      {formatarCnpj(lancamento?.cnpj_destinatario)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
+                      {formatarValor(lancamento?.valor_total)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        </>
       ) : null}
     </main>
   );

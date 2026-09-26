@@ -67,8 +67,10 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
   test('mostra entrada verde, saída vermelha e destaca Fiscal na sidebar', async ({ page }) => {
     await page.goto('/dashboard/fiscal/escrituracao');
 
-    const entrada = page.getByText('Entrada', { exact: true });
-    const saida = page.getByText('Saída', { exact: true });
+    // A tabela (desktop) e os cards (mobile) renderizam os mesmos badges; filtra
+    // pelo visível pra evitar strict mode violation com o dual-render responsivo.
+    const entrada = page.getByText('Entrada', { exact: true }).filter({ visible: true });
+    const saida = page.getByText('Saída', { exact: true }).filter({ visible: true });
 
     await expect(entrada).toBeVisible();
     await expect(entrada).toHaveClass(/bg-emerald-100/);
