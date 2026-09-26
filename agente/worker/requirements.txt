@@ -1,3 +1,5 @@
+# Deps de producao: run-worker-dev.cmd e build/build.sh instalam este arquivo (BUG-AGENTE-DEPS-01 / #515).
+# Nao incluir scikit-learn/joblib: so o scaffolding teste_rede_neural usa (#513).
 requests>=2.31.0
 watchdog>=6.0.0
 schedule>=1.2.0
