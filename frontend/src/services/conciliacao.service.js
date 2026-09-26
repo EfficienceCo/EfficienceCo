@@ -122,6 +122,24 @@ export async function concluirConciliacao(id, { clienteId } = {}) {
   return response.data;
 }
 
+function obterNomeArquivo(contentDisposition) {
+  if (!contentDisposition) {
+    return null;
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  return filenameMatch?.[1] || null;
+}
+
 export async function downloadRelatorio(id, { clienteId } = {}) {
   try {
     const response = await api.get(`/conciliacoes/${id}/relatorio`, {
@@ -129,7 +147,10 @@ export async function downloadRelatorio(id, { clienteId } = {}) {
       params: limparParams({ cliente_id: clienteId }),
     });
 
-    return response.data;
+    return {
+      blob: response.data,
+      nomeArquivo: obterNomeArquivo(response.headers?.['content-disposition']),
+    };
   } catch (error) {
     throw await converterBlobDeErroParaJson(error);
   }
