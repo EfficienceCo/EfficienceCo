@@ -421,8 +421,15 @@ export default function FiscalPage() {
 
       {!aguardandoSelecaoCliente && !erroResumo ? (
         <section
-          className={`grid gap-4 sm:grid-cols-2 ${
-            !isLoadingResumo && Number(resumo?.ipi) > 0 ? 'xl:grid-cols-5' : 'xl:grid-cols-4'
+          // 5 é primo: qualquer contagem de colunas intermediária (2, 3, 4)
+          // deixa o 5º card (IPI) órfão numa linha sozinho. Sem o card de
+          // IPI, mantém o 2 colunas a partir do sm de sempre (4 cards, sempre
+          // divide certo); com IPI, fica em 1 coluna até o xl, onde pula
+          // direto pras 5 colunas — nunca sobra card em nenhuma largura.
+          className={`grid gap-4 ${
+            !isLoadingResumo && Number(resumo?.ipi) > 0
+              ? 'xl:grid-cols-5'
+              : 'sm:grid-cols-2 xl:grid-cols-4'
           }`}
         >
           <CardResumo
