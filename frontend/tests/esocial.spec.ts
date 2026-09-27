@@ -297,6 +297,26 @@ test.describe('eSocial — wizard /dashboard/dp/esocial (issue #379)', () => {
     expect(evento.dados_formulario.dadosAdmissao.duracao).toEqual({ tpContr: '1' });
   });
 
+  test('categoria 111 (contrato verde e amarelo) não exige horas semanais nem trabalho noturno', async ({ page }) => {
+    await page.getByRole('button', { name: 'Avançar para o formulário' }).click();
+    await preencherFormularioS2200(page);
+
+    await grupo(page, 'Vínculo').getByLabel('Categoria do trabalhador').selectOption('111');
+
+    const hor = grupo(page, 'Horário contratual');
+    await hor.getByLabel('Quantidade de horas semanais').fill('');
+    await hor.getByLabel('Trabalho noturno').selectOption('');
+
+    // Espelha montarHorContratual em esocial-xml.util.js: para codCateg=111
+    // esses dois campos não são obrigatórios, então o asterisco some do rótulo.
+    await expect(hor.getByText('Quantidade de horas semanais *', { exact: true })).toHaveCount(0);
+    await expect(hor.getByText('Trabalho noturno *', { exact: true })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Revisar' }).click();
+    await expect(page.getByText('Revisão do evento')).toBeVisible();
+    await expect(page.getByText(/pendência\(s\) antes de revisar/)).toHaveCount(0);
+  });
+
   test('reabre um evento aprovado a partir do histórico com XML e download', async ({ page }) => {
     await page.getByRole('button', { name: 'Avançar para o formulário' }).click();
     await preencherFormularioS2200(page);
