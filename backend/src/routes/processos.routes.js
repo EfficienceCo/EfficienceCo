@@ -6,6 +6,7 @@ import {
   concluirEtapaJwt,
   concluirEtapaLicenca,
   executarAcaoEtapaJwt,
+  expirarExecucaoEtapaJwt,
   listarEtapasProntasAgente,
   concluirExecucaoEtapaAgente,
 } from "../controllers/processos.controller.js";
@@ -20,6 +21,7 @@ router.post("/", admins, criarProcesso);
 router.patch("/:id/etapas/:etapaId", todos, concluirEtapaJwt);
 router.post("/:id/etapas/:etapaId/concluir", concluirEtapaLicenca);
 router.post("/:id/etapas/:etapaId/executar-acao", todos, executarAcaoEtapaJwt);
+router.post("/:id/etapas/:etapaId/expirar-execucao", todos, expirarExecucaoEtapaJwt);
 
 // Rotas do agente — autenticadas via x-licenca-token (polling)
 router.get("/etapas/agente", listarEtapasProntasAgente);

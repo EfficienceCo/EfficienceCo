@@ -383,8 +383,14 @@ function validarFormulario(form) {
   exigir(a.localTrabalho.nrInsc, 'Local de trabalho — número de inscrição');
   exigir(a.horContratual.tpJornada, 'Horário — tipo de jornada');
   exigir(a.horContratual.tmpParc, 'Horário — tempo parcial');
-  exigir(a.horContratual.horarioNoturno, 'Horário — trabalho noturno');
   exigir(a.horContratual.descricaoJornada, 'Horário — descrição da jornada');
+  // Espelha montarHorContratual em esocial-xml.util.js: qtdHrsSem e
+  // horarioNoturno são obrigatórios para qualquer categoria, exceto 111
+  // (contrato verde e amarelo).
+  if (a.codCateg !== '111') {
+    exigir(a.horContratual.qtdHrsSem, 'Horário — quantidade de horas semanais');
+    exigir(a.horContratual.horarioNoturno, 'Horário — trabalho noturno');
+  }
   // Espelha a checagem de montarHorContratual em esocial-xml.util.js: o
   // tempo parcial de 25h (tmpParc=1) só existe para empregado doméstico
   // (codCateg=104); as demais categorias usam 30h ou 26h (tmpParc=2/3).
@@ -1403,10 +1409,10 @@ function PassoFormulario({
       </Fieldset>
 
       <Fieldset titulo="Horário contratual">
-        <Campo label="Quantidade de horas semanais" value={a.horContratual.qtdHrsSem} onChange={(v) => atualizarAdmissaoAninhado('horContratual', 'qtdHrsSem', v)} />
+        <Campo label="Quantidade de horas semanais" obrigatorio={a.codCateg !== '111'} value={a.horContratual.qtdHrsSem} onChange={(v) => atualizarAdmissaoAninhado('horContratual', 'qtdHrsSem', v)} />
         <CampoSelect label="Tipo de jornada" obrigatorio opcoes={TP_JORNADA} value={a.horContratual.tpJornada} onChange={(v) => atualizarAdmissaoAninhado('horContratual', 'tpJornada', v)} />
         <CampoSelect label="Tempo parcial" obrigatorio opcoes={TMP_PARCIAL} value={a.horContratual.tmpParc} onChange={(v) => atualizarAdmissaoAninhado('horContratual', 'tmpParc', v)} />
-        <CampoSelect label="Trabalho noturno" obrigatorio opcoes={SIM_NAO} value={a.horContratual.horarioNoturno} onChange={(v) => atualizarAdmissaoAninhado('horContratual', 'horarioNoturno', v)} />
+        <CampoSelect label="Trabalho noturno" obrigatorio={a.codCateg !== '111'} opcoes={SIM_NAO} value={a.horContratual.horarioNoturno} onChange={(v) => atualizarAdmissaoAninhado('horContratual', 'horarioNoturno', v)} />
         <Campo label="Descrição da jornada" obrigatorio value={a.horContratual.descricaoJornada} onChange={(v) => atualizarAdmissaoAninhado('horContratual', 'descricaoJornada', v)} className="lg:col-span-2" />
       </Fieldset>
 
