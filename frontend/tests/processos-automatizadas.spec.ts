@@ -24,6 +24,7 @@ type EstadoApi = {
   };
   posts: Array<Record<string, unknown>>;
   patches: Array<Record<string, unknown>>;
+  expiracoes: Array<Record<string, unknown>>;
   erroProximoPost: string;
 };
 
@@ -86,6 +87,7 @@ function criarEstadoApi(): EstadoApi {
     },
     posts: [],
     patches: [],
+    expiracoes: [],
     erroProximoPost: '',
   };
 }
@@ -145,6 +147,22 @@ async function prepararPagina(page: Page, estado = criarEstadoApi()) {
       etapa.status = 'pronta_para_execucao';
       etapa.payload_execucao = dados;
       etapa.erro_execucao = null;
+      await route.fulfill({ status: 200, json: etapa });
+      return;
+    }
+
+    const expirarMatch = url.pathname.match(
+      /^\/processos\/([^/]+)\/etapas\/([^/]+)\/expirar-execucao$/,
+    );
+    if (method === 'POST' && expirarMatch) {
+      const etapaId = expirarMatch[2];
+      const dados = request.postDataJSON() as Record<string, unknown>;
+      estado.expiracoes.push(dados);
+
+      const etapa = localizarEtapa(estado, etapaId);
+      etapa.status = 'pronta_para_execucao';
+      etapa.erro_execucao =
+        'O agente não respondeu em tempo hábil. Verifique se ele está ligado e tente novamente.';
       await route.fulfill({ status: 200, json: etapa });
       return;
     }
@@ -224,7 +242,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await expect(pastas.getByRole('checkbox')).toHaveCount(0);
     await expect(pastas.locator('input, textarea')).toHaveCount(0);
     await expect(pastas.getByText(/Nenhum dado adicional é necessário/i)).toBeVisible();
-    await expect(pastas.getByRole('button', { name: 'Concluir' })).toBeVisible();
+    await expect(pastas.getByRole('button', { name: 'Criar pastas' })).toBeVisible();
   });
 
   test('mantém o fluxo manual existente com PATCH', async ({ page }) => {
@@ -246,7 +264,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await page.getByLabel('Nome do sócio 2').fill('João Souza');
     await page.getByLabel('CPF do sócio 2').fill('11144477735');
     await page.getByLabel('Participação (%) do sócio 2').fill('40');
-    await contrato.getByRole('button', { name: 'Concluir' }).click();
+    await contrato.getByRole('button', { name: 'Gerar contrato social' }).click();
 
     await expect.poll(() => estado.posts.length).toBe(1);
     const { cliente_id: _clienteId, ...payloadContrato } = estado.posts[0];
@@ -267,7 +285,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     const contrato = etapaPorId(page, 'etapa-contrato');
 
     await preencherContrato(page, '60');
-    await contrato.getByRole('button', { name: 'Concluir' }).click();
+    await contrato.getByRole('button', { name: 'Gerar contrato social' }).click();
 
     await expect(contrato.getByRole('alert')).toContainText(
       'A soma das participações dos sócios deve ser 100%',
@@ -281,14 +299,14 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     estado.erroProximoPost = 'Serviço temporariamente indisponível';
 
     await preencherContrato(page);
-    await contrato.getByRole('button', { name: 'Concluir' }).click();
+    await contrato.getByRole('button', { name: 'Gerar contrato social' }).click();
 
     await expect(contrato.getByRole('alert')).toContainText(
       'Serviço temporariamente indisponível',
     );
     await expect(page.getByLabel('Nome do sócio 1')).toHaveValue('Maria da Silva');
-    await expect(contrato.getByRole('button', { name: 'Concluir' })).toBeEnabled();
-    await contrato.getByRole('button', { name: 'Concluir' }).click();
+    await expect(contrato.getByRole('button', { name: 'Gerar contrato social' })).toBeEnabled();
+    await contrato.getByRole('button', { name: 'Gerar contrato social' }).click();
     await expect.poll(() => estado.posts.length).toBe(2);
     await expect(contrato.getByRole('status')).toContainText('Processando');
   });
@@ -299,7 +317,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await page.clock.install();
 
     await preencherContrato(page);
-    await contrato.getByRole('button', { name: 'Concluir' }).click();
+    await contrato.getByRole('button', { name: 'Gerar contrato social' }).click();
     await expect(contrato.getByRole('status')).toContainText('Processando');
 
     const etapa = localizarEtapa(estado, 'etapa-contrato');
@@ -309,6 +327,31 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
 
     await expect(contrato.getByRole('alert')).toContainText('Template do contrato não encontrado');
     await expect(page.getByLabel('Nome do sócio 1')).toHaveValue('Maria da Silva');
+    await contrato.getByRole('button', { name: 'Gerar contrato social' }).click();
+    await expect.poll(() => estado.posts.length).toBe(2);
+    await expect(contrato.getByRole('alert')).toHaveCount(0);
+    await expect(contrato.getByRole('status')).toContainText('Processando');
+  });
+
+  test('agente desligado: após ~90s falha visivelmente e permite tentar novamente (#487)', async ({
+    page,
+  }) => {
+    const estado = await prepararPagina(page);
+    const contrato = etapaPorTexto(page, 'Gerar contrato social');
+    await page.clock.install();
+
+    await preencherContrato(page);
+    await contrato.getByRole('button', { name: 'Concluir' }).click();
+    await expect(contrato.getByRole('status')).toContainText('Processando');
+
+    // Agente nunca reivindica a etapa (fica "pronta_para_execucao" pra sempre) —
+    // simula o agente desligado. Sem o timeout, a UI ficaria presa aqui.
+    await page.clock.runFor(93_000);
+
+    await expect.poll(() => estado.expiracoes.length).toBeGreaterThan(0);
+    await expect(contrato.getByRole('alert')).toContainText('não respondeu em tempo hábil');
+    await expect(page.getByLabel('Nome do sócio 1')).toHaveValue('Maria da Silva');
+
     await contrato.getByRole('button', { name: 'Concluir' }).click();
     await expect.poll(() => estado.posts.length).toBe(2);
     await expect(contrato.getByRole('alert')).toHaveCount(0);
@@ -333,7 +376,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await expect(contrato.getByRole('alert')).toContainText('Falha ao preencher o modelo');
     await expect(page.getByLabel('Nome do sócio 1')).toHaveValue('Ana Lima');
     await expect(page.getByLabel('Capital social (R$)')).toHaveValue('15000');
-    await contrato.getByRole('button', { name: 'Concluir' }).click();
+    await contrato.getByRole('button', { name: 'Gerar contrato social' }).click();
     await expect.poll(() => estado.posts.length).toBe(1);
     await expect(contrato.getByRole('status')).toContainText('Processando');
   });
@@ -344,7 +387,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await page.clock.install();
 
     await preencherContrato(page);
-    await contrato.getByRole('button', { name: 'Concluir' }).click();
+    await contrato.getByRole('button', { name: 'Gerar contrato social' }).click();
     await expect(contrato.getByRole('status')).toContainText('Processando');
 
     const etapa = localizarEtapa(estado, 'etapa-contrato');
@@ -434,7 +477,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     const estado = await prepararPagina(page);
     const pastas = etapaPorId(page, 'etapa-pastas');
 
-    await pastas.getByRole('button', { name: 'Concluir' }).click();
+    await pastas.getByRole('button', { name: 'Criar pastas' }).click();
 
     await expect.poll(() => estado.posts.length).toBe(1);
     const { cliente_id: _clienteId, ...payloadPastas } = estado.posts[0];
