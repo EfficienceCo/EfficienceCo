@@ -36,16 +36,20 @@ def classificar_arquivo(caminho):
             print(f"[identificar_tipo] Classificador: {resultado['erro']}")
             return "nao_identificado"
         return resultado["classe"]
-    except ModuleNotFoundError as e:
-        # e.name com prefixo automacoes = o .py sumiu; qualquer outro nome = dep.
-        nome = e.name or ""
-        if nome.startswith("automacoes"):
+    except ImportError as e:
+        # ModuleNotFoundError é subclasse. DLL do torch no Windows levanta
+        # ImportError puro ("DLL load failed while importing _C"): também é dep.
+        nome = getattr(e, "name", None) or ""
+        if isinstance(e, ModuleNotFoundError) and nome == "automacoes.rede.classificador":
             causa = f"Módulo do classificador ausente ({nome})"
         else:
-            causa = f"Dependência da rede neural ausente ({nome})"
+            sufixo = f" ({nome})" if nome else ""
+            causa = f"Dependência da rede neural ausente{sufixo}"
         print(f"[identificar_tipo] {causa}: {e}")
         return "nao_identificado"
     except FileNotFoundError:
+        # Pesos faltando no fluxo normal voltam no dict de classificar_documento.
+        # Aqui só a corrida em que o .pth some entre o exists() e o torch.load.
         print("[identificar_tipo] Arquivo de pesos não encontrado (classificador_documentos.pth)")
         return "nao_identificado"
     except Exception as e:
