@@ -256,7 +256,17 @@ function montarPayload(form) {
   if (observacoes.length) dadosAdmissao.observacoesContrato = observacoes;
 
   if (estatutaria) {
-    dadosAdmissao.estatutario = limparVazios(a.estatutario);
+    // tpPlanRP/indTetoRGPS/indAbonoPerm/dataInicioAbono são exclusivos do
+    // RPPS (tpRegPrev=2) — o gerador (montarInfoEstatutario) rejeita esses
+    // campos para RGPS/RPPE, então eles só entram no payload nesse regime.
+    const estatutario = { ...a.estatutario };
+    if (a.tpRegPrev !== '2') {
+      delete estatutario.tpPlanRP;
+      delete estatutario.indTetoRGPS;
+      delete estatutario.indAbonoPerm;
+      delete estatutario.dataInicioAbono;
+    }
+    dadosAdmissao.estatutario = limparVazios(estatutario);
   } else {
     dadosAdmissao.tpAdmissao = a.tpAdmissao;
     dadosAdmissao.indAdmissao = a.indAdmissao || undefined;
@@ -412,7 +422,10 @@ function validarFormulario(form) {
     if (!a.estatutario.dataExercicio || !validarDataCivil(a.estatutario.dataExercicio)) {
       erros['Estatutário — data de exercício'] = 'Use dd/mm/aaaa e uma data existente.';
     }
-    if (a.tpRegPrev === '1') exigir(a.estatutario.indTetoRGPS, 'Estatutário — indicador de teto do RGPS');
+    // indTetoRGPS (e os demais campos de RPPS) só existem para tpRegPrev=2
+    // (RPPS) — o gerador (montarInfoEstatutario) rejeita esses campos fora
+    // desse regime, então aqui a obrigatoriedade é o espelho exato.
+    if (a.tpRegPrev === '2') exigir(a.estatutario.indTetoRGPS, 'Estatutário — indicador de teto do RGPS');
   } else {
     exigir(a.tpAdmissao, 'Celetista — tipo de admissão');
     exigir(a.indAdmissao, 'Celetista — indicativo de admissão');
@@ -1327,16 +1340,20 @@ function PassoFormulario({
         <Fieldset titulo="Regime estatutário (infoEstatutario)">
           <CampoSelect label="Tipo de provimento" obrigatorio opcoes={TP_PROVIMENTO} value={a.estatutario.tpProv} onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'tpProv', v)} />
           <Campo label="Data de exercício" obrigatorio placeholder="dd/mm/aaaa" value={a.estatutario.dataExercicio} onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'dataExercicio', v)} />
-          <CampoSelect
-            label="Indicador de teto do RGPS"
-            obrigatorio={a.tpRegPrev === '1'}
-            opcoes={SIM_NAO}
-            value={a.estatutario.indTetoRGPS}
-            onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'indTetoRGPS', v)}
-          />
-          <CampoSelect label="Tipo de plano de RP" opcoes={TP_PLANO_RP} value={a.estatutario.tpPlanRP} onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'tpPlanRP', v)} />
-          <CampoSelect label="Indicador de abono permanência" opcoes={SIM_NAO} value={a.estatutario.indAbonoPerm} onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'indAbonoPerm', v)} />
-          <Campo label="Data de início do abono" placeholder="dd/mm/aaaa" value={a.estatutario.dataInicioAbono} onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'dataInicioAbono', v)} />
+          {a.tpRegPrev === '2' ? (
+            <>
+              <CampoSelect
+                label="Indicador de teto do RGPS"
+                obrigatorio
+                opcoes={SIM_NAO}
+                value={a.estatutario.indTetoRGPS}
+                onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'indTetoRGPS', v)}
+              />
+              <CampoSelect label="Tipo de plano de RP" opcoes={TP_PLANO_RP} value={a.estatutario.tpPlanRP} onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'tpPlanRP', v)} />
+              <CampoSelect label="Indicador de abono permanência" opcoes={SIM_NAO} value={a.estatutario.indAbonoPerm} onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'indAbonoPerm', v)} />
+              <Campo label="Data de início do abono" placeholder="dd/mm/aaaa" value={a.estatutario.dataInicioAbono} onChange={(v) => atualizarAdmissaoAninhado('estatutario', 'dataInicioAbono', v)} />
+            </>
+          ) : null}
         </Fieldset>
       )}
 

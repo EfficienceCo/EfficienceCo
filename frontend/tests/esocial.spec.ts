@@ -199,8 +199,9 @@ async function preencherFormularioS2200Estatutario(page: Page) {
   const est = g('Regime estatutário (infoEstatutario)');
   await est.getByLabel('Tipo de provimento').selectOption('4');
   await est.getByLabel('Data de exercício').fill('02/02/2026');
-  // tpRegPrev permanece '1' (RGPS, valor padrão do form) — indTetoRGPS é obrigatório nesse caso.
-  await est.getByLabel(/Indicador de teto do RGPS/).selectOption('S');
+  // tpRegPrev permanece '1' (RGPS, valor padrão do form) — os campos de RPPS
+  // (indTetoRGPS e demais) são exclusivos de tpRegPrev=2 e nem aparecem aqui;
+  // o backend (montarInfoEstatutario) rejeita esses campos fora do RPPS.
 
   const cargo = g('Cargo');
   await cargo.getByLabel('Nome do cargo').fill('Analista Judiciário');
@@ -350,6 +351,13 @@ test.describe('eSocial — wizard /dashboard/dp/esocial (issue #379)', () => {
     await expect(page.getByRole('group', { name: 'Duração do contrato' })).toHaveCount(0);
     await expect(page.getByRole('group', { name: 'Regime CLT (infoCeletista)' })).toHaveCount(0);
 
+    // tpRegPrev permanece '1' (RGPS) — os campos exclusivos do RPPS (o backend
+    // rejeita esses campos fora de tpRegPrev=2) nem devem aparecer na tela.
+    const est = grupo(page, 'Regime estatutário (infoEstatutario)');
+    await expect(est.getByLabel(/Indicador de teto do RGPS/)).toHaveCount(0);
+    await expect(est.getByLabel('Tipo de plano de RP')).toHaveCount(0);
+    await expect(est.getByLabel('Indicador de abono permanência')).toHaveCount(0);
+
     await page.getByRole('button', { name: 'Revisar' }).click();
 
     // Sem remuneração/duração preenchidas, o formulário estatutário ainda assim
@@ -357,11 +365,37 @@ test.describe('eSocial — wizard /dashboard/dp/esocial (issue #379)', () => {
     await expect(page.getByText(/pendência\(s\) antes de revisar/)).toHaveCount(0);
     await expect(page.getByText('Revisão do evento')).toBeVisible();
 
-    // ...e o payload enviado ao backend não carrega remuneracao/duracao.
+    // ...e o payload enviado ao backend não carrega remuneracao/duracao nem
+    // os campos de RPPS (que o gerador rejeitaria para tpRegPrev=1).
     const evento = (page as any)._backend.eventos[0];
     expect(evento.dados_formulario.dadosAdmissao.tpRegTrab).toBe('2');
     expect(evento.dados_formulario.dadosAdmissao.remuneracao).toBeUndefined();
     expect(evento.dados_formulario.dadosAdmissao.duracao).toBeUndefined();
+    expect(evento.dados_formulario.dadosAdmissao.estatutario.indTetoRGPS).toBeUndefined();
+    expect(evento.dados_formulario.dadosAdmissao.estatutario.tpPlanRP).toBeUndefined();
+    expect(evento.dados_formulario.dadosAdmissao.estatutario.indAbonoPerm).toBeUndefined();
+  });
+
+  test('categoria estatutária com RPPS (tpRegPrev=2) exige e envia o indicador de teto do RGPS (BUG-ESOCIAL-07)', async ({ page }) => {
+    await page.getByRole('button', { name: 'Avançar para o formulário' }).click();
+
+    await preencherFormularioS2200Estatutario(page);
+    await grupo(page, 'Vínculo').getByLabel('Regime previdenciário').selectOption('2');
+
+    const est = grupo(page, 'Regime estatutário (infoEstatutario)');
+
+    // Sem o indicador de teto do RGPS preenchido, o RPPS barra o avanço —
+    // espelhando a exigência do backend (montarInfoEstatutario) para tpRegPrev=2.
+    await page.getByRole('button', { name: 'Revisar' }).click();
+    await expect(page.getByText(/pendência\(s\) antes de revisar/)).toContainText('teto do RGPS');
+
+    await est.getByLabel(/Indicador de teto do RGPS/).selectOption('S');
+    await page.getByRole('button', { name: 'Revisar' }).click();
+    await expect(page.getByText('Revisão do evento')).toBeVisible();
+
+    const evento = (page as any)._backend.eventos[0];
+    expect(evento.dados_formulario.dadosAdmissao.tpRegPrev).toBe('2');
+    expect(evento.dados_formulario.dadosAdmissao.estatutario.indTetoRGPS).toBe('S');
   });
 
   test('reabre um evento aprovado a partir do histórico com XML e download', async ({ page }) => {
