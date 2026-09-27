@@ -225,27 +225,29 @@ export async function buscarExtratoAtual(req, res) {
     return res.status(200).json({ extrato: null });
   }
 
-  // Extrato já usado para iniciar uma conciliação em andamento: essa sessão já
-  // aparece em "Sessões de Conciliação" — não reexibe no painel de upload nem
-  // reabilita "Nova conciliação", pra não permitir iniciar duas sessões ao
-  // mesmo tempo pro mesmo extrato (criarConciliacao já bloqueia isso com 409,
-  // mas evita o usuário nem precisar esbarrar no erro).
-  const { data: conciliacaoEmAndamento, error: erroConciliacao } = await supabase
+  // Extrato já usado para iniciar uma conciliação (em andamento OU concluída):
+  // essa sessão já aparece em "Sessões de Conciliação" — não reexibe no painel
+  // de upload nem reabilita "Nova conciliação", pra não permitir iniciar uma
+  // segunda sessão pro mesmo extrato (criarConciliacao já bloqueia isso com
+  // 409, mas evita o usuário nem precisar esbarrar no erro). Considerar só
+  // 'em_andamento' aqui deixava o painel voltar a aparecer depois que a
+  // conciliação era concluída (extratos_bancarios.status não muda ao
+  // concluir), reabrindo a porta pra reprocessar as mesmas transações.
+  const { data: conciliacoesExistentes, error: erroConciliacao } = await supabase
     .from("conciliacoes")
     .select("id")
     .eq("extrato_id", extrato.id)
-    .eq("status", "em_andamento")
-    .maybeSingle();
+    .limit(1);
 
   if (erroConciliacao) {
     console.error(
-      "[conciliacoes.controller] Erro ao verificar conciliação em andamento do extrato:",
+      "[conciliacoes.controller] Erro ao verificar conciliação existente do extrato:",
       erroConciliacao.message,
     );
     return res.status(500).json({ erro: "Erro ao buscar extrato bancário do período" });
   }
 
-  if (conciliacaoEmAndamento) {
+  if (conciliacoesExistentes?.length) {
     return res.status(200).json({ extrato: null });
   }
 
@@ -328,23 +330,27 @@ export async function criarConciliacao(req, res) {
     });
   }
 
-  const { data: conciliacaoEmAndamento, error: erroConciliacaoEmAndamento } = await supabase
+  // Bloqueia por QUALQUER conciliação já associada ao extrato — em_andamento
+  // (evita duas sessões concorrentes) ou concluida (evita reprocessar via
+  // executarMatching as mesmas transacoes_extrato já conciliadas e duplicar
+  // pares/totais; extratos_bancarios.status não muda ao concluir, então só
+  // filtrar por 'em_andamento' deixava essa segunda sessão passar).
+  const { data: conciliacoesExistentes, error: erroConciliacoesExistentes } = await supabase
     .from("conciliacoes")
     .select("id")
     .eq("extrato_id", extratoId)
-    .eq("status", "em_andamento")
-    .maybeSingle();
+    .limit(1);
 
-  if (erroConciliacaoEmAndamento) {
+  if (erroConciliacoesExistentes) {
     console.error(
-      "[conciliacoes.controller] Erro ao verificar conciliação em andamento:",
-      erroConciliacaoEmAndamento.message,
+      "[conciliacoes.controller] Erro ao verificar conciliações existentes:",
+      erroConciliacoesExistentes.message,
     );
     return res.status(500).json({ erro: "Erro ao verificar conciliações existentes" });
   }
 
-  if (conciliacaoEmAndamento) {
-    return res.status(409).json({ erro: "Já existe uma conciliação em andamento para este extrato" });
+  if (conciliacoesExistentes?.length) {
+    return res.status(409).json({ erro: "Este extrato já tem uma conciliação associada (em andamento ou concluída)" });
   }
 
   const { data: transacoes, error: erroTransacoes } = await supabase

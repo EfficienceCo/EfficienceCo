@@ -13,6 +13,11 @@ const EXTRATO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 const originalFrom = supabase.from;
 const filas = new Map();
+// Registra os pares (coluna, valor) de cada .eq() encadeado, por tabela — usado
+// pra provar que a consulta de conciliações do extrato NÃO filtra por status
+// (regressão: filtrar só 'em_andamento' deixava conciliação já concluída
+// passar batido e o extrato reaparecer depois do F5).
+const chamadasEq = new Map();
 function chave(t, m) { return `${t}:${m}`; }
 function queue(tabela, metodo, resultado) {
   const k = chave(tabela, metodo);
@@ -29,7 +34,11 @@ supabase.from = function (tabela) {
   };
   const builder = {
     select() { return builder; },
-    eq() { return builder; },
+    eq(coluna, valor) {
+      if (!chamadasEq.has(tabela)) chamadasEq.set(tabela, []);
+      chamadasEq.get(tabela).push([coluna, valor]);
+      return builder;
+    },
     order() { return builder; },
     limit() { return Promise.resolve(consumir("limit", { data: [], error: null })); },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
@@ -44,7 +53,10 @@ after(() => {
   supabase.from = originalFrom;
 });
 
-beforeEach(() => filas.clear());
+beforeEach(() => {
+  filas.clear();
+  chamadasEq.clear();
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,9 +99,9 @@ function queueExtratoEncontrado(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe("GET /conciliacoes/extrato", () => {
-  it("200: retorna o extrato processado mais recente do período sem conciliação em andamento", async () => {
+  it("200: retorna o extrato processado mais recente do período sem conciliação associada", async () => {
     queueExtratoEncontrado();
-    queue("conciliacoes", "maybeSingle", { data: null, error: null });
+    queue("conciliacoes", "limit", { data: [], error: null });
     queue("transacoes_extrato", "await", {
       data: [{ id: "t1" }, { id: "t2" }, { id: "t3" }],
       error: null,
@@ -122,13 +134,41 @@ describe("GET /conciliacoes/extrato", () => {
 
   it("200: extrato null quando já existe conciliação em andamento pra esse extrato (evita duplicar sessão)", async () => {
     queueExtratoEncontrado();
-    queue("conciliacoes", "maybeSingle", { data: { id: "conciliacao-1" }, error: null });
+    queue("conciliacoes", "limit", { data: [{ id: "conciliacao-1" }], error: null });
 
     const res = criarResposta();
     await buscarExtratoAtual(reqBase(), res);
 
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body, { extrato: null });
+  });
+
+  it("200: extrato null quando a conciliação do extrato já foi CONCLUÍDA (não só em_andamento) — não reabre painel nem reabilita Nova conciliação", async () => {
+    // Regressão: extratos_bancarios.status não muda quando a conciliação é
+    // concluída (concluirConciliacao só atualiza a tabela conciliacoes), e
+    // antes desta correção o filtro considerava só status='em_andamento' —
+    // uma conciliação concluida deixava o extrato voltar a aparecer no F5.
+    // O ponto central do teste: a consulta em "conciliacoes" NÃO pode
+    // filtrar por status (senão uma conciliação concluída passaria batido) —
+    // qualquer linha associada ao extrato_id já é suficiente pra ocultar.
+    queueExtratoEncontrado();
+    queue("conciliacoes", "limit", { data: [{ id: "conciliacao-concluida-1" }], error: null });
+
+    const res = criarResposta();
+    await buscarExtratoAtual(reqBase(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, { extrato: null });
+
+    const filtrosConciliacoes = chamadasEq.get("conciliacoes") ?? [];
+    assert.ok(
+      filtrosConciliacoes.some(([coluna, valor]) => coluna === "extrato_id" && valor === EXTRATO_ID),
+      "esperava filtrar por extrato_id",
+    );
+    assert.ok(
+      !filtrosConciliacoes.some(([coluna]) => coluna === "status"),
+      `não deveria filtrar conciliações por status (bug original) — chamadas: ${JSON.stringify(filtrosConciliacoes)}`,
+    );
   });
 
   it("400 quando cliente_id não pode ser resolvido", async () => {
@@ -155,9 +195,9 @@ describe("GET /conciliacoes/extrato", () => {
     assert.equal(res.statusCode, 500);
   });
 
-  it("500 quando falha a verificação de conciliação em andamento", async () => {
+  it("500 quando falha a verificação de conciliação existente", async () => {
     queueExtratoEncontrado();
-    queue("conciliacoes", "maybeSingle", { data: null, error: { message: "falha" } });
+    queue("conciliacoes", "limit", { data: null, error: { message: "falha" } });
 
     const res = criarResposta();
     await buscarExtratoAtual(reqBase(), res);
@@ -166,7 +206,7 @@ describe("GET /conciliacoes/extrato", () => {
 
   it("500 quando falha a contagem de transações do extrato", async () => {
     queueExtratoEncontrado();
-    queue("conciliacoes", "maybeSingle", { data: null, error: null });
+    queue("conciliacoes", "limit", { data: [], error: null });
     queue("transacoes_extrato", "await", { data: null, error: { message: "falha" } });
 
     const res = criarResposta();
