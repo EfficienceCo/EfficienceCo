@@ -15,21 +15,18 @@ fi
 echo "[build] instalando deps de $ROOT/requirements.txt …"
 "$PYTHON" -m pip install -r requirements.txt
 
-# Lazy imports (pdfplumber/pandas/…) não são detectados pelo analysis do
-# PyInstaller — listar explicitamente o que produção usa em runtime.
-HIDDEN=(
-  --hidden-import=pdfplumber
-  --hidden-import=pytesseract
-  --hidden-import=pypdfium2
-  --hidden-import=PIL
-  --hidden-import=pandas
-  --hidden-import=openpyxl
-  --hidden-import=matplotlib
-  --hidden-import=torch
-  --hidden-import=torchvision
-  --hidden-import=docxtpl
-  --hidden-import=docx
-)
+# Lazy imports nao entram no analysis do PyInstaller. A lista e deps-runtime.txt,
+# o mesmo arquivo que run-worker-dev.cmd confere antes de subir.
+HIDDEN=()
+while IFS= read -r nome || [[ -n "$nome" ]]; do
+  nome="${nome%%$'\r'}"
+  [[ -z "$nome" || "$nome" =~ ^[[:space:]]*# ]] && continue
+  nome="${nome%%#*}"
+  nome="${nome%"${nome##*[![:space:]]}"}"
+  nome="${nome#"${nome%%[![:space:]]*}"}"
+  [[ -z "$nome" ]] && continue
+  HIDDEN+=("--hidden-import=${nome}")
+done < deps-runtime.txt
 
 echo "[build] empacotando efficience-agente …"
 "$PYTHON" -m PyInstaller --onefile --noconsole main.py --name efficience-agente \
