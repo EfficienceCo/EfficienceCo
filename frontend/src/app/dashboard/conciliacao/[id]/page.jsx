@@ -104,66 +104,191 @@ function Spinner() {
   );
 }
 
+function IconBase({ children, className = 'h-5 w-5' }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`shrink-0 ${className}`}
+    >
+      {children}
+    </svg>
+  );
+}
+
+function CheckCircleIcon(props) {
+  return (
+    <IconBase {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8.25 12.5l2.5 2.5 5-5.5" />
+    </IconBase>
+  );
+}
+
+function AlertTriangleIcon(props) {
+  return (
+    <IconBase {...props}>
+      <path d="M12 4 3 19.5h18z" />
+      <path d="M12 10.2v4" />
+      <path d="M12 16.7h.01" />
+    </IconBase>
+  );
+}
+
+function XCircleIcon(props) {
+  return (
+    <IconBase {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9 9l6 6" />
+      <path d="M15 9l-6 6" />
+    </IconBase>
+  );
+}
+
+function ParCard({ par, mostrarAcoes, onConfirmar, onRejeitar, emAcao }) {
+  return (
+    <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Banco</p>
+          <p className="mt-0.5 text-sm font-medium text-zinc-900">
+            {formatarData(par.transacao?.data_lancamento)}
+          </p>
+          <p className="text-sm text-zinc-700">{par.transacao?.descricao || '-'}</p>
+        </div>
+        <p className="shrink-0 text-right text-sm font-semibold text-zinc-900">
+          {formatarValor(valorDoPar(par))}
+        </p>
+      </div>
+
+      <div className="mt-3 border-t border-zinc-100 pt-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Lançamento</p>
+        <p className="mt-0.5 text-sm font-medium text-zinc-900">
+          {formatarData(par.lancamento?.data_lancamento)}
+        </p>
+        <p className="text-sm text-zinc-700">{par.lancamento?.descricao || '-'}</p>
+      </div>
+
+      {mostrarAcoes ? (
+        <div className="mt-3 flex gap-2 border-t border-zinc-100 pt-3">
+          <button
+            type="button"
+            onClick={() => onConfirmar(par)}
+            disabled={emAcao}
+            className="flex-1 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {emAcao ? <Spinner /> : 'Confirmar'}
+          </button>
+          <button
+            type="button"
+            onClick={() => onRejeitar(par)}
+            disabled={emAcao}
+            className="flex-1 rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {emAcao ? <Spinner /> : 'Rejeitar'}
+          </button>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 function TabelaPares({ pares, mostrarAcoes, onConfirmar, onRejeitar, pareEmAcao }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-zinc-200 text-sm">
-        <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
-          <tr>
-            <th className="px-4 py-3">Data banco</th>
-            <th className="px-4 py-3">Descrição banco</th>
-            <th className="px-4 py-3">Data lançamento</th>
-            <th className="px-4 py-3">Descrição lançamento</th>
-            <th className="px-4 py-3">Valor</th>
-            {mostrarAcoes ? <th className="px-4 py-3">Ações</th> : null}
-          </tr>
-        </thead>
+    <>
+      {/* Abaixo de lg a tabela vira cards: a tabela original escondia Valor e
+          Ações fora da tela em telas pequenas, sem indicação de overflow (#565). */}
+      <div className="grid gap-3 p-4 lg:hidden">
+        {pares.map((par) => (
+          <ParCard
+            key={par.id}
+            par={par}
+            mostrarAcoes={mostrarAcoes}
+            onConfirmar={onConfirmar}
+            onRejeitar={onRejeitar}
+            emAcao={pareEmAcao === par.id}
+          />
+        ))}
+      </div>
 
-        <tbody className="divide-y divide-zinc-100">
-          {pares.map((par) => {
-            const emAcao = pareEmAcao === par.id;
+      <div className="hidden overflow-x-auto lg:block">
+        <table className="min-w-full divide-y divide-zinc-200 text-sm">
+          <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
+            <tr>
+              <th className="px-4 py-3">Data banco</th>
+              <th className="px-4 py-3">Descrição banco</th>
+              <th className="px-4 py-3">Data lançamento</th>
+              <th className="px-4 py-3">Descrição lançamento</th>
+              <th className="px-4 py-3">Valor</th>
+              {mostrarAcoes ? <th className="px-4 py-3">Ações</th> : null}
+            </tr>
+          </thead>
 
-            return (
-              <tr key={par.id}>
-                <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                  {formatarData(par.transacao?.data_lancamento)}
-                </td>
-                <td className="px-4 py-3 text-zinc-700">{par.transacao?.descricao || '-'}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                  {formatarData(par.lancamento?.data_lancamento)}
-                </td>
-                <td className="px-4 py-3 text-zinc-700">{par.lancamento?.descricao || '-'}</td>
-                <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
-                  {formatarValor(valorDoPar(par))}
-                </td>
-                {mostrarAcoes ? (
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onConfirmar(par)}
-                        disabled={emAcao}
-                        className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {emAcao ? <Spinner /> : 'Confirmar'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onRejeitar(par)}
-                        disabled={emAcao}
-                        className="rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {emAcao ? <Spinner /> : 'Rejeitar'}
-                      </button>
-                    </div>
+          <tbody className="divide-y divide-zinc-100">
+            {pares.map((par) => {
+              const emAcao = pareEmAcao === par.id;
+
+              return (
+                <tr key={par.id}>
+                  <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                    {formatarData(par.transacao?.data_lancamento)}
                   </td>
-                ) : null}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+                  <td className="px-4 py-3 text-zinc-700">{par.transacao?.descricao || '-'}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                    {formatarData(par.lancamento?.data_lancamento)}
+                  </td>
+                  <td className="px-4 py-3 text-zinc-700">{par.lancamento?.descricao || '-'}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
+                    {formatarValor(valorDoPar(par))}
+                  </td>
+                  {mostrarAcoes ? (
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onConfirmar(par)}
+                          disabled={emAcao}
+                          className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {emAcao ? <Spinner /> : 'Confirmar'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onRejeitar(par)}
+                          disabled={emAcao}
+                          className="rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {emAcao ? <Spinner /> : 'Rejeitar'}
+                        </button>
+                      </div>
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function ItemSemParCard({ data, descricao, valor }) {
+  return (
+    <article className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-zinc-900">{data}</p>
+          <p className="text-sm text-zinc-700">{descricao}</p>
+        </div>
+        <p className="shrink-0 text-right text-sm font-semibold text-zinc-900">{valor}</p>
+      </div>
+    </article>
   );
 }
 
@@ -456,7 +581,10 @@ function ConciliacaoDetalheContent({ id }) {
             <section className="rounded-xl border border-emerald-200 bg-white shadow-sm">
               <header className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-100 bg-emerald-50 p-5">
                 <div className="flex items-center gap-3">
-                  <h2 className="text-lg font-semibold text-emerald-900">✅ Automático</h2>
+                  <h2 className="flex items-center gap-2 text-lg font-semibold text-emerald-900">
+                    <CheckCircleIcon className="h-5 w-5 text-emerald-600" />
+                    Automático
+                  </h2>
                   <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">
                     {pares.automatico.length} match{pares.automatico.length === 1 ? '' : 'es'} automático
                     {pares.automatico.length === 1 ? '' : 's'}
@@ -484,7 +612,10 @@ function ConciliacaoDetalheContent({ id }) {
 
             <section className="rounded-xl border border-amber-200 bg-white shadow-sm">
               <header className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-100 bg-amber-50 p-5">
-                <h2 className="text-lg font-semibold text-amber-900">⚠️ Provável</h2>
+                <h2 className="flex items-center gap-2 text-lg font-semibold text-amber-900">
+                  <AlertTriangleIcon className="h-5 w-5 text-amber-600" />
+                  Provável
+                </h2>
                 <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">
                   {provaveisRestantes} sem decisão
                 </span>
@@ -505,7 +636,10 @@ function ConciliacaoDetalheContent({ id }) {
 
             <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
               <header className="border-b border-zinc-100 p-5">
-                <h2 className="text-lg font-semibold text-zinc-900">❌ Sem par</h2>
+                <h2 className="flex items-center gap-2 text-lg font-semibold text-zinc-900">
+                  <XCircleIcon className="h-5 w-5 text-rose-500" />
+                  Sem par
+                </h2>
                 <p className="mt-1 text-sm text-zinc-500">
                   Leitura apenas — resolva fora do sistema (lance ou ignore).
                 </p>
@@ -518,32 +652,45 @@ function ConciliacaoDetalheContent({ id }) {
                   </h3>
 
                   {transacoesSemLancamento.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-zinc-200 text-sm">
-                        <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
-                          <tr>
-                            <th className="px-4 py-3">Data</th>
-                            <th className="px-4 py-3">Descrição banco</th>
-                            <th className="px-4 py-3">Valor</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-100">
-                          {transacoesSemLancamento.map((par) => (
-                            <tr key={par.id}>
-                              <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                                {formatarData(par.transacao?.data_lancamento)}
-                              </td>
-                              <td className="px-4 py-3 text-zinc-700">
-                                {par.transacao?.descricao || '-'}
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
-                                {formatarValor(par.transacao?.valor)}
-                              </td>
+                    <>
+                      <div className="grid gap-2 lg:hidden">
+                        {transacoesSemLancamento.map((par) => (
+                          <ItemSemParCard
+                            key={par.id}
+                            data={formatarData(par.transacao?.data_lancamento)}
+                            descricao={par.transacao?.descricao || '-'}
+                            valor={formatarValor(par.transacao?.valor)}
+                          />
+                        ))}
+                      </div>
+
+                      <div className="hidden overflow-x-auto lg:block">
+                        <table className="min-w-full divide-y divide-zinc-200 text-sm">
+                          <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
+                            <tr>
+                              <th className="px-4 py-3">Data</th>
+                              <th className="px-4 py-3">Descrição banco</th>
+                              <th className="px-4 py-3">Valor</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-100">
+                            {transacoesSemLancamento.map((par) => (
+                              <tr key={par.id}>
+                                <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                                  {formatarData(par.transacao?.data_lancamento)}
+                                </td>
+                                <td className="px-4 py-3 text-zinc-700">
+                                  {par.transacao?.descricao || '-'}
+                                </td>
+                                <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
+                                  {formatarValor(par.transacao?.valor)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
                   ) : (
                     <p className="text-sm text-zinc-500">Nenhuma transação sem lançamento.</p>
                   )}
@@ -555,32 +702,45 @@ function ConciliacaoDetalheContent({ id }) {
                   </h3>
 
                   {lancamentosSemTransacao.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-zinc-200 text-sm">
-                        <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
-                          <tr>
-                            <th className="px-4 py-3">Data</th>
-                            <th className="px-4 py-3">Descrição</th>
-                            <th className="px-4 py-3">Valor</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-100">
-                          {lancamentosSemTransacao.map((par) => (
-                            <tr key={par.id}>
-                              <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                                {formatarData(par.lancamento?.data_lancamento)}
-                              </td>
-                              <td className="px-4 py-3 text-zinc-700">
-                                {par.lancamento?.descricao || '-'}
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
-                                {formatarValor(par.lancamento?.valor)}
-                              </td>
+                    <>
+                      <div className="grid gap-2 lg:hidden">
+                        {lancamentosSemTransacao.map((par) => (
+                          <ItemSemParCard
+                            key={par.id}
+                            data={formatarData(par.lancamento?.data_lancamento)}
+                            descricao={par.lancamento?.descricao || '-'}
+                            valor={formatarValor(par.lancamento?.valor)}
+                          />
+                        ))}
+                      </div>
+
+                      <div className="hidden overflow-x-auto lg:block">
+                        <table className="min-w-full divide-y divide-zinc-200 text-sm">
+                          <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
+                            <tr>
+                              <th className="px-4 py-3">Data</th>
+                              <th className="px-4 py-3">Descrição</th>
+                              <th className="px-4 py-3">Valor</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-100">
+                            {lancamentosSemTransacao.map((par) => (
+                              <tr key={par.id}>
+                                <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                                  {formatarData(par.lancamento?.data_lancamento)}
+                                </td>
+                                <td className="px-4 py-3 text-zinc-700">
+                                  {par.lancamento?.descricao || '-'}
+                                </td>
+                                <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
+                                  {formatarValor(par.lancamento?.valor)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
                   ) : (
                     <p className="text-sm text-zinc-500">Nenhum lançamento sem transação.</p>
                   )}
