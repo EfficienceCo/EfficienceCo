@@ -28,7 +28,8 @@ PASTA_REJEITADOS = "rejeitados"
 # 409: a NF-e já está no ledger — não gera outra cópia em Notas Fiscais/.
 PASTA_DUPLICADAS = "duplicadas"
 # 408/429 são 4xx, mas transitórios (timeout / rate limit).
-_STATUS_4XX_TRANSITORIOS = frozenset({408, 429})
+# 401/403 também: token ou licença, não defeito do XML — renovam e o próximo ciclo reenvia.
+_STATUS_4XX_TRANSITORIOS = frozenset({401, 403, 408, 429})
 ENDPOINT_LANCAMENTOS = "/lancamentos-fiscais"
 
 
@@ -337,9 +338,9 @@ def _postar_lancamento(payload: dict) -> str:
 
 
 def _erro_post_permanente(exc: BaseException) -> bool:
-    """4xx de validação não se resolve no próximo ciclo. 5xx e rede, sim.
+    """4xx de validação não se resolve no próximo ciclo. 5xx, rede, 401 e 403, sim.
 
-    409 já volta como 'duplicata' em _postar_lancamento. 408 e 429 reenviam.
+    409 já volta como 'duplicata' em _postar_lancamento. 401/403/408/429 reenviam.
     """
     if not isinstance(exc, ApiError):
         return False
@@ -367,6 +368,43 @@ def _mover_para_subpasta(
 
 def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> None:
     _mover_para_subpasta(xml_path, pasta_path, PASTA_NAO_IDENTIFICADO, "não identificado", motivo)
+
+
+def _copiar_criados(origem: Path, resultados: list[str], caminhos: list[Path]) -> None:
+    """Copia o XML para cada empresa cujo POST criou o lançamento. Não remove a origem."""
+    for resultado, destino in zip(resultados, caminhos):
+        if resultado != "criado":
+            continue
+        try:
+            copiado = _copiar_xml(origem, destino)
+            print(f"[processar_nfe] arquivado -> {copiado}")
+        except Exception as e:
+            print(f"[processar_nfe] POST criado, mas falha ao copiar {origem.name}: {e}")
+
+
+def _tirar_do_inbox(
+    xml_path: Path, pasta_path: Path, subpasta: str, rotulo: str, motivo: str
+) -> None:
+    """Tira o XML da varredura. Se a subpasta falhar, renomeia para não ser .xml."""
+    try:
+        _mover_para_subpasta(xml_path, pasta_path, subpasta, rotulo, motivo)
+        return
+    except Exception:
+        pass
+    if not xml_path.is_file():
+        return
+    reserva = xml_path.with_name(f"{xml_path.name}.{subpasta}-pendente")
+    try:
+        xml_path.rename(reserva)
+        print(
+            f"[processar_nfe] {xml_path.name} não entrou em {subpasta}/; "
+            f"renomeado para {reserva.name} para não reenviar o POST"
+        )
+    except Exception as e:
+        print(
+            f"[processar_nfe] falha ao tirar {xml_path.name} da varredura "
+            f"depois do POST {rotulo}: {e}"
+        )
 
 
 def processar_pasta_nfe(pasta: str) -> None:
@@ -478,44 +516,41 @@ def processar_pasta_nfe(pasta: str) -> None:
                 print(f"[processar_nfe] falha no POST ({nome}, {empresa['nome']}): {e}")
                 resultados.append("permanente" if _erro_post_permanente(e) else "transitorio")
 
-        # Rede/5xx/408/429: deixa no inbox para o próximo polling.
+        # Por empresa: criado arquiva o próprio caminho; duplicata não gera cópia.
+        # O XML do inbox só sai quando ninguém precisa de reenvio.
         if "transitorio" in resultados:
+            _copiar_criados(xml_path, resultados, caminhos_reais)
             continue
 
-        # 4xx permanente: sai do inbox (senão reenvia a cada 30s para sempre).
         if "permanente" in resultados:
-            try:
-                _mover_para_subpasta(
-                    xml_path,
-                    pasta_path,
-                    PASTA_REJEITADOS,
-                    "rejeitado",
-                    "erro permanente do POST",
-                )
-            except Exception:
-                pass
+            _copiar_criados(xml_path, resultados, caminhos_reais)
+            _tirar_do_inbox(
+                xml_path,
+                pasta_path,
+                PASTA_REJEITADOS,
+                "rejeitado",
+                "erro permanente do POST",
+            )
             continue
 
-        # Reenvio de NF-e já escriturada: sem cópia nova em Notas Fiscais/.
+        criados = [c for r, c in zip(resultados, caminhos_reais) if r == "criado"]
+        if criados:
+            try:
+                arquivados = _arquivar_nas_empresas(xml_path, criados)
+                for caminho in arquivados:
+                    print(f"[processar_nfe] arquivado -> {caminho}")
+            except Exception as e:
+                print(f"[processar_nfe] POST ok, mas falha ao arquivar {nome}: {e}")
+            continue
+
         if resultados and all(r == "duplicata" for r in resultados):
-            try:
-                _mover_para_subpasta(
-                    xml_path,
-                    pasta_path,
-                    PASTA_DUPLICADAS,
-                    "duplicata",
-                    dados["chave_nfe"],
-                )
-            except Exception:
-                pass
-            continue
-
-        try:
-            arquivados = _arquivar_nas_empresas(xml_path, caminhos_reais)
-            for caminho in arquivados:
-                print(f"[processar_nfe] arquivado -> {caminho}")
-        except Exception as e:
-            print(f"[processar_nfe] POST ok, mas falha ao arquivar {nome}: {e}")
+            _tirar_do_inbox(
+                xml_path,
+                pasta_path,
+                PASTA_DUPLICADAS,
+                "duplicata",
+                dados["chave_nfe"],
+            )
 
 
 if __name__ == "__main__":

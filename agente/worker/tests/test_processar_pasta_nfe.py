@@ -19,6 +19,7 @@ CNPJ_FORNECEDOR = "98765432000110"
 CLIENTE_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 CLIENTE_ID_EMIT = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 NOME_EMPRESA = "Padaria do João"
+NOME_FILIAL = "Filial Centro"
 NOME_FORNECEDOR = "Mercado Central"
 CHAVE_DOIS_CLIENTES = "35261298765432000110550010000000031000000033"
 
@@ -69,6 +70,16 @@ def _lookup_padaria(cnpj):
     digitos = "".join(c for c in str(cnpj) if c.isdigit())
     if digitos == CNPJ_CLIENTE:
         return {"id": CLIENTE_ID, "nome": NOME_EMPRESA}
+    return None
+
+
+def _lookup_matriz_e_filial(cnpj):
+    """Mesmo cliente_id em emitente e destinatário (matriz + filial)."""
+    digitos = "".join(c for c in str(cnpj) if c.isdigit())
+    if digitos == CNPJ_CLIENTE:
+        return {"id": CLIENTE_ID, "nome": NOME_EMPRESA}
+    if digitos == CNPJ_FORNECEDOR:
+        return {"id": CLIENTE_ID, "nome": NOME_FILIAL}
     return None
 
 
@@ -440,6 +451,99 @@ def test_erro_429_e_transitorio(pasta_nfe):
     assert mock_post.call_count == 1
     assert (inbox / "entrada.xml").is_file()
     assert not (inbox / "rejeitados" / "entrada.xml").exists()
+
+
+@pytest.mark.parametrize("codigo", [401, 403])
+def test_erro_auth_e_transitorio(pasta_nfe, codigo):
+    """401/403 é licença ou token, não a nota: o XML espera o próximo ciclo."""
+    inbox, base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=ApiError(codigo, "licença inválida"),
+        ) as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 2
+    assert (inbox / "entrada.xml").is_file()
+    assert not (inbox / "rejeitados" / "entrada.xml").exists()
+    assert not _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").exists()
+
+
+def test_falha_ao_mover_rejeitado_nao_reenvia(pasta_nfe):
+    inbox, _base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=ApiError(422, "valor_total fora da faixa"),
+        ) as mock_post,
+        patch("automacoes.processar_nfe._mover_xml", side_effect=OSError("disco cheio")),
+    ):
+        processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 1
+    assert not (inbox / "entrada.xml").is_file()
+    assert (inbox / "entrada.xml.rejeitados-pendente").is_file()
+
+
+def test_dois_alvos_criado_e_permanente_arquiva_so_o_criado(pasta_nfe):
+    """Matriz+filial no mesmo cliente: o POST criado não perde o XML."""
+    inbox, base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch(
+            "automacoes.processar_nfe.buscar_empresa_por_cnpj",
+            side_effect=_lookup_matriz_e_filial,
+        ),
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=[MagicMock(), ApiError(422, "rejeitada")],
+        ) as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 2
+    assert not (inbox / "entrada.xml").exists()
+    assert (inbox / "rejeitados" / "entrada.xml").is_file()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").is_file()
+    assert not _arquivo_nfe(base, NOME_FILIAL, "entrada.xml").exists()
+
+
+def test_dois_alvos_criado_e_duplicata_nao_copia_a_duplicata(pasta_nfe):
+    inbox, base = pasta_nfe
+    _copiar_fixture("entrada.xml", inbox)
+
+    with (
+        patch(
+            "automacoes.processar_nfe.buscar_empresa_por_cnpj",
+            side_effect=_lookup_matriz_e_filial,
+        ),
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=[MagicMock(), ApiError(409, "já existe")],
+        ) as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 2
+    assert not (inbox / "entrada.xml").exists()
+    assert not (inbox / "rejeitados" / "entrada.xml").exists()
+    assert not (inbox / "duplicadas" / "entrada.xml").exists()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "entrada.xml").is_file()
+    assert not _arquivo_nfe(base, NOME_FILIAL, "entrada.xml").exists()
+    assert not any((base / NOME_FILIAL / "Notas Fiscais").rglob("*.xml"))
 
 
 def test_cliente_id_ausente_nao_trava_scan(pasta_nfe):
