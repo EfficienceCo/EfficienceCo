@@ -3,7 +3,7 @@ import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
 import { aplicarFiltroPeriodo, dataLocalISO } from "../utils/periodo.util.js";
 import {
-  mensagemRejeicaoBanco,
+  camposRejeicaoBanco,
   validarLancamentoFiscal,
 } from "../utils/lancamento-fiscal.util.js";
 
@@ -172,12 +172,12 @@ export async function criarLancamentoFiscal(req, res) {
     if (error.code === "23505") {
       return res.status(409).json({ erro: "Já existe um lançamento fiscal para esta chave de NFe" });
     }
-    const detalhe = mensagemRejeicaoBanco(error.code);
-    if (detalhe) {
+    const campos = camposRejeicaoBanco(error);
+    if (campos) {
       console.error("[lancamentos-fiscais.controller] Lançamento fiscal recusado pelo banco:", error.message);
       return res.status(422).json({
         erro: "Dados do lançamento fiscal inválidos",
-        detalhe,
+        campos,
       });
     }
     console.error("[lancamentos-fiscais.controller] Erro ao registrar lançamento fiscal:", error.message);

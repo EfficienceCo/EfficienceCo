@@ -126,6 +126,29 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(insercoes[0].arquivo_xml, null);
   });
 
+  it("201 aceita datetime e CPF com dígito verificador, gravando só a data", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "pf" }, error: null });
+
+    const res = criarResposta();
+    await criarLancamentoFiscal(
+      {
+        headers: { "x-licenca-token": "tok" },
+        body: payloadValido({
+          data_emissao: "2026-07-15T00:00:00Z",
+          cnpj_destinatario: "52998224725",
+        }),
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(insercoes[0].data_emissao, "2026-07-15");
+    assert.equal(insercoes[0].cnpj_destinatario, "52998224725");
+  });
+
   it("422 quando data_emissao é futura (BUG-APUR-08)", async () => {
     tokenValido();
     const req = {
@@ -241,14 +264,18 @@ describe("POST /lancamentos-fiscais", () => {
       ["valor_total numérico com 3 casas", { valor_total: 10.999 }, "valor_total", /2 casas decimais/i],
       ["icms negativo", { icms: "-5" }, "icms", /não pode ser negativo/i],
       ["pis negativo", { pis: -1 }, "pis", /não pode ser negativo/i],
+      ["icms minúsculo em notação científica", { icms: 0.0000001 }, "icms", /2 casas decimais/i],
       ["data inexistente", { data_emissao: "2026-02-30" }, "data_emissao", /data existente/i],
       ["data em dd/mm/aaaa", { data_emissao: "31/03/2026" }, "data_emissao", /YYYY-MM-DD/i],
       ["data futura", { data_emissao: "2027-01-01" }, "data_emissao", /não pode ser futura/i],
+      ["data futura com hora", { data_emissao: "2099-01-01T10:00:00Z" }, "data_emissao", /não pode ser futura/i],
+      ["data com sufixo inválido", { data_emissao: "2026-07-15foo" }, "data_emissao", /YYYY-MM-DD/i],
       ["chave com 44 letras", { chave_nfe: "A".repeat(44) }, "chave_nfe", /44 dígitos/i],
       ["chave com 45 caracteres", { chave_nfe: "1".repeat(45) }, "chave_nfe", /44 dígitos/i],
       ["chave com 10 caracteres", { chave_nfe: "1234567890" }, "chave_nfe", /44 dígitos/i],
       ["cnpj_emitente com 15 caracteres", { cnpj_emitente: "112223330001811" }, "cnpj_emitente", /14 dígitos/i],
       ["cnpj_destinatario com 15 caracteres", { cnpj_destinatario: "112223330001811" }, "cnpj_destinatario", /14 dígitos|11 dígitos/i],
+      ["cpf sem dígito verificador", { cnpj_destinatario: "00000000000" }, "cnpj_destinatario", /CPF válido/i],
       [
         "arquivo_xml absoluto no Windows",
         { arquivo_xml: "C:\\Users\\joao\\x.xml" },
@@ -360,8 +387,32 @@ describe("POST /lancamentos-fiscais", () => {
     await criarLancamentoFiscal(req, res);
 
     assert.equal(res.statusCode, 422);
-    assert.match(res.body.detalhe, /faixa numérica/i);
+    assert.match(Object.values(res.body.campos).join(" "), /faixa numérica/i);
+    assert.equal(res.body.detalhe, undefined);
     assert.notEqual(res.body.erro, "Erro ao registrar lançamento fiscal");
+  });
+
+  it("422 do banco nomeia o campo quando a constraint aparece na mensagem", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", {
+      data: null,
+      error: {
+        code: "23514",
+        message: 'new row violates check constraint "lancamentos_fiscais_chave_nfe_digitos_check"',
+      },
+    });
+
+    const res = criarResposta();
+    await criarLancamentoFiscal(
+      { headers: { "x-licenca-token": "tok" }, body: payloadValido() },
+      res,
+    );
+
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.campos.chave_nfe, /44 dígitos/);
+    assert.equal(res.body.detalhe, undefined);
   });
 
   it("422 quando o banco recusa formato ou check, sem gravar 500 genérico", async () => {
@@ -388,7 +439,8 @@ describe("POST /lancamentos-fiscais", () => {
       );
 
       assert.equal(res.statusCode, 422, code);
-      assert.match(res.body.detalhe, mensagem, code);
+      assert.match(Object.values(res.body.campos).join(" "), mensagem, code);
+      assert.equal(res.body.detalhe, undefined, code);
     }
   });
 });

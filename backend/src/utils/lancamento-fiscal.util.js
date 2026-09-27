@@ -1,4 +1,5 @@
 import { dataIsoValida } from "./data.util.js";
+import { cpfValido } from "./cpf.util.js";
 
 // Faixa de negócio do valor fiscal: no máximo 12 dígitos inteiros e 2 casas
 // (o antigo numeric(14,2)). A coluna original arredondava o excesso antes de
@@ -22,8 +23,34 @@ const REJEICAO_BANCO = {
   "23514": "um campo viola a regra de integridade",
 };
 
-export function mensagemRejeicaoBanco(code) {
-  return REJEICAO_BANCO[code] ?? null;
+// Quando o CHECK nomeia a constraint, o 422 usa a mesma chave de `campos`
+// que a validação da API. Sem isso o chamador só via um `detalhe` genérico.
+const CAMPOS_POR_CONSTRAINT = {
+  lancamentos_fiscais_chave_nfe_digitos_check: {
+    chave_nfe: "chave_nfe deve ter exatamente 44 dígitos",
+  },
+  lancamentos_fiscais_cnpj_emitente_digitos_check: {
+    cnpj_emitente: "cnpj_emitente deve ter exatamente 14 dígitos",
+  },
+  lancamentos_fiscais_documento_destinatario_check: {
+    cnpj_destinatario: "cnpj_destinatario deve ter 14 dígitos (CNPJ) ou 11 dígitos (CPF válido)",
+  },
+  lancamentos_fiscais_arquivo_xml_relativo_check: {
+    arquivo_xml: "arquivo_xml deve ser um caminho relativo",
+  },
+  lancamentos_fiscais_valores_faixa_check: {
+    valor_total: "um valor está fora da faixa numérica",
+  },
+};
+
+export function camposRejeicaoBanco(error) {
+  const detalhe = REJEICAO_BANCO[error?.code];
+  if (!detalhe) return null;
+  const mensagem = typeof error.message === "string" ? error.message : "";
+  for (const [constraint, campos] of Object.entries(CAMPOS_POR_CONSTRAINT)) {
+    if (mensagem.includes(constraint)) return campos;
+  }
+  return { lancamento: detalhe };
 }
 
 function mensagemMonetaria(campo, motivo) {
@@ -34,7 +61,7 @@ export function analisarMonetario(valor) {
   let texto;
   if (typeof valor === "number") {
     if (!Number.isFinite(valor)) return { erro: "deve ser um número" };
-    texto = Object.is(valor, -0) ? "0" : valor.toString();
+    texto = valor.toString();
   } else if (typeof valor === "string") {
     texto = valor.trim();
     if (texto === "") return { erro: "deve ser um número" };
@@ -44,7 +71,12 @@ export function analisarMonetario(valor) {
 
   if (texto.startsWith("-")) return { erro: "não pode ser negativo" };
   if (/e/i.test(texto)) {
-    return { erro: "fora da faixa de numeric(14,2) (máximo 999999999999.99)" };
+    const pequenoDemais = /e-/i.test(texto);
+    return {
+      erro: pequenoDemais
+        ? "deve ter no máximo 2 casas decimais"
+        : "fora da faixa de numeric(14,2) (máximo 999999999999.99)",
+    };
   }
   if (!RE_MONETARIO.test(texto)) return { erro: "deve ser um número" };
 
@@ -93,15 +125,28 @@ function validarCnpjEmitente(valor) {
 }
 
 function validarDocumentoDestinatario(valor) {
-  if (typeof valor === "string" && /^(?:\d{11}|\d{14})$/.test(valor)) return null;
-  return "cnpj_destinatario deve ter 14 dígitos (CNPJ) ou 11 dígitos (CPF)";
+  if (typeof valor === "string" && /^\d{14}$/.test(valor)) return null;
+  if (typeof valor === "string" && /^\d{11}$/.test(valor)) {
+    return cpfValido(valor) ? null : "cnpj_destinatario não é um CPF válido";
+  }
+  return "cnpj_destinatario deve ter 14 dígitos (CNPJ) ou 11 dígitos (CPF válido)";
+}
+
+function dataEmissaoCanonica(valor) {
+  if (typeof valor !== "string" || valor.length < 10) return null;
+  const data = valor.slice(0, 10);
+  const resto = valor.slice(10);
+  if (resto !== "" && !resto.startsWith("T") && !resto.startsWith(" ")) return null;
+  if (!dataIsoValida(data)) return null;
+  return data;
 }
 
 function validarDataEmissao(valor, hojeISO) {
-  if (typeof valor !== "string" || !dataIsoValida(valor)) {
+  const data = dataEmissaoCanonica(valor);
+  if (!data) {
     return "data_emissao deve ser uma data existente no formato YYYY-MM-DD";
   }
-  if (valor > hojeISO) return "data_emissao não pode ser futura";
+  if (data > hojeISO) return "data_emissao não pode ser futura";
   return null;
 }
 
@@ -139,7 +184,7 @@ export function validarLancamentoFiscal(body, hojeISO) {
 
   const erroData = validarDataEmissao(body.data_emissao, hojeISO);
   if (erroData) erros.data_emissao = erroData;
-  else dados.data_emissao = body.data_emissao;
+  else dados.data_emissao = dataEmissaoCanonica(body.data_emissao);
 
   const arquivo = validarArquivoXml(body.arquivo_xml);
   if (arquivo.erro) erros.arquivo_xml = arquivo.erro;

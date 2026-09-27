@@ -33,6 +33,8 @@ ALTER TABLE lancamentos_fiscais
   NOT VALID;
 
 -- Destinatário pode ser CNPJ (14) ou CPF (11) — venda a pessoa física (#566).
+-- O CHECK só garante o comprimento. O dígito verificador do CPF fica na API
+-- (cpfValido), para não duplicar o algoritmo em SQL.
 ALTER TABLE lancamentos_fiscais
   DROP CONSTRAINT IF EXISTS lancamentos_fiscais_documento_destinatario_check;
 
