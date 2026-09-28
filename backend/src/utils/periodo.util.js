@@ -34,12 +34,42 @@ export function mesJaFechado(referenciaAnoMes, hojeISO = dataLocalISO()) {
   return hojeISO > ultimoDiaDoMes(ano, mes);
 }
 
+function valorInformado(valor) {
+  return valor !== undefined && valor !== null && String(valor).trim() !== "";
+}
+
+// Contrato da query de período (BUG-NFE-10 / #570):
+//   sem mes e sem ano → sem filtro
+//   só ano válido → o ano inteiro
+//   mes e ano válidos → aquele mês
+//   mes sem ano, ou valor presente fora da faixa → erro. Não cair no histórico
+//   inteiro nem no ano, que parece resposta certa.
+// "" conta como ausente. Quem chama aplicarFiltroPeriodo na borda HTTP deve
+// recusar antes; o filtro em si continua tolerante para não derrubar queries
+// internas já validadas.
+export function erroPeriodoConsulta(mes, ano) {
+  const mesInformado = valorInformado(mes);
+  const anoInformado = valorInformado(ano);
+  if (!mesInformado && !anoInformado) return null;
+
+  if (mesInformado && paraInteiroValido(mes, 1, 12) === null) {
+    return "mes deve ser um inteiro entre 1 e 12";
+  }
+  if (anoInformado && paraInteiroValido(ano, 1000, 9999) === null) {
+    return "ano deve ser um inteiro entre 1000 e 9999";
+  }
+  if (mesInformado && !anoInformado) {
+    return "mes exige ano";
+  }
+  return null;
+}
+
 // Aplica filtro de mes/ano a uma query Supabase sobre uma coluna de data.
 // Compartilhado entre controllers que filtram listagens por mes+ano (obrigacoes,
 // lancamentos-fiscais) pra não duplicar o cálculo de início/fim do período.
 // mes/ano inválidos (não numéricos, fora de faixa) são tratados como ausentes
 // em vez de derrubar o request — parseInt(NaN) em Date().toISOString() lança
-// RangeError não capturado pelo handler.
+// RangeError não capturado pelo handler. Na borda HTTP use erroPeriodoConsulta.
 export function aplicarFiltroPeriodo(query, campo, mes, ano) {
   const mesNumero = paraInteiroValido(mes, 1, 12);
   const anoNumero = paraInteiroValido(ano, 1000, 9999);

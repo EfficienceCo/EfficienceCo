@@ -258,6 +258,45 @@ describe("GET /lancamentos-fiscais", () => {
     assert.equal(res.statusCode, 400);
   });
 
+  it("400 quando clienteId não é UUID (admin_efficience)", async () => {
+    const req = reqBase({
+      usuario: { perfil: PERFIS.ADMIN_EFFICIENCE },
+      query: { clienteId: "abc" },
+    });
+    const res = criarResposta();
+    await listarLancamentosFiscais(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /UUID/);
+  });
+
+  it("400 quando o período é inválido ou incompleto", async () => {
+    const casos = [
+      [{ mes: "13", ano: "2026" }, /mes/],
+      [{ mes: "0", ano: "2026" }, /mes/],
+      [{ mes: "abc", ano: "2026" }, /mes/],
+      [{ mes: "9.5", ano: "2026" }, /mes/],
+      [{ mes: "9" }, /ano/],
+      [{ ano: "abc" }, /ano/],
+    ];
+
+    for (const [query, mensagem] of casos) {
+      const res = criarResposta();
+      await listarLancamentosFiscais(reqBase({ query }), res);
+      assert.equal(res.statusCode, 400, JSON.stringify(query));
+      assert.match(res.body.erro, mensagem);
+    }
+  });
+
+  it("200 quando só o ano é informado", async () => {
+    queue("lancamentos_fiscais", "await", { data: [], error: null });
+
+    const res = criarResposta();
+    await listarLancamentosFiscais(reqBase({ query: { ano: "2026" } }), res);
+
+    assert.equal(res.statusCode, 200);
+  });
+
   it("500 quando o Supabase retorna erro", async () => {
     queue("lancamentos_fiscais", "await", { data: null, error: { message: "falha" } });
 
@@ -324,5 +363,25 @@ describe("GET /lancamentos-fiscais/resumo", () => {
     await resumoLancamentosFiscais(req, res);
 
     assert.equal(res.statusCode, 400);
+  });
+
+  it("400 quando clienteId não é UUID", async () => {
+    const req = reqBase({
+      usuario: { perfil: PERFIS.ADMIN_EFFICIENCE },
+      query: { clienteId: "abc" },
+    });
+    const res = criarResposta();
+    await resumoLancamentosFiscais(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /UUID/);
+  });
+
+  it("400 quando mês vem sem ano", async () => {
+    const res = criarResposta();
+    await resumoLancamentosFiscais(reqBase({ query: { mes: "9" } }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /ano/);
   });
 });
