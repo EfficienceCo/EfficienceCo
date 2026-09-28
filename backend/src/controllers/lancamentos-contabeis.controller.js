@@ -1,6 +1,7 @@
 import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
-import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
+import { aplicarFiltroPeriodo, erroPeriodoConsulta } from "../utils/periodo.util.js";
+import { ehUuid } from "../utils/uuid.util.js";
 
 const TIPOS_VALIDOS = new Set(["credito", "debito"]);
 
@@ -71,6 +72,13 @@ export async function listarLancamentosContabeis(req, res) {
   }
 
   const { mes, ano } = req.query;
+  if (!ehUuid(clienteId)) {
+    return res.status(400).json({ erro: "clienteId deve ser um UUID" });
+  }
+  const erroPeriodo = erroPeriodoConsulta(mes, ano);
+  if (erroPeriodo) {
+    return res.status(400).json({ erro: erroPeriodo });
+  }
 
   let query = supabase
     .from("lancamentos_contabeis")
