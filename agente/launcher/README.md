@@ -21,7 +21,7 @@ Token e URL do backend **nunca** vão no binário — só em `config.yaml`.
 - Go 1.25+ (módulo pede 1.25 por `golang.org/x/sys`; testado com Go 1.26)
 - Windows (alvo de produção). Build cross a partir de Linux/macOS é possível.
 - Tray: [`fyne.io/systray`](https://fyne.io/systray) (sem CGO no Windows)
-- Worker PyInstaller: veja [`../worker/build/build.sh`](../worker/build/build.sh)
+- Worker PyInstaller: veja [`../worker/build/build.sh`](../worker/build/build.sh) (instala [`../worker/requirements.txt`](../worker/requirements.txt) antes do bundle). Em dev, `run-worker-dev.cmd` instala o que faltar (BUG-AGENTE-DEPS-01 / #515).
 
 ## Configuração
 
@@ -83,7 +83,7 @@ Efficience/
   config.yaml                # backend_url, licenca_token, cliente_id, pasta_base, agente_exe
 ```
 
-1. Build do worker: `cd agente/worker && bash build/build.sh` (ou PyInstaller equivalente no Windows).
+1. Build do worker: `cd agente/worker && bash build/build.sh` (instala `requirements.txt` antes do PyInstaller).
 2. Build do launcher (acima).
 3. Copie os dois `.exe` + `config.yaml` preenchido para a pasta do cliente.
 4. Execute `EfficienceLauncher.exe` uma vez (instala atalho no Startup automaticamente).

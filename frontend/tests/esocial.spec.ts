@@ -167,7 +167,51 @@ async function preencherFormularioS2200(page: Page) {
   await g('Local de trabalho').getByLabel(/^Número de inscrição/).fill('12345678000199');
 
   const hor = g('Horário contratual');
+  await hor.getByLabel('Quantidade de horas semanais').fill('44');
   await hor.getByLabel('Tipo de jornada').selectOption('3');
+  await hor.getByLabel('Descrição da jornada').fill('Segunda a sexta, 08h às 17h');
+}
+
+async function preencherFormularioS2200Estatutario(page: Page) {
+  const g = (nome: string) => grupo(page, nome);
+
+  const trab = g('Trabalhador');
+  await trab.getByLabel('CPF').fill('52998224725');
+  await trab.getByLabel('Nome completo').fill('JOÃO SERVIDOR DE TESTE');
+  await trab.getByLabel('Sexo').selectOption('M');
+  await trab.getByLabel('Raça/cor').selectOption('1');
+  await trab.getByLabel('Grau de instrução').selectOption('07');
+  await trab.getByLabel('Data de nascimento').fill('15/03/1985');
+
+  const end = g('Endereço');
+  await end.getByLabel(/^Logradouro/).fill('Avenida Paulista');
+  await end.getByLabel(/^Número/).fill('1000');
+  await end.getByLabel('CEP').fill('01310100');
+  await end.getByLabel(/^Código do munic/).fill('3550308');
+  await end.getByLabel(/^UF/).selectOption('SP');
+
+  const vinc = g('Vínculo');
+  await vinc.getByLabel('Empregador — número de inscrição').fill('12345678000199');
+  await vinc.getByLabel('Matrícula').fill('MAT-EST-001');
+  // 301 — Servidor público titular de cargo efetivo / vitalício (categoria estatutária)
+  await vinc.getByLabel('Categoria do trabalhador').selectOption('301');
+  await vinc.getByLabel('Data de admissão').fill('02/02/2026');
+
+  const est = g('Regime estatutário (infoEstatutario)');
+  await est.getByLabel('Tipo de provimento').selectOption('4');
+  await est.getByLabel('Data de exercício').fill('02/02/2026');
+  // tpRegPrev permanece '1' (RGPS, valor padrão do form) — os campos de RPPS
+  // (indTetoRGPS e demais) são exclusivos de tpRegPrev=2 e nem aparecem aqui;
+  // o backend (montarInfoEstatutario) rejeita esses campos fora do RPPS.
+
+  const cargo = g('Cargo');
+  await cargo.getByLabel('Nome do cargo').fill('Analista Judiciário');
+  await cargo.getByLabel('CBO do cargo').fill('252105');
+
+  await g('Local de trabalho').getByLabel(/^Número de inscrição/).fill('12345678000199');
+
+  const hor = g('Horário contratual');
+  await hor.getByLabel('Tipo de jornada').selectOption('2');
   await hor.getByLabel('Descrição da jornada').fill('Segunda a sexta, 08h às 17h');
 }
 
@@ -294,6 +338,85 @@ test.describe('eSocial — wizard /dashboard/dp/esocial (issue #379)', () => {
     // ... e não sujam o payload enviado pro backend
     const evento = (page as any)._backend.eventos[0];
     expect(evento.dados_formulario.dadosAdmissao.duracao).toEqual({ tpContr: '1' });
+  });
+
+  test('categoria estatutária (301) esconde remuneração/duração e admite sem esses campos (BUG-ESOCIAL-07)', async ({ page }) => {
+    await page.getByRole('button', { name: 'Avançar para o formulário' }).click();
+
+    await preencherFormularioS2200Estatutario(page);
+
+    // remuneracao/duracao só existem para o regime celetista — o backend
+    // (montarInfoContrato) rejeita esses grupos quando tpRegTrab=2 (estatutário),
+    // então o wizard nem deve exibir os campos pra categoria estatutária.
+    await expect(page.getByRole('group', { name: 'Remuneração' })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: 'Duração do contrato' })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: 'Regime CLT (infoCeletista)' })).toHaveCount(0);
+
+    // tpRegPrev permanece '1' (RGPS) — os campos exclusivos do RPPS (o backend
+    // rejeita esses campos fora de tpRegPrev=2) nem devem aparecer na tela.
+    const est = grupo(page, 'Regime estatutário (infoEstatutario)');
+    await expect(est.getByLabel(/Indicador de teto do RGPS/)).toHaveCount(0);
+    await expect(est.getByLabel('Tipo de plano de RP')).toHaveCount(0);
+    await expect(est.getByLabel('Indicador de abono permanência')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Revisar' }).click();
+
+    // Sem remuneração/duração preenchidas, o formulário estatutário ainda assim
+    // fica válido e chega até a revisão — sem pendências bloqueando o botão.
+    await expect(page.getByText(/pendência\(s\) antes de revisar/)).toHaveCount(0);
+    await expect(page.getByText('Revisão do evento')).toBeVisible();
+
+    // ...e o payload enviado ao backend não carrega remuneracao/duracao nem
+    // os campos de RPPS (que o gerador rejeitaria para tpRegPrev=1).
+    const evento = (page as any)._backend.eventos[0];
+    expect(evento.dados_formulario.dadosAdmissao.tpRegTrab).toBe('2');
+    expect(evento.dados_formulario.dadosAdmissao.remuneracao).toBeUndefined();
+    expect(evento.dados_formulario.dadosAdmissao.duracao).toBeUndefined();
+    expect(evento.dados_formulario.dadosAdmissao.estatutario.indTetoRGPS).toBeUndefined();
+    expect(evento.dados_formulario.dadosAdmissao.estatutario.tpPlanRP).toBeUndefined();
+    expect(evento.dados_formulario.dadosAdmissao.estatutario.indAbonoPerm).toBeUndefined();
+  });
+
+  test('categoria estatutária com RPPS (tpRegPrev=2) exige e envia o indicador de teto do RGPS (BUG-ESOCIAL-07)', async ({ page }) => {
+    await page.getByRole('button', { name: 'Avançar para o formulário' }).click();
+
+    await preencherFormularioS2200Estatutario(page);
+    await grupo(page, 'Vínculo').getByLabel('Regime previdenciário').selectOption('2');
+
+    const est = grupo(page, 'Regime estatutário (infoEstatutario)');
+
+    // Sem o indicador de teto do RGPS preenchido, o RPPS barra o avanço —
+    // espelhando a exigência do backend (montarInfoEstatutario) para tpRegPrev=2.
+    await page.getByRole('button', { name: 'Revisar' }).click();
+    await expect(page.getByText(/pendência\(s\) antes de revisar/)).toContainText('teto do RGPS');
+
+    await est.getByLabel(/Indicador de teto do RGPS/).selectOption('S');
+    await page.getByRole('button', { name: 'Revisar' }).click();
+    await expect(page.getByText('Revisão do evento')).toBeVisible();
+
+    const evento = (page as any)._backend.eventos[0];
+    expect(evento.dados_formulario.dadosAdmissao.tpRegPrev).toBe('2');
+    expect(evento.dados_formulario.dadosAdmissao.estatutario.indTetoRGPS).toBe('S');
+  });
+
+  test('categoria 111 (contrato verde e amarelo) não exige horas semanais nem trabalho noturno', async ({ page }) => {
+    await page.getByRole('button', { name: 'Avançar para o formulário' }).click();
+    await preencherFormularioS2200(page);
+
+    await grupo(page, 'Vínculo').getByLabel('Categoria do trabalhador').selectOption('111');
+
+    const hor = grupo(page, 'Horário contratual');
+    await hor.getByLabel('Quantidade de horas semanais').fill('');
+    await hor.getByLabel('Trabalho noturno').selectOption('');
+
+    // Espelha montarHorContratual em esocial-xml.util.js: para codCateg=111
+    // esses dois campos não são obrigatórios, então o asterisco some do rótulo.
+    await expect(hor.getByText('Quantidade de horas semanais *', { exact: true })).toHaveCount(0);
+    await expect(hor.getByText('Trabalho noturno *', { exact: true })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Revisar' }).click();
+    await expect(page.getByText('Revisão do evento')).toBeVisible();
+    await expect(page.getByText(/pendência\(s\) antes de revisar/)).toHaveCount(0);
   });
 
   test('reabre um evento aprovado a partir do histórico com XML e download', async ({ page }) => {
