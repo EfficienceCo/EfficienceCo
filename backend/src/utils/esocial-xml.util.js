@@ -84,7 +84,7 @@ export const CATEGORIAS_S2200 = new Set([
 
 // Categorias de regime estatutário (usam infoEstatutario em vez de
 // infoCeletista). As demais categorias do S-2200 são celetistas.
-const CATEGORIAS_ESTATUTARIAS = new Set([301, 302, 303, 306, 307, 309, 310, 312, 314]);
+export const CATEGORIAS_ESTATUTARIAS = new Set([301, 302, 303, 306, 307, 309, 310, 312, 314]);
 const TP_INSC_EMPREGADOR = new Set([1, 2]);
 const TP_INSC_LOCAL_GERAL = new Set([1, 3, 4]);
 const TP_INSC_ESTAB_VINC = new Set([1, 2]);

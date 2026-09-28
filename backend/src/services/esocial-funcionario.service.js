@@ -5,7 +5,7 @@
 // evento eSocial.
 
 import supabase from "../config/database.js";
-import { formatarData, formatarValor } from "../utils/esocial-xml.util.js";
+import { CATEGORIAS_ESTATUTARIAS, formatarData, formatarValor } from "../utils/esocial-xml.util.js";
 
 // Aplica um normalizador do gerador (formatarData/formatarValor), devolvendo
 // `null` em vez de propagar o ErroXmlESocial — a coluna correspondente é
@@ -27,6 +27,15 @@ function normalizar(fn) {
 function mapearFuncionario(clienteId, dadosFormulario) {
   const f = dadosFormulario?.funcionario ?? {};
   const a = dadosFormulario?.dadosAdmissao ?? {};
+  const estatutaria = CATEGORIAS_ESTATUTARIAS.has(Number(a.codCateg));
+
+  // Categorias estatutárias (301/302/303/306/307/309/310/312/314) não têm
+  // grupo remuneracao no S-2200 — infoEstatutario não carrega salário.
+  // `funcionarios.salario` é NOT NULL, então usamos 0 como placeholder em vez
+  // de bloquear a criação do registro por um campo que o evento nunca informa.
+  const salario = estatutaria
+    ? (normalizar(() => formatarValor(a.remuneracao?.valorSalarioFixo)) ?? "0.00")
+    : normalizar(() => formatarValor(a.remuneracao?.valorSalarioFixo));
 
   return {
     cliente_id: clienteId,
@@ -37,7 +46,7 @@ function mapearFuncionario(clienteId, dadosFormulario) {
     cargo: a.cargo?.nome ?? null,
     cbo: a.cargo?.cbo != null ? String(a.cargo.cbo).replace(/\D+/g, "") : null,
     categoria: a.codCateg != null ? String(a.codCateg) : null,
-    salario: normalizar(() => formatarValor(a.remuneracao?.valorSalarioFixo)), // ponto decimal, 2 casas
+    salario, // ponto decimal, 2 casas
   };
 }
 
