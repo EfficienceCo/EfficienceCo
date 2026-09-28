@@ -170,6 +170,20 @@ function classeBadgeTipo(tipo) {
   return 'bg-zinc-100 text-zinc-700';
 }
 
+function obterStatusLancamento(status) {
+  if (status === 'cancelada') {
+    return {
+      label: 'Cancelada',
+      classes: 'bg-zinc-200 text-zinc-700 ring-zinc-300',
+    };
+  }
+
+  return {
+    label: 'Ativa',
+    classes: 'bg-sky-100 text-sky-700 ring-sky-200',
+  };
+}
+
 function Spinner() {
   return (
     <span
@@ -507,6 +521,7 @@ export default function FiscalPage() {
                 <th className="px-4 py-3">Data emissão</th>
                 <th className="px-4 py-3">Chave NFe</th>
                 <th className="px-4 py-3">Tipo</th>
+                <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">CNPJ emitente</th>
                 <th className="px-4 py-3">CNPJ destinatário</th>
                 <th className="px-4 py-3">Valor total</th>
@@ -514,8 +529,11 @@ export default function FiscalPage() {
             </thead>
 
             <tbody className="divide-y divide-zinc-100">
-              {lancamentos.map((lancamento, index) => (
-                <tr key={lancamento?.id || `${lancamento?.chave_nfe}-${index}`}>
+              {lancamentos.map((lancamento, index) => {
+                const status = obterStatusLancamento(lancamento?.status);
+
+                return (
+                  <tr key={lancamento?.id || `${lancamento?.chave_nfe}-${index}`}>
                   <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
                     {formatarData(lancamento?.data_emissao)}
                   </td>
@@ -534,6 +552,13 @@ export default function FiscalPage() {
                       {formatarTipo(lancamento?.tipo)}
                     </span>
                   </td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <span
+                      className={`rounded-full px-2 py-1 text-xs font-semibold ring-1 ${status.classes}`}
+                    >
+                      {status.label}
+                    </span>
+                  </td>
                   <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
                     {formatarCnpj(lancamento?.cnpj_emitente)}
                   </td>
@@ -543,8 +568,9 @@ export default function FiscalPage() {
                   <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
                     {formatarValor(lancamento?.valor_total)}
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </section>

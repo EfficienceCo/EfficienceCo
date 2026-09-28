@@ -12,6 +12,15 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
 CNPJ_CLIENTE = "12345678000199"
 
 
+def _envolver_nfe_autorizada(xml: str) -> str:
+    conteudo = xml.split("?>", 1)[-1]
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+    <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+      {conteudo}
+      <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
+    </nfeProc>"""
+
+
 @pytest.fixture(autouse=True)
 def _sem_pasta_base(monkeypatch):
     """Evita que PASTA_BASE do .env local falhe nos parses de fixture/tmp."""
@@ -111,7 +120,7 @@ def test_sem_inf_nfe(tmp_path):
 
 
 def test_campo_obrigatorio_ausente(tmp_path):
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    xml = _envolver_nfe_autorizada("""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
       <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
         <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
@@ -122,7 +131,7 @@ def test_campo_obrigatorio_ausente(tmp_path):
         </ICMSTot></total>
       </infNFe>
     </NFe>
-    """
+    """)
     caminho = tmp_path / "sem_vnf.xml"
     caminho.write_text(xml, encoding="utf-8")
     with pytest.raises(ValueError, match="total/ICMSTot/vNF"):
@@ -130,7 +139,7 @@ def test_campo_obrigatorio_ausente(tmp_path):
 
 
 def test_dest_cpf_rejeitado(tmp_path):
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    xml = _envolver_nfe_autorizada("""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
       <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
         <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
@@ -141,7 +150,7 @@ def test_dest_cpf_rejeitado(tmp_path):
         </ICMSTot></total>
       </infNFe>
     </NFe>
-    """
+    """)
     caminho = tmp_path / "b2c.xml"
     caminho.write_text(xml, encoding="utf-8")
     with pytest.raises(ValueError, match="dest/CNPJ"):
@@ -176,7 +185,7 @@ def test_caminho_fora_pasta_base(monkeypatch, tmp_path):
 def test_chave_com_digito_unicode_rejeitada(tmp_path):
     # 43 ASCII + ² (isdigit True, mas não ASCII 0-9)
     chave_ruim = "3" * 43 + "²"
-    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    xml = _envolver_nfe_autorizada(f"""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
       <infNFe Id="NFe{chave_ruim}" versao="4.00">
         <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
@@ -187,7 +196,7 @@ def test_chave_com_digito_unicode_rejeitada(tmp_path):
         </ICMSTot></total>
       </infNFe>
     </NFe>
-    """
+    """)
     caminho = tmp_path / "unicode_id.xml"
     caminho.write_text(xml, encoding="utf-8")
     with pytest.raises(ValueError, match="chave_nfe inválida"):
@@ -201,6 +210,19 @@ def test_nfe_proc_denegada_nao_tem_efeito_fiscal(tmp_path):
     caminho.write_text(xml, encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"sem autorização fiscal \(cStat=110\)"):
+        parsear_nfe(str(caminho))
+
+
+def test_nfe_sem_nfe_proc_nao_tem_efeito_fiscal(tmp_path):
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+      <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00" />
+    </NFe>
+    """
+    caminho = tmp_path / "sem-protocolo.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="sem protocolo de autorização"):
         parsear_nfe(str(caminho))
 
 

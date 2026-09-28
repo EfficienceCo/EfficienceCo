@@ -121,6 +121,12 @@ function ehNotaDeSaida(nota) {
   return nota?.tipo === undefined || nota?.tipo === "saida";
 }
 
+function filtrarNotasAtivas(notas) {
+  // Defesa adicional para mocks/adapters que não apliquem o .eq("status", "ativa").
+  // Registros legados sem status continuam ativos; só canceladas são excluídas.
+  return (notas || []).filter((nota) => nota?.status !== "cancelada");
+}
+
 function resumirNota(nota, detalhes) {
   return {
     id: nota.id ?? null,
@@ -430,7 +436,7 @@ export async function dispararApuracao(req, res) {
 
   const { data: notas, error: erroNotas } = await supabase
     .from("lancamentos_fiscais")
-    .select("id, chave_nfe, tipo, valor_total, data_emissao")
+    .select("id, chave_nfe, tipo, valor_total, data_emissao, status")
     .eq("cliente_id", clienteId)
     .eq("status", "ativa")
     .gte("data_emissao", janelaRbt12.inicio)
@@ -442,7 +448,7 @@ export async function dispararApuracao(req, res) {
   }
 
   const bases = montarBasesCalculo({
-    notas,
+    notas: filtrarNotasAtivas(notas),
     historicoReceita: cliente.historico_receita,
     mes: mesNum,
     ano: anoNum,
@@ -573,7 +579,7 @@ export async function detalharApuracao(req, res) {
       .maybeSingle(),
     supabase
       .from("lancamentos_fiscais")
-      .select("id, chave_nfe, tipo, valor_total, data_emissao")
+      .select("id, chave_nfe, tipo, valor_total, data_emissao, status")
       .eq("cliente_id", data.cliente_id)
       .eq("status", "ativa")
       .gte("data_emissao", janelaRbt12.inicio)
@@ -593,7 +599,7 @@ export async function detalharApuracao(req, res) {
   }
 
   const bases = montarBasesCalculo({
-    notas,
+    notas: filtrarNotasAtivas(notas),
     historicoReceita: cliente.historico_receita,
     mes: data.periodo_mes,
     ano: data.periodo_ano,
@@ -854,7 +860,7 @@ export async function recalcularApuracao(req, res) {
 
   const { data: notas, error: erroNotas } = await supabase
     .from("lancamentos_fiscais")
-    .select("id, chave_nfe, tipo, valor_total, data_emissao")
+    .select("id, chave_nfe, tipo, valor_total, data_emissao, status")
     .eq("cliente_id", apuracao.cliente_id)
     .eq("status", "ativa")
     .gte("data_emissao", janelaRbt12.inicio)
@@ -866,7 +872,7 @@ export async function recalcularApuracao(req, res) {
   }
 
   const bases = montarBasesCalculo({
-    notas,
+    notas: filtrarNotasAtivas(notas),
     historicoReceita: cliente.historico_receita,
     mes: apuracao.periodo_mes,
     ano: apuracao.periodo_ano,

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from comunicacao.api_client import ApiError
-from automacoes.processar_nfe import _caminho_xml_relativo, processar_pasta_nfe
+from automacoes.processar_nfe import _caminho_xml_relativo, _ler_xml, processar_pasta_nfe
 from core.estrutura_pastas import SUBPASTAS
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
@@ -130,11 +130,13 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
     with (
         patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
         patch("automacoes.processar_nfe.client.post") as mock_post,
+        patch("automacoes.processar_nfe._ler_xml", wraps=_ler_xml) as mock_ler_xml,
     ):
         mock_post.return_value = MagicMock()
         processar_pasta_nfe(str(inbox))
 
     assert mock_post.called
+    assert mock_ler_xml.call_count == 1
     payload = mock_post.call_args.args[1]
     assert payload["tipo"] == "entrada"
     assert payload["chave_nfe"] == "35260712345678000190550010000000011000000011"

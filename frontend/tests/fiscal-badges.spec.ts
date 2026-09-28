@@ -41,6 +41,7 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
         json: [
           {
             id: 'entrada-1',
+            status: 'ativa',
             data_emissao: '2026-08-18',
             chave_nfe: '12345678901234567890123456789012345678901234',
             tipo: 'entrada',
@@ -50,12 +51,23 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
           },
           {
             id: 'saida-1',
+            status: 'ativa',
             data_emissao: '2026-08-18',
             chave_nfe: '98765432109876543210987654321098765432109876',
             tipo: 'saida',
             cnpj_emitente: '98765432000110',
             cnpj_destinatario: '12345678000190',
             valor_total: 1_000,
+          },
+          {
+            id: 'cancelada-1',
+            status: 'cancelada',
+            data_emissao: '2026-08-18',
+            chave_nfe: '11111111111111111111111111111111111111111111',
+            tipo: 'saida',
+            cnpj_emitente: '98765432000110',
+            cnpj_destinatario: '12345678000190',
+            valor_total: 500,
           },
         ],
       });
@@ -68,7 +80,7 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await page.goto('/dashboard/fiscal/escrituracao');
 
     const entrada = page.getByText('Entrada', { exact: true });
-    const saida = page.getByText('Saída', { exact: true });
+    const saida = page.getByText('Saída', { exact: true }).first();
 
     await expect(entrada).toBeVisible();
     await expect(entrada).toHaveClass(/bg-emerald-100/);
@@ -77,6 +89,10 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(saida).toBeVisible();
     await expect(saida).toHaveClass(/bg-rose-100/);
     await expect(saida).toHaveClass(/text-rose-700/);
+
+    const cancelada = page.getByText('Cancelada', { exact: true });
+    await expect(cancelada).toBeVisible();
+    await expect(cancelada).toHaveClass(/bg-zinc-200/);
 
     const sidebar = page.locator('aside.nova-sidebar');
     const fiscalLink = sidebar.getByRole('link', { name: 'Fiscal', exact: true });

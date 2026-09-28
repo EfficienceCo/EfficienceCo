@@ -69,7 +69,10 @@ def _ler_xml(caminho_xml: str) -> ET.Element:
 
 def _validar_protocolo_autorizacao(root: ET.Element) -> str | None:
     """Valida o protocolo quando o documento é um nfeProc da SEFAZ."""
-    if _nome_local(root) != "nfeProc":
+    nome_raiz = _nome_local(root)
+    if nome_raiz == "NFe":
+        raise ValueError("NF-e sem protocolo de autorização da SEFAZ")
+    if nome_raiz != "nfeProc":
         return None
 
     cstat = (_text(root, ".//nfe:protNFe/nfe:infProt/nfe:cStat") or "").strip()
@@ -114,9 +117,7 @@ def _data_emissao(inf: ET.Element) -> date:
         raise ValueError(f"data de emissão inválida: {texto!r}") from e
 
 
-def parsear_nfe(caminho_xml: str) -> dict:
-    """Lê XML de NF-e SEFAZ e retorna campos relevantes tipados."""
-    root = _ler_xml(caminho_xml)
+def _parsear_nfe_root(root: ET.Element) -> dict:
     cstat = _validar_protocolo_autorizacao(root)
 
     inf = _inf_nfe(root)
@@ -143,9 +144,12 @@ def parsear_nfe(caminho_xml: str) -> dict:
     }
 
 
-def parsear_evento_cancelamento(caminho_xml: str) -> dict | None:
-    """Retorna os dados de um procEventoNFe de cancelamento, ou None para NF-e."""
-    root = _ler_xml(caminho_xml)
+def parsear_nfe(caminho_xml: str) -> dict:
+    """Lê XML de NF-e SEFAZ e retorna campos relevantes tipados."""
+    return _parsear_nfe_root(_ler_xml(caminho_xml))
+
+
+def _parsear_evento_cancelamento_root(root: ET.Element) -> dict | None:
     if _nome_local(root) != "procEventoNFe":
         return None
 
@@ -177,6 +181,11 @@ def parsear_evento_cancelamento(caminho_xml: str) -> dict | None:
         ),
         "cstat": cstat,
     }
+
+
+def parsear_evento_cancelamento(caminho_xml: str) -> dict | None:
+    """Retorna os dados de um procEventoNFe de cancelamento, ou None para NF-e."""
+    return _parsear_evento_cancelamento_root(_ler_xml(caminho_xml))
 
 
 def identificar_tipo_operacao(
@@ -430,7 +439,8 @@ def processar_pasta_nfe(pasta: str) -> None:
     for xml_path in _listar_xmls(pasta_path):
         nome = xml_path.name
         try:
-            evento = parsear_evento_cancelamento(str(xml_path))
+            root = _ler_xml(str(xml_path))
+            evento = _parsear_evento_cancelamento_root(root)
         except ValueError as e:
             try:
                 _mover_nao_identificado(xml_path, pasta_path, str(e))
@@ -454,7 +464,7 @@ def processar_pasta_nfe(pasta: str) -> None:
             continue
 
         try:
-            dados = parsear_nfe(str(xml_path))
+            dados = _parsear_nfe_root(root)
         except ValueError as e:
             try:
                 _mover_nao_identificado(xml_path, pasta_path, str(e))
