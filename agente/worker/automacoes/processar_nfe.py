@@ -56,6 +56,19 @@ def _digitos(valor: str | None, campo: str) -> str:
     return so
 
 
+def _cpf_valido(cpf: str) -> bool:
+    """Mesma regra de cpfValido em backend/src/utils/cpf.util.js."""
+    if len(cpf) != 11 or not cpf.isdigit() or cpf == cpf[0] * 11:
+        return False
+
+    def digito(quantidade: int) -> int:
+        soma = sum(int(cpf[i]) * (quantidade + 1 - i) for i in range(quantidade))
+        resto = (soma * 10) % 11
+        return 0 if resto == 10 else resto
+
+    return digito(9) == int(cpf[9]) and digito(10) == int(cpf[10])
+
+
 def _documento_destinatario(inf: ET.Element) -> str:
     """CNPJ (14) ou CPF (11) do destinatário.
 
@@ -71,8 +84,10 @@ def _documento_destinatario(inf: ET.Element) -> str:
     if len(cnpj) == 14:
         return cnpj
     if len(cpf) == 11:
+        if not _cpf_valido(cpf):
+            raise ValueError(f"dest/CPF inválido (dígito verificador): {cpf_bruto!r}")
         return cpf
-    if cnpj:
+    if cnpj_bruto:
         raise ValueError(f"dest/CNPJ inválido (esperado 14 dígitos): {cnpj_bruto!r}")
     if cpf_bruto is not None:
         raise ValueError(f"dest/CPF inválido (esperado 11 dígitos): {cpf_bruto!r}")

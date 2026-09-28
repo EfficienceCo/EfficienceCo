@@ -200,6 +200,28 @@ def test_dest_cpf_tamanho_invalido_nao_acusa_cnpj_ausente(tmp_path):
     assert "dest/CNPJ" not in str(exc.value)
 
 
+def test_dest_cnpj_nao_numerico_nao_acusa_ausente(tmp_path):
+    caminho = tmp_path / "cnpj_na.xml"
+    caminho.write_text(
+        _xml_nfe(f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", "<CNPJ>N/A</CNPJ>"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="dest/CNPJ inválido") as exc:
+        parsear_nfe(str(caminho))
+    assert "N/A" in str(exc.value)
+    assert "ausente" not in str(exc.value)
+
+
+def test_dest_cpf_sem_digito_verificador(tmp_path):
+    caminho = tmp_path / "cpf_invalido.xml"
+    caminho.write_text(
+        _xml_nfe(f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", "<CPF>11111111111</CPF>"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="dígito verificador"):
+        parsear_nfe(str(caminho))
+
+
 def test_cnpj_cliente_ausente_na_nota():
     with pytest.raises(ValueError, match="não é emitente nem destinatário"):
         identificar_tipo_operacao(

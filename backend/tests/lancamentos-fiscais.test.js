@@ -222,6 +222,21 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(res.body.tipo, "saida");
   });
 
+  it("400 quando o CPF do destinatário não tem dígito verificador", async () => {
+    tokenValido();
+    const res = criarResposta();
+    await criarLancamentoFiscal(
+      {
+        headers: { "x-licenca-token": "tok" },
+        body: payloadValido({ cnpj_destinatario: "11111111111" }),
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /CPF válido/);
+  });
+
   it("403 quando CNPJ do cliente da licença não corresponde ao tipo da nota", async () => {
     tokenValido();
     clienteComCnpj(CNPJ_ALHEIO);
