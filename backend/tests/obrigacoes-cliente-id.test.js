@@ -127,6 +127,31 @@ describe("GET /obrigacoes — resolução do cliente (#506)", () => {
     assert.equal(res.statusCode, 200);
     assert.equal(filtroCliente().valor, CLIENTE_ID);
   });
+
+  it("400 quando admin_efficience manda clienteId que não é UUID", async () => {
+    const res = criarResposta();
+    await listarObrigacoes(staff({ query: { clienteId: "abc" } }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /UUID/);
+    assert.equal(filtroCliente(), undefined);
+  });
+
+  it("400 quando o período é inválido ou incompleto", async () => {
+    const casos = [
+      [{ clienteId: CLIENTE_ID, mes: "13", ano: "2026" }, /mes/],
+      [{ clienteId: CLIENTE_ID, mes: "9" }, /ano/],
+    ];
+
+    for (const [query, mensagem] of casos) {
+      filtros.length = 0;
+      const res = criarResposta();
+      await listarObrigacoes(staff({ query }), res);
+      assert.equal(res.statusCode, 400, JSON.stringify(query));
+      assert.match(res.body.erro, mensagem);
+      assert.equal(filtroCliente(), undefined);
+    }
+  });
 });
 
 describe("GET /obrigacoes/proximas — resolução do cliente (#506)", () => {

@@ -24,7 +24,22 @@ const MESES = [
   { value: 12, label: 'Dezembro' },
 ];
 
+// Sem error.response o axios não recebeu resposta nenhuma do backend (API fora
+// do ar, DNS falhou, timeout etc.) — nesse caso error.message vem cru e em
+// inglês ("Network Error"), então tratamos à parte com uma mensagem em pt-BR.
+function ehErroDeRede(error) {
+  if (!error || error.response) {
+    return false;
+  }
+
+  return Boolean(error.request) || error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED';
+}
+
 function obterMensagemErro(error, fallback = 'Não foi possível processar a solicitação.') {
+  if (ehErroDeRede(error)) {
+    return 'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.';
+  }
+
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
@@ -254,10 +269,17 @@ export default function FiscalPage() {
   const [lancamentos, setLancamentos] = useState([]);
   const [isLoadingLancamentos, setIsLoadingLancamentos] = useState(true);
   const [erroLista, setErroLista] = useState('');
+  const [erroListaEhRede, setErroListaEhRede] = useState(false);
 
   const [resumo, setResumo] = useState(null);
   const [isLoadingResumo, setIsLoadingResumo] = useState(true);
   const [erroResumo, setErroResumo] = useState('');
+  const [erroResumoEhRede, setErroResumoEhRede] = useState(false);
+  // Só oculta o banner do resumo quando a lista TAMBÉM falhou por rede (e já
+  // vai mostrar o mesmo aviso com "Tentar novamente" logo abaixo) — se só o
+  // resumo falhar (ex.: timeout isolado), o banner dele tem que aparecer,
+  // senão a seção some sem aviso nenhum e sem forma de tentar de novo.
+  const duplicaAvisoDeRedeDaLista = Boolean(erroLista) && erroResumoEhRede && erroListaEhRede;
 
   const anosDisponiveis = useMemo(obterAnosDisponiveis, []);
 
@@ -292,8 +314,10 @@ export default function FiscalPage() {
 
     setIsLoadingLancamentos(true);
     setErroLista('');
+    setErroListaEhRede(false);
     setIsLoadingResumo(true);
     setErroResumo('');
+    setErroResumoEhRede(false);
 
     try {
       const parametros = {
@@ -320,6 +344,7 @@ export default function FiscalPage() {
             'Não foi possível carregar os lançamentos fiscais.',
           ),
         );
+        setErroListaEhRede(ehErroDeRede(resultadoLancamentos.reason));
         setLancamentos([]);
       }
 
@@ -329,12 +354,15 @@ export default function FiscalPage() {
         setErroResumo(
           obterMensagemErro(resultadoResumo.reason, 'Não foi possível carregar o resumo fiscal.'),
         );
+        setErroResumoEhRede(ehErroDeRede(resultadoResumo.reason));
         setResumo(null);
       }
     } catch (error) {
       if (idRequisicao === requisicaoIdRef.current) {
         setErroLista(obterMensagemErro(error, 'Não foi possível carregar os lançamentos fiscais.'));
+        setErroListaEhRede(ehErroDeRede(error));
         setErroResumo(obterMensagemErro(error, 'Não foi possível carregar o resumo fiscal.'));
+        setErroResumoEhRede(ehErroDeRede(error));
         setLancamentos([]);
         setResumo(null);
       }
@@ -368,9 +396,11 @@ export default function FiscalPage() {
       setLancamentos([]);
       setIsLoadingLancamentos(false);
       setErroLista('');
+      setErroListaEhRede(false);
       setResumo(null);
       setIsLoadingResumo(false);
       setErroResumo('');
+      setErroResumoEhRede(false);
       return;
     }
 
@@ -413,9 +443,22 @@ export default function FiscalPage() {
         </button>
       </header>
 
-      {!aguardandoSelecaoCliente && erroResumo ? (
-        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+      {/* Só oculta este banner quando a falha é de rede E a lista (abaixo)
+          também falhou por rede — nesse caso o banner dela já cobre o mesmo
+          aviso com "Tentar novamente". Se só o resumo falhar, o banner (com
+          o próprio retry) tem que aparecer — senão a seção some sem aviso
+          nenhum e sem forma de tentar de novo. */}
+      {!aguardandoSelecaoCliente && erroResumo && !duplicaAvisoDeRedeDaLista ? (
+        <section className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-rose-800">{erroResumo}</p>
+          <button
+            type="button"
+            onClick={carregarDados}
+            disabled={isLoadingResumo}
+            className="shrink-0 rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoadingResumo ? 'Tentando...' : 'Tentar novamente'}
+          </button>
         </section>
       ) : null}
 
@@ -539,8 +582,16 @@ export default function FiscalPage() {
       ) : null}
 
       {!aguardandoSelecaoCliente && erroLista ? (
-        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+        <section className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-rose-800">{erroLista}</p>
+          <button
+            type="button"
+            onClick={carregarDados}
+            disabled={isLoadingLancamentos}
+            className="shrink-0 rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoadingLancamentos ? 'Tentando...' : 'Tentar novamente'}
+          </button>
         </section>
       ) : null}
 

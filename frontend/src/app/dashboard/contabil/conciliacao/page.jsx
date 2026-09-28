@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useAuth } from '../../../../context/AuthContext';
 import { listarClientes } from '../../../../services/clientes.service';
 import {
+  buscarExtratoAtual,
   criarLancamentoContabil,
   deletarLancamentoContabil,
   iniciarConciliacao,
@@ -248,6 +249,7 @@ export default function ConciliacaoPage() {
 
   const [extrato, setExtrato] = useState(null);
   const [isUploadingExtrato, setIsUploadingExtrato] = useState(false);
+  const [isLoadingExtrato, setIsLoadingExtrato] = useState(false);
   const [erroUpload, setErroUpload] = useState('');
 
   const [isModalLancamentoAberto, setIsModalLancamentoAberto] = useState(false);
@@ -355,12 +357,55 @@ export default function ConciliacaoPage() {
     }
   }, [carregarClientes, isAdminEfficience, isAuthenticated, isLoading]);
 
-  // O upload de extrato não tem endpoint de consulta por período — o estado só
-  // existe enquanto durar esta sessão da página, por isso é limpo a cada troca
-  // de cliente/período em vez de tentar recuperá-lo do backend.
+  const requisicaoExtratoIdRef = useRef(0);
+
+  // Restaura o extrato já enviado (se houver) para o cliente/período atual —
+  // sem isso, "N transações importadas" e o botão "Nova conciliação" só
+  // existiam em memória e somiam a cada F5, troca de mês/ano ou volta da
+  // revisão, obrigando reenvio do OFX (e criando extrato duplicado).
   useEffect(() => {
+    const idRequisicao = (requisicaoExtratoIdRef.current += 1);
+
     setExtrato(null);
     setErroUpload('');
+
+    if (!clienteIdEfetivo) {
+      return;
+    }
+
+    setIsLoadingExtrato(true);
+
+    buscarExtratoAtual({ clienteId: clienteIdEfetivo, mes: filtroMes, ano: filtroAno })
+      .then((resultado) => {
+        if (idRequisicao !== requisicaoExtratoIdRef.current) {
+          return;
+        }
+
+        const extratoAtual = resultado?.extrato;
+        if (extratoAtual) {
+          setExtrato({
+            extratoId: extratoAtual.extrato_id,
+            banco: extratoAtual.banco,
+            conta: extratoAtual.conta,
+            totalTransacoes: extratoAtual.total_transacoes ?? 0,
+            enviadoEm: extratoAtual.enviado_em,
+          });
+        }
+      })
+      .catch((error) => {
+        if (idRequisicao !== requisicaoExtratoIdRef.current) {
+          return;
+        }
+
+        setErroUpload(
+          obterMensagemErro(error, 'Não foi possível recuperar o extrato enviado para este período.'),
+        );
+      })
+      .finally(() => {
+        if (idRequisicao === requisicaoExtratoIdRef.current) {
+          setIsLoadingExtrato(false);
+        }
+      });
   }, [clienteIdEfetivo, filtroMes, filtroAno]);
 
   useEffect(() => {
@@ -772,6 +817,11 @@ export default function ConciliacaoPage() {
                 <div className="mt-4 flex items-center gap-3 text-sm text-zinc-600">
                   <Spinner />
                   <span>Processando...</span>
+                </div>
+              ) : isLoadingExtrato ? (
+                <div className="mt-4 flex items-center gap-3 text-sm text-zinc-600">
+                  <Spinner />
+                  <span>Verificando extrato enviado...</span>
                 </div>
               ) : extrato ? (
                 <div className="mt-4 space-y-3">
