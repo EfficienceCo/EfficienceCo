@@ -291,6 +291,19 @@ describe("montarConteudoRelatorio", () => {
     assert.equal(totais.valorTotalConciliado, 6662.01);
   });
 
+  it("valorTotalConciliado soma em centavos, sem erro de ponto flutuante (0,1 + 0,2)", () => {
+    const paresFloat = [
+      { transacao_id: "a", lancamento_id: "x", confianca: "automatico", confirmado_em: null },
+      { transacao_id: "b", lancamento_id: "y", confianca: "automatico", confirmado_em: null },
+    ];
+    const { totais } = montarConteudoRelatorio(
+      paresFloat,
+      { a: { id: "a", valor: 0.1, data_lancamento: "2026-07-01" }, b: { id: "b", valor: 0.2, data_lancamento: "2026-07-02" } },
+      { x: { id: "x", valor: 0.1 }, y: { id: "y", valor: 0.2 } },
+    );
+    assert.equal(totais.valorTotalConciliado, 0.3);
+  });
+
   it("ordena matches e itens sem par por data (sem par intercala banco e lançamentos)", () => {
     const { matches, semPar } = montarConteudoRelatorio(pares, transacoesPorId, lancamentosPorId);
     assert.deepEqual(matches.map((m) => m.data), ["2026-08-13", "2026-08-16"]);

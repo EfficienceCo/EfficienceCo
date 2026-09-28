@@ -146,7 +146,8 @@ function parConciliado(par) {
 export function montarConteudoRelatorio(paresTodos, transacoesPorId, lancamentosPorId) {
   const matches = [];
   const semPar = [];
-  let valorTotalConciliado = 0;
+  // soma em centavos inteiros: somar Number(valor) em ponto flutuante acumula erro (0.1 + 0.2)
+  let centavosConciliados = 0;
   for (const par of paresTodos) {
     const transacao = par.transacao_id ? transacoesPorId[par.transacao_id] ?? null : null;
     const lancamento = par.lancamento_id ? lancamentosPorId[par.lancamento_id] ?? null : null;
@@ -159,7 +160,7 @@ export function montarConteudoRelatorio(paresTodos, transacoesPorId, lancamentos
         descricaoLancamento: lancamento?.descricao ?? null,
         valor,
       });
-      valorTotalConciliado += Number(valor);
+      centavosConciliados += Math.round(Number(valor) * 100);
     } else {
       semPar.push({
         data: (transacao ?? lancamento)?.data_lancamento ?? null,
@@ -190,7 +191,7 @@ export function montarConteudoRelatorio(paresTodos, transacoesPorId, lancamentos
     totalConciliadas: matches.length,
     totalTransacoesPendentes: transacoesPendentes,
     totalLancamentosSemPar: semPar.length - transacoesPendentes,
-    valorTotalConciliado,
+    valorTotalConciliado: centavosConciliados / 100,
   };
 
   return { matches, semPar, totais };
