@@ -3,6 +3,7 @@ import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
 import { aplicarFiltroPeriodo, dataLocalISO, erroPeriodoConsulta } from "../utils/periodo.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
+import { cpfValido } from "../utils/cpf.util.js";
 
 const TIPOS_VALIDOS = new Set(["entrada", "saida"]);
 
@@ -99,6 +100,11 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(400).json({ erro: "tipo deve ser 'entrada' ou 'saida'" });
   }
 
+  const digitosDestinatario = soDigitosCnpj(cnpj_destinatario);
+  if (digitosDestinatario.length === 11 && !cpfValido(digitosDestinatario)) {
+    return res.status(400).json({ erro: "cnpj_destinatario não é um CPF válido" });
+  }
+
   if (cliente_id !== licenca.cliente_id) {
     return res.status(403).json({ erro: "cliente_id não corresponde ao token de licença" });
   }
@@ -155,6 +161,9 @@ export async function criarLancamentoFiscal(req, res) {
       chave_nfe,
       tipo,
       cnpj_emitente,
+      // CNPJ (14) ou CPF (11). O #566 era o parser do agente, que exigia 14
+      // dígitos; este insert nunca travou o tamanho. CPF de 11 dígitos passa
+      // por cpfValido antes de gravar.
       cnpj_destinatario,
       valor_total,
       icms: icms ?? 0,

@@ -63,6 +63,44 @@ def _digitos(valor: str | None, campo: str) -> str:
     return so
 
 
+def _cpf_valido(cpf: str) -> bool:
+    """Mesma regra de cpfValido em backend/src/utils/cpf.util.js."""
+    if len(cpf) != 11 or not cpf.isdigit() or cpf == cpf[0] * 11:
+        return False
+
+    def digito(quantidade: int) -> int:
+        soma = sum(int(cpf[i]) * (quantidade + 1 - i) for i in range(quantidade))
+        resto = (soma * 10) % 11
+        return 0 if resto == 10 else resto
+
+    return digito(9) == int(cpf[9]) and digito(10) == int(cpf[10])
+
+
+def _documento_destinatario(inf: ET.Element) -> str:
+    """CNPJ (14) ou CPF (11) do destinatário.
+
+    Venda a pessoa física é NF-e legítima. O CPF entra em cnpj_destinatario:
+    a coluna é VARCHAR(14), então 11 dígitos cabem sem migration. Só dígitos,
+    no mesmo formato do CNPJ.
+    """
+    cnpj_bruto = _text(inf, "nfe:dest/nfe:CNPJ")
+    cpf_bruto = _text(inf, "nfe:dest/nfe:CPF")
+    cnpj = _somente_digitos(cnpj_bruto) if cnpj_bruto else ""
+    cpf = _somente_digitos(cpf_bruto) if cpf_bruto else ""
+
+    if len(cnpj) == 14:
+        return cnpj
+    if len(cpf) == 11:
+        if not _cpf_valido(cpf):
+            raise ValueError(f"dest/CPF inválido (dígito verificador): {cpf_bruto!r}")
+        return cpf
+    if cnpj_bruto:
+        raise ValueError(f"dest/CNPJ inválido (esperado 14 dígitos): {cnpj_bruto!r}")
+    if cpf_bruto is not None:
+        raise ValueError(f"dest/CPF inválido (esperado 11 dígitos): {cpf_bruto!r}")
+    raise ValueError("campo obrigatório ausente: dest/CNPJ ou dest/CPF")
+
+
 def _dec(texto: str | None, campo: str, obrigatorio: bool = True) -> Decimal:
     if texto is None or texto.strip() == "":
         if obrigatorio:
@@ -110,7 +148,7 @@ def parsear_nfe(caminho_xml: str) -> dict:
         raise ValueError(f"chave_nfe inválida no atributo Id: {id_attr!r}")
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
-    cnpj_dest = _digitos(_text(inf, "nfe:dest/nfe:CNPJ"), "dest/CNPJ")
+    cnpj_dest = _documento_destinatario(inf)
 
     return {
         "chave_nfe": chave,
