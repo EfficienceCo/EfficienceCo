@@ -16,7 +16,12 @@ const STATUS_ETAPA = {
   CONCLUIDA: "concluida",
 };
 const LEASE_EXECUCAO_MS = 15 * 60 * 1000;
+// Espelha TIMEOUT_ETAPA_PROCESSANDO_MS do frontend (page.jsx) — o servidor precisa
+// da mesma janela para recusar um expirar-execucao chamado cedo demais.
+const TIMEOUT_ETAPA_PROCESSANDO_MS = 90 * 1000;
 const LIMITE_ETAPAS_POR_POLLING = 20;
+const MENSAGEM_TIMEOUT_EXECUCAO =
+  "O agente não respondeu em tempo hábil. Verifique se ele está ligado e tente novamente.";
 
 function corpoObjeto(req) {
   return req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
@@ -501,6 +506,101 @@ export async function executarAcaoEtapaJwt(req, res) {
 
   const { cliente_id, ...payload } = body;
   const resultado = await _executarAcaoEtapa(processoId, etapaId, clienteId, payload);
+  return res.status(resultado.status).json(resultado.body);
+}
+
+// Chamada pela UI quando o front espera pelo agente há tempo demais (~90s, ver
+// TIMEOUT_ETAPA_PROCESSANDO_MS no frontend) e nada aconteceu — agente desligado ou
+// travado. Reaproveita o mesmo caminho de "erro reportado" que o agente usa em
+// concluirExecucaoEtapaAgente, então a etapa volta pronta_para_execucao com
+// erro_execucao preenchido e o contador pode tentar de novo pelo formulário normal.
+async function _expirarExecucaoEtapa(processoId, etapaId, clienteId) {
+  const { data: processo, error: erroProcesso } = await supabase
+    .from("processos")
+    .select("id, cliente_id, status")
+    .eq("id", processoId)
+    .single();
+
+  if (erroProcesso || !processo) {
+    return { status: 404, body: { erro: "Processo não encontrado" } };
+  }
+
+  if (processo.cliente_id !== clienteId) {
+    return { status: 403, body: { erro: "Sem permissão para este processo" } };
+  }
+
+  if (processo.status !== "em_andamento") {
+    return { status: 400, body: { erro: "Processo não está em andamento" } };
+  }
+
+  const { data: etapa, error: erroEtapa } = await supabase
+    .from("etapas")
+    .select("id, processo_id, tipo, status, concluida, execucao_iniciada_em")
+    .eq("id", etapaId)
+    .eq("processo_id", processoId)
+    .single();
+
+  if (erroEtapa || !etapa) {
+    return { status: 404, body: { erro: "Etapa não encontrada" } };
+  }
+
+  if (etapa.tipo !== "automatizada" || etapa.concluida) {
+    return { status: 400, body: { erro: "Etapa não está aguardando execução automatizada" } };
+  }
+
+  if (etapa.status !== STATUS_ETAPA.PRONTA && etapa.status !== STATUS_ETAPA.PROCESSANDO) {
+    return { status: 400, body: { erro: "Etapa não está em execução" } };
+  }
+
+  if (etapa.status === STATUS_ETAPA.PROCESSANDO && etapa.execucao_iniciada_em) {
+    const decorrido = Date.now() - new Date(etapa.execucao_iniciada_em).getTime();
+    if (decorrido < TIMEOUT_ETAPA_PROCESSANDO_MS) {
+      return { status: 409, body: { erro: "Claim de execução ainda é válido" } };
+    }
+  }
+
+  const { data: etapaExpirada, error: erroUpdate } = await supabase
+    .from("etapas")
+    .update({
+      status: STATUS_ETAPA.PRONTA,
+      erro_execucao: MENSAGEM_TIMEOUT_EXECUCAO,
+      execucao_token: null,
+      execucao_iniciada_em: null,
+    })
+    .eq("id", etapaId)
+    .eq("processo_id", processoId)
+    .eq("tipo", "automatizada")
+    .eq("concluida", false)
+    .in("status", [STATUS_ETAPA.PRONTA, STATUS_ETAPA.PROCESSANDO])
+    .select()
+    .maybeSingle();
+
+  if (erroUpdate) {
+    console.error("[processos.controller] Erro ao expirar execução da etapa:", erroUpdate.message);
+    return { status: 500, body: { erro: "Erro ao registrar timeout da etapa" } };
+  }
+
+  if (!etapaExpirada) {
+    return { status: 409, body: { erro: "Etapa foi alterada por outra solicitação" } };
+  }
+
+  return { status: 200, body: etapaExpirada };
+}
+
+export async function expirarExecucaoEtapaJwt(req, res) {
+  const { id: processoId, etapaId } = req.params;
+  const body = corpoObjeto(req);
+
+  const clienteId =
+    req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE
+      ? body.cliente_id || req.query.cliente_id
+      : req.usuario?.cliente_id;
+
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const resultado = await _expirarExecucaoEtapa(processoId, etapaId, clienteId);
   return res.status(resultado.status).json(resultado.body);
 }
 

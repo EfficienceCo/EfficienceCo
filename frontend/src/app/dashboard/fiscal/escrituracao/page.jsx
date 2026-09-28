@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../../context/AuthContext';
 import { listarClientes } from '../../../../services/clientes.service';
@@ -23,7 +24,22 @@ const MESES = [
   { value: 12, label: 'Dezembro' },
 ];
 
+// Sem error.response o axios não recebeu resposta nenhuma do backend (API fora
+// do ar, DNS falhou, timeout etc.) — nesse caso error.message vem cru e em
+// inglês ("Network Error"), então tratamos à parte com uma mensagem em pt-BR.
+function ehErroDeRede(error) {
+  if (!error || error.response) {
+    return false;
+  }
+
+  return Boolean(error.request) || error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED';
+}
+
 function obterMensagemErro(error, fallback = 'Não foi possível processar a solicitação.') {
+  if (ehErroDeRede(error)) {
+    return 'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.';
+  }
+
   return (
     error?.response?.data?.erro ||
     error?.response?.data?.message ||
@@ -198,6 +214,48 @@ function CardResumo({ titulo, valor, isLoading }) {
   );
 }
 
+function LancamentoCard({ lancamento }) {
+  return (
+    <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-zinc-900">
+            {formatarData(lancamento?.data_emissao)}
+          </p>
+          <p
+            className="mt-0.5 truncate font-mono text-xs text-zinc-500"
+            title={lancamento?.chave_nfe || ''}
+          >
+            {truncarChaveNfe(lancamento?.chave_nfe)}
+          </p>
+        </div>
+        <span
+          className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${classeBadgeTipo(
+            lancamento?.tipo,
+          )}`}
+        >
+          {formatarTipo(lancamento?.tipo)}
+        </span>
+      </div>
+
+      <dl className="mt-3 space-y-2 border-t border-zinc-100 pt-3 text-sm">
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-zinc-500">CNPJ emitente</dt>
+          <dd className="text-zinc-700">{formatarDocumentoFiscal(lancamento?.cnpj_emitente)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-zinc-500">CNPJ/CPF destinatário</dt>
+          <dd className="text-zinc-700">{formatarDocumentoFiscal(lancamento?.cnpj_destinatario)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="font-semibold text-zinc-500">Valor total</dt>
+          <dd className="font-semibold text-zinc-900">{formatarValor(lancamento?.valor_total)}</dd>
+        </div>
+      </dl>
+    </article>
+  );
+}
+
 export default function FiscalPage() {
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -215,10 +273,17 @@ export default function FiscalPage() {
   const [lancamentos, setLancamentos] = useState([]);
   const [isLoadingLancamentos, setIsLoadingLancamentos] = useState(true);
   const [erroLista, setErroLista] = useState('');
+  const [erroListaEhRede, setErroListaEhRede] = useState(false);
 
   const [resumo, setResumo] = useState(null);
   const [isLoadingResumo, setIsLoadingResumo] = useState(true);
   const [erroResumo, setErroResumo] = useState('');
+  const [erroResumoEhRede, setErroResumoEhRede] = useState(false);
+  // Só oculta o banner do resumo quando a lista TAMBÉM falhou por rede (e já
+  // vai mostrar o mesmo aviso com "Tentar novamente" logo abaixo) — se só o
+  // resumo falhar (ex.: timeout isolado), o banner dele tem que aparecer,
+  // senão a seção some sem aviso nenhum e sem forma de tentar de novo.
+  const duplicaAvisoDeRedeDaLista = Boolean(erroLista) && erroResumoEhRede && erroListaEhRede;
 
   const anosDisponiveis = useMemo(obterAnosDisponiveis, []);
 
@@ -253,8 +318,10 @@ export default function FiscalPage() {
 
     setIsLoadingLancamentos(true);
     setErroLista('');
+    setErroListaEhRede(false);
     setIsLoadingResumo(true);
     setErroResumo('');
+    setErroResumoEhRede(false);
 
     try {
       const parametros = {
@@ -281,6 +348,7 @@ export default function FiscalPage() {
             'Não foi possível carregar os lançamentos fiscais.',
           ),
         );
+        setErroListaEhRede(ehErroDeRede(resultadoLancamentos.reason));
         setLancamentos([]);
       }
 
@@ -290,12 +358,15 @@ export default function FiscalPage() {
         setErroResumo(
           obterMensagemErro(resultadoResumo.reason, 'Não foi possível carregar o resumo fiscal.'),
         );
+        setErroResumoEhRede(ehErroDeRede(resultadoResumo.reason));
         setResumo(null);
       }
     } catch (error) {
       if (idRequisicao === requisicaoIdRef.current) {
         setErroLista(obterMensagemErro(error, 'Não foi possível carregar os lançamentos fiscais.'));
+        setErroListaEhRede(ehErroDeRede(error));
         setErroResumo(obterMensagemErro(error, 'Não foi possível carregar o resumo fiscal.'));
+        setErroResumoEhRede(ehErroDeRede(error));
         setLancamentos([]);
         setResumo(null);
       }
@@ -329,9 +400,11 @@ export default function FiscalPage() {
       setLancamentos([]);
       setIsLoadingLancamentos(false);
       setErroLista('');
+      setErroListaEhRede(false);
       setResumo(null);
       setIsLoadingResumo(false);
       setErroResumo('');
+      setErroResumoEhRede(false);
       return;
     }
 
@@ -352,7 +425,13 @@ export default function FiscalPage() {
     <main className="space-y-6 p-6">
       <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-900">Fiscal</h1>
+          <Link
+            href="/dashboard/fiscal"
+            className="text-sm font-medium text-sky-700 hover:underline"
+          >
+            ← Voltar para Fiscal
+          </Link>
+          <h1 className="mt-1 text-2xl font-semibold text-zinc-900">Escrituração fiscal (NF-e)</h1>
           <p className="mt-1 text-sm text-zinc-500">
             Lançamentos de NFe registrados automaticamente pelo agente.
           </p>
@@ -368,14 +447,38 @@ export default function FiscalPage() {
         </button>
       </header>
 
-      {!aguardandoSelecaoCliente && erroResumo ? (
-        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+      {/* Só oculta este banner quando a falha é de rede E a lista (abaixo)
+          também falhou por rede — nesse caso o banner dela já cobre o mesmo
+          aviso com "Tentar novamente". Se só o resumo falhar, o banner (com
+          o próprio retry) tem que aparecer — senão a seção some sem aviso
+          nenhum e sem forma de tentar de novo. */}
+      {!aguardandoSelecaoCliente && erroResumo && !duplicaAvisoDeRedeDaLista ? (
+        <section className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-rose-800">{erroResumo}</p>
+          <button
+            type="button"
+            onClick={carregarDados}
+            disabled={isLoadingResumo}
+            className="shrink-0 rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoadingResumo ? 'Tentando...' : 'Tentar novamente'}
+          </button>
         </section>
       ) : null}
 
       {!aguardandoSelecaoCliente && !erroResumo ? (
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <section
+          // 5 é primo: qualquer contagem de colunas intermediária (2, 3, 4)
+          // deixa o 5º card (IPI) órfão numa linha sozinho. Sem o card de
+          // IPI, mantém o 2 colunas a partir do sm de sempre (4 cards, sempre
+          // divide certo); com IPI, fica em 1 coluna até o xl, onde pula
+          // direto pras 5 colunas — nunca sobra card em nenhuma largura.
+          className={`grid gap-4 ${
+            !isLoadingResumo && Number(resumo?.ipi) > 0
+              ? 'xl:grid-cols-5'
+              : 'sm:grid-cols-2 xl:grid-cols-4'
+          }`}
+        >
           <CardResumo
             titulo="Total de NFes processadas"
             valor={resumo?.total_nfe ?? 0}
@@ -483,8 +586,16 @@ export default function FiscalPage() {
       ) : null}
 
       {!aguardandoSelecaoCliente && erroLista ? (
-        <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
+        <section className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-rose-800">{erroLista}</p>
+          <button
+            type="button"
+            onClick={carregarDados}
+            disabled={isLoadingLancamentos}
+            className="shrink-0 rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoadingLancamentos ? 'Tentando...' : 'Tentar novamente'}
+          </button>
         </section>
       ) : null}
 
@@ -504,54 +615,65 @@ export default function FiscalPage() {
       ) : null}
 
       {!aguardandoSelecaoCliente && !erroLista && !isLoadingLancamentos && lancamentos.length > 0 ? (
-        <section className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
-          <table className="min-w-full divide-y divide-zinc-200 text-sm">
-            <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
-              <tr>
-                <th className="px-4 py-3">Data emissão</th>
-                <th className="px-4 py-3">Chave NFe</th>
-                <th className="px-4 py-3">Tipo</th>
-                <th className="px-4 py-3">CNPJ emitente</th>
-                <th className="px-4 py-3">CNPJ/CPF destinatário</th>
-                <th className="px-4 py-3">Valor total</th>
-              </tr>
-            </thead>
+        <>
+          <section className="grid gap-3 lg:hidden">
+            {lancamentos.map((lancamento, index) => (
+              <LancamentoCard
+                key={lancamento?.id || `${lancamento?.chave_nfe}-${index}`}
+                lancamento={lancamento}
+              />
+            ))}
+          </section>
 
-            <tbody className="divide-y divide-zinc-100">
-              {lancamentos.map((lancamento, index) => (
-                <tr key={lancamento?.id || `${lancamento?.chave_nfe}-${index}`}>
-                  <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                    {formatarData(lancamento?.data_emissao)}
-                  </td>
-                  <td
-                    className="whitespace-nowrap px-4 py-3 font-mono text-xs text-zinc-700"
-                    title={lancamento?.chave_nfe || ''}
-                  >
-                    {truncarChaveNfe(lancamento?.chave_nfe)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <span
-                      className={`rounded-full px-2 py-1 text-xs font-semibold ${classeBadgeTipo(
-                        lancamento?.tipo,
-                      )}`}
-                    >
-                      {formatarTipo(lancamento?.tipo)}
-                    </span>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                    {formatarDocumentoFiscal(lancamento?.cnpj_emitente)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                    {formatarDocumentoFiscal(lancamento?.cnpj_destinatario)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
-                    {formatarValor(lancamento?.valor_total)}
-                  </td>
+          <section className="hidden overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm lg:block">
+            <table className="min-w-full divide-y divide-zinc-200 text-sm">
+              <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600">
+                <tr>
+                  <th className="px-4 py-3">Data emissão</th>
+                  <th className="px-4 py-3">Chave NFe</th>
+                  <th className="px-4 py-3">Tipo</th>
+                  <th className="px-4 py-3">CNPJ emitente</th>
+                  <th className="px-4 py-3">CNPJ/CPF destinatário</th>
+                  <th className="px-4 py-3">Valor total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+              </thead>
+
+              <tbody className="divide-y divide-zinc-100">
+                {lancamentos.map((lancamento, index) => (
+                  <tr key={lancamento?.id || `${lancamento?.chave_nfe}-${index}`}>
+                    <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                      {formatarData(lancamento?.data_emissao)}
+                    </td>
+                    <td
+                      className="whitespace-nowrap px-4 py-3 font-mono text-xs text-zinc-700"
+                      title={lancamento?.chave_nfe || ''}
+                    >
+                      {truncarChaveNfe(lancamento?.chave_nfe)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs font-semibold ${classeBadgeTipo(
+                          lancamento?.tipo,
+                        )}`}
+                      >
+                        {formatarTipo(lancamento?.tipo)}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                      {formatarDocumentoFiscal(lancamento?.cnpj_emitente)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
+                      {formatarDocumentoFiscal(lancamento?.cnpj_destinatario)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
+                      {formatarValor(lancamento?.valor_total)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        </>
       ) : null}
     </main>
   );
