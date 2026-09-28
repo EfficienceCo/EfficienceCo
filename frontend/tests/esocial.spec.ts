@@ -167,6 +167,7 @@ async function preencherFormularioS2200(page: Page) {
   await g('Local de trabalho').getByLabel(/^Número de inscrição/).fill('12345678000199');
 
   const hor = g('Horário contratual');
+  await hor.getByLabel('Quantidade de horas semanais').fill('44');
   await hor.getByLabel('Tipo de jornada').selectOption('1');
   await hor.getByLabel('Descrição da jornada').fill('Segunda a sexta, 08h às 17h');
 }
@@ -396,6 +397,26 @@ test.describe('eSocial — wizard /dashboard/dp/esocial (issue #379)', () => {
     const evento = (page as any)._backend.eventos[0];
     expect(evento.dados_formulario.dadosAdmissao.tpRegPrev).toBe('2');
     expect(evento.dados_formulario.dadosAdmissao.estatutario.indTetoRGPS).toBe('S');
+  });
+
+  test('categoria 111 (contrato verde e amarelo) não exige horas semanais nem trabalho noturno', async ({ page }) => {
+    await page.getByRole('button', { name: 'Avançar para o formulário' }).click();
+    await preencherFormularioS2200(page);
+
+    await grupo(page, 'Vínculo').getByLabel('Categoria do trabalhador').selectOption('111');
+
+    const hor = grupo(page, 'Horário contratual');
+    await hor.getByLabel('Quantidade de horas semanais').fill('');
+    await hor.getByLabel('Trabalho noturno').selectOption('');
+
+    // Espelha montarHorContratual em esocial-xml.util.js: para codCateg=111
+    // esses dois campos não são obrigatórios, então o asterisco some do rótulo.
+    await expect(hor.getByText('Quantidade de horas semanais *', { exact: true })).toHaveCount(0);
+    await expect(hor.getByText('Trabalho noturno *', { exact: true })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Revisar' }).click();
+    await expect(page.getByText('Revisão do evento')).toBeVisible();
+    await expect(page.getByText(/pendência\(s\) antes de revisar/)).toHaveCount(0);
   });
 
   test('reabre um evento aprovado a partir do histórico com XML e download', async ({ page }) => {
