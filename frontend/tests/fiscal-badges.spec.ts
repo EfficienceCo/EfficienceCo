@@ -90,6 +90,60 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
   });
 });
 
+test.describe('Fiscal — erro de rede em pt-BR e sem duplicação (issue #572)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
+    await page.route('**/lancamentos-fiscais**', (route) => route.abort('failed'));
+    await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
+  });
+
+  test('mostra um único banner em pt-BR com Tentar novamente, sem duplicar em inglês', async ({
+    page,
+  }) => {
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    const mensagemRede = page.getByText(
+      'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.',
+    );
+
+    await expect(mensagemRede).toBeVisible();
+    await expect(mensagemRede).toHaveCount(1);
+    await expect(page.getByText('Network Error')).toHaveCount(0);
+
+    await expect(page.getByRole('button', { name: 'Tentar novamente' })).toBeVisible();
+  });
+
+  test('resumo falha sozinho por rede (lista ok): banner do resumo aparece com retry próprio', async ({
+    page,
+  }) => {
+    // Cenário de review do #572: as duas chamadas rodam independentes via
+    // Promise.allSettled contra endpoints diferentes — se só a do resumo
+    // falhar (ex.: timeout isolado), o banner dela não pode ficar oculto
+    // esperando um aviso da lista que nunca vai aparecer.
+    await page.unroute('**/lancamentos-fiscais**');
+    await page.route('**/lancamentos-fiscais**', async (route) => {
+      const { pathname } = new URL(route.request().url());
+      if (pathname.endsWith('/resumo')) {
+        await route.abort('failed');
+        return;
+      }
+      await route.fulfill({ json: [] });
+    });
+
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    const mensagemRede = page.getByText(
+      'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.',
+    );
+
+    await expect(mensagemRede).toBeVisible();
+    await expect(mensagemRede).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Tentar novamente' })).toBeVisible();
+    // A lista carregou normal (vazia) — não deve haver o banner de erro dela.
+    await expect(page.getByText('Nenhum lançamento encontrado')).toBeVisible();
+  });
+});
+
 test.describe('Fiscal — card de IPI não fica órfão no grid de resumo (issue #573)', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
