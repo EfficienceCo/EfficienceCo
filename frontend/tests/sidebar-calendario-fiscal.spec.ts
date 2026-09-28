@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
 function criarToken() {
   const payload = Buffer.from(
     JSON.stringify({
@@ -17,13 +19,13 @@ function criarToken() {
 test.describe('Sidebar — Calendário Fiscal (#508)', () => {
   test('oferece navegação direta e destaca a rota de obrigações', async ({ page }) => {
     await page.addInitScript((token) => localStorage.setItem('token', token), criarToken());
-    await page.route('http://localhost:3001/notificacoes**', (route) =>
+    await page.route(`${API_URL}/notificacoes**`, (route) =>
       route.fulfill({ json: [] }),
     );
-    await page.route('http://localhost:3001/obrigacoes**', (route) =>
+    await page.route(`${API_URL}/obrigacoes**`, (route) =>
       route.fulfill({ json: [] }),
     );
-    await page.route('http://localhost:3001/certificados**', (route) =>
+    await page.route(`${API_URL}/certificados**`, (route) =>
       route.fulfill({ json: [] }),
     );
 
