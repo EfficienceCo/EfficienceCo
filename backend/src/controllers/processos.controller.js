@@ -3,6 +3,7 @@ import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
 import { normalizarCpf, cpfValido } from "../utils/cpf.util.js";
+import { ehUuidV4 } from "../utils/uuid.util.js";
 import {
   criarProcessoComEtapas,
   ETAPAS_PADRAO,
@@ -723,12 +724,7 @@ export async function concluirExecucaoEtapaAgente(req, res) {
     return res.status(400).json({ erro: "sucesso deve ser booleano" });
   }
 
-  if (
-    typeof execucaoToken !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      execucaoToken,
-    )
-  ) {
+  if (typeof execucaoToken !== "string" || !ehUuidV4(execucaoToken)) {
     return res.status(400).json({ erro: "execucao_token inválido" });
   }
 

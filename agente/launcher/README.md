@@ -21,7 +21,7 @@ Token e URL do backend **nunca** vão no binário — só em `config.yaml`.
 - Go 1.25+ (módulo pede 1.25 por `golang.org/x/sys`; testado com Go 1.26)
 - Windows (alvo de produção). Build cross a partir de Linux/macOS é possível.
 - Tray: [`fyne.io/systray`](https://fyne.io/systray) (sem CGO no Windows)
-- Worker PyInstaller: veja [`../worker/scripts/build.sh`](../worker/scripts/build.sh)
+- Worker PyInstaller: veja [`../worker/build/build.sh`](../worker/build/build.sh) (instala [`../worker/requirements.txt`](../worker/requirements.txt) antes do bundle). Em dev, `run-worker-dev.cmd` instala o que faltar (BUG-AGENTE-DEPS-01 / #515).
 
 ## Configuração
 
@@ -93,7 +93,7 @@ Efficience/
 
 Quem instala por este pacote **já recebe** a pasta `modelos/classificador_documentos/` (mesmo vazia de pesos, com o manifest). Quem roda o worker sem o instalador (QA/dev) instala os artefatos na mão — ver [`../worker/automacoes/classificador_documentos/README.md`](../worker/automacoes/classificador_documentos/README.md).
 
-1. Build do worker: `cd agente/worker && bash scripts/build.sh` (ou PyInstaller equivalente no Windows).
+1. Build do worker: `cd agente/worker && bash build/build.sh` (instala `requirements.txt` antes do PyInstaller).
 2. Build do launcher (acima).
 3. Monte a pasta do cliente com o script:
    `powershell -File agente/worker/scripts/empacotar.ps1 -SaidaDir C:\dist\Efficience [-ArtefatosFonte C:\caminho\pesos]`
