@@ -168,7 +168,7 @@ async function preencherFormularioS2200(page: Page) {
 
   const hor = g('Horário contratual');
   await hor.getByLabel('Quantidade de horas semanais').fill('44');
-  await hor.getByLabel('Tipo de jornada').selectOption('1');
+  await hor.getByLabel('Tipo de jornada').selectOption('3');
   await hor.getByLabel('Descrição da jornada').fill('Segunda a sexta, 08h às 17h');
 }
 
