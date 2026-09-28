@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "modelo_id": "classificador_documentos_tfidf",
+  "modelo_version": "0.0.0-unpublished",
+  "stack": "tfidf_mlp",
+  "descricao": "Artefatos do classificador de documentos (TF-IDF + MLP). Treinar uma vez; distribuir só estes arquivos; o cliente só consulta.",
+  "arquivos": [
+    {
+      "nome": "modelo.pt",
+      "obrigatorio": true,
+      "sha256": null
+    },
+    {
+      "nome": "vetorizador.joblib",
+      "obrigatorio": true,
+      "sha256": null
+    },
+    {
+      "nome": "indice_para_rotulo.joblib",
+      "obrigatorio": true,
+      "sha256": null
+    }
+  ],
+  "destino_relativo_pacote": "modelos/classificador_documentos",
+  "destino_relativo_modulo": ".",
+  "publicado": false,
+  "nota": "Versão 0.0.0-unpublished: ainda não há pesos treinados com dataset do projeto. Após o treino, preencher sha256 de cada arquivo, marcar publicado=true e incluir a pasta modelos/ no pacote do launcher."
+}

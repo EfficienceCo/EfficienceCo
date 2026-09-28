@@ -123,6 +123,31 @@ describe("criarFuncionarioDeS2200", () => {
     });
   });
 
+  it("categoria estatutária (301) sem remuneracao insere com salario '0.00'", async () => {
+    // S-2200 não carrega remuneração para categorias estatutárias
+    // (301/302/303/306/307/309/310/312/314) — sem esse fallback, salario
+    // resolveria null e criarFuncionarioDeS2200 recusaria o registro inteiro.
+    queue("funcionarios", "maybeSingle", { data: null, error: null });
+    queue("funcionarios", "maybeSingle", { data: { id: FUNC_ID }, error: null });
+
+    const { funcionario, erro } = await criarFuncionarioDeS2200({
+      clienteId: CLIENTE_ID,
+      dadosFormulario: formularioS2200({
+        dadosAdmissao: {
+          dataAdmissao: "2026-08-01",
+          codCateg: 301,
+          cargo: { nome: "Servidor", cbo: "2522-10" },
+          remuneracao: undefined,
+        },
+      }),
+    });
+
+    assert.equal(erro, null);
+    assert.equal(funcionario.id, FUNC_ID);
+    assert.equal(insercoes[0].dados.salario, "0.00");
+    assert.equal(insercoes[0].dados.categoria, "301");
+  });
+
   it("normaliza data DD/MM/AAAA e salário pt-BR antes de inserir", async () => {
     queue("funcionarios", "maybeSingle", { data: null, error: null });
     queue("funcionarios", "maybeSingle", { data: { id: FUNC_ID }, error: null });
