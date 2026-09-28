@@ -33,10 +33,17 @@ test.describe('Conciliação bancária — página principal (/dashboard/concili
     await expect(dialog).toHaveAttribute('aria-modal', 'true');
     await expect(dialog).toBeFocused();
     await expect(dialog.getByRole('button', { name: 'Fechar modal' }).locator('svg')).toBeVisible();
+    await expect(page.locator('main')).toHaveAttribute('inert', '');
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(dialog.getByRole('button', { name: 'Adicionar lançamento' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Fechar modal' })).toBeFocused();
 
     await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible();
     await expect(botaoAbrir).toBeFocused();
+    await expect(page.locator('main')).not.toHaveAttribute('inert', '');
 
     await botaoAbrir.click();
 
@@ -81,6 +88,7 @@ test.describe('Conciliação bancária — página principal (/dashboard/concili
     await page.getByRole('button', { name: 'Excluir lançamento' }).click();
 
     await expect(page.getByRole('heading', { name: 'Confirmar exclusão' })).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Lançamentos Internos' })).toBeFocused();
     await expect(page.getByRole('row', { name: new RegExp(descricao) })).not.toBeVisible();
   });
 });
