@@ -26,6 +26,11 @@ agente/launcher/config.yaml
 agente/launcher/*.exe
 
 *.pth
+*.joblib
+modelo.pt
 datasets/
 dataset/
 gravacao-demo/
+
+# Manifest do classificador é texto versionado (não é peso treinado)
+!agente/worker/automacoes/classificador_documentos/manifest.json
