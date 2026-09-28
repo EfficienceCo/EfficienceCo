@@ -1,5 +1,6 @@
 import api from './api';
 import { converterBlobDeErroParaJson } from './http-erro.util';
+import { obterNomeArquivoDownload } from './http-header.util';
 
 // Remove chaves undefined e retorna undefined se não sobrar nada, para o axios
 // omitir o parâmetro em vez de mandar "campo=undefined" na querystring.
@@ -122,24 +123,6 @@ export async function concluirConciliacao(id, { clienteId } = {}) {
   return response.data;
 }
 
-function obterNomeArquivo(contentDisposition) {
-  if (!contentDisposition) {
-    return null;
-  }
-
-  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      return utf8Match[1];
-    }
-  }
-
-  const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
-  return filenameMatch?.[1] || null;
-}
-
 export async function downloadRelatorio(id, { clienteId } = {}) {
   try {
     const response = await api.get(`/conciliacoes/${id}/relatorio`, {
@@ -149,7 +132,7 @@ export async function downloadRelatorio(id, { clienteId } = {}) {
 
     return {
       blob: response.data,
-      nomeArquivo: obterNomeArquivo(response.headers?.['content-disposition']),
+      nomeArquivo: obterNomeArquivoDownload(response.headers),
     };
   } catch (error) {
     throw await converterBlobDeErroParaJson(error);

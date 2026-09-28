@@ -9,6 +9,7 @@ import {
   obterProcessamentoFolha,
   tentarNovamenteGerarSaidaFolha,
 } from '../../../../services/folha.service';
+import { obterNomeArquivoDownload } from '../../../../services/http-header.util';
 
 const STORAGE_KEY = 'efficience:folha:processamentos';
 const POLLING_INTERVAL_MS = 5000;
@@ -383,26 +384,6 @@ function obterReferenciaArquivo(arquivo) {
   }
 
   return arquivo.empresa || '-';
-}
-
-function obterNomeDownload(headers, fallback) {
-  const contentDisposition = headers?.['content-disposition'] || headers?.['Content-Disposition'];
-
-  if (!contentDisposition) {
-    return fallback;
-  }
-
-  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      return utf8Match[1];
-    }
-  }
-
-  const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
-  return filenameMatch?.[1] || fallback;
 }
 
 function dispararDownload(blob, nomeArquivo) {
@@ -1011,7 +992,7 @@ function StatusFolhaContent() {
         processamentoId,
         arquivo: arquivo.identificador,
       });
-      const nomeDownload = obterNomeDownload(headers, arquivo.nome);
+      const nomeDownload = obterNomeArquivoDownload(headers, arquivo.nome);
       dispararDownload(blob, nomeDownload);
     } catch (error) {
       setErroDownload(obterMensagemErro(error, 'Não foi possível baixar o arquivo selecionado.'));
