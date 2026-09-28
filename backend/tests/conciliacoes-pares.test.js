@@ -262,8 +262,6 @@ describe("PATCH /conciliacoes/:id/pares/:pareId/rejeitar", () => {
     queueParValido();
     queue("pares_conciliacao", "single", { data: { id: "novo-par" }, error: null });
     queue("pares_conciliacao", "await", { data: null, error: null });
-    queue("conciliacoes", "maybeSingle", { data: { total_pendentes: 2 }, error: null });
-    queue("conciliacoes", "await", { data: null, error: null });
 
     const espiao = espionarEscritas();
     const res = criarResposta();
@@ -283,8 +281,8 @@ describe("PATCH /conciliacoes/:id/pares/:pareId/rejeitar", () => {
     });
     const update = espiao.escritas.find((e) => e.tabela === "pares_conciliacao" && e.metodo === "update");
     assert.deepEqual(update.campos, { lancamento_id: null, confianca: "sem_par" });
-    const totais = espiao.escritas.find((e) => e.tabela === "conciliacoes" && e.metodo === "update");
-    assert.deepEqual(totais.campos, { total_pendentes: 3 });
+    // total_pendentes conta só transações: a transação segue pendente, então não há update de totais
+    assert.ok(!espiao.escritas.some((e) => e.tabela === "conciliacoes"));
   });
 
   it("500 sem alterar o par quando o insert do lançamento falha", async () => {
@@ -315,25 +313,6 @@ describe("PATCH /conciliacoes/:id/pares/:pareId/rejeitar", () => {
     assert.equal(res.statusCode, 500);
     assert.ok(espiao.escritas.some((e) => e.tabela === "pares_conciliacao" && e.metodo === "delete"));
     assert.ok(!espiao.escritas.some((e) => e.tabela === "conciliacoes"));
-  });
-
-  it("500 e restaura o par provável quando a atualização dos totais falha", async () => {
-    queueConciliacaoValida();
-    queueParValido();
-    queue("pares_conciliacao", "single", { data: { id: "novo-par" }, error: null });
-    queue("pares_conciliacao", "await", { data: null, error: null });
-    queue("conciliacoes", "maybeSingle", { data: { total_pendentes: 2 }, error: null });
-    queue("conciliacoes", "await", { data: null, error: { message: "falha" } });
-
-    const espiao = espionarEscritas();
-    const res = criarResposta();
-    await rejeitarPar(reqBase(), res);
-    espiao.restaurar();
-
-    assert.equal(res.statusCode, 500);
-    const updatesPar = espiao.escritas.filter((e) => e.tabela === "pares_conciliacao" && e.metodo === "update");
-    assert.deepEqual(updatesPar.at(-1).campos, { lancamento_id: "l1", confianca: "provavel" });
-    assert.ok(espiao.escritas.some((e) => e.tabela === "pares_conciliacao" && e.metodo === "delete"));
   });
 
   it("404 quando a conciliação pertence a outro cliente", async () => {

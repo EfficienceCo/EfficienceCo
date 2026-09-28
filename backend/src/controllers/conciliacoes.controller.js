@@ -745,37 +745,9 @@ export async function rejeitarPar(req, res) {
     return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
   }
 
-  // O par provável já contava como 1 pendente; agora são 2 pares 'sem_par'.
-  // Mesmo padrão de re-busca + update do confirmarPar (sem update atômico no client).
-  const { data: conciliacaoAtual, error: erroConciliacaoAtual } = await supabase
-    .from("conciliacoes")
-    .select("total_pendentes")
-    .eq("id", id)
-    .maybeSingle();
-
-  const erroUpdateConciliacao =
-    erroConciliacaoAtual ??
-    (
-      await supabase
-        .from("conciliacoes")
-        .update({ total_pendentes: conciliacaoAtual.total_pendentes + 1 })
-        .eq("id", id)
-    ).error;
-
-  if (erroUpdateConciliacao) {
-    console.error(
-      "[conciliacoes.controller] Erro ao atualizar totais da conciliação:",
-      erroUpdateConciliacao.message,
-    );
-    // Volta o par ao estado provável para permitir uma nova tentativa consistente.
-    await supabase
-      .from("pares_conciliacao")
-      .update({ lancamento_id: par.lancamento_id, confianca: "provavel" })
-      .eq("id", pareId);
-    await desfazerInsert();
-    return res.status(500).json({ erro: "Erro ao atualizar totais da conciliação" });
-  }
-
+  // total_pendentes não muda: conta só transações (conciliadas + pendentes = total_transacoes,
+  // ver criarConciliacao) e a transação do par rejeitado continua pendente. O par novo é só de
+  // lançamento, fora dessa conta.
   return res.status(200).json({
     id: pareId,
     confianca: "sem_par",
