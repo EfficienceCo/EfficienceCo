@@ -26,6 +26,7 @@ type EstadoApi = {
   patches: Array<Record<string, unknown>>;
   erroProximoPost: string;
   atrasoRecarregamentoMs: number;
+  respostaFinalizacaoProcessoNoPatch: boolean;
 };
 
 const API_URL = 'http://localhost:3001';
@@ -89,6 +90,7 @@ function criarEstadoApi(): EstadoApi {
     patches: [],
     erroProximoPost: '',
     atrasoRecarregamentoMs: 0,
+    respostaFinalizacaoProcessoNoPatch: false,
   };
 }
 
@@ -161,7 +163,16 @@ async function prepararPagina(page: Page, estado = criarEstadoApi()) {
       estado.patches.push(dados);
       etapa.concluida = Boolean(dados.concluida);
       etapa.status = etapa.concluida ? 'concluida' : 'pendente';
-      await route.fulfill({ status: 200, json: etapa });
+      const resposta = estado.respostaFinalizacaoProcessoNoPatch
+        ? {
+            ...etapa,
+            processo_concluido: true,
+            tipo: estado.processo.tipo,
+            nome_empresa: estado.processo.nome_empresa,
+            pasta_base: 'C:\\Clientes\\Empresa',
+          }
+        : etapa;
+      await route.fulfill({ status: 200, json: resposta });
       return;
     }
 
@@ -240,6 +251,29 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
 
     await expect.poll(() => estado.patches.length).toBe(1);
     expect(estado.patches[0]).toEqual({ concluida: true });
+  });
+
+  test('mantém o tipo manual ao concluir a última etapa do processo', async ({ page }) => {
+    const estado = criarEstadoApi();
+    estado.atrasoRecarregamentoMs = 700;
+    estado.respostaFinalizacaoProcessoNoPatch = true;
+    localizarEtapa(estado, 'etapa-contrato').concluida = true;
+    localizarEtapa(estado, 'etapa-contrato').status = 'concluida';
+    localizarEtapa(estado, 'etapa-pastas').concluida = true;
+    localizarEtapa(estado, 'etapa-pastas').status = 'concluida';
+
+    await prepararPagina(page, estado);
+    const manual = etapaPorTexto(page, 'Verificar viabilidade do nome empresarial');
+    const checkbox = manual.getByRole('checkbox');
+
+    await checkbox.check();
+    await expect.poll(() => estado.patches.length).toBe(1);
+    await page.waitForTimeout(100);
+
+    await expect(checkbox).toBeVisible();
+    await expect(checkbox).toBeChecked();
+    await expect(manual.getByText(/Tipo de etapa não suportado/i)).toHaveCount(0);
+    await expect(checkbox).toBeEnabled();
   });
 
   test('preserva o scroll ao marcar e desmarcar uma etapa manual (#495)', async ({ page }) => {

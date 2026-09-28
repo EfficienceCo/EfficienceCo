@@ -615,6 +615,17 @@ function extrairEtapaAtualizada(payload) {
   );
 }
 
+function mesclarRespostaEtapaManual(etapaAtual, etapaAtualizada) {
+  return {
+    ...etapaAtual,
+    concluida: etapaAtualizada.concluida ?? etapaAtual.concluida,
+    concluida_em: Object.prototype.hasOwnProperty.call(etapaAtualizada, 'concluida_em')
+      ? etapaAtualizada.concluida_em
+      : etapaAtual.concluida_em,
+    status: etapaAtualizada.status || etapaAtual.status,
+  };
+}
+
 const PERFIS_PODEM_MARCAR_ETAPA = new Set(['funcionario', 'admin_cliente', 'admin_efficience']);
 const PERFIL_PODE_CRIAR_PROCESSO = 'admin_cliente';
 const INTERVALO_POLLING_ETAPAS_MS = 3000;
@@ -1201,10 +1212,9 @@ export default function ProcessosPage() {
 
       if (etapaAtualizada) {
         setProcessos((valorAtual) =>
-          atualizarEtapaNaLista(valorAtual, processoId, etapaId, (etapaAtual) => ({
-            ...etapaAtual,
-            ...etapaAtualizada,
-          })),
+          atualizarEtapaNaLista(valorAtual, processoId, etapaId, (etapaAtual) =>
+            mesclarRespostaEtapaManual(etapaAtual, etapaAtualizada),
+          ),
         );
       }
 
