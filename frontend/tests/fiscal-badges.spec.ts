@@ -67,8 +67,10 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
   test('mostra entrada verde, saída vermelha e destaca Fiscal na sidebar', async ({ page }) => {
     await page.goto('/dashboard/fiscal/escrituracao');
 
-    const entrada = page.getByText('Entrada', { exact: true });
-    const saida = page.getByText('Saída', { exact: true });
+    // A tabela (desktop) e os cards (mobile) renderizam os mesmos badges; filtra
+    // pelo visível pra evitar strict mode violation com o dual-render responsivo.
+    const entrada = page.getByText('Entrada', { exact: true }).filter({ visible: true });
+    const saida = page.getByText('Saída', { exact: true }).filter({ visible: true });
 
     await expect(entrada).toBeVisible();
     await expect(entrada).toHaveClass(/bg-emerald-100/);
@@ -85,5 +87,120 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(fiscalLink).toHaveAttribute('href', '/dashboard/fiscal');
     await expect(fiscalLink).toHaveClass(/bg-sky-400\/10/);
     await expect(sidebar.getByRole('link', { name: 'Home' })).not.toHaveClass(/bg-sky-400\/10/);
+  });
+});
+
+test.describe('Fiscal — erro de rede em pt-BR e sem duplicação (issue #572)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
+    await page.route('**/lancamentos-fiscais**', (route) => route.abort('failed'));
+    await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
+  });
+
+  test('mostra um único banner em pt-BR com Tentar novamente, sem duplicar em inglês', async ({
+    page,
+  }) => {
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    const mensagemRede = page.getByText(
+      'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.',
+    );
+
+    await expect(mensagemRede).toBeVisible();
+    await expect(mensagemRede).toHaveCount(1);
+    await expect(page.getByText('Network Error')).toHaveCount(0);
+
+    await expect(page.getByRole('button', { name: 'Tentar novamente' })).toBeVisible();
+  });
+
+  test('resumo falha sozinho por rede (lista ok): banner do resumo aparece com retry próprio', async ({
+    page,
+  }) => {
+    // Cenário de review do #572: as duas chamadas rodam independentes via
+    // Promise.allSettled contra endpoints diferentes — se só a do resumo
+    // falhar (ex.: timeout isolado), o banner dela não pode ficar oculto
+    // esperando um aviso da lista que nunca vai aparecer.
+    await page.unroute('**/lancamentos-fiscais**');
+    await page.route('**/lancamentos-fiscais**', async (route) => {
+      const { pathname } = new URL(route.request().url());
+      if (pathname.endsWith('/resumo')) {
+        await route.abort('failed');
+        return;
+      }
+      await route.fulfill({ json: [] });
+    });
+
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    const mensagemRede = page.getByText(
+      'Não foi possível falar com o servidor. Verifique sua conexão e tente novamente.',
+    );
+
+    await expect(mensagemRede).toBeVisible();
+    await expect(mensagemRede).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Tentar novamente' })).toBeVisible();
+    // A lista carregou normal (vazia) — não deve haver o banner de erro dela.
+    await expect(page.getByText('Nenhum lançamento encontrado')).toBeVisible();
+  });
+});
+
+test.describe('Fiscal — card de IPI não fica órfão no grid de resumo (issue #573)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
+
+    await page.route('**/lancamentos-fiscais**', async (route) => {
+      const { pathname } = new URL(route.request().url());
+
+      if (pathname.endsWith('/resumo')) {
+        await route.fulfill({
+          json: {
+            total_nfe: 2,
+            valor_total: 2_500,
+            icms: 180,
+            pis: 20,
+            cofins: 90,
+            ipi: 50,
+            entradas: 1,
+            saidas: 1,
+          },
+        });
+        return;
+      }
+
+      await route.fulfill({ json: [] });
+    });
+
+    await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
+  });
+
+  async function contarColunasDoGrid(page) {
+    return page.evaluate(() => {
+      const titulo = [...document.querySelectorAll('p')].find(
+        (p) => p.textContent === 'Total de NFes processadas',
+      );
+      const grid = titulo?.closest('section');
+      if (!grid) return null;
+      return getComputedStyle(grid).gridTemplateColumns.split(' ').length;
+    });
+  }
+
+  test('em 768px (md, faixa testada no QA), com IPI > 0, o grid fica em 1 coluna — nenhum card sozinho numa linha', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    await expect(page.getByText('IPI total')).toBeVisible();
+    expect(await contarColunasDoGrid(page)).toBe(1);
+  });
+
+  test('em 1440px (xl), com IPI > 0, os 5 cards ficam numa única linha de 5 colunas', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    await expect(page.getByText('IPI total')).toBeVisible();
+    expect(await contarColunasDoGrid(page)).toBe(5);
   });
 });
