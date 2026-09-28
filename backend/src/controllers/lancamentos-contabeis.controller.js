@@ -39,8 +39,9 @@ export async function criarLancamentoContabil(req, res) {
     return res.status(400).json({ erro: "tipo deve ser 'credito' ou 'debito'" });
   }
 
+  // Isolamento multi-tenant: 404 nunca 403
   if (req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE && cliente_id !== req.usuario.cliente_id) {
-    return res.status(403).json({ erro: "cliente_id não corresponde ao usuário autenticado" });
+    return res.status(404).json({ erro: "Cliente não encontrado" });
   }
 
   const { data, error } = await supabase
@@ -107,15 +108,14 @@ export async function atualizarLancamentoContabil(req, res) {
     .eq("id", id)
     .single();
 
-  if (erroBusca || !lancamento) {
-    return res.status(404).json({ erro: "Lançamento contábil não encontrado" });
-  }
-
+  // Isolamento multi-tenant: 404 nunca 403
   if (
-    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-    lancamento.cliente_id !== req.usuario.cliente_id
+    erroBusca ||
+    !lancamento ||
+    (req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
+      lancamento.cliente_id !== req.usuario.cliente_id)
   ) {
-    return res.status(403).json({ erro: "Sem permissão para alterar este lançamento" });
+    return res.status(404).json({ erro: "Lançamento contábil não encontrado" });
   }
 
   if (lancamento.conciliado) {
@@ -163,15 +163,14 @@ export async function deletarLancamentoContabil(req, res) {
     .eq("id", id)
     .single();
 
-  if (erroBusca || !lancamento) {
-    return res.status(404).json({ erro: "Lançamento contábil não encontrado" });
-  }
-
+  // Isolamento multi-tenant: 404 nunca 403
   if (
-    req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
-    lancamento.cliente_id !== req.usuario.cliente_id
+    erroBusca ||
+    !lancamento ||
+    (req.usuario.perfil !== PERFIS.ADMIN_EFFICIENCE &&
+      lancamento.cliente_id !== req.usuario.cliente_id)
   ) {
-    return res.status(403).json({ erro: "Sem permissão para remover este lançamento" });
+    return res.status(404).json({ erro: "Lançamento contábil não encontrado" });
   }
 
   if (lancamento.conciliado) {
