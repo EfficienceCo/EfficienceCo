@@ -631,6 +631,24 @@ export default function Regras() {
       return;
     }
 
+    // abertura_empresa espelha o destino em pasta_origem: o destino também precisa ser absoluto
+    // (na edição, só revalida se foi alterado — regra legada continua editável)
+    const destinoOriginal =
+      modoFormulario === 'criar'
+        ? undefined
+        : regras.find((item) => item.id === regraEditandoId)?.pasta_destino;
+    const destinoAlterado = modoFormulario === 'criar' || pastaDestino !== (destinoOriginal ?? '').trim();
+
+    if (
+      formData.acao === 'abertura_empresa' &&
+      pastaDestino &&
+      destinoAlterado &&
+      !CAMINHO_WINDOWS_ABSOLUTO.test(pastaDestino)
+    ) {
+      setErroFormulario('Pasta destino inválida: informe um caminho absoluto do Windows (ex.: C:\\Docs\\Clientes).');
+      return;
+    }
+
     if (schema.nomeEmpresa?.obrigatorio && !formData.condicao_nome_empresa.trim()) {
       setErroFormulario('Informe o nome da empresa.');
       return;

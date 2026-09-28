@@ -433,6 +433,67 @@ describe("regras.controller — condicao JSONB (BK-REGRAS-ENRICH)", () => {
     assert.equal(chamadasUpdate[antes].payload.pasta_origem, "C:\\Docs\\Entrada");
   });
 
+  it("criarRegra: abertura_empresa recusa pasta_destino malformada, pois vira pasta_origem (#484)", async () => {
+    const res = criarRes();
+    await criarRegra(
+      reqAdmin({
+        condicao: { nome_empresa: "ACME" },
+        acao: "abertura_empresa",
+        pasta_destino: "C;\\Souza",
+      }),
+      res,
+    );
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /pasta_destino inválida/);
+  });
+
+  it("criarRegra: abertura_empresa aceita destino absoluto e persiste trimado (#484)", async () => {
+    queue("regras", "single", { data: { id: REGRA_ID, cliente_id: CLIENTE_A }, error: null });
+    const antes = chamadasInsert.length;
+    const res = criarRes();
+    await criarRegra(
+      reqAdmin({
+        condicao: { nome_empresa: "ACME" },
+        acao: "abertura_empresa",
+        pasta_destino: " C:\\Clientes ",
+      }),
+      res,
+    );
+    assert.equal(res.statusCode, 201);
+    assert.equal(chamadasInsert[antes].payload.pasta_destino, "C:\\Clientes");
+  });
+
+  it("atualizarRegra: abertura_empresa com destino malformado no body é recusada (#484)", async () => {
+    queue("regras", "single", {
+      data: {
+        id: REGRA_ID, cliente_id: CLIENTE_A, acao: "abertura_empresa",
+        pasta_origem: "C:/base", pasta_destino: "C:/base", condicao: { nome_empresa: "ACME" },
+      },
+      error: null,
+    });
+    const res = criarRes();
+    await atualizarRegra(
+      reqAdmin({ pasta_destino: "relativa\\pasta" }, { params: { id: REGRA_ID } }),
+      res,
+    );
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /pasta_destino inválida/);
+  });
+
+  it("atualizarRegra: abertura_empresa legada (destino relativo) segue editável sem mexer no destino (#484)", async () => {
+    queue("regras", "single", {
+      data: {
+        id: REGRA_ID, cliente_id: CLIENTE_A, acao: "abertura_empresa",
+        pasta_origem: "base", pasta_destino: "base", condicao: { nome_empresa: "ACME" },
+      },
+      error: null,
+    });
+    queue("regras", "single", { data: { id: REGRA_ID }, error: null });
+    const res = criarRes();
+    await atualizarRegra(reqAdmin({ ativa: false }, { params: { id: REGRA_ID } }), res);
+    assert.equal(res.statusCode, 200);
+  });
+
   it("atualizarRegra: 403 quando admin_cliente tenta alterar regra de outro cliente", async () => {
     queue("regras", "single", {
       data: { id: REGRA_ID, cliente_id: CLIENTE_B, acao: "mover" },

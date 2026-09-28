@@ -51,6 +51,22 @@ test.describe('Regras de automação — pasta_origem validada (issue #484)', ()
     expect(postsEnviados).toBe(0);
   });
 
+  test('abertura_empresa: destino malformado é barrado, pois é espelhado em pasta_origem', async ({ page }) => {
+    let postsEnviados = 0;
+    await page.route('**/regras', (route) => {
+      if (route.request().method() === 'POST') postsEnviados += 1;
+      return route.continue();
+    });
+
+    await page.locator('#acao').selectOption('abertura_empresa');
+    await page.locator('#pasta_destino').fill('C;\\Souza');
+    await page.locator('#condicao_nome_empresa').fill('ACME');
+    await page.getByRole('button', { name: 'Criar regra' }).click();
+
+    await expect(page.getByText(/Pasta destino inválida: informe um caminho absoluto do Windows/)).toBeVisible();
+    expect(postsEnviados).toBe(0);
+  });
+
   test('aceita caminho absoluto válido e envia a regra', async ({ page }) => {
     let corpo: Record<string, unknown> | null = null;
     await page.route('**/regras', (route) => {
