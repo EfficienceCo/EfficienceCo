@@ -21,6 +21,18 @@ const STATUS_EXTRATO = {
   ERRO: "erro",
 };
 
+const CONSTRAINT_HASH_ARQUIVO = "uq_extratos_bancarios_cliente_arquivo_hash";
+
+function erroDeArquivoDuplicado(erro) {
+  if (erro?.code !== "23505") {
+    return false;
+  }
+
+  return [erro.constraint, erro.message, erro.details, erro.hint]
+    .filter(Boolean)
+    .some((valor) => String(valor).includes(CONSTRAINT_HASH_ARQUIVO));
+}
+
 function periodoAtual() {
   const agora = new Date();
   return { mes: agora.getMonth() + 1, ano: agora.getFullYear() };
@@ -68,7 +80,7 @@ export async function criarConciliacaoExtrato(req, res) {
     .single();
 
   if (erroInsercao) {
-    if (erroInsercao.code === "23505") {
+    if (erroDeArquivoDuplicado(erroInsercao)) {
       return res.status(409).json({ erro: "Este arquivo OFX já foi importado para este cliente" });
     }
 
@@ -83,7 +95,7 @@ export async function criarConciliacaoExtrato(req, res) {
     console.error("[conciliacoes.controller] Erro ao parsear OFX:", erroParsing.message);
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(422).json({
       erro: "Arquivo OFX inválido ou malformado",
@@ -107,7 +119,7 @@ export async function criarConciliacaoExtrato(req, res) {
     console.error("[conciliacoes.controller] Erro ao inserir transações:", erroTransacoes.message);
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(500).json({ erro: "Erro ao salvar transações do extrato" });
   }
@@ -133,7 +145,7 @@ export async function criarConciliacaoExtrato(req, res) {
     // o extrato preso em 'aguardando' com dados órfãos e sem sinalização.
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(500).json({
       erro: "Erro ao finalizar processamento do extrato",

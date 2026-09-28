@@ -62,6 +62,8 @@ test.describe('Conciliação bancária — página principal (/dashboard/concili
 
     await inputArquivo.setInputFiles(arquivo);
     await expect(page.getByText('Este arquivo OFX já foi importado para este cliente')).toBeVisible();
+    await expect(page.getByText('2 transações importadas')).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Nova conciliação' })).not.toBeVisible();
   });
 
   test('modal de novo lançamento abre, bloqueia submit sem campos obrigatórios e fecha ao cancelar', async ({ page }) => {

@@ -524,6 +524,7 @@ export default function ConciliacaoPage() {
         enviadoEm: new Date().toISOString(),
       });
     } catch (error) {
+      setExtrato(null);
       setErroUpload(obterMensagemErro(error, 'Não foi possível enviar o extrato bancário.'));
     } finally {
       setIsUploadingExtrato(false);

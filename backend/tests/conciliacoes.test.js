@@ -163,7 +163,11 @@ describe("POST /conciliacoes/extrato", () => {
     queue("extratos_bancarios", "await", { data: null, error: null });
     queue("extratos_bancarios", "single", {
       data: null,
-      error: { code: "23505", message: "duplicate key value violates unique constraint" },
+      error: {
+        code: "23505",
+        message:
+          'duplicate key value violates unique constraint "uq_extratos_bancarios_cliente_arquivo_hash"',
+      },
     });
 
     try {
@@ -183,6 +187,22 @@ describe("POST /conciliacoes/extrato", () => {
     } finally {
       supabase.from = originalFromLocal;
     }
+  });
+
+  it("não confunde outra violação de unicidade com arquivo duplicado", async () => {
+    queue("extratos_bancarios", "single", {
+      data: null,
+      error: {
+        code: "23505",
+        message: 'duplicate key value violates unique constraint "outra_constraint"',
+      },
+    });
+
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload(), res);
+
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.body.erro, "Erro ao registrar extrato bancário");
   });
 
   it("infere crédito/débito corretamente do sinal do TRNAMT", async () => {
@@ -233,6 +253,7 @@ describe("POST /conciliacoes/extrato", () => {
     queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
 
     let statusAtualizado = null;
+    let hashAtualizado;
     const originalUpdate = supabase.from;
     supabase.from = function (tabela) {
       const builder = originalUpdate(tabela);
@@ -240,6 +261,7 @@ describe("POST /conciliacoes/extrato", () => {
         const updateOriginal = builder.update.bind(builder);
         builder.update = (campos) => {
           if (campos.status) statusAtualizado = campos.status;
+          if (campos.status === "erro") hashAtualizado = campos.arquivo_hash;
           return updateOriginal(campos);
         };
       }
@@ -255,6 +277,7 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(res.statusCode, 422);
     assert.ok(res.body.detalhe);
     assert.equal(statusAtualizado, "erro");
+    assert.equal(hashAtualizado, null);
   });
 
   it("400 quando nenhum arquivo é enviado", async () => {
@@ -288,6 +311,7 @@ describe("POST /conciliacoes/extrato", () => {
     queue("transacoes_extrato", "await", { data: null, error: { message: "falha ao inserir" } });
 
     let statusAtualizado = null;
+    let hashAtualizado;
     const originalFromLocal = supabase.from;
     supabase.from = function (tabela) {
       const builder = originalFromLocal(tabela);
@@ -295,6 +319,7 @@ describe("POST /conciliacoes/extrato", () => {
         const updateOriginal = builder.update.bind(builder);
         builder.update = (campos) => {
           if (campos.status) statusAtualizado = campos.status;
+          if (campos.status === "erro") hashAtualizado = campos.arquivo_hash;
           return updateOriginal(campos);
         };
       }
@@ -308,6 +333,7 @@ describe("POST /conciliacoes/extrato", () => {
 
     assert.equal(res.statusCode, 500);
     assert.equal(statusAtualizado, "erro");
+    assert.equal(hashAtualizado, null);
   });
 
   it("500 e status='erro' quando falha o update final (transações já salvas ficam órfãs sem isso)", async () => {
@@ -315,6 +341,7 @@ describe("POST /conciliacoes/extrato", () => {
     queue("transacoes_extrato", "await", { data: [], error: null });
 
     let statusAtualizado = null;
+    let hashAtualizado;
     const originalFromLocal = supabase.from;
     supabase.from = function (tabela) {
       const builder = originalFromLocal(tabela);
@@ -322,6 +349,7 @@ describe("POST /conciliacoes/extrato", () => {
         const updateOriginal = builder.update.bind(builder);
         builder.update = (campos) => {
           if (campos.status) statusAtualizado = campos.status;
+          if (campos.status === "erro") hashAtualizado = campos.arquivo_hash;
           return updateOriginal(campos);
         };
       }
@@ -337,6 +365,7 @@ describe("POST /conciliacoes/extrato", () => {
 
     assert.equal(res.statusCode, 500);
     assert.equal(statusAtualizado, "erro");
+    assert.equal(hashAtualizado, null);
   });
 
   it("decodifica MEMO acentuado corretamente (extrato real vem em Windows-1252, não UTF-8)", async () => {
