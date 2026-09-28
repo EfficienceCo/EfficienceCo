@@ -23,6 +23,7 @@ const originalFrom = supabase.from;
 const filas = new Map();
 let ultimoUpdate = null;
 let filtros = [];
+const insercoes = [];
 function chave(t, m) { return `${t}:${m}`; }
 function queue(tabela, metodo, resultado) {
   const k = chave(tabela, metodo);
@@ -39,7 +40,7 @@ supabase.from = function (tabela) {
   };
   const builder = {
     select() { return builder; },
-    insert() { return builder; },
+    insert(payload) { insercoes.push(payload); return builder; },
     update(payload) { ultimoUpdate = payload; return builder; },
     eq(campo, valor) { filtros.push([tabela, campo, valor]); return builder; },
     gte() { return builder; },
@@ -62,6 +63,7 @@ beforeEach(() => {
   filas.clear();
   ultimoUpdate = null;
   filtros = [];
+  insercoes.length = 0;
 });
 
 // ---------------------------------------------------------------------------
@@ -121,9 +123,39 @@ describe("POST /lancamentos-fiscais", () => {
 
     assert.equal(res.statusCode, 201);
     assert.equal(res.body.id, "novo-id");
+    assert.equal(insercoes.length, 1);
+    assert.equal(insercoes[0].valor_total, "1000.50");
+    assert.equal(insercoes[0].icms, "0.00");
+    assert.equal(insercoes[0].pis, "0.00");
+    assert.equal(insercoes[0].cofins, "0.00");
+    assert.equal(insercoes[0].ipi, "0.00");
+    assert.equal(insercoes[0].arquivo_xml, null);
   });
 
-  it("400 quando data_emissao é futura (BUG-APUR-08)", async () => {
+  it("201 aceita datetime e CPF com dígito verificador, gravando só a data", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "pf" }, error: null });
+
+    const res = criarResposta();
+    await criarLancamentoFiscal(
+      {
+        headers: { "x-licenca-token": "tok" },
+        body: payloadValido({
+          data_emissao: "2026-07-15T00:00:00Z",
+          cnpj_destinatario: "52998224725",
+        }),
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(insercoes[0].data_emissao, "2026-07-15");
+    assert.equal(insercoes[0].cnpj_destinatario, "52998224725");
+  });
+
+  it("422 quando data_emissao é futura (BUG-APUR-08)", async () => {
     tokenValido();
     const req = {
       headers: { "x-licenca-token": "tok" },
@@ -132,8 +164,9 @@ describe("POST /lancamentos-fiscais", () => {
     const res = criarResposta();
     await criarLancamentoFiscal(req, res);
 
-    assert.equal(res.statusCode, 400);
-    assert.match(res.body.erro, /não pode ser futura/i);
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.campos.data_emissao, /não pode ser futura/i);
+    assert.equal(insercoes.length, 0);
   });
 
   it("403 quando cliente_id do payload não pertence ao token", async () => {
@@ -213,6 +246,41 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(res.statusCode, 400);
   });
 
+  it("201 quando a saída tem destinatário CPF (11 dígitos) em cnpj_destinatario", async () => {
+    const cpf = "12345678909";
+    const corpo = payloadValido({ cnpj_destinatario: cpf, valor_total: 250 });
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "saida-cpf", ...corpo }, error: null });
+
+    const req = { headers: { "x-licenca-token": "tok" }, body: corpo };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.cnpj_destinatario, cpf);
+    assert.equal(res.body.tipo, "saida");
+  });
+
+  it("422 quando o CPF do destinatário não tem dígito verificador", async () => {
+    tokenValido();
+    const res = criarResposta();
+    await criarLancamentoFiscal(
+      {
+        headers: { "x-licenca-token": "tok" },
+        body: payloadValido({ cnpj_destinatario: "11111111111" }),
+      },
+      res,
+    );
+
+    // validarLancamentoFiscal (#568) já recusa o CPF sem dígito verificador
+    // antes de chegar na checagem antiga de #566 — mesmo cpfValido, 422 com
+    // campos em vez do 400 solto de antes.
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.campos.cnpj_destinatario, /CPF válido/);
+  });
+
   it("403 quando CNPJ do cliente da licença não corresponde ao tipo da nota", async () => {
     tokenValido();
     clienteComCnpj(CNPJ_ALHEIO);
@@ -226,6 +294,195 @@ describe("POST /lancamentos-fiscais", () => {
 
     assert.equal(res.statusCode, 403);
     assert.match(res.body.erro, /CNPJ/i);
+  });
+
+  it("422 com mensagem por campo e sem insert (BUG-NFE-08 / #568)", async () => {
+    const casos = [
+      ["valor_total texto", { valor_total: "abc" }, "valor_total", /deve ser um número/i],
+      ["valor_total negativo", { valor_total: "-10.00" }, "valor_total", /não pode ser negativo/i],
+      ["valor_total estoura numeric(14,2)", { valor_total: "123456789012345.67" }, "valor_total", /numeric\(14,2\)/i],
+      ["valor_total com 3 casas decimais", { valor_total: "10.999" }, "valor_total", /2 casas decimais/i],
+      ["valor_total numérico com 3 casas", { valor_total: 10.999 }, "valor_total", /2 casas decimais/i],
+      ["icms negativo", { icms: "-5" }, "icms", /não pode ser negativo/i],
+      ["pis negativo", { pis: -1 }, "pis", /não pode ser negativo/i],
+      ["icms minúsculo em notação científica", { icms: 0.0000001 }, "icms", /2 casas decimais/i],
+      ["data inexistente", { data_emissao: "2026-02-30" }, "data_emissao", /data existente/i],
+      ["data em dd/mm/aaaa", { data_emissao: "31/03/2026" }, "data_emissao", /YYYY-MM-DD/i],
+      ["data futura", { data_emissao: "2027-01-01" }, "data_emissao", /não pode ser futura/i],
+      ["data futura com hora", { data_emissao: "2099-01-01T10:00:00Z" }, "data_emissao", /não pode ser futura/i],
+      ["data com sufixo inválido", { data_emissao: "2026-07-15foo" }, "data_emissao", /YYYY-MM-DD/i],
+      ["chave com 44 letras", { chave_nfe: "A".repeat(44) }, "chave_nfe", /44 dígitos/i],
+      ["chave com 45 caracteres", { chave_nfe: "1".repeat(45) }, "chave_nfe", /44 dígitos/i],
+      ["chave com 10 caracteres", { chave_nfe: "1234567890" }, "chave_nfe", /44 dígitos/i],
+      ["cnpj_emitente com 15 caracteres", { cnpj_emitente: "112223330001811" }, "cnpj_emitente", /14 dígitos/i],
+      ["cnpj_destinatario com 15 caracteres", { cnpj_destinatario: "112223330001811" }, "cnpj_destinatario", /14 dígitos|11 dígitos/i],
+      ["cpf sem dígito verificador", { cnpj_destinatario: "00000000000" }, "cnpj_destinatario", /CPF válido/i],
+      [
+        "arquivo_xml absoluto no Windows",
+        { arquivo_xml: "C:\\Users\\joao\\x.xml" },
+        "arquivo_xml",
+        /caminho relativo/i,
+      ],
+      ["arquivo_xml absoluto POSIX", { arquivo_xml: "/var/nfe/x.xml" }, "arquivo_xml", /caminho relativo/i],
+      ["arquivo_xml com ..", { arquivo_xml: "empresa/../../segredo.xml" }, "arquivo_xml", /caminho relativo/i],
+      [
+        "arquivo_xml UNC",
+        { arquivo_xml: "\\\\servidor\\share\\x.xml" },
+        "arquivo_xml",
+        /caminho relativo/i,
+      ],
+    ];
+
+    for (const [nome, over, campo, mensagem] of casos) {
+      tokenValido();
+      const req = { headers: { "x-licenca-token": "tok" }, body: payloadValido(over) };
+      const res = criarResposta();
+      await criarLancamentoFiscal(req, res);
+
+      assert.equal(res.statusCode, 422, nome);
+      assert.equal(res.body.erro, "Dados do lançamento fiscal inválidos", nome);
+      assert.match(res.body.campos[campo], mensagem, `${nome}: ${res.body.campos?.[campo]}`);
+      assert.equal(insercoes.length, 0, nome);
+    }
+  });
+
+  it("422 lista todos os campos inválidos do mesmo payload", async () => {
+    tokenValido();
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: payloadValido({
+        valor_total: "abc",
+        data_emissao: "2026-02-30",
+        chave_nfe: "123",
+      }),
+    };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.campos.valor_total, /número/i);
+    assert.match(res.body.campos.data_emissao, /YYYY-MM-DD/i);
+    assert.match(res.body.campos.chave_nfe, /44 dígitos/i);
+    assert.equal(insercoes.length, 0);
+  });
+
+  it("201 quando valor_total é zero e grava escala 2 sem arredondar outra casa", async () => {
+    const corpo = payloadValido({
+      valor_total: "0",
+      icms: "1.80",
+      arquivo_xml: "Cliente Teste/Notas Fiscais/2026-03/x.xml",
+    });
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "zero", ...corpo }, error: null });
+
+    const req = { headers: { "x-licenca-token": "tok" }, body: corpo };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(insercoes.length, 1);
+    assert.equal(insercoes[0].valor_total, "0.00");
+    assert.equal(insercoes[0].icms, "1.80");
+    assert.equal(insercoes[0].arquivo_xml, "Cliente Teste/Notas Fiscais/2026-03/x.xml");
+  });
+
+  it("201 no teto de numeric(14,2) e 422 um dígito acima", async () => {
+    const noTeto = payloadValido({ valor_total: "999999999999.99" });
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "teto" }, error: null });
+
+    const aceito = criarResposta();
+    await criarLancamentoFiscal({ headers: { "x-licenca-token": "tok" }, body: noTeto }, aceito);
+    assert.equal(aceito.statusCode, 201);
+    assert.equal(insercoes[0].valor_total, "999999999999.99");
+
+    tokenValido();
+    const estoura = criarResposta();
+    await criarLancamentoFiscal(
+      {
+        headers: { "x-licenca-token": "tok" },
+        body: payloadValido({ valor_total: "1000000000000.00" }),
+      },
+      estoura,
+    );
+    assert.equal(estoura.statusCode, 422);
+    assert.match(estoura.body.campos.valor_total, /numeric\(14,2\)/i);
+    assert.equal(insercoes.length, 1);
+  });
+
+  it("422 quando o banco recusa numeric overflow em vez de 500 genérico", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", {
+      data: null,
+      error: { code: "22003", message: "numeric field overflow" },
+    });
+
+    const req = { headers: { "x-licenca-token": "tok" }, body: payloadValido() };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 422);
+    assert.match(Object.values(res.body.campos).join(" "), /faixa numérica/i);
+    assert.equal(res.body.detalhe, undefined);
+    assert.notEqual(res.body.erro, "Erro ao registrar lançamento fiscal");
+  });
+
+  it("422 do banco nomeia o campo quando a constraint aparece na mensagem", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", {
+      data: null,
+      error: {
+        code: "23514",
+        message: 'new row violates check constraint "lancamentos_fiscais_chave_nfe_digitos_check"',
+      },
+    });
+
+    const res = criarResposta();
+    await criarLancamentoFiscal(
+      { headers: { "x-licenca-token": "tok" }, body: payloadValido() },
+      res,
+    );
+
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.campos.chave_nfe, /44 dígitos/);
+    assert.equal(res.body.detalhe, undefined);
+  });
+
+  it("422 quando o banco recusa formato ou check, sem gravar 500 genérico", async () => {
+    const codigos = [
+      ["22P02", /formato inválido/i],
+      ["22008", /data_emissao inválida/i],
+      ["23514", /regra de integridade/i],
+      ["22001", /tamanho aceito/i],
+    ];
+
+    for (const [code, mensagem] of codigos) {
+      tokenValido();
+      clienteComCnpj(CNPJ_EMIT);
+      queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+      queue("lancamentos_fiscais", "single", {
+        data: null,
+        error: { code, message: `postgres ${code}` },
+      });
+
+      const res = criarResposta();
+      await criarLancamentoFiscal(
+        { headers: { "x-licenca-token": "tok" }, body: payloadValido() },
+        res,
+      );
+
+      assert.equal(res.statusCode, 422, code);
+      assert.match(Object.values(res.body.campos).join(" "), mensagem, code);
+      assert.equal(res.body.detalhe, undefined, code);
+    }
   });
 });
 
@@ -312,6 +569,45 @@ describe("GET /lancamentos-fiscais", () => {
     assert.equal(res.statusCode, 400);
   });
 
+  it("400 quando clienteId não é UUID (admin_efficience)", async () => {
+    const req = reqBase({
+      usuario: { perfil: PERFIS.ADMIN_EFFICIENCE },
+      query: { clienteId: "abc" },
+    });
+    const res = criarResposta();
+    await listarLancamentosFiscais(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /UUID/);
+  });
+
+  it("400 quando o período é inválido ou incompleto", async () => {
+    const casos = [
+      [{ mes: "13", ano: "2026" }, /mes/],
+      [{ mes: "0", ano: "2026" }, /mes/],
+      [{ mes: "abc", ano: "2026" }, /mes/],
+      [{ mes: "9.5", ano: "2026" }, /mes/],
+      [{ mes: "9" }, /ano/],
+      [{ ano: "abc" }, /ano/],
+    ];
+
+    for (const [query, mensagem] of casos) {
+      const res = criarResposta();
+      await listarLancamentosFiscais(reqBase({ query }), res);
+      assert.equal(res.statusCode, 400, JSON.stringify(query));
+      assert.match(res.body.erro, mensagem);
+    }
+  });
+
+  it("200 quando só o ano é informado", async () => {
+    queue("lancamentos_fiscais", "await", { data: [], error: null });
+
+    const res = criarResposta();
+    await listarLancamentosFiscais(reqBase({ query: { ano: "2026" } }), res);
+
+    assert.equal(res.statusCode, 200);
+  });
+
   it("500 quando o Supabase retorna erro", async () => {
     queue("lancamentos_fiscais", "await", { data: null, error: { message: "falha" } });
 
@@ -363,6 +659,32 @@ describe("GET /lancamentos-fiscais/resumo", () => {
     assert.ok(filtros.some(([t, c, v]) => t === "lancamentos_fiscais" && c === "status" && v === "ativa"));
   });
 
+  it("soma a saída para CPF no resumo (receita da apuração lê essas saídas)", async () => {
+    queue("lancamentos_fiscais", "await", {
+      data: [
+        {
+          tipo: "saida",
+          cnpj_destinatario: "12345678909",
+          valor_total: 250,
+          icms: 0,
+          pis: 0,
+          cofins: 0,
+          ipi: 0,
+        },
+      ],
+      error: null,
+    });
+
+    const res = criarResposta();
+    await resumoLancamentosFiscais(reqBase(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.total_nfe, 1);
+    assert.equal(res.body.saidas, 1);
+    assert.equal(res.body.entradas, 0);
+    assert.equal(res.body.valor_total, 250);
+  });
+
   it("200 com zeros quando não há lançamentos no período", async () => {
     queue("lancamentos_fiscais", "await", { data: [], error: null });
 
@@ -380,5 +702,25 @@ describe("GET /lancamentos-fiscais/resumo", () => {
     await resumoLancamentosFiscais(req, res);
 
     assert.equal(res.statusCode, 400);
+  });
+
+  it("400 quando clienteId não é UUID", async () => {
+    const req = reqBase({
+      usuario: { perfil: PERFIS.ADMIN_EFFICIENCE },
+      query: { clienteId: "abc" },
+    });
+    const res = criarResposta();
+    await resumoLancamentosFiscais(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /UUID/);
+  });
+
+  it("400 quando mês vem sem ano", async () => {
+    const res = criarResposta();
+    await resumoLancamentosFiscais(reqBase({ query: { mes: "9" } }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /ano/);
   });
 });

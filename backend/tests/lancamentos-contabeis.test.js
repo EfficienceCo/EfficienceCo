@@ -178,6 +178,29 @@ describe("GET /lancamentos-contabeis", () => {
 
     assert.equal(res.statusCode, 500);
   });
+
+  it("400 quando clienteId não é UUID (admin_efficience)", async () => {
+    const req = reqAdmin(undefined, {
+      usuario: { perfil: PERFIS.ADMIN_EFFICIENCE },
+      query: { clienteId: "abc" },
+    });
+    const res = criarResposta();
+    await listarLancamentosContabeis(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /UUID/);
+  });
+
+  it("400 quando mês vem sem ano", async () => {
+    const res = criarResposta();
+    await listarLancamentosContabeis(
+      reqAdmin(undefined, { query: { mes: "9" } }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /ano/);
+  });
 });
 
 // ---------------------------------------------------------------------------

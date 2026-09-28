@@ -1,0 +1,19 @@
+# Nomes de import, nao de pacote pip. Pillow -> PIL, python-dotenv -> dotenv.
+# run-worker-dev.cmd e build/build.sh leem este arquivo.
+# requirements.txt e o que o pip instala. python-docx entra via docxtpl (import docx).
+# pyinstaller e pytest ficam so no requirements: nao sao import do worker em runtime.
+pdfplumber
+pytesseract
+pypdfium2
+PIL
+pandas
+openpyxl
+matplotlib
+torch
+torchvision
+docxtpl
+docx
+requests
+watchdog
+schedule
+dotenv
