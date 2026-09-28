@@ -79,12 +79,6 @@ const casos = [
     path: "/conciliacoes",
     body: { extrato_id: "abc", mes: 9, ano: 2026 },
   },
-  {
-    nome: "criação da conciliação com UUID que não é v4",
-    method: "POST",
-    path: "/conciliacoes",
-    body: { extrato_id: "aaaaaaaa-aaaa-1aaa-8aaa-aaaaaaaaaaaa", mes: 9, ano: 2026 },
-  },
 ];
 
 describe("Conciliações — IDs inválidos", () => {

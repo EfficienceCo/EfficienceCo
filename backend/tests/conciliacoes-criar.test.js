@@ -15,6 +15,11 @@ const CONCILIACAO_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
 const originalFrom = supabase.from;
 const filas = new Map();
+// Registra os pares (coluna, valor) de cada .eq() encadeado, por tabela — usado
+// pra provar que a consulta de conciliações existentes do extrato NÃO filtra
+// por status (regressão: filtrar só 'em_andamento' deixava uma segunda sessão
+// ser criada pra um extrato já conciliado, duplicando pares/totais).
+const chamadasEq = new Map();
 function chave(t, m) { return `${t}:${m}`; }
 function queue(tabela, metodo, resultado) {
   const k = chave(tabela, metodo);
@@ -34,11 +39,16 @@ supabase.from = function (tabela) {
     insert() { return builder; },
     update() { return builder; },
     delete() { return builder; },
-    eq() { return builder; },
+    eq(coluna, valor) {
+      if (!chamadasEq.has(tabela)) chamadasEq.set(tabela, []);
+      chamadasEq.get(tabela).push([coluna, valor]);
+      return builder;
+    },
     gte() { return builder; },
     lte() { return builder; },
     order() { return builder; },
     range() { return builder; },
+    limit() { return Promise.resolve(consumir("limit", { data: [], error: null })); },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     single() { return Promise.resolve(consumir("single", { data: null, error: null })); },
     then(resolve, reject) {
@@ -52,7 +62,10 @@ after(() => {
   supabase.from = originalFrom;
 });
 
-beforeEach(() => filas.clear());
+beforeEach(() => {
+  filas.clear();
+  chamadasEq.clear();
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -202,10 +215,33 @@ describe("POST /conciliacoes", () => {
 
   it("409 quando já existe uma conciliação em andamento para o extrato", async () => {
     queueExtratoValido();
-    queue("conciliacoes", "maybeSingle", { data: { id: "conciliacao-existente" }, error: null });
+    queue("conciliacoes", "limit", { data: [{ id: "conciliacao-existente" }], error: null });
     const res = criarResposta();
     await criarConciliacao(reqBase(), res);
     assert.equal(res.statusCode, 409);
+  });
+
+  it("409 quando a conciliação do extrato já foi CONCLUÍDA (não só em_andamento) — evita reprocessar transações já conciliadas", async () => {
+    // Regressão: extratos_bancarios.status não muda quando a conciliação é
+    // concluída, então filtrar só por status='em_andamento' aqui deixava
+    // passar uma 2ª sessão pro mesmo extrato, reprocessando via
+    // executarMatching todas as transacoes_extrato (sem filtrar
+    // conciliado=true) e duplicando pares/totais já conciliados.
+    queueExtratoValido();
+    queue("conciliacoes", "limit", { data: [{ id: "conciliacao-concluida" }], error: null });
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    assert.equal(res.statusCode, 409);
+
+    const filtrosConciliacoes = chamadasEq.get("conciliacoes") ?? [];
+    assert.ok(
+      filtrosConciliacoes.some(([coluna, valor]) => coluna === "extrato_id" && valor === EXTRATO_ID),
+      "esperava filtrar por extrato_id",
+    );
+    assert.ok(
+      !filtrosConciliacoes.some(([coluna]) => coluna === "status"),
+      `não deveria filtrar conciliações por status (bug original) — chamadas: ${JSON.stringify(filtrosConciliacoes)}`,
+    );
   });
 
   it("500 quando falha a busca de transações do extrato", async () => {

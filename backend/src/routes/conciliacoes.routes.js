@@ -5,6 +5,7 @@ import { validarUuidParams } from "../middlewares/uuid.middleware.js";
 import {
   criarConciliacaoExtrato,
   listarTransacoesExtrato,
+  buscarExtratoAtual,
   criarConciliacao,
   listarConciliacoes,
   buscarConciliacao,
@@ -40,6 +41,7 @@ function uploadExtrato(req, res, next) {
 }
 
 router.post("/extrato", todos, uploadExtrato, criarConciliacaoExtrato);
+router.get("/extrato", todos, buscarExtratoAtual);
 router.get("/extrato/:id/transacoes", todos, validarId, listarTransacoesExtrato);
 router.post("/", todos, criarConciliacao);
 router.get("/", todos, listarConciliacoes);
