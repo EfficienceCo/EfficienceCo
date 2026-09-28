@@ -63,8 +63,13 @@ export async function buscarLicencaCliente(req, res) {
 
   const { data, error } = await consultarLicencaPorClienteId(clienteId);
 
-  if (error || !data) {
-    return res.status(404).json({ erro: "Licenca nao encontrada" });
+  if (error) {
+    console.error("[licenca.controller] Erro ao consultar licença:", error.message);
+    return res.status(500).json({ ativa: false, erro: "Erro ao consultar licença" });
+  }
+
+  if (!data) {
+    return res.status(200).json(montarRespostaSemLicenca(clienteId));
   }
 
   return res.status(200).json(montarRespostaLicenca(data, clienteId));
@@ -87,7 +92,7 @@ export async function validarLicenca(req, res) {
 
     if (error) {
       console.error("[licenca.controller] Erro ao consultar licença:", error.message);
-      return res.status(500).json({ erro: "Erro ao consultar licença" });
+      return res.status(500).json({ ativa: false, erro: "Erro ao consultar licença" });
     }
 
     if (!data) {
