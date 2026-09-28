@@ -7,7 +7,7 @@ import app from "../src/app.js";
 import { PERFIS } from "../src/config/perfis.js";
 
 const CLIENTE_ID = "11111111-1111-1111-1111-111111111111";
-const CONCILIACAO_ID = "22222222-2222-2222-2222-222222222222";
+const CONCILIACAO_ID = "22222222-2222-4222-8222-222222222222";
 const JWT_SECRET = "conciliacoes-ids-invalidos-test-secret";
 
 process.env.JWT_SECRET ??= JWT_SECRET;
@@ -78,6 +78,12 @@ const casos = [
     method: "POST",
     path: "/conciliacoes",
     body: { extrato_id: "abc", mes: 9, ano: 2026 },
+  },
+  {
+    nome: "criação da conciliação com UUID que não é v4",
+    method: "POST",
+    path: "/conciliacoes",
+    body: { extrato_id: "aaaaaaaa-aaaa-1aaa-8aaa-aaaaaaaaaaaa", mes: 9, ano: 2026 },
   },
 ];
 
