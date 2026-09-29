@@ -4,6 +4,7 @@ import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
+import { ehUuid } from "../utils/uuid.util.js";
 import { gerarRelatorioConciliacaoPDF } from "../services/conciliacao-relatorio.service.js";
 
 function sanitizarNomeArquivo(nome) {
@@ -310,6 +311,10 @@ export async function criarConciliacao(req, res) {
   const { extrato_id: extratoId } = req.body ?? {};
   if (!extratoId) {
     return res.status(400).json({ erro: "extrato_id é obrigatório" });
+  }
+
+  if (!ehUuid(extratoId)) {
+    return res.status(400).json({ erro: "extrato_id deve ser um UUID válido" });
   }
 
   const periodo = periodoDoBody(req.body);
