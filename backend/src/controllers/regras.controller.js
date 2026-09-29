@@ -24,6 +24,22 @@ const ACOES_EXIGEM_ORIGEM = new Set([
   "upload_folha",
 ]);
 
+/**
+ * Caminho absoluto Windows: unidade + separador (`C:\x`, `C:/x`) ou UNC (`\\srv\share`).
+ * Sem caracteres inválidos de nome de arquivo (`< > " | ? *`) nem `:` fora da unidade.
+ * Alinhar ao FE (frontend/src/app/dashboard/regras/page.jsx).
+ */
+const CAMINHO_WINDOWS_ABSOLUTO = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/:*?"<>|]+[\\/][^\\/:*?"<>|]+)[^:*?"<>|]*$/;
+
+export function caminhoWindowsAbsolutoValido(caminho) {
+  return CAMINHO_WINDOWS_ABSOLUTO.test(String(caminho).trim());
+}
+
+// a validação de formato roda sobre o valor trimado, então persiste o trimado também
+function normalizarOrigem(pasta_origem) {
+  return typeof pasta_origem === "string" ? pasta_origem.trim() : pasta_origem;
+}
+
 function parseCondicao(condicao) {
   if (condicao === undefined || condicao === null || typeof condicao === "object") {
     return { valor: condicao };
@@ -43,7 +59,7 @@ function campoPreenchido(valor) {
 /**
  * Valida campos por ação. Em PATCH parcial (sem acao no body), só valida o que veio.
  */
-function validarCamposPorAcao({ acao, pasta_origem, pasta_destino, condicao }, { parcial = false } = {}) {
+function validarCamposPorAcao({ acao, pasta_origem, pasta_destino, condicao }, { parcial = false, validarFormatoOrigem = true, validarFormatoDestino = true } = {}) {
   if (acao !== undefined && acao !== null && acao !== "") {
     if (!ACOES_VALIDAS.has(acao)) {
       return { erro: `acao inválida: use uma de ${[...ACOES_VALIDAS].join(", ")}` };
@@ -59,6 +75,11 @@ function validarCamposPorAcao({ acao, pasta_origem, pasta_destino, condicao }, {
       if (!campoPreenchido(pasta_origem)) {
         return { erro: "pasta_origem é obrigatória para esta ação" };
       }
+      if (validarFormatoOrigem && !caminhoWindowsAbsolutoValido(pasta_origem)) {
+        return {
+          erro: "pasta_origem inválida: informe um caminho absoluto do Windows (ex.: C:\\Docs\\Entrada)",
+        };
+      }
     }
   }
 
@@ -67,6 +88,16 @@ function validarCamposPorAcao({ acao, pasta_origem, pasta_destino, condicao }, {
       if (!campoPreenchido(pasta_destino)) {
         return { erro: "pasta_destino é obrigatória para esta ação" };
       }
+    }
+  }
+
+  // abertura_empresa não exige origem, mas o formulário espelha o destino em pasta_origem
+  // (e o agente observa pasta_origem de toda regra ativa) — então o destino também é absoluto.
+  if (acaoEfetiva === "abertura_empresa" && validarFormatoDestino && campoPreenchido(pasta_destino)) {
+    if (!caminhoWindowsAbsolutoValido(pasta_destino)) {
+      return {
+        erro: "pasta_destino inválida: informe um caminho absoluto do Windows (ex.: C:\\Docs\\Clientes)",
+      };
     }
   }
 
@@ -133,7 +164,7 @@ export async function criarRegra(req, res) {
   }
 
   const destinoNormalizado =
-    pasta_destino === undefined || pasta_destino === null ? "" : pasta_destino;
+    pasta_destino === undefined || pasta_destino === null ? "" : normalizarOrigem(pasta_destino);
 
   console.log("[regras.controller] Criando regra para cliente:", clienteId);
 
@@ -141,7 +172,7 @@ export async function criarRegra(req, res) {
     .from("regras")
     .insert({
       cliente_id: clienteId,
-      pasta_origem,
+      pasta_origem: normalizarOrigem(pasta_origem),
       pasta_destino: destinoNormalizado,
       condicao: condicaoParseada,
       acao,
@@ -180,8 +211,8 @@ export async function atualizarRegra(req, res) {
 
   const { pasta_origem, pasta_destino, condicao, acao, ativa } = req.body;
   const updates = {};
-  if (pasta_origem !== undefined) updates.pasta_origem = pasta_origem;
-  if (pasta_destino !== undefined) updates.pasta_destino = pasta_destino ?? "";
+  if (pasta_origem !== undefined) updates.pasta_origem = normalizarOrigem(pasta_origem);
+  if (pasta_destino !== undefined) updates.pasta_destino = normalizarOrigem(pasta_destino) ?? "";
   if (condicao !== undefined) {
     const { valor: condicaoParseada, erro: erroCondicao } = parseCondicao(condicao);
     if (erroCondicao) {
@@ -204,7 +235,12 @@ export async function atualizarRegra(req, res) {
       pasta_destino: updates.pasta_destino ?? regra.pasta_destino,
       condicao: updates.condicao ?? regra.condicao,
     },
-    { parcial: true },
+    // só valida o formato quando a origem veio no body: regras legadas não travam toggles (ativa etc.)
+    {
+      parcial: true,
+      validarFormatoOrigem: updates.pasta_origem !== undefined,
+      validarFormatoDestino: updates.pasta_destino !== undefined,
+    },
   );
   if (erroCampos) {
     return res.status(400).json({ erro: erroCampos });
