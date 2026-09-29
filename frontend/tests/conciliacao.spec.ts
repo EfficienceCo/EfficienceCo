@@ -67,8 +67,27 @@ test.describe('Conciliação bancária — página principal (/dashboard/concili
   });
 
   test('modal de novo lançamento abre, bloqueia submit sem campos obrigatórios e fecha ao cancelar', async ({ page }) => {
-    await page.getByRole('button', { name: '+ Adicionar lançamento' }).click();
-    await expect(page.getByRole('heading', { name: 'Novo lançamento' })).toBeVisible();
+    const botaoAbrir = page.getByRole('button', { name: '+ Adicionar lançamento' });
+    await botaoAbrir.click();
+
+    const dialog = page.getByRole('dialog', { name: 'Novo lançamento' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAttribute('aria-modal', 'true');
+    await expect(dialog).toBeFocused();
+    await expect(dialog.getByRole('button', { name: 'Fechar modal' }).locator('svg')).toBeVisible();
+    await expect(page.locator('main')).toHaveAttribute('inert', '');
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(dialog.getByRole('button', { name: 'Adicionar lançamento' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Fechar modal' })).toBeFocused();
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(botaoAbrir).toBeFocused();
+    await expect(page.locator('main')).not.toHaveAttribute('inert', '');
+
+    await botaoAbrir.click();
 
     // Campos "required" (data, descrição, valor) bloqueiam o submit via validação
     // nativa do HTML5 — o modal deve permanecer aberto em vez de chamar a API.
@@ -95,11 +114,23 @@ test.describe('Conciliação bancária — página principal (/dashboard/concili
     await expect(linha.getByText('R$ 123,45')).toBeVisible();
     await expect(linha.getByText('Débito')).toBeVisible();
 
-    await linha.getByRole('button', { name: 'Excluir' }).click();
-    await expect(page.getByRole('heading', { name: 'Confirmar exclusão' })).toBeVisible();
+    const botaoExcluir = linha.getByRole('button', { name: 'Excluir' });
+    await botaoExcluir.click();
+
+    const dialogExclusao = page.getByRole('dialog', { name: 'Confirmar exclusão' });
+    await expect(dialogExclusao).toBeVisible();
+    await expect(dialogExclusao).toHaveAttribute('aria-modal', 'true');
+    await expect(dialogExclusao).toBeFocused();
+
+    await page.keyboard.press('Escape');
+    await expect(dialogExclusao).not.toBeVisible();
+    await expect(botaoExcluir).toBeFocused();
+
+    await botaoExcluir.click();
     await page.getByRole('button', { name: 'Excluir lançamento' }).click();
 
     await expect(page.getByRole('heading', { name: 'Confirmar exclusão' })).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Lançamentos Internos' })).toBeFocused();
     await expect(page.getByRole('row', { name: new RegExp(descricao) })).not.toBeVisible();
   });
 });

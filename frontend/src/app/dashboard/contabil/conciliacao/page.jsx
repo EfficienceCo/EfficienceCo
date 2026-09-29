@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '../../../../context/AuthContext';
+import { FecharIcon } from '../../../../components/icons/AutomacaoIcons';
 import { listarClientes } from '../../../../services/clientes.service';
 import {
   buscarExtratoAtual,
@@ -222,9 +223,99 @@ function UploadIcon() {
   );
 }
 
+function useModalAcessivel(isAberto, fecharModal, { focusFallbackRef } = {}) {
+  const dialogRef = useRef(null);
+  const gatilhoRef = useRef(null);
+  const fecharModalRef = useRef(fecharModal);
+
+  useEffect(() => {
+    fecharModalRef.current = fecharModal;
+  }, [fecharModal]);
+
+  useEffect(() => {
+    if (!isAberto) {
+      return undefined;
+    }
+
+    const gatilho = gatilhoRef.current;
+    const dialog = dialogRef.current;
+    const overlay = dialog?.parentElement;
+    const elementosFundo = overlay?.parentElement
+      ? Array.from(overlay.parentElement.children).filter((elemento) => elemento !== overlay)
+      : [];
+    const estadosFundo = elementosFundo.map((elemento) => ({
+      elemento,
+      inert: elemento.inert,
+      ariaHidden: elemento.getAttribute('aria-hidden'),
+    }));
+
+    elementosFundo.forEach((elemento) => {
+      elemento.inert = true;
+      elemento.setAttribute('aria-hidden', 'true');
+    });
+
+    dialog?.focus();
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        fecharModalRef.current();
+        return;
+      }
+
+      if (event.key === 'Tab' && dialog) {
+        const elementosFocaveis = Array.from(
+          dialog.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter((elemento) => !elemento.hasAttribute('hidden'));
+
+        if (elementosFocaveis.length === 0) {
+          event.preventDefault();
+          dialog.focus();
+          return;
+        }
+
+        const primeiro = elementosFocaveis[0];
+        const ultimo = elementosFocaveis[elementosFocaveis.length - 1];
+
+        if (event.shiftKey && (document.activeElement === primeiro || document.activeElement === dialog)) {
+          event.preventDefault();
+          ultimo.focus();
+        } else if (!event.shiftKey && document.activeElement === ultimo) {
+          event.preventDefault();
+          primeiro.focus();
+        }
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      estadosFundo.forEach(({ elemento, inert, ariaHidden }) => {
+        elemento.inert = inert;
+        if (ariaHidden === null) {
+          elemento.removeAttribute('aria-hidden');
+        } else {
+          elemento.setAttribute('aria-hidden', ariaHidden);
+        }
+      });
+
+      window.requestAnimationFrame(() => {
+        const destinoFoco = gatilho?.isConnected ? gatilho : focusFallbackRef?.current;
+        destinoFoco?.focus();
+      });
+    };
+  }, [focusFallbackRef, isAberto]);
+
+  return { dialogRef, gatilhoRef };
+}
+
 export default function ConciliacaoPage() {
   const router = useRouter();
   const fileInputRef = useRef(null);
+  const lancamentosTituloRef = useRef(null);
   const { isAuthenticated, isLoading, user } = useAuth();
 
   const isAdminEfficience = user?.perfil === PERFIL_ADMIN_EFFICIENCE;
@@ -261,6 +352,11 @@ export default function ConciliacaoPage() {
   const [isDeleteModalAberto, setIsDeleteModalAberto] = useState(false);
   const [erroDelete, setErroDelete] = useState('');
   const [isDeletingLancamento, setIsDeletingLancamento] = useState(false);
+
+  const modalLancamento = useModalAcessivel(isModalLancamentoAberto, fecharModalLancamento);
+  const modalDelete = useModalAcessivel(isDeleteModalAberto, fecharModalDelete, {
+    focusFallbackRef: lancamentosTituloRef,
+  });
 
   const [isIniciandoConciliacao, setIsIniciandoConciliacao] = useState(false);
   const [erroIniciar, setErroIniciar] = useState('');
@@ -427,7 +523,8 @@ export default function ConciliacaoPage() {
     carregarDados();
   }, [carregarDados, clienteId, isAdminEfficience, isAuthenticated, isLoading]);
 
-  function abrirModalLancamento() {
+  function abrirModalLancamento(event) {
+    modalLancamento.gatilhoRef.current = event.currentTarget;
     setFormData(FORM_INICIAL);
     setErroFormulario('');
     setIsModalLancamentoAberto(true);
@@ -503,7 +600,8 @@ export default function ConciliacaoPage() {
     }
   }
 
-  function abrirModalDelete(lancamento) {
+  function abrirModalDelete(lancamento, gatilho) {
+    modalDelete.gatilhoRef.current = gatilho;
     setLancamentoParaDeletar(lancamento);
     setErroDelete('');
     setIsDeleteModalAberto(true);
@@ -700,7 +798,13 @@ export default function ConciliacaoPage() {
             <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
               <header className="flex flex-col gap-3 border-b border-zinc-100 p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-zinc-900">Lançamentos Internos</h2>
+                  <h2
+                    ref={lancamentosTituloRef}
+                    tabIndex={-1}
+                    className="rounded-sm text-lg font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  >
+                    Lançamentos Internos
+                  </h2>
                   <p className="mt-1 text-sm text-zinc-500">
                     Registros contábeis do período selecionado.
                   </p>
@@ -780,7 +884,7 @@ export default function ConciliacaoPage() {
                             {!lancamento?.conciliado ? (
                               <button
                                 type="button"
-                                onClick={() => abrirModalDelete(lancamento)}
+                                onClick={(event) => abrirModalDelete(lancamento, event.currentTarget)}
                                 className="rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100"
                               >
                                 Excluir
@@ -967,10 +1071,22 @@ export default function ConciliacaoPage() {
 
       {isModalLancamentoAberto ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
-          <section className="w-full max-w-xl rounded-xl border border-zinc-200 bg-white shadow-xl">
+          <section
+            ref={modalLancamento.dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-modal-novo-lancamento"
+            tabIndex={-1}
+            className="w-full max-w-xl rounded-xl border border-zinc-200 bg-white shadow-xl outline-none"
+          >
             <header className="flex items-start justify-between border-b border-zinc-200 p-5">
               <div>
-                <h2 className="text-lg font-semibold text-zinc-900">Novo lançamento</h2>
+                <h2
+                  id="titulo-modal-novo-lancamento"
+                  className="text-lg font-semibold text-zinc-900"
+                >
+                  Novo lançamento
+                </h2>
                 <p className="mt-1 text-sm text-zinc-500">
                   Informe os dados do lançamento contábil interno.
                 </p>
@@ -980,10 +1096,10 @@ export default function ConciliacaoPage() {
                 type="button"
                 onClick={fecharModalLancamento}
                 disabled={isSavingLancamento}
-                className="rounded-md border border-zinc-300 px-2 py-1 text-sm text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Fechar modal"
               >
-                X
+                <FecharIcon className="h-4 w-4" />
               </button>
             </header>
 
@@ -1109,8 +1225,20 @@ export default function ConciliacaoPage() {
 
       {isDeleteModalAberto && lancamentoParaDeletar ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
-          <section className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl">
-            <h2 className="text-lg font-semibold text-zinc-900">Confirmar exclusão</h2>
+          <section
+            ref={modalDelete.dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-modal-confirmar-exclusao"
+            tabIndex={-1}
+            className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl outline-none"
+          >
+            <h2
+              id="titulo-modal-confirmar-exclusao"
+              className="text-lg font-semibold text-zinc-900"
+            >
+              Confirmar exclusão
+            </h2>
             <p className="mt-2 text-sm text-zinc-600">Deseja realmente excluir este lançamento?</p>
             <p className="mt-2 rounded-md bg-zinc-100 px-3 py-2 text-xs text-zinc-700">
               {lancamentoParaDeletar.descricao || '-'} — {formatarValor(lancamentoParaDeletar.valor)}
