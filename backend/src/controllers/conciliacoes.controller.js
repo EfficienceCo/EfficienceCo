@@ -5,7 +5,7 @@ import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.uti
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
-import { gerarRelatorioConciliacaoPDF } from "../services/conciliacao-relatorio.service.js";
+import { gerarRelatorioConciliacaoPDF, montarConteudoRelatorio } from "../services/conciliacao-relatorio.service.js";
 
 function sanitizarNomeArquivo(nome) {
   return nome
@@ -408,6 +408,10 @@ export async function criarConciliacao(req, res) {
   const totalAutomaticos = pares.filter((p) => p.confianca === "automatico").length;
   const totalProvaveis = pares.filter((p) => p.confianca === "provavel").length;
   const totalSemPar = pares.filter((p) => p.confianca === "sem_par").length;
+  // total_pendentes conta só TRANSAÇÕES ainda sem conciliação, para que
+  // total_conciliadas + total_pendentes = total_transacoes. Lançamentos internos
+  // sem transação não entram (senão "pendentes" mistura as duas origens).
+  const totalTransacoesSemPar = pares.filter((p) => p.confianca === "sem_par" && p.transacao_id).length;
 
   const { data: conciliacao, error: erroConciliacao } = await supabase
     .from("conciliacoes")
@@ -419,7 +423,7 @@ export async function criarConciliacao(req, res) {
       status: "em_andamento",
       total_transacoes: transacoesEncontradas.length,
       total_conciliadas: totalAutomaticos,
-      total_pendentes: totalProvaveis + totalSemPar,
+      total_pendentes: totalProvaveis + totalTransacoesSemPar,
     })
     .select()
     .single();
@@ -872,14 +876,6 @@ export async function concluirConciliacao(req, res) {
   });
 }
 
-// Par "conciliado" = automático ou provável já confirmado — mesmo critério usado em
-// concluirConciliacao para marcar conciliado=true. Como o relatório só existe para
-// sessões com status='concluida', todo par 'provavel' aqui já tem confirmado_em setado
-// (concluirConciliacao bloqueia com 409 se restar algum pendente).
-function parConciliado(par) {
-  return par.confianca === "automatico" || (par.confianca === "provavel" && par.confirmado_em);
-}
-
 export async function gerarRelatorioConciliacao(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -953,31 +949,7 @@ export async function gerarRelatorioConciliacao(req, res) {
   const transacoesPorId = Object.fromEntries((transacoesResultado.data ?? []).map((t) => [t.id, t]));
   const lancamentosPorId = Object.fromEntries((lancamentosResultado.data ?? []).map((l) => [l.id, l]));
 
-  const matches = [];
-  const semPar = [];
-  let valorTotalConciliado = 0;
-  for (const par of paresTodos) {
-    const transacao = par.transacao_id ? transacoesPorId[par.transacao_id] ?? null : null;
-    const lancamento = par.lancamento_id ? lancamentosPorId[par.lancamento_id] ?? null : null;
-    const valor = transacao?.valor ?? lancamento?.valor ?? 0;
-
-    if (parConciliado(par)) {
-      matches.push({
-        data: transacao?.data_lancamento ?? lancamento?.data_lancamento ?? null,
-        descricaoBanco: transacao?.descricao ?? null,
-        descricaoLancamento: lancamento?.descricao ?? null,
-        valor,
-      });
-      valorTotalConciliado += Number(valor);
-    } else {
-      semPar.push({
-        data: (transacao ?? lancamento)?.data_lancamento ?? null,
-        descricao: (transacao ?? lancamento)?.descricao ?? null,
-        valor,
-        origem: transacao ? "banco" : "lancamento_interno",
-      });
-    }
-  }
+  const { matches, semPar, totais } = montarConteudoRelatorio(paresTodos, transacoesPorId, lancamentosPorId);
 
   const nomeCliente = clienteResultado.data?.nome ?? "";
 
@@ -990,12 +962,7 @@ export async function gerarRelatorioConciliacao(req, res) {
       mes: conciliacao.mes,
       ano: conciliacao.ano,
       geradoEm: new Date(),
-      totais: {
-        totalTransacoes: conciliacao.total_transacoes,
-        totalConciliadas: conciliacao.total_conciliadas,
-        totalPendentes: conciliacao.total_pendentes,
-        valorTotalConciliado,
-      },
+      totais,
       matches,
       semPar,
     });
