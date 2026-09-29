@@ -743,6 +743,22 @@ export async function rejeitarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
+  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e
+  // outro só com o lançamento — no mesmo formato que o matching gera para sobras.
+  // Assim o lançamento continua visível em "Lançamentos sem transação" e no PDF.
+  const { data: parLancamento, error: erroInsertPar } = await supabase
+    .from("pares_conciliacao")
+    .insert({ conciliacao_id: id, transacao_id: null, lancamento_id: par.lancamento_id, confianca: "sem_par" })
+    .select("id")
+    .single();
+
+  if (erroInsertPar) {
+    console.error("[conciliacoes.controller] Erro ao separar lançamento do par rejeitado:", erroInsertPar.message);
+    return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
+  }
+
+  const desfazerInsert = () => supabase.from("pares_conciliacao").delete().eq("id", parLancamento.id);
+
   const { error: erroUpdatePar } = await supabase
     .from("pares_conciliacao")
     .update({ lancamento_id: null, confianca: "sem_par" })
@@ -750,10 +766,18 @@ export async function rejeitarPar(req, res) {
 
   if (erroUpdatePar) {
     console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroUpdatePar.message);
+    await desfazerInsert();
     return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
   }
 
-  return res.status(200).json({ id: pareId, confianca: "sem_par" });
+  // total_pendentes não muda: conta só transações (conciliadas + pendentes = total_transacoes,
+  // ver criarConciliacao) e a transação do par rejeitado continua pendente. O par novo é só de
+  // lançamento, fora dessa conta.
+  return res.status(200).json({
+    id: pareId,
+    confianca: "sem_par",
+    par_lancamento: { id: parLancamento.id, lancamento_id: par.lancamento_id, confianca: "sem_par" },
+  });
 }
 
 export async function concluirConciliacao(req, res) {
