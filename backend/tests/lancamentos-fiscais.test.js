@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
 import {
+  cancelarLancamentoFiscal,
   criarLancamentoFiscal,
   listarLancamentosFiscais,
   resumoLancamentosFiscais,
@@ -20,6 +21,8 @@ const CNPJ_ALHEIO = "11111111000191";
 
 const originalFrom = supabase.from;
 const filas = new Map();
+let ultimoUpdate = null;
+let filtros = [];
 const insercoes = [];
 function chave(t, m) { return `${t}:${m}`; }
 function queue(tabela, metodo, resultado) {
@@ -38,7 +41,8 @@ supabase.from = function (tabela) {
   const builder = {
     select() { return builder; },
     insert(payload) { insercoes.push(payload); return builder; },
-    eq() { return builder; },
+    update(payload) { ultimoUpdate = payload; return builder; },
+    eq(campo, valor) { filtros.push([tabela, campo, valor]); return builder; },
     gte() { return builder; },
     lte() { return builder; },
     order() { return builder; },
@@ -57,6 +61,8 @@ after(() => {
 
 beforeEach(() => {
   filas.clear();
+  ultimoUpdate = null;
+  filtros = [];
   insercoes.length = 0;
 });
 
@@ -481,6 +487,52 @@ describe("POST /lancamentos-fiscais", () => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /lancamentos-fiscais/cancelar
+// ---------------------------------------------------------------------------
+
+describe("POST /lancamentos-fiscais/cancelar", () => {
+  it("marca a NF-e da licença como cancelada e preserva a trilha", async () => {
+    tokenValido();
+    queue("lancamentos_fiscais", "maybeSingle", {
+      data: { id: "nota-id", status: "cancelada" },
+      error: null,
+    });
+
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: {
+        chave_nfe: payloadValido().chave_nfe,
+        motivo: "Operação não realizada",
+        protocolo: "135260000000001",
+        data_evento: "2026-07-16T10:00:00-03:00",
+      },
+    };
+    const res = criarResposta();
+    await cancelarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(ultimoUpdate.status, "cancelada");
+    assert.equal(ultimoUpdate.motivo_cancelamento, "Operação não realizada");
+    assert.ok(filtros.some(([t, c, v]) => t === "lancamentos_fiscais" && c === "cliente_id" && v === CLIENTE_ID));
+    assert.ok(filtros.some(([t, c, v]) => t === "lancamentos_fiscais" && c === "chave_nfe" && v === payloadValido().chave_nfe));
+  });
+
+  it("404 sem alterar outro tenant quando a chave não pertence à licença", async () => {
+    tokenValido();
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: { chave_nfe: payloadValido().chave_nfe },
+    };
+    const res = criarResposta();
+    await cancelarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 404);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /lancamentos-fiscais
 // ---------------------------------------------------------------------------
 
@@ -585,6 +637,7 @@ describe("GET /lancamentos-fiscais/resumo", () => {
         { tipo: "entrada", valor_total: 100, icms: 10, pis: 1, cofins: 2, ipi: 0 },
         { tipo: "saida", valor_total: 200, icms: 20, pis: 2, cofins: 4, ipi: 5 },
         { tipo: "saida", valor_total: 50, icms: 5, pis: 0.5, cofins: 1, ipi: 0 },
+        { tipo: "saida", valor_total: 999, icms: 99, pis: 9, cofins: 19, ipi: 9, status: "cancelada" },
       ],
       error: null,
     });
@@ -603,6 +656,7 @@ describe("GET /lancamentos-fiscais/resumo", () => {
       entradas: 1,
       saidas: 2,
     });
+    assert.ok(filtros.some(([t, c, v]) => t === "lancamentos_fiscais" && c === "status" && v === "ativa"));
   });
 
   it("soma a saída para CPF no resumo (receita da apuração lê essas saídas)", async () => {

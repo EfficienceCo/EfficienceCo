@@ -23,4 +23,9 @@
       </total>
     </infNFe>
   </NFe>
+  <protNFe>
+    <infProt>
+      <cStat>100</cStat>
+    </infProt>
+  </protNFe>
 </nfeProc>

@@ -1,6 +1,7 @@
 import express from "express";
 import multer from "multer";
 import { exigirPerfil } from "../middlewares/permissao.middleware.js";
+import { validarUuidParams } from "../middlewares/uuid.middleware.js";
 import {
   criarConciliacaoExtrato,
   listarTransacoesExtrato,
@@ -17,6 +18,8 @@ import {
 const router = express.Router();
 
 const todos = exigirPerfil("admin_efficience", "admin_cliente", "funcionario");
+const validarId = validarUuidParams("id");
+const validarIdEParId = validarUuidParams("id", "pareId");
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -39,14 +42,14 @@ function uploadExtrato(req, res, next) {
 
 router.post("/extrato", todos, uploadExtrato, criarConciliacaoExtrato);
 router.get("/extrato", todos, buscarExtratoAtual);
-router.get("/extrato/:id/transacoes", todos, listarTransacoesExtrato);
+router.get("/extrato/:id/transacoes", todos, validarId, listarTransacoesExtrato);
 router.post("/", todos, criarConciliacao);
 router.get("/", todos, listarConciliacoes);
-router.patch("/:id/pares/:pareId/confirmar", todos, confirmarPar);
-router.patch("/:id/pares/:pareId/rejeitar", todos, rejeitarPar);
-router.post("/:id/concluir", todos, concluirConciliacao);
-router.get("/:id/relatorio", todos, gerarRelatorioConciliacao);
-router.get("/:id", todos, buscarConciliacao);
+router.patch("/:id/pares/:pareId/confirmar", todos, validarIdEParId, confirmarPar);
+router.patch("/:id/pares/:pareId/rejeitar", todos, validarIdEParId, rejeitarPar);
+router.post("/:id/concluir", todos, validarId, concluirConciliacao);
+router.get("/:id/relatorio", todos, validarId, gerarRelatorioConciliacao);
+router.get("/:id", todos, validarId, buscarConciliacao);
 
 console.log("[conciliacoes.routes] Rotas de conciliação bancária registradas");
 

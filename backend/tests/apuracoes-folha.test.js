@@ -502,7 +502,10 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
   it("200 recalcula Anexo I com os lançamentos fiscais atuais e limpa valor_editado antigo", async () => {
     queueApuracaoBase();
     queueCliente();
-    queueNotas([{ valor_total: 60000, data_emissao: "2026-08-10", tipo: "saida" }]);
+    queueNotas([
+      { valor_total: 60000, data_emissao: "2026-08-10", tipo: "saida", status: "ativa" },
+      { valor_total: 999999, data_emissao: "2026-08-11", tipo: "saida", status: "cancelada" },
+    ]);
     queue("apuracoes", "maybeSingle", {
       data: { id: APURACAO_ID, status: "rascunho", valor_calculado: 2400, valor_editado: null },
       error: null,
@@ -516,6 +519,7 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
 
     const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
     assert.equal(update.payload.valor_editado, null);
+    assert.equal(update.payload.receita_mes, 60000);
     // Anexo fora do V — folha_status não é relevante (fator_r fica null,
     // fora do filtro do polling), mas segue o default por consistência.
     assert.equal(update.payload.folha_status, "pendente");

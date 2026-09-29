@@ -6,7 +6,7 @@ import { criarConciliacao } from "../src/controllers/conciliacoes.controller.js"
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
-const EXTRATO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const EXTRATO_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const CONCILIACAO_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
+import { ehUuid } from "../utils/uuid.util.js";
 import { gerarRelatorioConciliacaoPDF, montarConteudoRelatorio } from "../services/conciliacao-relatorio.service.js";
 
 function sanitizarNomeArquivo(nome) {
@@ -19,6 +21,18 @@ const STATUS_EXTRATO = {
   PROCESSADO: "processado",
   ERRO: "erro",
 };
+
+const CONSTRAINT_HASH_ARQUIVO = "uq_extratos_bancarios_cliente_arquivo_hash";
+
+function erroDeArquivoDuplicado(erro) {
+  if (erro?.code !== "23505") {
+    return false;
+  }
+
+  return [erro.constraint, erro.message, erro.details, erro.hint]
+    .filter(Boolean)
+    .some((valor) => String(valor).includes(CONSTRAINT_HASH_ARQUIVO));
+}
 
 function periodoAtual() {
   const agora = new Date();
@@ -44,6 +58,8 @@ export async function criarConciliacaoExtrato(req, res) {
     return res.status(400).json({ erro: "Arquivo OFX é obrigatório (campo 'arquivo')" });
   }
 
+  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
+
   const periodoInformado = periodoDoBody(req.body);
 
   // Registro criado antes do parsing para que uma falha de parsing tenha
@@ -58,12 +74,17 @@ export async function criarConciliacaoExtrato(req, res) {
       mes: periodoInformado?.mes ?? periodoAtual().mes,
       ano: periodoInformado?.ano ?? periodoAtual().ano,
       arquivo_nome: req.file.originalname,
+      arquivo_hash: arquivoHash,
       status: STATUS_EXTRATO.AGUARDANDO,
     })
     .select()
     .single();
 
   if (erroInsercao) {
+    if (erroDeArquivoDuplicado(erroInsercao)) {
+      return res.status(409).json({ erro: "Este arquivo OFX já foi importado para este cliente" });
+    }
+
     console.error("[conciliacoes.controller] Erro ao criar registro de extrato:", erroInsercao.message);
     return res.status(500).json({ erro: "Erro ao registrar extrato bancário" });
   }
@@ -75,7 +96,7 @@ export async function criarConciliacaoExtrato(req, res) {
     console.error("[conciliacoes.controller] Erro ao parsear OFX:", erroParsing.message);
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(422).json({
       erro: "Arquivo OFX inválido ou malformado",
@@ -99,7 +120,7 @@ export async function criarConciliacaoExtrato(req, res) {
     console.error("[conciliacoes.controller] Erro ao inserir transações:", erroTransacoes.message);
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(500).json({ erro: "Erro ao salvar transações do extrato" });
   }
@@ -125,7 +146,7 @@ export async function criarConciliacaoExtrato(req, res) {
     // o extrato preso em 'aguardando' com dados órfãos e sem sinalização.
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(500).json({
       erro: "Erro ao finalizar processamento do extrato",
@@ -290,6 +311,10 @@ export async function criarConciliacao(req, res) {
   const { extrato_id: extratoId } = req.body ?? {};
   if (!extratoId) {
     return res.status(400).json({ erro: "extrato_id é obrigatório" });
+  }
+
+  if (!ehUuid(extratoId)) {
+    return res.status(400).json({ erro: "extrato_id deve ser um UUID válido" });
   }
 
   const periodo = periodoDoBody(req.body);
@@ -722,6 +747,22 @@ export async function rejeitarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
+  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e
+  // outro só com o lançamento — no mesmo formato que o matching gera para sobras.
+  // Assim o lançamento continua visível em "Lançamentos sem transação" e no PDF.
+  const { data: parLancamento, error: erroInsertPar } = await supabase
+    .from("pares_conciliacao")
+    .insert({ conciliacao_id: id, transacao_id: null, lancamento_id: par.lancamento_id, confianca: "sem_par" })
+    .select("id")
+    .single();
+
+  if (erroInsertPar) {
+    console.error("[conciliacoes.controller] Erro ao separar lançamento do par rejeitado:", erroInsertPar.message);
+    return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
+  }
+
+  const desfazerInsert = () => supabase.from("pares_conciliacao").delete().eq("id", parLancamento.id);
+
   const { error: erroUpdatePar } = await supabase
     .from("pares_conciliacao")
     .update({ lancamento_id: null, confianca: "sem_par" })
@@ -729,10 +770,18 @@ export async function rejeitarPar(req, res) {
 
   if (erroUpdatePar) {
     console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroUpdatePar.message);
+    await desfazerInsert();
     return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
   }
 
-  return res.status(200).json({ id: pareId, confianca: "sem_par" });
+  // total_pendentes não muda: conta só transações (conciliadas + pendentes = total_transacoes,
+  // ver criarConciliacao) e a transação do par rejeitado continua pendente. O par novo é só de
+  // lançamento, fora dessa conta.
+  return res.status(200).json({
+    id: pareId,
+    confianca: "sem_par",
+    par_lancamento: { id: parLancamento.id, lancamento_id: par.lancamento_id, confianca: "sem_par" },
+  });
 }
 
 export async function concluirConciliacao(req, res) {
