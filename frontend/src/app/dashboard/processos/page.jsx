@@ -633,49 +633,15 @@ function extrairEtapaAtualizada(payload) {
   );
 }
 
-function extrairProcessoAtualizado(payload) {
-  if (!payload || typeof payload !== 'object') {
-    return null;
-  }
-
-  if (payload.processo && typeof payload.processo === 'object') {
-    return payload.processo;
-  }
-
-  if (payload.data && typeof payload.data === 'object') {
-    if (payload.data.processo && typeof payload.data.processo === 'object') {
-      return payload.data.processo;
-    }
-
-    if (
-      payload.data.id ||
-      payload.data.status ||
-      payload.data.situacao ||
-      Array.isArray(payload.data.etapas) ||
-      Array.isArray(payload.data.checklist)
-    ) {
-      return payload.data;
-    }
-  }
-
-  if (payload.id || payload.status || payload.situacao || Array.isArray(payload.etapas)) {
-    return payload;
-  }
-
-  return null;
-}
-
-function atualizarProcessoNaLista(lista, processoId, processoAtualizado) {
-  return lista.map((processo) => {
-    if (String(obterIdProcesso(processo)) !== String(processoId)) {
-      return processo;
-    }
-
-    return {
-      ...processo,
-      ...processoAtualizado,
-    };
-  });
+function mesclarRespostaEtapaManual(etapaAtual, etapaAtualizada) {
+  return {
+    ...etapaAtual,
+    concluida: etapaAtualizada.concluida ?? etapaAtual.concluida,
+    concluida_em: Object.prototype.hasOwnProperty.call(etapaAtualizada, 'concluida_em')
+      ? etapaAtualizada.concluida_em
+      : etapaAtual.concluida_em,
+    status: etapaAtualizada.status || etapaAtual.status,
+  };
 }
 
 const PERFIS_PODEM_MARCAR_ETAPA = new Set(['funcionario', 'admin_cliente', 'admin_efficience']);
@@ -1363,11 +1329,13 @@ export default function ProcessosPage() {
 
     try {
       const retorno = await concluirEtapa(processoId, etapaId, { concluida });
-      const processoAtualizado = extrairProcessoAtualizado(retorno);
+      const etapaAtualizada = extrairEtapaAtualizada(retorno);
 
-      if (processoAtualizado) {
+      if (etapaAtualizada) {
         setProcessos((valorAtual) =>
-          atualizarProcessoNaLista(valorAtual, processoId, processoAtualizado),
+          atualizarEtapaNaLista(valorAtual, processoId, etapaId, (etapaAtual) =>
+            mesclarRespostaEtapaManual(etapaAtual, etapaAtualizada),
+          ),
         );
       }
 

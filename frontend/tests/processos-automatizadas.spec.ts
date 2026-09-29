@@ -26,6 +26,8 @@ type EstadoApi = {
   patches: Array<Record<string, unknown>>;
   expiracoes: Array<Record<string, unknown>>;
   erroProximoPost: string;
+  atrasoRecarregamentoMs: number;
+  respostaFinalizacaoProcessoNoPatch: boolean;
 };
 
 const API_URL = 'http://localhost:3001';
@@ -89,6 +91,8 @@ function criarEstadoApi(): EstadoApi {
     patches: [],
     expiracoes: [],
     erroProximoPost: '',
+    atrasoRecarregamentoMs: 0,
+    respostaFinalizacaoProcessoNoPatch: false,
   };
 }
 
@@ -124,6 +128,9 @@ async function prepararPagina(page: Page, estado = criarEstadoApi()) {
     const method = request.method();
 
     if (method === 'GET' && url.pathname === '/processos') {
+      if (estado.patches.length > 0 && estado.atrasoRecarregamentoMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, estado.atrasoRecarregamentoMs));
+      }
       await route.fulfill({ status: 200, json: [estado.processo] });
       return;
     }
@@ -174,7 +181,16 @@ async function prepararPagina(page: Page, estado = criarEstadoApi()) {
       estado.patches.push(dados);
       etapa.concluida = Boolean(dados.concluida);
       etapa.status = etapa.concluida ? 'concluida' : 'pendente';
-      await route.fulfill({ status: 200, json: etapa });
+      const resposta = estado.respostaFinalizacaoProcessoNoPatch
+        ? {
+            ...etapa,
+            processo_concluido: true,
+            tipo: estado.processo.tipo,
+            nome_empresa: estado.processo.nome_empresa,
+            pasta_base: 'C:\\Clientes\\Empresa',
+          }
+        : etapa;
+      await route.fulfill({ status: 200, json: resposta });
       return;
     }
 
@@ -253,6 +269,95 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
 
     await expect.poll(() => estado.patches.length).toBe(1);
     expect(estado.patches[0]).toEqual({ concluida: true });
+  });
+
+  test('mantém o tipo manual ao concluir a última etapa do processo', async ({ page }) => {
+    const estado = criarEstadoApi();
+    estado.atrasoRecarregamentoMs = 700;
+    estado.respostaFinalizacaoProcessoNoPatch = true;
+    localizarEtapa(estado, 'etapa-contrato').concluida = true;
+    localizarEtapa(estado, 'etapa-contrato').status = 'concluida';
+    localizarEtapa(estado, 'etapa-pastas').concluida = true;
+    localizarEtapa(estado, 'etapa-pastas').status = 'concluida';
+
+    await prepararPagina(page, estado);
+    const manual = etapaPorTexto(page, 'Verificar viabilidade do nome empresarial');
+    const checkbox = manual.getByRole('checkbox');
+
+    await checkbox.check();
+    await expect.poll(() => estado.patches.length).toBe(1);
+    await page.waitForTimeout(100);
+
+    expect(await manual.getByText(/Tipo de etapa não suportado/i).count()).toBe(0);
+    expect(await checkbox.count()).toBe(1);
+    await expect(checkbox).toBeVisible();
+    await expect(checkbox).toBeChecked();
+    await expect(manual.getByText(/Tipo de etapa não suportado/i)).toHaveCount(0);
+    await expect(checkbox).toBeEnabled();
+  });
+
+  test('preserva o scroll ao marcar e desmarcar uma etapa manual (#495)', async ({ page }) => {
+    const estado = await prepararPagina(page);
+    const checkbox = etapaPorTexto(
+      page,
+      'Verificar viabilidade do nome empresarial',
+    ).getByRole('checkbox');
+
+    await checkbox.scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollBy(0, 200));
+    const scrollAntes = await page.evaluate(() => window.scrollY);
+    expect(scrollAntes).toBeGreaterThan(0);
+
+    await checkbox.check();
+
+    await expect.poll(() => estado.patches.length).toBe(1);
+    await expect(checkbox).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollAntes);
+
+    await checkbox.uncheck();
+
+    await expect.poll(() => estado.patches.length).toBe(2);
+    await expect(checkbox).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollAntes);
+    expect(estado.patches).toEqual([{ concluida: true }, { concluida: false }]);
+  });
+
+  test('mantém o card aberto e respeita scroll intencional durante a atualização (#495)', async ({
+    page,
+  }) => {
+    const estado = criarEstadoApi();
+    estado.atrasoRecarregamentoMs = 700;
+    estado.processo.etapas.push(
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `etapa-manual-extra-${index + 1}`,
+        descricao: `Etapa manual extra ${String(index + 1).padStart(2, '0')}`,
+        tipo: 'manual',
+        acao: null,
+        status: 'pendente',
+        concluida: false,
+      })),
+    );
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await prepararPagina(page, estado);
+    const checkbox = etapaPorTexto(page, 'Etapa manual extra 10').getByRole('checkbox');
+
+    await checkbox.scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollBy(0, -100));
+    const scrollNoClique = await page.evaluate(() => window.scrollY);
+    expect(scrollNoClique).toBeGreaterThan(0);
+
+    await checkbox.check();
+    await expect.poll(() => estado.patches.length).toBe(1);
+    await page.waitForTimeout(150);
+
+    await expect(checkbox).toBeVisible();
+    await page.evaluate(() => window.scrollBy(0, 200));
+    const scrollEscolhidoPeloUsuario = await page.evaluate(() => window.scrollY);
+    expect(scrollEscolhidoPeloUsuario).toBeGreaterThan(scrollNoClique);
+
+    await expect(checkbox).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollEscolhidoPeloUsuario);
   });
 
   test('adiciona sócios, envia o payload tipado e entra em processamento', async ({ page }) => {
