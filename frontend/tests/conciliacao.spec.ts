@@ -24,6 +24,48 @@ test.describe('Conciliação bancária — página principal (/dashboard/concili
     await expect(page.getByRole('button', { name: 'Nova conciliação' })).not.toBeVisible();
   });
 
+  test('informa claramente quando o mesmo arquivo OFX já foi importado', async ({ page }) => {
+    let totalUploads = 0;
+    await page.route('**/conciliacoes/extrato', async (route) => {
+      totalUploads += 1;
+
+      if (totalUploads === 1) {
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            extrato_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            total_transacoes: 2,
+            banco: '0341',
+            conta: '7890',
+          }),
+        });
+        return;
+      }
+
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ erro: 'Este arquivo OFX já foi importado para este cliente' }),
+      });
+    });
+
+    const arquivo = {
+      name: 'extrato.ofx',
+      mimeType: 'application/x-ofx',
+      buffer: Buffer.from('<OFX>mesmo arquivo</OFX>'),
+    };
+    const inputArquivo = page.locator('input[type="file"]');
+
+    await inputArquivo.setInputFiles(arquivo);
+    await expect(page.getByText('2 transações importadas')).toBeVisible();
+
+    await inputArquivo.setInputFiles(arquivo);
+    await expect(page.getByText('Este arquivo OFX já foi importado para este cliente')).toBeVisible();
+    await expect(page.getByText('2 transações importadas')).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Nova conciliação' })).not.toBeVisible();
+  });
+
   test('modal de novo lançamento abre, bloqueia submit sem campos obrigatórios e fecha ao cancelar', async ({ page }) => {
     await page.getByRole('button', { name: '+ Adicionar lançamento' }).click();
     await expect(page.getByRole('heading', { name: 'Novo lançamento' })).toBeVisible();

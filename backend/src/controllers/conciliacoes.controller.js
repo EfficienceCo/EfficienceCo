@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
@@ -19,6 +20,18 @@ const STATUS_EXTRATO = {
   PROCESSADO: "processado",
   ERRO: "erro",
 };
+
+const CONSTRAINT_HASH_ARQUIVO = "uq_extratos_bancarios_cliente_arquivo_hash";
+
+function erroDeArquivoDuplicado(erro) {
+  if (erro?.code !== "23505") {
+    return false;
+  }
+
+  return [erro.constraint, erro.message, erro.details, erro.hint]
+    .filter(Boolean)
+    .some((valor) => String(valor).includes(CONSTRAINT_HASH_ARQUIVO));
+}
 
 function periodoAtual() {
   const agora = new Date();
@@ -44,6 +57,8 @@ export async function criarConciliacaoExtrato(req, res) {
     return res.status(400).json({ erro: "Arquivo OFX é obrigatório (campo 'arquivo')" });
   }
 
+  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
+
   const periodoInformado = periodoDoBody(req.body);
 
   // Registro criado antes do parsing para que uma falha de parsing tenha
@@ -58,12 +73,17 @@ export async function criarConciliacaoExtrato(req, res) {
       mes: periodoInformado?.mes ?? periodoAtual().mes,
       ano: periodoInformado?.ano ?? periodoAtual().ano,
       arquivo_nome: req.file.originalname,
+      arquivo_hash: arquivoHash,
       status: STATUS_EXTRATO.AGUARDANDO,
     })
     .select()
     .single();
 
   if (erroInsercao) {
+    if (erroDeArquivoDuplicado(erroInsercao)) {
+      return res.status(409).json({ erro: "Este arquivo OFX já foi importado para este cliente" });
+    }
+
     console.error("[conciliacoes.controller] Erro ao criar registro de extrato:", erroInsercao.message);
     return res.status(500).json({ erro: "Erro ao registrar extrato bancário" });
   }
@@ -75,7 +95,7 @@ export async function criarConciliacaoExtrato(req, res) {
     console.error("[conciliacoes.controller] Erro ao parsear OFX:", erroParsing.message);
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(422).json({
       erro: "Arquivo OFX inválido ou malformado",
@@ -99,7 +119,7 @@ export async function criarConciliacaoExtrato(req, res) {
     console.error("[conciliacoes.controller] Erro ao inserir transações:", erroTransacoes.message);
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(500).json({ erro: "Erro ao salvar transações do extrato" });
   }
@@ -125,7 +145,7 @@ export async function criarConciliacaoExtrato(req, res) {
     // o extrato preso em 'aguardando' com dados órfãos e sem sinalização.
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(500).json({
       erro: "Erro ao finalizar processamento do extrato",
