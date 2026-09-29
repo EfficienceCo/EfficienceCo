@@ -436,12 +436,12 @@ function ConciliacaoDetalheContent({ id }) {
     setErroDownload('');
 
     try {
-      const blob = await downloadRelatorio(id, { clienteId });
+      const { blob, nomeArquivo } = await downloadRelatorio(id, { clienteId });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
 
       link.href = url;
-      link.download = `conciliacao-${id}.pdf`;
+      link.download = nomeArquivo || `conciliacao-${id}.pdf`;
       document.body.appendChild(link);
       link.click();
       link.remove();

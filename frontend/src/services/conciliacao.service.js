@@ -1,5 +1,6 @@
 import api from './api';
 import { converterBlobDeErroParaJson } from './http-erro.util';
+import { obterNomeArquivoDownload } from './http-header.util';
 
 // Remove chaves undefined e retorna undefined se não sobrar nada, para o axios
 // omitir o parâmetro em vez de mandar "campo=undefined" na querystring.
@@ -140,7 +141,10 @@ export async function downloadRelatorio(id, { clienteId } = {}) {
       params: limparParams({ cliente_id: clienteId }),
     });
 
-    return response.data;
+    return {
+      blob: response.data,
+      nomeArquivo: obterNomeArquivoDownload(response.headers),
+    };
   } catch (error) {
     throw await converterBlobDeErroParaJson(error);
   }

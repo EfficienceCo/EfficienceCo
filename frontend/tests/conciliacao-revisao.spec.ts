@@ -252,6 +252,6 @@ test.describe('Conciliação bancária — tela de revisão (/dashboard/concilia
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Download Relatório' }).click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/\.pdf$/);
+    expect(download.suggestedFilename()).toMatch(/^conciliacao-2022-02-.+\.pdf$/);
   });
 });
