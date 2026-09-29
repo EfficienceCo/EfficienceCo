@@ -270,6 +270,8 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await expect.poll(() => estado.patches.length).toBe(1);
     await page.waitForTimeout(100);
 
+    expect(await manual.getByText(/Tipo de etapa não suportado/i).count()).toBe(0);
+    expect(await checkbox.count()).toBe(1);
     await expect(checkbox).toBeVisible();
     await expect(checkbox).toBeChecked();
     await expect(manual.getByText(/Tipo de etapa não suportado/i)).toHaveCount(0);
