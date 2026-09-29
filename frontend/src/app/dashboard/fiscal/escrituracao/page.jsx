@@ -190,6 +190,32 @@ function classeBadgeTipo(tipo) {
   return 'bg-zinc-100 text-zinc-700';
 }
 
+function obterStatusLancamento(status) {
+  if (status === 'cancelada') {
+    return {
+      label: 'Cancelada',
+      classes: 'bg-zinc-200 text-zinc-700 ring-zinc-300',
+    };
+  }
+
+  return {
+    label: 'Ativa',
+    classes: 'bg-sky-100 text-sky-700 ring-sky-200',
+  };
+}
+
+function StatusLancamentoBadge({ status }) {
+  const meta = obterStatusLancamento(status);
+
+  return (
+    <span
+      className={`rounded-full px-2 py-1 text-xs font-semibold ring-1 ${meta.classes}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
 function Spinner() {
   return (
     <span
@@ -229,13 +255,16 @@ function LancamentoCard({ lancamento }) {
             {truncarChaveNfe(lancamento?.chave_nfe)}
           </p>
         </div>
-        <span
-          className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${classeBadgeTipo(
-            lancamento?.tipo,
-          )}`}
-        >
-          {formatarTipo(lancamento?.tipo)}
-        </span>
+        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+          <span
+            className={`rounded-full px-2 py-1 text-xs font-semibold ${classeBadgeTipo(
+              lancamento?.tipo,
+            )}`}
+          >
+            {formatarTipo(lancamento?.tipo)}
+          </span>
+          <StatusLancamentoBadge status={lancamento?.status} />
+        </div>
       </div>
 
       <dl className="mt-3 space-y-2 border-t border-zinc-100 pt-3 text-sm">
@@ -632,6 +661,7 @@ export default function FiscalPage() {
                   <th className="px-4 py-3">Data emissão</th>
                   <th className="px-4 py-3">Chave NFe</th>
                   <th className="px-4 py-3">Tipo</th>
+                  <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">CNPJ emitente</th>
                   <th className="px-4 py-3">CNPJ/CPF destinatário</th>
                   <th className="px-4 py-3">Valor total</th>
@@ -658,6 +688,9 @@ export default function FiscalPage() {
                       >
                         {formatarTipo(lancamento?.tipo)}
                       </span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <StatusLancamentoBadge status={lancamento?.status} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
                       {formatarDocumentoFiscal(lancamento?.cnpj_emitente)}

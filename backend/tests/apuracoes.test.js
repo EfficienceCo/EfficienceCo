@@ -142,8 +142,9 @@ describe("POST /apuracoes", () => {
     queueSemDuplicata();
     queueCliente("I");
     queueNotas([
-      { valor_total: 40000, data_emissao: "2025-09-15" },
-      { valor_total: 45000, data_emissao: "2026-08-10" },
+      { valor_total: 40000, data_emissao: "2025-09-15", status: "ativa" },
+      { valor_total: 45000, data_emissao: "2026-08-10", status: "ativa" },
+      { valor_total: 999999, data_emissao: "2026-08-11", status: "cancelada" },
     ]);
     queue("apuracoes", "single", { data: { id: "nova-apuracao", status: "rascunho" }, error: null });
 
@@ -632,8 +633,9 @@ describe("GET /apuracoes/:id", () => {
     });
     queueCliente("I");
     queueNotas([
-      { tipo: "saida", valor_total: 40000, data_emissao: "2025-09-15" },
-      { tipo: "saida", valor_total: 45000, data_emissao: "2026-08-10" },
+      { tipo: "saida", valor_total: 40000, data_emissao: "2025-09-15", status: "ativa" },
+      { tipo: "saida", valor_total: 45000, data_emissao: "2026-08-10", status: "ativa" },
+      { tipo: "saida", valor_total: 999999, data_emissao: "2026-08-11", status: "cancelada" },
     ]);
 
     const res = criarResposta();
@@ -645,6 +647,7 @@ describe("GET /apuracoes/:id", () => {
     assert.equal(res.body.aliquota_nominal, 0.04);
     assert.equal(res.body.rbt12_mensal.length, 12);
     assert.equal(res.body.breakdown_desatualizado, false);
+    assert.equal(res.body.notas_fiscais.consideradas.length, 2);
   });
 
   it("sinaliza breakdown desatualizado quando uma NF-e da janela mudou após a criação (#499)", async () => {
