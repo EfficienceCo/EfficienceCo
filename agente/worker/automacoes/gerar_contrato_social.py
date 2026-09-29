@@ -6,7 +6,7 @@ from datetime import date
 import os
 from pathlib import Path
 
-from core.estrutura_pastas import criar_estrutura_empresa_em
+from core.estrutura_pastas import criar_estrutura_empresa_em, pasta_empresa_em_abertura
 from core.utils import resolver_pasta_base, validar_nome
 
 NOME_ARQUIVO_SAIDA = "contrato_social_v1.docx"
@@ -145,7 +145,7 @@ def _validar_dados(dados):
 
 def gerar_contrato_social(dados):
     """
-    Preenche o template DOCX e salva em {pasta_base}/{nome_empresa}/Contratos/.
+    Preenche o template DOCX e salva em {pasta_base}/CLIENTES/EM_ABERTURA/{nome_empresa}/Contratos/.
 
     Retorna dict: {sucesso, arquivo_gerado, erro[, codigo]} — nunca levanta para o caller.
     """
@@ -162,7 +162,7 @@ def gerar_contrato_social(dados):
                 codigo="template_ausente",
             )
 
-        pasta_empresa = os.path.join(validado["pasta_base"], validado["nome_empresa"])
+        pasta_empresa = pasta_empresa_em_abertura(validado["pasta_base"], validado["nome_empresa"])
         try:
             criar_estrutura_empresa_em(pasta_empresa)
         except PermissionError:

@@ -13,6 +13,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+# scikit-learn/joblib ainda não estão no requirements do runtime (rede neural
+# adiada até haver documentos reais de cliente). Sem eles o módulo não importa.
+pytest.importorskip("joblib")
+pytest.importorskip("sklearn")
+
 from automacoes.classificador_documentos.classificador import classificar_documento
 
 

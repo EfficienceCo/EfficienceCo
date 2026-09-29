@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
+import { soDigitos, validarCpf } from '../../../lib/esocial-tabelas';
 import {
   concluirEtapa,
   criar,
   executarAcaoEtapa,
+  expirarExecucaoEtapa,
   listar,
 } from '../../../services/processos.service';
 
@@ -155,6 +157,33 @@ function obterAcaoEtapa(etapa) {
     .toLowerCase();
 }
 
+// O contrato social é gravado dentro da árvore de pastas da empresa, então a
+// etapa só abre depois que "Criar estrutura de pastas" conclui (#488).
+const DEPENDENCIA_ETAPA = {
+  gerar_contrato_social: 'criar_pastas',
+};
+
+function obterDependenciaPendente(etapa, etapas) {
+  const acaoRequerida = DEPENDENCIA_ETAPA[obterAcaoEtapa(etapa)];
+
+  if (!acaoRequerida) {
+    return '';
+  }
+
+  const etapasRequeridas = etapas.filter(
+    (item) => obterAcaoEtapa(item) === acaoRequerida,
+  );
+
+  if (
+    etapasRequeridas.length === 0 ||
+    etapasRequeridas.some((item) => etapaConcluida(item))
+  ) {
+    return '';
+  }
+
+  return obterTituloEtapa(etapasRequeridas[0]);
+}
+
 function obterStatusEtapa(etapa) {
   if (!etapa || typeof etapa !== 'object') {
     return 'pendente';
@@ -203,6 +232,23 @@ function etapaEmProcessamento(etapa) {
   );
 }
 
+function obterChaveEtapa(processo, processoIndex, etapa, etapaIndex) {
+  const processoId = obterIdProcesso(processo);
+  const chaveProcesso = processoId ? String(processoId) : `idx-${processoIndex}`;
+  const etapaId = obterIdEtapa(etapa);
+  return `${chaveProcesso}::${etapaId || `etapa-${etapaIndex}`}`;
+}
+
+function obterInicioProcessamentoServidor(etapa) {
+  const iniciadaEm = etapa?.execucao_iniciada_em || etapa?.execucaoIniciadaEm;
+  if (!iniciadaEm) {
+    return null;
+  }
+
+  const timestamp = new Date(iniciadaEm).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
 function obterPayloadExecucao(etapa) {
   if (!etapa || typeof etapa !== 'object') {
     return {};
@@ -247,7 +293,7 @@ function montarPayloadContratoSocial(formulario) {
   return {
     socios: formulario.socios.map((socio) => ({
       nome: socio.nome.trim(),
-      cpf: socio.cpf.trim(),
+      cpf: soDigitos(socio.cpf),
       participacao: Number(socio.participacao),
     })),
     capital_social: Number(formulario.capital_social),
@@ -272,6 +318,16 @@ function validarFormularioContratoSocial(formulario) {
 
   if (socioInvalido) {
     return 'Preencha nome, CPF e participação válida para todos os sócios.';
+  }
+
+  const cpfInvalido = formulario.socios.some((socio) => !validarCpf(socio.cpf));
+  if (cpfInvalido) {
+    return 'Informe um CPF válido para todos os sócios.';
+  }
+
+  const cpfsNormalizados = formulario.socios.map((socio) => soDigitos(socio.cpf));
+  if (new Set(cpfsNormalizados).size !== cpfsNormalizados.length) {
+    return 'Não é possível repetir o CPF de um sócio.';
   }
 
   const participacaoTotal = formulario.socios.reduce(
@@ -328,8 +384,36 @@ function obterArquivoGerado(etapa) {
     (typeof arquivo === 'string' && /^https?:\/\//i.test(arquivo) ? arquivo : '');
   const url = String(urlDeclarada || '');
   const possuiLinkSeguro = /^(https?:\/\/|\/(?!\/))/i.test(url);
+  const localInformado =
+    typeof arquivo === 'object' ? arquivo.pasta || arquivo.diretorio || arquivo.local : '';
+  const ehCaminhoLocal =
+    !localInformado &&
+    !/^https?:\/\//i.test(caminhoSemQuery) &&
+    /^([a-zA-Z]:[\\/]|\/)/.test(caminhoSemQuery);
+  let diretorio = '';
 
-  return { nome, url: possuiLinkSeguro ? url : '' };
+  if (ehCaminhoLocal) {
+    const segmentosCaminho = caminhoSemQuery.split(/[\\/]/).filter(Boolean);
+    segmentosCaminho.pop();
+    const separador = caminhoSemQuery.includes('\\') ? '\\' : '/';
+    diretorio = (caminhoSemQuery.startsWith('/') ? '/' : '') + segmentosCaminho.join(separador);
+  }
+
+  return {
+    nome,
+    url: possuiLinkSeguro ? url : '',
+    local: String(localInformado || diretorio || ''),
+  };
+}
+
+function obterProximaEtapaPendente(etapas, indiceAtual) {
+  for (let indice = indiceAtual + 1; indice < etapas.length; indice += 1) {
+    if (!etapaConcluida(etapas[indice])) {
+      return obterTituloEtapa(etapas[indice], indice);
+    }
+  }
+
+  return null;
 }
 
 function obterResumoEtapas(processo) {
@@ -423,7 +507,13 @@ function classeBadgeStatus(status) {
 }
 
 function tituloProcesso(processo, index) {
-  return processo?.titulo || processo?.nome || processo?.descricao || `Processo ${index + 1}`;
+  return (
+    processo?.titulo ||
+    processo?.nome_empresa ||
+    processo?.nome ||
+    processo?.descricao ||
+    `Processo ${index + 1}`
+  );
 }
 
 function calcularTotalProcessos(payload, processos) {
@@ -543,54 +633,23 @@ function extrairEtapaAtualizada(payload) {
   );
 }
 
-function extrairProcessoAtualizado(payload) {
-  if (!payload || typeof payload !== 'object') {
-    return null;
-  }
-
-  if (payload.processo && typeof payload.processo === 'object') {
-    return payload.processo;
-  }
-
-  if (payload.data && typeof payload.data === 'object') {
-    if (payload.data.processo && typeof payload.data.processo === 'object') {
-      return payload.data.processo;
-    }
-
-    if (
-      payload.data.id ||
-      payload.data.status ||
-      payload.data.situacao ||
-      Array.isArray(payload.data.etapas) ||
-      Array.isArray(payload.data.checklist)
-    ) {
-      return payload.data;
-    }
-  }
-
-  if (payload.id || payload.status || payload.situacao || Array.isArray(payload.etapas)) {
-    return payload;
-  }
-
-  return null;
-}
-
-function atualizarProcessoNaLista(lista, processoId, processoAtualizado) {
-  return lista.map((processo) => {
-    if (String(obterIdProcesso(processo)) !== String(processoId)) {
-      return processo;
-    }
-
-    return {
-      ...processo,
-      ...processoAtualizado,
-    };
-  });
+function mesclarRespostaEtapaManual(etapaAtual, etapaAtualizada) {
+  return {
+    ...etapaAtual,
+    concluida: etapaAtualizada.concluida ?? etapaAtual.concluida,
+    concluida_em: Object.prototype.hasOwnProperty.call(etapaAtualizada, 'concluida_em')
+      ? etapaAtualizada.concluida_em
+      : etapaAtual.concluida_em,
+    status: etapaAtualizada.status || etapaAtual.status,
+  };
 }
 
 const PERFIS_PODEM_MARCAR_ETAPA = new Set(['funcionario', 'admin_cliente', 'admin_efficience']);
 const PERFIL_PODE_CRIAR_PROCESSO = 'admin_cliente';
 const INTERVALO_POLLING_ETAPAS_MS = 3000;
+// BUG-ABERT-01 (#487): se o agente ficar desligado/travado, sem isso a etapa
+// automatizada fica em "Processando..." pra sempre e sem nenhum jeito de tentar de novo.
+const TIMEOUT_ETAPA_PROCESSANDO_MS = 90 * 1000;
 const STATUS_OPCOES = [
   { value: '', label: 'Todos' },
   { value: 'em_andamento', label: 'Em andamento' },
@@ -767,10 +826,23 @@ function FormularioContratoSocial({
   );
 }
 
+function obterRotuloAcaoEtapa(acao) {
+  if (acao === 'gerar_contrato_social') {
+    return 'Gerar contrato social';
+  }
+
+  if (acao === 'criar_pastas') {
+    return 'Criar pastas';
+  }
+
+  return 'Executar';
+}
+
 function EtapaAutomatizada({
   acao,
   bloqueada,
   concluida,
+  dependenciaPendente,
   enviando,
   erro,
   formulario,
@@ -778,6 +850,7 @@ function EtapaAutomatizada({
   processando,
   titulo,
   arquivo,
+  proximaEtapa,
   onAdicionarSocio,
   onAlterarCampo,
   onAlterarSocio,
@@ -807,21 +880,35 @@ function EtapaAutomatizada({
 
         {arquivo ? (
           <div className="ml-8 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-            <span className="font-medium">Arquivo gerado: </span>
-            {arquivo.url ? (
-              <a
-                href={arquivo.url}
-                target="_blank"
-                rel="noreferrer"
-                className="underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700"
-              >
-                {arquivo.nome}
-              </a>
-            ) : (
-              <span>{arquivo.nome}</span>
-            )}
+            <p>
+              <span className="font-medium">Arquivo gerado: </span>
+              {arquivo.url ? (
+                <a
+                  href={arquivo.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700"
+                >
+                  {arquivo.nome}
+                </a>
+              ) : (
+                <span>{arquivo.nome}</span>
+              )}
+            </p>
+            {arquivo.local ? (
+              <p className="mt-1 text-xs text-emerald-800">
+                <span className="font-medium">Salvo em: </span>
+                {arquivo.local}
+              </p>
+            ) : null}
           </div>
         ) : null}
+
+        <p className="ml-8 text-xs text-zinc-600">
+          {proximaEtapa
+            ? `Próximo passo: ${proximaEtapa}.`
+            : 'Todas as etapas deste processo foram concluídas.'}
+        </p>
       </div>
     );
   }
@@ -870,8 +957,16 @@ function EtapaAutomatizada({
               : 'Confirme para o agente criar a estrutura padrão de pastas.'}
           </p>
         </div>
-        <span className="text-xs font-medium text-amber-700">Pendente</span>
+        <span className="text-xs font-medium text-amber-700">
+          {dependenciaPendente ? 'Bloqueada' : 'Pendente'}
+        </span>
       </div>
+
+      {dependenciaPendente ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Disponível apenas após concluir a etapa &quot;{dependenciaPendente}&quot;.
+        </p>
+      ) : null}
 
       {erro ? (
         <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -901,7 +996,7 @@ function EtapaAutomatizada({
           disabled={bloqueada}
           className="inline-flex items-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Concluir
+          {obterRotuloAcaoEtapa(acao)}
         </button>
       </div>
     </form>
@@ -925,6 +1020,8 @@ export default function ProcessosPage() {
   const [etapasEmExecucao, setEtapasEmExecucao] = useState({});
   const [errosExecucaoEtapa, setErrosExecucaoEtapa] = useState({});
   const [formulariosEtapa, setFormulariosEtapa] = useState({});
+  const [etapasProcessandoDesde, setEtapasProcessandoDesde] = useState({});
+  const etapasExpirandoRef = useRef(new Set());
 
   const [isNovoModalAberto, setIsNovoModalAberto] = useState(false);
   const [novoTipoProcesso, setNovoTipoProcesso] = useState(TIPOS_PADRAO[0]);
@@ -988,6 +1085,92 @@ export default function ProcessosPage() {
       ),
     [processos],
   );
+
+  // Marca desde quando cada etapa está esperando o agente — usa o timestamp do
+  // servidor quando ele existe (etapa já reivindicada) e cai pro relógio local só
+  // pra etapa "pronta_para_execucao" que ainda não foi reivindicada (o servidor não
+  // guarda esse instante). Sem isso não dá pra saber quando os 90s do timeout passaram.
+  useEffect(() => {
+    setEtapasProcessandoDesde((valorAtual) => {
+      const chavesAtivas = new Set();
+      let alterado = false;
+      const proximo = { ...valorAtual };
+
+      processos.forEach((processo, processoIndex) => {
+        obterEtapas(processo).forEach((etapa, etapaIndex) => {
+          if (!etapaEmProcessamento(etapa)) {
+            return;
+          }
+
+          const chave = obterChaveEtapa(processo, processoIndex, etapa, etapaIndex);
+          chavesAtivas.add(chave);
+
+          const inicioServidor = obterInicioProcessamentoServidor(etapa);
+          if (inicioServidor) {
+            if (proximo[chave] !== inicioServidor) {
+              proximo[chave] = inicioServidor;
+              alterado = true;
+            }
+          } else if (!proximo[chave]) {
+            proximo[chave] = Date.now();
+            alterado = true;
+          }
+        });
+      });
+
+      Object.keys(proximo).forEach((chave) => {
+        if (!chavesAtivas.has(chave)) {
+          delete proximo[chave];
+          alterado = true;
+        }
+      });
+
+      return alterado ? proximo : valorAtual;
+    });
+  }, [processos]);
+
+  // Quando uma etapa passa de 90s esperando o agente, reporta o timeout pro backend
+  // (mesmo caminho que o agente usa ao reportar falha) em vez de deixar a UI travada
+  // em "Processando..." pra sempre — a etapa volta com erro_execucao preenchido e o
+  // formulário de execução reaparece pronto pra nova tentativa.
+  useEffect(() => {
+    processos.forEach((processo, processoIndex) => {
+      obterEtapas(processo).forEach((etapa, etapaIndex) => {
+        if (!etapaEmProcessamento(etapa)) {
+          return;
+        }
+
+        const chave = obterChaveEtapa(processo, processoIndex, etapa, etapaIndex);
+        const inicio = obterInicioProcessamentoServidor(etapa) ?? etapasProcessandoDesde[chave];
+
+        if (!inicio || Date.now() - inicio < TIMEOUT_ETAPA_PROCESSANDO_MS) {
+          return;
+        }
+
+        if (etapasExpirandoRef.current.has(chave)) {
+          return;
+        }
+
+        const processoId = obterIdProcesso(processo);
+        const etapaId = obterIdEtapa(etapa);
+        if (!processoId || !etapaId) {
+          return;
+        }
+
+        const clienteId = processo?.cliente_id || processo?.clienteId;
+        const dados = perfilUsuario === 'admin_efficience' && clienteId ? { cliente_id: clienteId } : {};
+
+        etapasExpirandoRef.current.add(chave);
+
+        expirarExecucaoEtapa(processoId, etapaId, dados)
+          .catch(() => {})
+          .finally(() => {
+            etapasExpirandoRef.current.delete(chave);
+            carregarProcessos({ silencioso: true, reportarErro: false });
+          });
+      });
+    });
+  }, [processos, etapasProcessandoDesde, perfilUsuario, carregarProcessos]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -1146,11 +1329,13 @@ export default function ProcessosPage() {
 
     try {
       const retorno = await concluirEtapa(processoId, etapaId, { concluida });
-      const processoAtualizado = extrairProcessoAtualizado(retorno);
+      const etapaAtualizada = extrairEtapaAtualizada(retorno);
 
-      if (processoAtualizado) {
+      if (etapaAtualizada) {
         setProcessos((valorAtual) =>
-          atualizarProcessoNaLista(valorAtual, processoId, processoAtualizado),
+          atualizarEtapaNaLista(valorAtual, processoId, etapaId, (etapaAtual) =>
+            mesclarRespostaEtapaManual(etapaAtual, etapaAtualizada),
+          ),
         );
       }
 
@@ -1581,12 +1766,16 @@ export default function ProcessosPage() {
                             : null;
                           const erroEtapa =
                             errosExecucaoEtapa[chaveEtapa] || obterErroExecucaoEtapa(etapa);
+                          const dependenciaPendente = automatizada
+                            ? obterDependenciaPendente(etapa, etapas)
+                            : '';
                           const bloqueado =
                             !podeMarcarEtapa ||
                             !processoId ||
                             !etapaId ||
                             atualizandoEtapa ||
-                            enviandoEtapa;
+                            enviandoEtapa ||
+                            Boolean(dependenciaPendente);
                           const idBase = `etapa-${String(etapaId || etapaIndex).replace(
                             /[^a-zA-Z0-9_-]/g,
                             '-',
@@ -1608,12 +1797,16 @@ export default function ProcessosPage() {
                                   arquivo={obterArquivoGerado(etapa)}
                                   bloqueada={bloqueado}
                                   concluida={concluida}
+                                  dependenciaPendente={dependenciaPendente}
                                   enviando={enviandoEtapa}
                                   erro={erroEtapa}
                                   formulario={formulario}
                                   idBase={idBase}
                                   processando={etapaEmProcessamento(etapa)}
                                   titulo={tituloEtapa}
+                                  proximaEtapa={
+                                    concluida ? obterProximaEtapaPendente(etapas, etapaIndex) : null
+                                  }
                                   onAdicionarSocio={() =>
                                     adicionarSocioFormulario(chaveEtapa, etapa, processo)
                                   }

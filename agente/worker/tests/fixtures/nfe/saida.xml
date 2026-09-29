@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+<NFe>
   <infNFe Id="NFe35260712345678000199550010000000021000000022" versao="4.00">
     <ide>
       <tpNF>1</tpNF>
@@ -21,3 +22,9 @@
     </total>
   </infNFe>
 </NFe>
+<protNFe>
+  <infProt>
+    <cStat>100</cStat>
+  </infProt>
+</protNFe>
+</nfeProc>

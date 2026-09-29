@@ -1,37 +1,17 @@
-"""Consome o canal de etapas automatizadas (#266 / #262)."""
+"""Consome o canal de etapas automatizadas (#266 / #262).
+
+Eventos de log (painel Logs) são persistidos pelo backend em
+concluir-execucao — não há segundo POST /eventos aqui (#489).
+"""
 
 from __future__ import annotations
 
 import os
 
 from comunicacao.etapas_agente import concluir_execucao, listar_etapas_prontas
-from comunicacao.reportar_evento import reportar_evento
 from automacoes.gerar_contrato_social import gerar_contrato_social
-from core.estrutura_pastas import criar_estrutura_empresa_em
+from core.estrutura_pastas import criar_estrutura_empresa_em, pasta_empresa_em_abertura
 from core.utils import resolver_pasta_base, validar_nome
-
-
-def _nome_empresa_evento(etapa):
-    nome = etapa.get("nome_empresa")
-    if isinstance(nome, str) and nome.strip():
-        return nome.strip()
-    return "empresa"
-
-
-def _mensagem_evento(etapa, resultado):
-    acao = etapa.get("acao") or "desconhecida"
-    nome_empresa = _nome_empresa_evento(etapa)
-    sucesso = bool(resultado.get("sucesso"))
-
-    if not sucesso:
-        erro = resultado.get("erro") or "erro desconhecido"
-        return f"Falha ao processar etapa {acao} ({nome_empresa}): {erro}"
-
-    if acao == "criar_pastas":
-        return f"Estrutura de pastas criada para {nome_empresa}"
-    if acao == "gerar_contrato_social":
-        return f"Contrato social gerado para {nome_empresa}"
-    return f"Etapa {acao} concluída para {nome_empresa}"
 
 
 def _criar_pastas(etapa):
@@ -55,7 +35,7 @@ def _criar_pastas(etapa):
     except ValueError as e:
         return {"sucesso": False, "erro": str(e), "arquivo_gerado": None}
 
-    pasta_empresa = os.path.join(pasta_base, nome_empresa)
+    pasta_empresa = pasta_empresa_em_abertura(pasta_base, nome_empresa)
     try:
         criar_estrutura_empresa_em(pasta_empresa)
     except PermissionError:
@@ -125,15 +105,6 @@ def processar_etapa(etapa):
             "arquivo_gerado": None,
         }
     _reportar(etapa, resultado)
-
-    try:
-        reportar_evento(
-            _mensagem_evento(etapa, resultado),
-            bool(resultado.get("sucesso")),
-        )
-    except Exception as e:
-        print(f"[executar_etapas] Falha ao reportar evento: {e}")
-
     return resultado
 
 

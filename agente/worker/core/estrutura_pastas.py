@@ -26,9 +26,18 @@ TIPO_PARA_SUBPASTA = {
     "recibo": "Declaracoes",
 }
 
-SUBPASTAS_COM_MES = frozenset({"Folha", "Declaracoes", "Notas Fiscais"})
+SUBPASTAS_COM_MES = frozenset({"Folha", "Declaracoes", "Notas Fiscais", "Comprovantes"})
 
 PASTA_NAO_CLASSIFICADO = "NAO_CLASSIFICADO"
+
+# Destino canônico de empresas em abertura (#490): {PASTA_BASE}/CLIENTES/EM_ABERTURA/{empresa}.
+# Ao obter o CNPJ a pasta migra para CLIENTES/ATIVO (fora do escopo da #490).
+PASTA_CLIENTES = "CLIENTES"
+PASTA_EM_ABERTURA = "EM_ABERTURA"
+
+
+def pasta_empresa_em_abertura(pasta_base, nome_empresa):
+    return os.path.join(pasta_base, PASTA_CLIENTES, PASTA_EM_ABERTURA, nome_empresa)
 
 
 def criar_estrutura_empresa_em(pasta_empresa):

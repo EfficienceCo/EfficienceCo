@@ -28,12 +28,21 @@ function montarRespostaLicenca(licenca, clienteId) {
   };
 }
 
+function montarRespostaSemLicenca(clienteId) {
+  return {
+    ativa: false,
+    validade: null,
+    clienteId,
+    status: "unlicensed",
+  };
+}
+
 async function consultarLicencaPorClienteId(clienteId) {
   return supabase
     .from("licencas")
     .select("cliente_id, ativa, validade")
     .eq("cliente_id", clienteId)
-    .single();
+    .maybeSingle();
 }
 
 async function consultarLicencaPorToken(token) {
@@ -54,8 +63,13 @@ export async function buscarLicencaCliente(req, res) {
 
   const { data, error } = await consultarLicencaPorClienteId(clienteId);
 
-  if (error || !data) {
-    return res.status(404).json({ erro: "Licenca nao encontrada" });
+  if (error) {
+    console.error("[licenca.controller] Erro ao consultar licença:", error.message);
+    return res.status(500).json({ ativa: false, erro: "Erro ao consultar licença" });
+  }
+
+  if (!data) {
+    return res.status(200).json(montarRespostaSemLicenca(clienteId));
   }
 
   return res.status(200).json(montarRespostaLicenca(data, clienteId));
@@ -76,10 +90,16 @@ export async function validarLicenca(req, res) {
 
     const { data, error } = await consultarLicencaPorClienteId(usuario.cliente_id);
 
-    if (error || !data) {
-      return res
-        .status(404)
-        .json({ ativa: false, erro: "Licenca nao encontrada" });
+    if (error) {
+      console.error("[licenca.controller] Erro ao consultar licença:", error.message);
+      return res.status(500).json({ ativa: false, erro: "Erro ao consultar licença" });
+    }
+
+    if (!data) {
+      // Ausência de licença é um estado válido do tenant, não um recurso HTTP
+      // inexistente. Em next dev, remontagens/HMR variavam quando o widget fazia
+      // esta consulta e davam aparência intermitente ao antigo 404.
+      return res.status(200).json(montarRespostaSemLicenca(usuario.cliente_id));
     }
 
     return res

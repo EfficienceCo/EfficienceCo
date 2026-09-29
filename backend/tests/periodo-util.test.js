@@ -1,6 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { aplicarFiltroPeriodo } from "../src/utils/periodo.util.js";
+import {
+  aplicarFiltroPeriodo,
+  competenciaEstaFechada,
+  erroPeriodoConsulta,
+  hojeNoBrasil,
+  ultimaCompetenciaFechada,
+} from "../src/utils/periodo.util.js";
 
 function criarQueryFake() {
   const chamadas = [];
@@ -104,5 +110,75 @@ describe("aplicarFiltroPeriodo", () => {
 
     assert.doesNotThrow(() => aplicarFiltroPeriodo(query, "data_emissao", "7", "2026xyz"));
     assert.deepEqual(chamadas, []);
+  });
+});
+
+describe("erroPeriodoConsulta", () => {
+  it("aceita ausência total, só ano e mês+ano válidos", () => {
+    assert.equal(erroPeriodoConsulta(undefined, undefined), null);
+    assert.equal(erroPeriodoConsulta("", "2026"), null);
+    assert.equal(erroPeriodoConsulta(undefined, 2026), null);
+    assert.equal(erroPeriodoConsulta("9", "2026"), null);
+    assert.equal(erroPeriodoConsulta(1, 2026), null);
+    assert.equal(erroPeriodoConsulta(12, "2026"), null);
+  });
+
+  it("rejeita mês fora de 1–12, decimal ou não numérico", () => {
+    assert.match(erroPeriodoConsulta(13, 2026), /mes/);
+    assert.match(erroPeriodoConsulta(0, 2026), /mes/);
+    assert.match(erroPeriodoConsulta("9.5", 2026), /mes/);
+    assert.match(erroPeriodoConsulta("abc", 2026), /mes/);
+  });
+
+  it("rejeita mês sem ano", () => {
+    assert.match(erroPeriodoConsulta(9, undefined), /ano/);
+    assert.match(erroPeriodoConsulta("9", ""), /ano/);
+  });
+
+  it("rejeita ano inválido", () => {
+    assert.match(erroPeriodoConsulta(undefined, "abc"), /ano/);
+    assert.match(erroPeriodoConsulta("7", "2026xyz"), /ano/);
+  });
+});
+
+describe("hojeNoBrasil", () => {
+  it("usa o dia do Brasil, não o do UTC, depois das 21:00 (BRT)", () => {
+    assert.equal(hojeNoBrasil(new Date("2026-09-30T23:30:00-03:00")), "2026-09-30");
+    assert.equal(hojeNoBrasil(new Date("2026-10-01T00:30:00-03:00")), "2026-10-01");
+  });
+});
+
+describe("ultimaCompetenciaFechada", () => {
+  it("devolve o mês anterior ao corrente", () => {
+    assert.deepEqual(ultimaCompetenciaFechada(new Date("2026-09-19T12:00:00-03:00")), { ano: 2026, mes: 8 });
+  });
+
+  it("vira o ano quando o mês corrente é janeiro", () => {
+    assert.deepEqual(ultimaCompetenciaFechada(new Date("2027-01-05T12:00:00-03:00")), { ano: 2026, mes: 12 });
+  });
+
+  it("no último dia do mês, o mês ainda não fechou mesmo já sendo dia 1º em UTC", () => {
+    // 30/09 23:30 BRT = 01/10 02:30 UTC. Com toISOString() a última fechada
+    // seria setembro, liberando a apuração três horas antes do mês fechar.
+    assert.deepEqual(ultimaCompetenciaFechada(new Date("2026-09-30T23:30:00-03:00")), { ano: 2026, mes: 8 });
+  });
+});
+
+describe("competenciaEstaFechada", () => {
+  const agora = new Date("2026-09-19T12:00:00-03:00");
+
+  it("aceita a última competência fechada e as anteriores", () => {
+    assert.equal(competenciaEstaFechada(2026, 8, agora), true);
+    assert.equal(competenciaEstaFechada(2026, 1, agora), true);
+    assert.equal(competenciaEstaFechada(2020, 12, agora), true);
+  });
+
+  it("recusa o mês corrente, ainda em aberto", () => {
+    assert.equal(competenciaEstaFechada(2026, 9, agora), false);
+  });
+
+  it("recusa competência futura, no mesmo ano ou à frente", () => {
+    assert.equal(competenciaEstaFechada(2026, 12, agora), false);
+    assert.equal(competenciaEstaFechada(2027, 6, agora), false);
   });
 });

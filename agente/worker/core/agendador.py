@@ -5,7 +5,7 @@ import schedule
 from comunicacao.fila_eventos import reenviar_fila, INTERVALO_RETRY_MINUTOS
 from core.configuracao import gerenciar_configuracoes, extrair_pastas, verificar_atualizacao, INTERVALO_POLLING_SEGUNDOS
 from core.licenca import validar_licenca
-from automacoes.monitorar_pasta import iniciar_monitoramento
+from automacoes.monitorar_pasta import iniciar_monitoramento, aplicar_regras_no_monitor
 from automacoes.gerar_relatorio import gerar_relatorio
 from automacoes.executar_etapas import processar_etapas_pendentes
 
@@ -13,10 +13,12 @@ INTERVALO_LICENCA_HORAS = 24
 HORARIO_RELATORIO = "18:00"
 INTERVALO_POLLING_ETAPAS_SEGUNDOS = INTERVALO_POLLING_SEGUNDOS
 
+
 def _retry_fila():
     while True:
         time.sleep(INTERVALO_RETRY_MINUTOS * 60)
         reenviar_fila()
+
 
 def _revalidar_licenca():
     while True:
@@ -27,10 +29,20 @@ def _revalidar_licenca():
             os._exit(1)
         print("[agendador] Licença revalidada.")
 
+
 def _polling_regras():
+    pendentes = None
     while True:
         time.sleep(INTERVALO_POLLING_SEGUNDOS)
-        verificar_atualizacao()
+        try:
+            regras = verificar_atualizacao()
+            if regras is not None:
+                pendentes = regras
+            if pendentes is not None and aplicar_regras_no_monitor(pendentes):
+                pendentes = None
+        except Exception as e:
+            print(f"[agendador] Erro no polling de regras: {e}")
+
 
 def _polling_etapas():
     while True:
@@ -76,10 +88,12 @@ def _agendar_tarefas_diarias():
     schedule.every().day.at(HORARIO_RELATORIO).do(_gerar_relatorio_seguro)
     print(f"[agendador] Relatório agendado para {HORARIO_RELATORIO}")
 
+
 def _loop_schedule():
     while True:
         schedule.run_pending()
         time.sleep(30)
+
 
 def _criar_pastas_regras(regras):
     pastas = set()
@@ -88,7 +102,7 @@ def _criar_pastas_regras(regras):
             pastas.add(regra["pasta_origem"])
         if regra.get("pasta_destino"):
             pastas.add(regra["pasta_destino"])
-    
+
     for pasta in pastas:
         try:
             if not os.path.exists(pasta):
@@ -98,6 +112,7 @@ def _criar_pastas_regras(regras):
             print(f"[agendador] Sem permissão para criar: {pasta}")
         except Exception as e:
             print(f"[agendador] Erro ao criar {pasta}: {e}")
+
 
 def iniciar_agendador():
     regras = gerenciar_configuracoes()

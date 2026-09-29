@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
-import { gerarRelatorioConciliacaoPDF } from "../services/conciliacao-relatorio.service.js";
+import { ehUuid } from "../utils/uuid.util.js";
+import { gerarRelatorioConciliacaoPDF, montarConteudoRelatorio } from "../services/conciliacao-relatorio.service.js";
 
 function sanitizarNomeArquivo(nome) {
   return nome
@@ -19,6 +21,18 @@ const STATUS_EXTRATO = {
   PROCESSADO: "processado",
   ERRO: "erro",
 };
+
+const CONSTRAINT_HASH_ARQUIVO = "uq_extratos_bancarios_cliente_arquivo_hash";
+
+function erroDeArquivoDuplicado(erro) {
+  if (erro?.code !== "23505") {
+    return false;
+  }
+
+  return [erro.constraint, erro.message, erro.details, erro.hint]
+    .filter(Boolean)
+    .some((valor) => String(valor).includes(CONSTRAINT_HASH_ARQUIVO));
+}
 
 function periodoAtual() {
   const agora = new Date();
@@ -44,6 +58,8 @@ export async function criarConciliacaoExtrato(req, res) {
     return res.status(400).json({ erro: "Arquivo OFX é obrigatório (campo 'arquivo')" });
   }
 
+  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
+
   const periodoInformado = periodoDoBody(req.body);
 
   // Registro criado antes do parsing para que uma falha de parsing tenha
@@ -58,12 +74,17 @@ export async function criarConciliacaoExtrato(req, res) {
       mes: periodoInformado?.mes ?? periodoAtual().mes,
       ano: periodoInformado?.ano ?? periodoAtual().ano,
       arquivo_nome: req.file.originalname,
+      arquivo_hash: arquivoHash,
       status: STATUS_EXTRATO.AGUARDANDO,
     })
     .select()
     .single();
 
   if (erroInsercao) {
+    if (erroDeArquivoDuplicado(erroInsercao)) {
+      return res.status(409).json({ erro: "Este arquivo OFX já foi importado para este cliente" });
+    }
+
     console.error("[conciliacoes.controller] Erro ao criar registro de extrato:", erroInsercao.message);
     return res.status(500).json({ erro: "Erro ao registrar extrato bancário" });
   }
@@ -75,7 +96,7 @@ export async function criarConciliacaoExtrato(req, res) {
     console.error("[conciliacoes.controller] Erro ao parsear OFX:", erroParsing.message);
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(422).json({
       erro: "Arquivo OFX inválido ou malformado",
@@ -99,7 +120,7 @@ export async function criarConciliacaoExtrato(req, res) {
     console.error("[conciliacoes.controller] Erro ao inserir transações:", erroTransacoes.message);
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(500).json({ erro: "Erro ao salvar transações do extrato" });
   }
@@ -125,7 +146,7 @@ export async function criarConciliacaoExtrato(req, res) {
     // o extrato preso em 'aguardando' com dados órfãos e sem sinalização.
     await supabase
       .from("extratos_bancarios")
-      .update({ status: STATUS_EXTRATO.ERRO })
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
     return res.status(500).json({
       erro: "Erro ao finalizar processamento do extrato",
@@ -162,12 +183,9 @@ export async function listarTransacoesExtrato(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar extrato bancário" });
   }
 
-  if (!extrato) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!extrato || extrato.cliente_id !== clienteId) {
     return res.status(404).json({ erro: "Extrato bancário não encontrado" });
-  }
-
-  if (extrato.cliente_id !== clienteId) {
-    return res.status(403).json({ erro: "Sem permissão para acessar este extrato" });
   }
 
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
@@ -186,6 +204,93 @@ export async function listarTransacoesExtrato(req, res) {
   }
 
   return res.status(200).json({ data, total: count, limit, offset });
+}
+
+// Recupera o extrato processado mais recente do cliente/período que ainda não
+// foi usado para iniciar uma conciliação em andamento — permite à tela de
+// conciliação restaurar "N transações importadas" e o botão "Nova conciliação"
+// após F5, troca de mês/ano ou volta da revisão, sem depender apenas do estado
+// em memória do componente (ver comentário removido em conciliacao/page.jsx).
+export async function buscarExtratoAtual(req, res) {
+  const clienteId = resolverClienteId(req);
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const mes = Number(req.query.mes);
+  const ano = Number(req.query.ano);
+  if (!Number.isInteger(mes) || mes < 1 || mes > 12 || !Number.isInteger(ano) || ano <= 0) {
+    return res.status(400).json({ erro: "mes e ano são obrigatórios e devem ser válidos" });
+  }
+
+  const { data: extratos, error: erroExtrato } = await supabase
+    .from("extratos_bancarios")
+    .select("id, banco, conta, criado_em")
+    .eq("cliente_id", clienteId)
+    .eq("mes", mes)
+    .eq("ano", ano)
+    .eq("status", STATUS_EXTRATO.PROCESSADO)
+    .order("criado_em", { ascending: false })
+    .limit(1);
+
+  if (erroExtrato) {
+    console.error("[conciliacoes.controller] Erro ao buscar extrato do período:", erroExtrato.message);
+    return res.status(500).json({ erro: "Erro ao buscar extrato bancário do período" });
+  }
+
+  const extrato = extratos?.[0];
+  if (!extrato) {
+    return res.status(200).json({ extrato: null });
+  }
+
+  // Extrato já usado para iniciar uma conciliação (em andamento OU concluída):
+  // essa sessão já aparece em "Sessões de Conciliação" — não reexibe no painel
+  // de upload nem reabilita "Nova conciliação", pra não permitir iniciar uma
+  // segunda sessão pro mesmo extrato (criarConciliacao já bloqueia isso com
+  // 409, mas evita o usuário nem precisar esbarrar no erro). Considerar só
+  // 'em_andamento' aqui deixava o painel voltar a aparecer depois que a
+  // conciliação era concluída (extratos_bancarios.status não muda ao
+  // concluir), reabrindo a porta pra reprocessar as mesmas transações.
+  const { data: conciliacoesExistentes, error: erroConciliacao } = await supabase
+    .from("conciliacoes")
+    .select("id")
+    .eq("extrato_id", extrato.id)
+    .limit(1);
+
+  if (erroConciliacao) {
+    console.error(
+      "[conciliacoes.controller] Erro ao verificar conciliação existente do extrato:",
+      erroConciliacao.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar extrato bancário do período" });
+  }
+
+  if (conciliacoesExistentes?.length) {
+    return res.status(200).json({ extrato: null });
+  }
+
+  const { data: transacoes, error: erroTransacoes } = await supabase
+    .from("transacoes_extrato")
+    .select("id")
+    .eq("extrato_id", extrato.id);
+
+  if (erroTransacoes) {
+    console.error(
+      "[conciliacoes.controller] Erro ao contar transações do extrato:",
+      erroTransacoes.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar extrato bancário do período" });
+  }
+
+  return res.status(200).json({
+    extrato: {
+      extrato_id: extrato.id,
+      banco: extrato.banco,
+      conta: extrato.conta,
+      total_transacoes: transacoes?.length ?? 0,
+      enviado_em: extrato.criado_em,
+    },
+  });
 }
 
 function periodoObrigatorioDoBody(body) {
@@ -208,6 +313,10 @@ export async function criarConciliacao(req, res) {
     return res.status(400).json({ erro: "extrato_id é obrigatório" });
   }
 
+  if (!ehUuid(extratoId)) {
+    return res.status(400).json({ erro: "extrato_id deve ser um UUID válido" });
+  }
+
   const periodo = periodoDoBody(req.body);
   if (!periodo) {
     return res.status(400).json({ erro: "mes e ano são obrigatórios e devem ser válidos" });
@@ -225,12 +334,9 @@ export async function criarConciliacao(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar extrato bancário" });
   }
 
-  if (!extrato) {
+  // Isolamento multi-tenant: 404 nunca 403
+  if (!extrato || extrato.cliente_id !== clienteId) {
     return res.status(404).json({ erro: "Extrato bancário não encontrado" });
-  }
-
-  if (extrato.cliente_id !== clienteId) {
-    return res.status(403).json({ erro: "Sem permissão para acessar este extrato" });
   }
 
   if (extrato.status !== STATUS_EXTRATO.PROCESSADO) {
@@ -243,29 +349,36 @@ export async function criarConciliacao(req, res) {
     });
   }
 
-  const { data: conciliacaoEmAndamento, error: erroConciliacaoEmAndamento } = await supabase
+  // Bloqueia por QUALQUER conciliação já associada ao extrato — em_andamento
+  // (evita duas sessões concorrentes) ou concluida (evita reprocessar via
+  // executarMatching as mesmas transacoes_extrato já conciliadas e duplicar
+  // pares/totais; extratos_bancarios.status não muda ao concluir, então só
+  // filtrar por 'em_andamento' deixava essa segunda sessão passar).
+  const { data: conciliacoesExistentes, error: erroConciliacoesExistentes } = await supabase
     .from("conciliacoes")
     .select("id")
     .eq("extrato_id", extratoId)
-    .eq("status", "em_andamento")
-    .maybeSingle();
+    .limit(1);
 
-  if (erroConciliacaoEmAndamento) {
+  if (erroConciliacoesExistentes) {
     console.error(
-      "[conciliacoes.controller] Erro ao verificar conciliação em andamento:",
-      erroConciliacaoEmAndamento.message,
+      "[conciliacoes.controller] Erro ao verificar conciliações existentes:",
+      erroConciliacoesExistentes.message,
     );
     return res.status(500).json({ erro: "Erro ao verificar conciliações existentes" });
   }
 
-  if (conciliacaoEmAndamento) {
-    return res.status(409).json({ erro: "Já existe uma conciliação em andamento para este extrato" });
+  if (conciliacoesExistentes?.length) {
+    return res.status(409).json({ erro: "Este extrato já tem uma conciliação associada (em andamento ou concluída)" });
   }
 
+  // Itens já conciliados (conciliado=true, marcados em concluirConciliacao)
+  // ficam fora do matching — senão seriam casados de novo em outra conciliação.
   const { data: transacoes, error: erroTransacoes } = await supabase
     .from("transacoes_extrato")
     .select("*")
-    .eq("extrato_id", extratoId);
+    .eq("extrato_id", extratoId)
+    .eq("conciliado", false);
 
   if (erroTransacoes) {
     console.error("[conciliacoes.controller] Erro ao buscar transações do extrato:", erroTransacoes.message);
@@ -273,7 +386,11 @@ export async function criarConciliacao(req, res) {
   }
 
   const { data: lancamentos, error: erroLancamentos } = await aplicarFiltroPeriodo(
-    supabase.from("lancamentos_contabeis").select("*").eq("cliente_id", clienteId),
+    supabase
+      .from("lancamentos_contabeis")
+      .select("*")
+      .eq("cliente_id", clienteId)
+      .eq("conciliado", false),
     "data_lancamento",
     mes,
     ano,
@@ -291,6 +408,10 @@ export async function criarConciliacao(req, res) {
   const totalAutomaticos = pares.filter((p) => p.confianca === "automatico").length;
   const totalProvaveis = pares.filter((p) => p.confianca === "provavel").length;
   const totalSemPar = pares.filter((p) => p.confianca === "sem_par").length;
+  // total_pendentes conta só TRANSAÇÕES ainda sem conciliação, para que
+  // total_conciliadas + total_pendentes = total_transacoes. Lançamentos internos
+  // sem transação não entram (senão "pendentes" mistura as duas origens).
+  const totalTransacoesSemPar = pares.filter((p) => p.confianca === "sem_par" && p.transacao_id).length;
 
   const { data: conciliacao, error: erroConciliacao } = await supabase
     .from("conciliacoes")
@@ -302,7 +423,7 @@ export async function criarConciliacao(req, res) {
       status: "em_andamento",
       total_transacoes: transacoesEncontradas.length,
       total_conciliadas: totalAutomaticos,
-      total_pendentes: totalProvaveis + totalSemPar,
+      total_pendentes: totalProvaveis + totalTransacoesSemPar,
     })
     .select()
     .single();
@@ -462,8 +583,13 @@ export async function buscarConciliacao(req, res) {
       transacao: par.transacao_id ? transacoesPorId[par.transacao_id] ?? null : null,
       lancamento: par.lancamento_id ? lancamentosPorId[par.lancamento_id] ?? null : null,
     };
+    // Confirmar um provável não muda a confianca — só seta confirmado_em. O
+    // cliente precisa do confirmado_em para distinguir pendente de já decidido
+    // ao recarregar a sessão (rejeitados já viram 'sem_par' no próprio registro).
     paresAgrupados[par.confianca].push(
-      par.confianca === "provavel" ? { ...base, confirmado_por: par.confirmado_por } : base,
+      par.confianca === "provavel"
+        ? { ...base, confirmado_por: par.confirmado_por, confirmado_em: par.confirmado_em }
+        : base,
     );
   }
 
@@ -621,6 +747,22 @@ export async function rejeitarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
+  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e
+  // outro só com o lançamento — no mesmo formato que o matching gera para sobras.
+  // Assim o lançamento continua visível em "Lançamentos sem transação" e no PDF.
+  const { data: parLancamento, error: erroInsertPar } = await supabase
+    .from("pares_conciliacao")
+    .insert({ conciliacao_id: id, transacao_id: null, lancamento_id: par.lancamento_id, confianca: "sem_par" })
+    .select("id")
+    .single();
+
+  if (erroInsertPar) {
+    console.error("[conciliacoes.controller] Erro ao separar lançamento do par rejeitado:", erroInsertPar.message);
+    return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
+  }
+
+  const desfazerInsert = () => supabase.from("pares_conciliacao").delete().eq("id", parLancamento.id);
+
   const { error: erroUpdatePar } = await supabase
     .from("pares_conciliacao")
     .update({ lancamento_id: null, confianca: "sem_par" })
@@ -628,10 +770,18 @@ export async function rejeitarPar(req, res) {
 
   if (erroUpdatePar) {
     console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroUpdatePar.message);
+    await desfazerInsert();
     return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
   }
 
-  return res.status(200).json({ id: pareId, confianca: "sem_par" });
+  // total_pendentes não muda: conta só transações (conciliadas + pendentes = total_transacoes,
+  // ver criarConciliacao) e a transação do par rejeitado continua pendente. O par novo é só de
+  // lançamento, fora dessa conta.
+  return res.status(200).json({
+    id: pareId,
+    confianca: "sem_par",
+    par_lancamento: { id: parLancamento.id, lancamento_id: par.lancamento_id, confianca: "sem_par" },
+  });
 }
 
 export async function concluirConciliacao(req, res) {
@@ -726,14 +876,6 @@ export async function concluirConciliacao(req, res) {
   });
 }
 
-// Par "conciliado" = automático ou provável já confirmado — mesmo critério usado em
-// concluirConciliacao para marcar conciliado=true. Como o relatório só existe para
-// sessões com status='concluida', todo par 'provavel' aqui já tem confirmado_em setado
-// (concluirConciliacao bloqueia com 409 se restar algum pendente).
-function parConciliado(par) {
-  return par.confianca === "automatico" || (par.confianca === "provavel" && par.confirmado_em);
-}
-
 export async function gerarRelatorioConciliacao(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -807,31 +949,7 @@ export async function gerarRelatorioConciliacao(req, res) {
   const transacoesPorId = Object.fromEntries((transacoesResultado.data ?? []).map((t) => [t.id, t]));
   const lancamentosPorId = Object.fromEntries((lancamentosResultado.data ?? []).map((l) => [l.id, l]));
 
-  const matches = [];
-  const semPar = [];
-  let valorTotalConciliado = 0;
-  for (const par of paresTodos) {
-    const transacao = par.transacao_id ? transacoesPorId[par.transacao_id] ?? null : null;
-    const lancamento = par.lancamento_id ? lancamentosPorId[par.lancamento_id] ?? null : null;
-    const valor = transacao?.valor ?? lancamento?.valor ?? 0;
-
-    if (parConciliado(par)) {
-      matches.push({
-        data: transacao?.data_lancamento ?? lancamento?.data_lancamento ?? null,
-        descricaoBanco: transacao?.descricao ?? null,
-        descricaoLancamento: lancamento?.descricao ?? null,
-        valor,
-      });
-      valorTotalConciliado += Number(valor);
-    } else {
-      semPar.push({
-        data: (transacao ?? lancamento)?.data_lancamento ?? null,
-        descricao: (transacao ?? lancamento)?.descricao ?? null,
-        valor,
-        origem: transacao ? "banco" : "lancamento_interno",
-      });
-    }
-  }
+  const { matches, semPar, totais } = montarConteudoRelatorio(paresTodos, transacoesPorId, lancamentosPorId);
 
   const nomeCliente = clienteResultado.data?.nome ?? "";
 
@@ -844,12 +962,7 @@ export async function gerarRelatorioConciliacao(req, res) {
       mes: conciliacao.mes,
       ano: conciliacao.ano,
       geradoEm: new Date(),
-      totais: {
-        totalTransacoes: conciliacao.total_transacoes,
-        totalConciliadas: conciliacao.total_conciliadas,
-        totalPendentes: conciliacao.total_pendentes,
-        valorTotalConciliado,
-      },
+      totais,
       matches,
       semPar,
     });

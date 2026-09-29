@@ -11,12 +11,14 @@ const STATUS_LABELS = {
   active: 'Ativa',
   expired: 'Expirada',
   suspended: 'Inativa',
+  unlicensed: 'Sem licença',
 };
 
 const STATUS_BADGE_STYLES = {
   active: 'bg-amber-100 text-amber-800',
   expired: 'bg-rose-100 text-rose-700',
   suspended: 'bg-zinc-200 text-zinc-800',
+  unlicensed: 'bg-zinc-200 text-zinc-800',
 };
 
 const LINK_STYLES = {
@@ -218,11 +220,18 @@ export default function StatusLicenca({ detalhesHref = '/admin/licencas' }) {
   const badgeStyle = STATUS_BADGE_STYLES[statusEfetivo] || 'bg-zinc-200 text-zinc-800';
   const badgeLabel = STATUS_LABELS[statusEfetivo] || 'Desconhecido';
   const isExpired = statusEfetivo === 'expired';
+  const isUnlicensed = statusEfetivo === 'unlicensed';
   const dataFormatada = statusLicenca.validade ? formatarData(statusLicenca.validade) : '';
-  const titulo = isExpired ? 'Licença expirada' : 'Licença inativa';
+  const titulo = isExpired
+    ? 'Licença expirada'
+    : isUnlicensed
+      ? 'Sem licença cadastrada'
+      : 'Licença inativa';
   const mensagem = isExpired
     ? `A licença expirou${dataFormatada ? ` em ${dataFormatada}` : ''}.`
-    : 'A licença está inativa no momento.';
+    : isUnlicensed
+      ? 'Este cliente ainda não possui uma licença cadastrada.'
+      : 'A licença está inativa no momento.';
 
   return (
     <section

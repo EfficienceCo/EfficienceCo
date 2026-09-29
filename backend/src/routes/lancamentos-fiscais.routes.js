@@ -1,6 +1,7 @@
 import express from "express";
 import { exigirPerfil } from "../middlewares/permissao.middleware.js";
 import {
+  cancelarLancamentoFiscal,
   criarLancamentoFiscal,
   listarLancamentosFiscais,
   resumoLancamentosFiscais,
@@ -11,6 +12,7 @@ const router = express.Router();
 const todos = exigirPerfil("admin_efficience", "admin_cliente", "funcionario");
 
 // Agente — autenticado via x-licenca-token no controller
+router.post("/cancelar", cancelarLancamentoFiscal);
 router.post("/", criarLancamentoFiscal);
 
 router.get("/resumo", todos, resumoLancamentosFiscais);

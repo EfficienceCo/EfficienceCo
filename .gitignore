@@ -2,7 +2,6 @@ node_modules/
 .env
 .env.local
 .env*.local
-backend/scripts/seed-dev.js
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -11,6 +10,7 @@ dist/
 build/
 .next/
 .claude/
+.codex/
 CLAUDE.md
 _CLAUDE.md
 .postman/
@@ -31,3 +31,6 @@ modelo.pt
 datasets/
 dataset/
 gravacao-demo/
+
+# Manifest do classificador é texto versionado (não é peso treinado)
+!agente/worker/automacoes/classificador_documentos/manifest.json

@@ -1,8 +1,10 @@
 import json
 import os
+import re
 from pathlib import Path
 
 TIPOS_PATH = Path(__file__).parent / "tipos_documentos.json"
+
 
 def _carregar_tipos():
     try:
@@ -17,23 +19,38 @@ def identificar_tipo_no_nome(nome_arquivo):
     nome_normalizado = os.path.splitext(nome_arquivo)[0].lower().replace("_", "").replace(" ", "")
     
     return next(
-        (t for t in tipos if t.replace("_", "") in nome_normalizado),
+        (t for t in tipos if (
+            re.search(r"(?<![^\W_])nf(?![^\W_])", os.path.splitext(nome_arquivo)[0], re.IGNORECASE)
+            if t == "nf" else t.replace("_", "") in nome_normalizado
+        )),
         None
     )
 
+
 def classificar_arquivo(caminho):
     try:
-        from automacoes.classificador_documentos.classificador import classificar_documento
+        from automacoes.rede.classificador import classificar_documento
         resultado = classificar_documento(caminho, threshold=0.75)
         if isinstance(resultado, dict) and resultado.get("erro"):
+            # O dict já traz a causa (pesos .pth, extensão, PDF). Só prefixa o log.
             print(f"[identificar_tipo] Classificador: {resultado['erro']}")
             return "nao_identificado"
         return resultado["classe"]
-    except ModuleNotFoundError as e:
-        print(f"[identificar_tipo] Módulo ou dependência do classificador ausente ({e.name}): {e}")
-        return "nao_identificado"
     except ImportError as e:
-        print(f"[identificar_tipo] Falha ao importar o classificador: {e}")
+        # ModuleNotFoundError é subclasse. DLL do torch no Windows levanta
+        # ImportError puro ("DLL load failed while importing _C"): também é dep.
+        nome = getattr(e, "name", None) or ""
+        if isinstance(e, ModuleNotFoundError) and nome == "automacoes.rede.classificador":
+            causa = f"Módulo do classificador ausente ({nome})"
+        else:
+            sufixo = f" ({nome})" if nome else ""
+            causa = f"Dependência da rede neural ausente{sufixo}"
+        print(f"[identificar_tipo] {causa}: {e}")
+        return "nao_identificado"
+    except FileNotFoundError:
+        # Pesos faltando no fluxo normal voltam no dict de classificar_documento.
+        # Aqui só a corrida em que o .pth some entre o exists() e o torch.load.
+        print("[identificar_tipo] Arquivo de pesos não encontrado (classificador_documentos.pth)")
         return "nao_identificado"
     except Exception as e:
         print(f"[identificar_tipo] Falha ao classificar: {e}")

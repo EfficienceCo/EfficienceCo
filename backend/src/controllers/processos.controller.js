@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
+import { normalizarCpf, cpfValido } from "../utils/cpf.util.js";
+import { ehUuidV4 } from "../utils/uuid.util.js";
 import {
   criarProcessoComEtapas,
   ETAPAS_PADRAO,
@@ -15,7 +17,12 @@ const STATUS_ETAPA = {
   CONCLUIDA: "concluida",
 };
 const LEASE_EXECUCAO_MS = 15 * 60 * 1000;
+// Espelha TIMEOUT_ETAPA_PROCESSANDO_MS do frontend (page.jsx) — o servidor precisa
+// da mesma janela para recusar um expirar-execucao chamado cedo demais.
+const TIMEOUT_ETAPA_PROCESSANDO_MS = 90 * 1000;
 const LIMITE_ETAPAS_POR_POLLING = 20;
+const MENSAGEM_TIMEOUT_EXECUCAO =
+  "O agente não respondeu em tempo hábil. Verifique se ele está ligado e tente novamente.";
 
 function corpoObjeto(req) {
   return req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
@@ -52,6 +59,14 @@ function validarPayloadExecucao(acao, payload) {
     return "Preencha nome, CPF e participação válida para todos os sócios";
   }
 
+  const cpfsNormalizados = socios.map((socio) => normalizarCpf(socio.cpf));
+  if (cpfsNormalizados.some((cpf) => !cpfValido(cpf))) {
+    return "Informe um CPF válido para todos os sócios";
+  }
+  if (new Set(cpfsNormalizados).size !== cpfsNormalizados.length) {
+    return "Não é possível repetir o CPF de um sócio";
+  }
+
   const participacaoTotal = socios.reduce(
     (total, socio) => total + Number(socio.participacao),
     0,
@@ -75,6 +90,42 @@ function validarPayloadExecucao(acao, payload) {
   return null;
 }
 
+// O contrato social é gravado dentro de {pasta_empresa}/Contratos — a árvore de
+// pastas precisa existir antes. O agente tem fallback para criá-la, mas a ordem
+// das etapas é regra de produto e vale mesmo assim (#488).
+const DEPENDENCIAS_ACAO = { gerar_contrato_social: "criar_pastas" };
+
+async function _dependenciaPendente(processoId, acao) {
+  const acaoRequerida = DEPENDENCIAS_ACAO[acao];
+  if (!acaoRequerida) return null;
+
+  // (processo_id, acao) não é único — um processo pode repetir a mesma ação em
+  // etapas diferentes. Uma delas concluída já garante a pasta no disco.
+  const { data: etapasRequeridas, error } = await supabase
+    .from("etapas")
+    .select("descricao, concluida")
+    .eq("processo_id", processoId)
+    .eq("acao", acaoRequerida)
+    .order("ordem", { ascending: true });
+
+  if (error) {
+    console.error("[processos.controller] Erro ao verificar dependência:", error.message);
+    return { status: 500, body: { erro: "Erro ao verificar dependências da etapa" } };
+  }
+
+  const candidatas = etapasRequeridas || [];
+  if (candidatas.length === 0 || candidatas.some((etapa) => etapa.concluida)) {
+    return null;
+  }
+
+  return {
+    status: 409,
+    body: {
+      erro: `Conclua a etapa "${candidatas[0].descricao}" antes de executar esta etapa`,
+    },
+  };
+}
+
 function resolverClienteId(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
     return req.body.cliente_id || req.query.cliente_id;
@@ -90,8 +141,10 @@ function calcularPercentual(etapas) {
 
 export async function listarProcessos(req, res) {
   const clienteId = resolverClienteId(req);
+  // Widget do shell chama GET /processos?status=em_andamento sem cliente_id para
+  // admin_efficience. Resposta vazia evita 400; mutações continuam exigindo cliente.
   if (!clienteId) {
-    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+    return res.status(200).json([]);
   }
 
   const { tipo, status } = req.query;
@@ -162,6 +215,28 @@ async function _criarAberturaEmpresa(req, res, clienteId) {
   }
   if (!cenario || !["nova", "cliente_existente"].includes(cenario)) {
     return res.status(400).json({ erro: "cenario deve ser 'nova' ou 'cliente_existente'" });
+  }
+
+  // Dados do contrato social são opcionais na criação (cliente_existente não os
+  // envia). Se vierem, valida com a mesma regra da execução da etapa — senão o
+  // processo nasce com sócios/CPF/participação inconsistentes que só seriam
+  // barrados depois, ao executar a etapa "gerar_contrato_social".
+  const dadosContratoInformados =
+    socios !== undefined ||
+    capital_social !== undefined ||
+    objeto_social !== undefined ||
+    endereco !== undefined;
+
+  if (dadosContratoInformados) {
+    const erroContrato = validarPayloadExecucao("gerar_contrato_social", {
+      socios,
+      capital_social,
+      objeto_social,
+      endereco,
+    });
+    if (erroContrato) {
+      return res.status(400).json({ erro: erroContrato });
+    }
   }
 
   // A raiz pertence à configuração da máquina do agente. O backend não deve
@@ -359,6 +434,11 @@ async function _executarAcaoEtapa(processoId, etapaId, clienteId, payload) {
     return { status: 400, body: { erro: "Etapa já está concluída" } };
   }
 
+  const dependenciaPendente = await _dependenciaPendente(processoId, etapa.acao);
+  if (dependenciaPendente) {
+    return dependenciaPendente;
+  }
+
   const primeiraExecucao = etapa.status === STATUS_ETAPA.PENDENTE;
   const novaTentativa =
     etapa.status === STATUS_ETAPA.PRONTA &&
@@ -427,6 +507,101 @@ export async function executarAcaoEtapaJwt(req, res) {
 
   const { cliente_id, ...payload } = body;
   const resultado = await _executarAcaoEtapa(processoId, etapaId, clienteId, payload);
+  return res.status(resultado.status).json(resultado.body);
+}
+
+// Chamada pela UI quando o front espera pelo agente há tempo demais (~90s, ver
+// TIMEOUT_ETAPA_PROCESSANDO_MS no frontend) e nada aconteceu — agente desligado ou
+// travado. Reaproveita o mesmo caminho de "erro reportado" que o agente usa em
+// concluirExecucaoEtapaAgente, então a etapa volta pronta_para_execucao com
+// erro_execucao preenchido e o contador pode tentar de novo pelo formulário normal.
+async function _expirarExecucaoEtapa(processoId, etapaId, clienteId) {
+  const { data: processo, error: erroProcesso } = await supabase
+    .from("processos")
+    .select("id, cliente_id, status")
+    .eq("id", processoId)
+    .single();
+
+  if (erroProcesso || !processo) {
+    return { status: 404, body: { erro: "Processo não encontrado" } };
+  }
+
+  if (processo.cliente_id !== clienteId) {
+    return { status: 403, body: { erro: "Sem permissão para este processo" } };
+  }
+
+  if (processo.status !== "em_andamento") {
+    return { status: 400, body: { erro: "Processo não está em andamento" } };
+  }
+
+  const { data: etapa, error: erroEtapa } = await supabase
+    .from("etapas")
+    .select("id, processo_id, tipo, status, concluida, execucao_iniciada_em")
+    .eq("id", etapaId)
+    .eq("processo_id", processoId)
+    .single();
+
+  if (erroEtapa || !etapa) {
+    return { status: 404, body: { erro: "Etapa não encontrada" } };
+  }
+
+  if (etapa.tipo !== "automatizada" || etapa.concluida) {
+    return { status: 400, body: { erro: "Etapa não está aguardando execução automatizada" } };
+  }
+
+  if (etapa.status !== STATUS_ETAPA.PRONTA && etapa.status !== STATUS_ETAPA.PROCESSANDO) {
+    return { status: 400, body: { erro: "Etapa não está em execução" } };
+  }
+
+  if (etapa.status === STATUS_ETAPA.PROCESSANDO && etapa.execucao_iniciada_em) {
+    const decorrido = Date.now() - new Date(etapa.execucao_iniciada_em).getTime();
+    if (decorrido < TIMEOUT_ETAPA_PROCESSANDO_MS) {
+      return { status: 409, body: { erro: "Claim de execução ainda é válido" } };
+    }
+  }
+
+  const { data: etapaExpirada, error: erroUpdate } = await supabase
+    .from("etapas")
+    .update({
+      status: STATUS_ETAPA.PRONTA,
+      erro_execucao: MENSAGEM_TIMEOUT_EXECUCAO,
+      execucao_token: null,
+      execucao_iniciada_em: null,
+    })
+    .eq("id", etapaId)
+    .eq("processo_id", processoId)
+    .eq("tipo", "automatizada")
+    .eq("concluida", false)
+    .in("status", [STATUS_ETAPA.PRONTA, STATUS_ETAPA.PROCESSANDO])
+    .select()
+    .maybeSingle();
+
+  if (erroUpdate) {
+    console.error("[processos.controller] Erro ao expirar execução da etapa:", erroUpdate.message);
+    return { status: 500, body: { erro: "Erro ao registrar timeout da etapa" } };
+  }
+
+  if (!etapaExpirada) {
+    return { status: 409, body: { erro: "Etapa foi alterada por outra solicitação" } };
+  }
+
+  return { status: 200, body: etapaExpirada };
+}
+
+export async function expirarExecucaoEtapaJwt(req, res) {
+  const { id: processoId, etapaId } = req.params;
+  const body = corpoObjeto(req);
+
+  const clienteId =
+    req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE
+      ? body.cliente_id || req.query.cliente_id
+      : req.usuario?.cliente_id;
+
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const resultado = await _expirarExecucaoEtapa(processoId, etapaId, clienteId);
   return res.status(resultado.status).json(resultado.body);
 }
 
@@ -533,6 +708,7 @@ export async function listarEtapasProntasAgente(req, res) {
 
 // Rota de conclusão do agente — reporta sucesso (com o path do arquivo gerado) ou erro
 // ao terminar de executar a ação da etapa.
+// A migration 94 grava evento/notificação na mesma transação do UPDATE da etapa.
 export async function concluirExecucaoEtapaAgente(req, res) {
   const token = req.headers["x-licenca-token"];
   const licenca = await validarTokenLicenca(token);
@@ -548,12 +724,7 @@ export async function concluirExecucaoEtapaAgente(req, res) {
     return res.status(400).json({ erro: "sucesso deve ser booleano" });
   }
 
-  if (
-    typeof execucaoToken !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      execucaoToken,
-    )
-  ) {
+  if (typeof execucaoToken !== "string" || !ehUuidV4(execucaoToken)) {
     return res.status(400).json({ erro: "execucao_token inválido" });
   }
 

@@ -5,10 +5,19 @@ export async function listarClientes() {
   return response.data;
 }
 
-export async function criarCliente({ nome, cnpj }) {
+export async function criarCliente({
+  nome,
+  cnpj,
+  regime_tributario: regimeTributario,
+  anexo_simples: anexoSimples,
+}) {
   const payload = {
     nome,
     ...(cnpj ? { cnpj } : {}),
+    // Regime e anexo são opcionais no cadastro: quem não souber o regime na
+    // hora de criar preenche depois pelo editor de regime tributário (#496).
+    ...(regimeTributario ? { regime_tributario: regimeTributario } : {}),
+    ...(anexoSimples ? { anexo_simples: anexoSimples } : {}),
   };
 
   const response = await api.post('/clientes', payload);

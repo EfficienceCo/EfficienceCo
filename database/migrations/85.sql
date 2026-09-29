@@ -18,5 +18,9 @@
 -- vínculo entre as duas tabelas (provavelmente uma coluna
 -- `processamento_folha_id` em `eventos_esocial`) precisa ser desenhado junto
 -- — não faz sentido manter um stub quebrado até lá.
+--
+-- Desde BUG-ESOCIAL-05 (#455), 80.sql e 81.sql são no-ops para instalações
+-- novas. Esta limpeza permanece necessária e idempotente para bancos que
+-- executaram a versão antiga da 81.sql.
 DROP TRIGGER IF EXISTS trigger_atualiza_esocial_fechado ON eventos_esocial;
 DROP FUNCTION IF EXISTS trg_set_esocial_fechado_em();

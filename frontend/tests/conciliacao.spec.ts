@@ -24,9 +24,70 @@ test.describe('Conciliação bancária — página principal (/dashboard/concili
     await expect(page.getByRole('button', { name: 'Nova conciliação' })).not.toBeVisible();
   });
 
+  test('informa claramente quando o mesmo arquivo OFX já foi importado', async ({ page }) => {
+    let totalUploads = 0;
+    await page.route('**/conciliacoes/extrato', async (route) => {
+      totalUploads += 1;
+
+      if (totalUploads === 1) {
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            extrato_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            total_transacoes: 2,
+            banco: '0341',
+            conta: '7890',
+          }),
+        });
+        return;
+      }
+
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ erro: 'Este arquivo OFX já foi importado para este cliente' }),
+      });
+    });
+
+    const arquivo = {
+      name: 'extrato.ofx',
+      mimeType: 'application/x-ofx',
+      buffer: Buffer.from('<OFX>mesmo arquivo</OFX>'),
+    };
+    const inputArquivo = page.locator('input[type="file"]');
+
+    await inputArquivo.setInputFiles(arquivo);
+    await expect(page.getByText('2 transações importadas')).toBeVisible();
+
+    await inputArquivo.setInputFiles(arquivo);
+    await expect(page.getByText('Este arquivo OFX já foi importado para este cliente')).toBeVisible();
+    await expect(page.getByText('2 transações importadas')).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Nova conciliação' })).not.toBeVisible();
+  });
+
   test('modal de novo lançamento abre, bloqueia submit sem campos obrigatórios e fecha ao cancelar', async ({ page }) => {
-    await page.getByRole('button', { name: '+ Adicionar lançamento' }).click();
-    await expect(page.getByRole('heading', { name: 'Novo lançamento' })).toBeVisible();
+    const botaoAbrir = page.getByRole('button', { name: '+ Adicionar lançamento' });
+    await botaoAbrir.click();
+
+    const dialog = page.getByRole('dialog', { name: 'Novo lançamento' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAttribute('aria-modal', 'true');
+    await expect(dialog).toBeFocused();
+    await expect(dialog.getByRole('button', { name: 'Fechar modal' }).locator('svg')).toBeVisible();
+    await expect(page.locator('main')).toHaveAttribute('inert', '');
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(dialog.getByRole('button', { name: 'Adicionar lançamento' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Fechar modal' })).toBeFocused();
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(botaoAbrir).toBeFocused();
+    await expect(page.locator('main')).not.toHaveAttribute('inert', '');
+
+    await botaoAbrir.click();
 
     // Campos "required" (data, descrição, valor) bloqueiam o submit via validação
     // nativa do HTML5 — o modal deve permanecer aberto em vez de chamar a API.
@@ -53,11 +114,23 @@ test.describe('Conciliação bancária — página principal (/dashboard/concili
     await expect(linha.getByText('R$ 123,45')).toBeVisible();
     await expect(linha.getByText('Débito')).toBeVisible();
 
-    await linha.getByRole('button', { name: 'Excluir' }).click();
-    await expect(page.getByRole('heading', { name: 'Confirmar exclusão' })).toBeVisible();
+    const botaoExcluir = linha.getByRole('button', { name: 'Excluir' });
+    await botaoExcluir.click();
+
+    const dialogExclusao = page.getByRole('dialog', { name: 'Confirmar exclusão' });
+    await expect(dialogExclusao).toBeVisible();
+    await expect(dialogExclusao).toHaveAttribute('aria-modal', 'true');
+    await expect(dialogExclusao).toBeFocused();
+
+    await page.keyboard.press('Escape');
+    await expect(dialogExclusao).not.toBeVisible();
+    await expect(botaoExcluir).toBeFocused();
+
+    await botaoExcluir.click();
     await page.getByRole('button', { name: 'Excluir lançamento' }).click();
 
     await expect(page.getByRole('heading', { name: 'Confirmar exclusão' })).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Lançamentos Internos' })).toBeFocused();
     await expect(page.getByRole('row', { name: new RegExp(descricao) })).not.toBeVisible();
   });
 });

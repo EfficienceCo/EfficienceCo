@@ -1,9 +1,15 @@
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
-import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
+import { aplicarFiltroPeriodo, dataLocalISO, erroPeriodoConsulta } from "../utils/periodo.util.js";
+import { ehUuid } from "../utils/uuid.util.js";
+import {
+  camposRejeicaoBanco,
+  validarLancamentoFiscal,
+} from "../utils/lancamento-fiscal.util.js";
 
 const TIPOS_VALIDOS = new Set(["entrada", "saida"]);
+const CHAVE_NFE_REGEX = /^\d{44}$/;
 
 const CAMPOS_OBRIGATORIOS = [
   "chave_nfe",
@@ -46,6 +52,15 @@ function resolverClienteIdQuery(req) {
   return req.usuario?.cliente_id;
 }
 
+// 400 antes do Postgres: id não-UUID vira 22P02 (500 genérico) e período
+// inválido era ignorado, devolvendo o ano ou o histórico inteiro.
+function erroConsultaLancamentos(clienteId, mes, ano) {
+  if (!ehUuid(clienteId)) {
+    return "clienteId deve ser um UUID";
+  }
+  return erroPeriodoConsulta(mes, ano);
+}
+
 // Agente local envia o payload do XML da NFe já parseado, autenticado via
 // x-licenca-token (mesmo padrão de uploadFolhaAgente em folha.controller.js).
 // Authz: cliente_id do payload DEVE ser o da licença. Checagem CNPJ↔tipo é
@@ -63,9 +78,20 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(400).json({ erro: "Campos obrigatórios faltando", faltando });
   }
 
+  // A API é a fronteira de confiança: o agente valida antes, mas um payload
+  // inválido não pode virar 500 genérico nem linha no ledger (#568).
+  // Data futura continua recusada aqui (BUG-APUR-08) — contaminaria RBT12.
+  const validacao = validarLancamentoFiscal(req.body, dataLocalISO());
+  if (!validacao.valido) {
+    return res.status(422).json({
+      erro: "Dados do lançamento fiscal inválidos",
+      campos: validacao.erros,
+    });
+  }
+
+  const { tipo, cliente_id } = req.body;
   const {
     chave_nfe,
-    tipo,
     cnpj_emitente,
     cnpj_destinatario,
     valor_total,
@@ -74,9 +100,8 @@ export async function criarLancamentoFiscal(req, res) {
     cofins,
     ipi,
     data_emissao,
-    cliente_id,
     arquivo_xml,
-  } = req.body;
+  } = validacao.dados;
 
   if (!TIPOS_VALIDOS.has(tipo)) {
     return res.status(400).json({ erro: "tipo deve ser 'entrada' ou 'saida'" });
@@ -138,14 +163,20 @@ export async function criarLancamentoFiscal(req, res) {
       chave_nfe,
       tipo,
       cnpj_emitente,
+      // CNPJ (14) ou CPF (11). A coluna é VARCHAR(14); CPF de 11 dígitos cabe
+      // e a venda para pessoa física segue escriturada (#566) — esse era o
+      // parser do agente, que exigia 14 dígitos; este insert nunca travou o
+      // tamanho. CPF de 11 dígitos já passou por cpfValido em
+      // validarLancamentoFiscal/validarDocumentoDestinatario, antes de chegar
+      // aqui.
       cnpj_destinatario,
       valor_total,
-      icms: icms ?? 0,
-      pis: pis ?? 0,
-      cofins: cofins ?? 0,
-      ipi: ipi ?? 0,
+      icms,
+      pis,
+      cofins,
+      ipi,
       data_emissao,
-      arquivo_xml: arquivo_xml ?? null,
+      arquivo_xml,
     })
     .select()
     .single();
@@ -156,11 +187,65 @@ export async function criarLancamentoFiscal(req, res) {
     if (error.code === "23505") {
       return res.status(409).json({ erro: "Já existe um lançamento fiscal para esta chave de NFe" });
     }
+    const campos = camposRejeicaoBanco(error);
+    if (campos) {
+      console.error("[lancamentos-fiscais.controller] Lançamento fiscal recusado pelo banco:", error.message);
+      return res.status(422).json({
+        erro: "Dados do lançamento fiscal inválidos",
+        campos,
+      });
+    }
     console.error("[lancamentos-fiscais.controller] Erro ao registrar lançamento fiscal:", error.message);
     return res.status(500).json({ erro: "Erro ao registrar lançamento fiscal" });
   }
 
   return res.status(201).json(data);
+}
+
+// POST /lancamentos-fiscais/cancelar — chamado pelo agente ao receber um
+// procEventoNFe de cancelamento homologado. O registro é preservado para
+// auditoria, mas deixa de produzir efeito nos resumos e apurações.
+export async function cancelarLancamentoFiscal(req, res) {
+  const token = req.headers["x-licenca-token"];
+  const licenca = await validarTokenLicenca(token);
+
+  if (!licenca) {
+    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
+  }
+
+  const { chave_nfe, motivo, protocolo, data_evento } = req.body || {};
+  if (!CHAVE_NFE_REGEX.test(String(chave_nfe || ""))) {
+    return res.status(400).json({ erro: "chave_nfe deve conter 44 dígitos" });
+  }
+
+  const dataCancelamento = data_evento ? new Date(data_evento) : new Date();
+  if (Number.isNaN(dataCancelamento.getTime())) {
+    return res.status(400).json({ erro: "data_evento inválida" });
+  }
+
+  const { data, error } = await supabase
+    .from("lancamentos_fiscais")
+    .update({
+      status: "cancelada",
+      cancelado_em: dataCancelamento.toISOString(),
+      motivo_cancelamento: motivo || null,
+      protocolo_cancelamento: protocolo || null,
+    })
+    .eq("cliente_id", licenca.cliente_id)
+    .eq("chave_nfe", chave_nfe)
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error("[lancamentos-fiscais.controller] Erro ao cancelar lançamento:", error.message);
+    return res.status(500).json({ erro: "Erro ao cancelar lançamento fiscal" });
+  }
+
+  if (!data) {
+    return res.status(404).json({ erro: "Lançamento fiscal não encontrado para esta licença" });
+  }
+
+  return res.status(200).json(data);
 }
 
 export async function listarLancamentosFiscais(req, res) {
@@ -171,6 +256,10 @@ export async function listarLancamentosFiscais(req, res) {
   }
 
   const { mes, ano } = req.query;
+  const erroConsulta = erroConsultaLancamentos(clienteId, mes, ano);
+  if (erroConsulta) {
+    return res.status(400).json({ erro: erroConsulta });
+  }
 
   let query = supabase
     .from("lancamentos_fiscais")
@@ -198,11 +287,16 @@ export async function resumoLancamentosFiscais(req, res) {
   }
 
   const { mes, ano } = req.query;
+  const erroConsulta = erroConsultaLancamentos(clienteId, mes, ano);
+  if (erroConsulta) {
+    return res.status(400).json({ erro: erroConsulta });
+  }
 
   let query = supabase
     .from("lancamentos_fiscais")
-    .select("tipo, valor_total, icms, pis, cofins, ipi")
-    .eq("cliente_id", clienteId);
+    .select("tipo, valor_total, icms, pis, cofins, ipi, status")
+    .eq("cliente_id", clienteId)
+    .eq("status", "ativa");
 
   query = aplicarFiltroPeriodo(query, "data_emissao", mes, ano);
 
@@ -213,7 +307,9 @@ export async function resumoLancamentosFiscais(req, res) {
     return res.status(500).json({ erro: "Erro ao calcular resumo dos lançamentos fiscais" });
   }
 
-  const linhas = data || [];
+  // O filtro local também protege integrações/mocks que retornem linhas além
+  // do filtro solicitado ao banco.
+  const linhas = (data || []).filter((lancamento) => lancamento.status !== "cancelada");
 
   const totais = linhas.reduce(
     (acc, lancamento) => ({

@@ -3,6 +3,60 @@ import { login } from './helpers/auth';
 import * as path from 'path';
 import * as fs from 'fs';
 
+test.describe('Folha #440 — retry da saída (API simulada)', () => {
+  for (const width of [1440, 390]) {
+    test(`erro parcial e retry no layout ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 1000 });
+      const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+      const user = { id: 'qa-440', email: 'qa-440@example.test', perfil: 'admin_cliente', cliente_id: 'fixture' };
+      const token = `fixture.${Buffer.from(JSON.stringify(user)).toString('base64url')}.fixture`;
+      await page.addInitScript(value => localStorage.setItem('token', value), token);
+      let saidaStatus = 'erro', retryFalha = true, consultaFalha = false, tentativas = 0;
+      const motivo = 'Erro ao gerar holerite de Maria';
+      await page.route(`**/folha/${id}**`, async route => {
+        if (route.request().method() === 'POST') {
+          expect(new URL(route.request().url()).pathname).toBe(`/folha/${id}/gerar-saida`);
+          tentativas++;
+          if (retryFalha) return route.fulfill({ status: 500, json: { erro: 'Storage indisponível' } });
+          saidaStatus = 'ok';
+          return route.fulfill({ json: { processamento_id: id } });
+        }
+        if (consultaFalha) return route.fulfill({ status: 500, json: { erro: 'Consulta indisponível' } });
+        return route.fulfill({ json: {
+          processamento_id: id, status: 'concluido', saida_status: saidaStatus,
+          motivo_erro: saidaStatus === 'erro' ? motivo : null, mes_referencia: '2026-07-01',
+          arquivos: [{ id: 'calc-1', nome: 'holerite_joao.pdf', tipo: 'holerite', funcionario: 'João' }],
+        } });
+      });
+      await page.goto(`/dashboard/folha/status?processamento_id=${id}`);
+      // A tela mantém os dois layouts no DOM; validar somente o que está visível.
+      const aviso = page.getByText('Falha ao gerar arquivos', { exact: true }).filter({ visible: true });
+      const erro = page.getByText(motivo, { exact: true }).filter({ visible: true });
+      const retry = page.getByRole('button', { name: 'Tentar novamente', exact: true });
+      await expect(aviso).toBeVisible();
+      await expect(erro).toBeVisible();
+      await expect(page.getByText('holerite_joao.pdf', { exact: true }).filter({ visible: true })).toBeVisible();
+      await retry.click();
+      await expect(page.getByText('Storage indisponível', { exact: true })).toBeVisible();
+      await expect(retry).toBeEnabled();
+      retryFalha = false;
+      await retry.click();
+      await expect(aviso).toHaveCount(0);
+      await expect(erro).toHaveCount(0);
+      await expect(retry).toHaveCount(0);
+      expect(tentativas).toBe(2);
+      saidaStatus = 'erro';
+      await page.getByRole('button', { name: 'Atualizar lista', exact: true }).click();
+      await expect(erro).toBeVisible();
+      consultaFalha = true;
+      await page.getByRole('button', { name: 'Atualizar lista', exact: true }).click();
+      await expect(page.getByText('Consulta indisponível', { exact: true }).first()).toBeVisible();
+      await expect(erro).toBeVisible();
+      await expect(retry).toBeVisible();
+    });
+  }
+});
+
 test.describe('Folha de Pagamento', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     // O cenário LGPD é autocontido: não deve depender de backend/credenciais só

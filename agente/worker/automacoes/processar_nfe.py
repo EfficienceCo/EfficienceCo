@@ -23,7 +23,18 @@ from core.utils import validar_caminho, validar_nome
 NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
 _ASCII_DIGITS = "0123456789"
 PASTA_NAO_IDENTIFICADO = "nao_identificado"
+PASTA_EVENTOS_CANCELAMENTO = "eventos_cancelamento"
+# Erro 4xx do POST não some reenviando; fica fora do inbox (polling de 30s).
+PASTA_REJEITADOS = "rejeitados"
+# 409: a NF-e já está no ledger — não gera outra cópia em Notas Fiscais/.
+PASTA_DUPLICADAS = "duplicadas"
+# 408/429 são 4xx, mas transitórios (timeout / rate limit).
+# 401/403 também: token ou licença, não defeito do XML — renovam e o próximo ciclo reenvia.
+_STATUS_4XX_TRANSITORIOS = frozenset({401, 403, 408, 429})
 ENDPOINT_LANCAMENTOS = "/lancamentos-fiscais"
+ENDPOINT_CANCELAMENTO = "/lancamentos-fiscais/cancelar"
+_CSTAT_AUTORIZADOS = {"100", "150"}
+_CSTAT_CANCELAMENTO_AUTORIZADO = {"135", "155"}
 
 
 def _find(pai: ET.Element, path: str) -> ET.Element | None:
@@ -42,6 +53,42 @@ def _inf_nfe(root: ET.Element) -> ET.Element:
     return inf
 
 
+def _nome_local(elemento: ET.Element) -> str:
+    return elemento.tag.rsplit("}", 1)[-1]
+
+
+def _ler_xml(caminho_xml: str) -> ET.Element:
+    validar_caminho(caminho_xml)
+
+    path = Path(caminho_xml)
+    if not path.is_file():
+        raise ValueError(f"arquivo XML não encontrado: {caminho_xml}")
+
+    try:
+        return ET.parse(path).getroot()
+    except ET.ParseError as e:
+        raise ValueError(f"XML malformado: {e}") from e
+    except UnicodeDecodeError as e:
+        raise ValueError(f"encoding inválido no XML: {e}") from e
+    except OSError as e:
+        raise ValueError(f"falha ao ler XML: {e}") from e
+
+
+def _validar_protocolo_autorizacao(root: ET.Element) -> str | None:
+    """Valida o protocolo quando o documento é um nfeProc da SEFAZ."""
+    nome_raiz = _nome_local(root)
+    if nome_raiz == "NFe":
+        raise ValueError("NF-e sem protocolo de autorização da SEFAZ")
+    if nome_raiz != "nfeProc":
+        return None
+
+    cstat = (_text(root, ".//nfe:protNFe/nfe:infProt/nfe:cStat") or "").strip()
+    if cstat not in _CSTAT_AUTORIZADOS:
+        status = cstat or "ausente"
+        raise ValueError(f"NF-e sem autorização fiscal (cStat={status})")
+    return cstat
+
+
 def _somente_digitos(v: str) -> str:
     """Extrai apenas dígitos ASCII 0-9 (não usa str.isdigit — evita Unicode)."""
     return "".join(c for c in v if c in _ASCII_DIGITS)
@@ -54,6 +101,44 @@ def _digitos(valor: str | None, campo: str) -> str:
     if len(so) != 14:
         raise ValueError(f"{campo} inválido (esperado 14 dígitos): {valor!r}")
     return so
+
+
+def _cpf_valido(cpf: str) -> bool:
+    """Mesma regra de cpfValido em backend/src/utils/cpf.util.js."""
+    if len(cpf) != 11 or not cpf.isdigit() or cpf == cpf[0] * 11:
+        return False
+
+    def digito(quantidade: int) -> int:
+        soma = sum(int(cpf[i]) * (quantidade + 1 - i) for i in range(quantidade))
+        resto = (soma * 10) % 11
+        return 0 if resto == 10 else resto
+
+    return digito(9) == int(cpf[9]) and digito(10) == int(cpf[10])
+
+
+def _documento_destinatario(inf: ET.Element) -> str:
+    """CNPJ (14) ou CPF (11) do destinatário.
+
+    Venda a pessoa física é NF-e legítima. O CPF entra em cnpj_destinatario:
+    a coluna é VARCHAR(14), então 11 dígitos cabem sem migration. Só dígitos,
+    no mesmo formato do CNPJ.
+    """
+    cnpj_bruto = _text(inf, "nfe:dest/nfe:CNPJ")
+    cpf_bruto = _text(inf, "nfe:dest/nfe:CPF")
+    cnpj = _somente_digitos(cnpj_bruto) if cnpj_bruto else ""
+    cpf = _somente_digitos(cpf_bruto) if cpf_bruto else ""
+
+    if len(cnpj) == 14:
+        return cnpj
+    if len(cpf) == 11:
+        if not _cpf_valido(cpf):
+            raise ValueError(f"dest/CPF inválido (dígito verificador): {cpf_bruto!r}")
+        return cpf
+    if cnpj_bruto:
+        raise ValueError(f"dest/CNPJ inválido (esperado 14 dígitos): {cnpj_bruto!r}")
+    if cpf_bruto is not None:
+        raise ValueError(f"dest/CPF inválido (esperado 11 dígitos): {cpf_bruto!r}")
+    raise ValueError("campo obrigatório ausente: dest/CNPJ ou dest/CPF")
 
 
 def _dec(texto: str | None, campo: str, obrigatorio: bool = True) -> Decimal:
@@ -77,23 +162,8 @@ def _data_emissao(inf: ET.Element) -> date:
         raise ValueError(f"data de emissão inválida: {texto!r}") from e
 
 
-def parsear_nfe(caminho_xml: str) -> dict:
-    """Lê XML de NF-e SEFAZ e retorna campos relevantes tipados."""
-    validar_caminho(caminho_xml)
-
-    path = Path(caminho_xml)
-    if not path.is_file():
-        raise ValueError(f"arquivo XML não encontrado: {caminho_xml}")
-
-    try:
-        tree = ET.parse(path)
-        root = tree.getroot()
-    except ET.ParseError as e:
-        raise ValueError(f"XML malformado: {e}") from e
-    except UnicodeDecodeError as e:
-        raise ValueError(f"encoding inválido no XML: {e}") from e
-    except OSError as e:
-        raise ValueError(f"falha ao ler XML: {e}") from e
+def _parsear_nfe_root(root: ET.Element) -> dict:
+    cstat = _validar_protocolo_autorizacao(root)
 
     inf = _inf_nfe(root)
 
@@ -103,7 +173,7 @@ def parsear_nfe(caminho_xml: str) -> dict:
         raise ValueError(f"chave_nfe inválida no atributo Id: {id_attr!r}")
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
-    cnpj_dest = _digitos(_text(inf, "nfe:dest/nfe:CNPJ"), "dest/CNPJ")
+    cnpj_dest = _documento_destinatario(inf)
 
     return {
         "chave_nfe": chave,
@@ -115,7 +185,52 @@ def parsear_nfe(caminho_xml: str) -> dict:
         "cofins": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vCOFINS"), "total/ICMSTot/vCOFINS"),
         "ipi": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vIPI"), "total/ICMSTot/vIPI", obrigatorio=False),
         "data_emissao": _data_emissao(inf),
+        "cstat": cstat,
     }
+
+
+def parsear_nfe(caminho_xml: str) -> dict:
+    """Lê XML de NF-e SEFAZ e retorna campos relevantes tipados."""
+    return _parsear_nfe_root(_ler_xml(caminho_xml))
+
+
+def _parsear_evento_cancelamento_root(root: ET.Element) -> dict | None:
+    if _nome_local(root) != "procEventoNFe":
+        return None
+
+    inf_evento = root.find(".//nfe:evento/nfe:infEvento", NS)
+    if inf_evento is None:
+        raise ValueError("tag evento/infEvento não encontrada")
+
+    tipo_evento = (_text(inf_evento, "nfe:tpEvento") or "").strip()
+    if tipo_evento != "110111":
+        raise ValueError(f"evento de NF-e não suportado (tpEvento={tipo_evento or 'ausente'})")
+
+    inf_retorno = root.find(".//nfe:retEvento/nfe:infEvento", NS)
+    cstat = (_text(inf_retorno, "nfe:cStat") or "").strip() if inf_retorno is not None else ""
+    if cstat not in _CSTAT_CANCELAMENTO_AUTORIZADO:
+        raise ValueError(f"cancelamento sem homologação fiscal (cStat={cstat or 'ausente'})")
+
+    chave = _somente_digitos(_text(inf_evento, "nfe:chNFe") or "")
+    if len(chave) != 44:
+        raise ValueError("chNFe inválida no evento de cancelamento")
+
+    return {
+        "chave_nfe": chave,
+        "motivo": (_text(inf_evento, "nfe:detEvento/nfe:xJust") or "").strip() or None,
+        "protocolo": (_text(inf_retorno, "nfe:nProt") or "").strip() or None,
+        "data_evento": (
+            (_text(inf_retorno, "nfe:dhRegEvento") or "").strip()
+            or (_text(inf_evento, "nfe:dhEvento") or "").strip()
+            or None
+        ),
+        "cstat": cstat,
+    }
+
+
+def parsear_evento_cancelamento(caminho_xml: str) -> dict | None:
+    """Retorna os dados de um procEventoNFe de cancelamento, ou None para NF-e."""
+    return _parsear_evento_cancelamento_root(_ler_xml(caminho_xml))
 
 
 def identificar_tipo_operacao(
@@ -330,15 +445,83 @@ def _postar_lancamento(payload: dict) -> str:
         raise
 
 
-def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> None:
+def _postar_cancelamento(evento: dict) -> None:
+    client.post(
+        ENDPOINT_CANCELAMENTO,
+        evento,
+        timeout=30,
+        addToHeaders={"x-licenca-token": client.LICENSE_TOKEN},
+    )
+
+
+def _erro_post_permanente(exc: BaseException) -> bool:
+    """4xx de validação não se resolve no próximo ciclo. 5xx, rede, 401 e 403, sim.
+
+    409 já volta como 'duplicata' em _postar_lancamento. 401/403/408/429 reenviam.
+    """
+    if not isinstance(exc, ApiError):
+        return False
+    codigo = exc.status_code
+    if not isinstance(codigo, int) or not (400 <= codigo < 500):
+        return False
+    if codigo == 409 or codigo in _STATUS_4XX_TRANSITORIOS:
+        return False
+    return True
+
+
+def _mover_para_subpasta(
+    xml_path: Path, pasta_path: Path, subpasta: str, rotulo: str, motivo: str
+) -> None:
     nome = xml_path.name
-    destino_nao = pasta_path / PASTA_NAO_IDENTIFICADO / nome
+    destino = pasta_path / subpasta / nome
     try:
-        movido = _mover_xml(xml_path, destino_nao)
-        print(f"[processar_nfe] não identificado ({nome}): {motivo} -> {movido}")
+        movido = _mover_xml(xml_path, destino)
+        detalhe = f": {motivo}" if motivo else ""
+        print(f"[processar_nfe] {rotulo} ({nome}){detalhe} -> {movido}")
     except Exception as move_err:
-        print(f"[processar_nfe] falha ao mover {nome} para nao_identificado/: {move_err}")
+        print(f"[processar_nfe] falha ao mover {nome} para {subpasta}/: {move_err}")
         raise
+
+
+def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> None:
+    _mover_para_subpasta(xml_path, pasta_path, PASTA_NAO_IDENTIFICADO, "não identificado", motivo)
+
+
+def _copiar_criados(origem: Path, resultados: list[str], caminhos: list[Path]) -> None:
+    """Copia o XML para cada empresa cujo POST criou o lançamento. Não remove a origem."""
+    for resultado, destino in zip(resultados, caminhos):
+        if resultado != "criado":
+            continue
+        try:
+            copiado = _copiar_xml(origem, destino)
+            print(f"[processar_nfe] arquivado -> {copiado}")
+        except Exception as e:
+            print(f"[processar_nfe] POST criado, mas falha ao copiar {origem.name}: {e}")
+
+
+def _tirar_do_inbox(
+    xml_path: Path, pasta_path: Path, subpasta: str, rotulo: str, motivo: str
+) -> None:
+    """Tira o XML da varredura. Se a subpasta falhar, renomeia para não ser .xml."""
+    try:
+        _mover_para_subpasta(xml_path, pasta_path, subpasta, rotulo, motivo)
+        return
+    except Exception:
+        pass
+    if not xml_path.is_file():
+        return
+    reserva = xml_path.with_name(f"{xml_path.name}.{subpasta}-pendente")
+    try:
+        xml_path.rename(reserva)
+        print(
+            f"[processar_nfe] {xml_path.name} não entrou em {subpasta}/; "
+            f"renomeado para {reserva.name} para não reenviar o POST"
+        )
+    except Exception as e:
+        print(
+            f"[processar_nfe] falha ao tirar {xml_path.name} da varredura "
+            f"depois do POST {rotulo}: {e}"
+        )
 
 
 def processar_pasta_nfe(pasta: str) -> None:
@@ -360,10 +543,47 @@ def processar_pasta_nfe(pasta: str) -> None:
     for xml_path in _listar_xmls(pasta_path):
         nome = xml_path.name
         try:
-            dados = parsear_nfe(str(xml_path))
+            root = _ler_xml(str(xml_path))
+            evento = _parsear_evento_cancelamento_root(root)
         except ValueError as e:
             try:
                 _mover_nao_identificado(xml_path, pasta_path, str(e))
+            except Exception:
+                pass
+            continue
+
+        if evento is not None:
+            try:
+                _postar_cancelamento(evento)
+                destino = pasta_path / PASTA_EVENTOS_CANCELAMENTO / nome
+                movido = _mover_xml(xml_path, destino)
+                print(
+                    f"[processar_nfe] cancelada {evento['chave_nfe']} "
+                    f"e evento arquivado -> {movido}"
+                )
+            except Exception as e:
+                # Mantém na entrada para retentar, inclusive se o evento chegar
+                # antes da NF-e original ser escriturada.
+                print(f"[processar_nfe] falha no cancelamento ({nome}): {e}")
+            continue
+
+        try:
+            dados = _parsear_nfe_root(root)
+        except ValueError as e:
+            try:
+                _mover_nao_identificado(xml_path, pasta_path, str(e))
+            except Exception:
+                pass
+            continue
+
+        # BUG-APUR-08 / QA-E: NF-e com data futura não entra no ledger.
+        if dados["data_emissao"] > date.today():
+            try:
+                _mover_nao_identificado(
+                    xml_path,
+                    pasta_path,
+                    f"data de emissão futura ({dados['data_emissao'].isoformat()})",
+                )
             except Exception:
                 pass
             continue
@@ -416,7 +636,8 @@ def processar_pasta_nfe(pasta: str) -> None:
         # no banco aponta para onde o arquivo vai parar de fato.
         caminhos_reais = [_caminho_livre(d) for _, d in alvos]
 
-        falhou_post = False
+        # criado | duplicata | permanente | transitorio
+        resultados: list[str] = []
         pasta_base_path = Path(pasta_base)
         for (empresa, _destino), caminho_real in zip(alvos, caminhos_reais):
             relativo = _caminho_xml_relativo(Path(caminho_real), pasta_base_path)
@@ -432,19 +653,46 @@ def processar_pasta_nfe(pasta: str) -> None:
                     f"[processar_nfe] {resultado} {empresa['tipo']} "
                     f"{empresa['nome']} {dados['chave_nfe']}"
                 )
+                resultados.append(resultado)
             except Exception as e:
                 print(f"[processar_nfe] falha no POST ({nome}, {empresa['nome']}): {e}")
-                falhou_post = True
+                resultados.append("permanente" if _erro_post_permanente(e) else "transitorio")
 
-        if falhou_post:
+        # Por empresa: criado arquiva o próprio caminho; duplicata não gera cópia.
+        # O XML do inbox só sai quando ninguém precisa de reenvio.
+        if "transitorio" in resultados:
+            _copiar_criados(xml_path, resultados, caminhos_reais)
             continue
 
-        try:
-            arquivados = _arquivar_nas_empresas(xml_path, caminhos_reais)
-            for caminho in arquivados:
-                print(f"[processar_nfe] arquivado -> {caminho}")
-        except Exception as e:
-            print(f"[processar_nfe] POST ok, mas falha ao arquivar {nome}: {e}")
+        if "permanente" in resultados:
+            _copiar_criados(xml_path, resultados, caminhos_reais)
+            _tirar_do_inbox(
+                xml_path,
+                pasta_path,
+                PASTA_REJEITADOS,
+                "rejeitado",
+                "erro permanente do POST",
+            )
+            continue
+
+        criados = [c for r, c in zip(resultados, caminhos_reais) if r == "criado"]
+        if criados:
+            try:
+                arquivados = _arquivar_nas_empresas(xml_path, criados)
+                for caminho in arquivados:
+                    print(f"[processar_nfe] arquivado -> {caminho}")
+            except Exception as e:
+                print(f"[processar_nfe] POST ok, mas falha ao arquivar {nome}: {e}")
+            continue
+
+        if resultados and all(r == "duplicata" for r in resultados):
+            _tirar_do_inbox(
+                xml_path,
+                pasta_path,
+                PASTA_DUPLICADAS,
+                "duplicata",
+                dados["chave_nfe"],
+            )
 
 
 if __name__ == "__main__":

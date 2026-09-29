@@ -19,6 +19,7 @@ const LANCAMENTO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 const originalFrom = supabase.from;
 const filas = new Map();
+let ultimoPayload = null;
 function chave(t, m) { return `${t}:${m}`; }
 function queue(tabela, metodo, resultado) {
   const k = chave(tabela, metodo);
@@ -35,8 +36,8 @@ supabase.from = function (tabela) {
   };
   const builder = {
     select() { return builder; },
-    insert() { return builder; },
-    update() { return builder; },
+    insert(payload) { ultimoPayload = payload; return builder; },
+    update(payload) { ultimoPayload = payload; return builder; },
     delete() { return builder; },
     eq() { return builder; },
     gte() { return builder; },
@@ -54,7 +55,10 @@ after(() => {
   supabase.from = originalFrom;
 });
 
-beforeEach(() => filas.clear());
+beforeEach(() => {
+  filas.clear();
+  ultimoPayload = null;
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -124,11 +128,63 @@ describe("POST /lancamentos-contabeis", () => {
     assert.equal(res.statusCode, 400);
   });
 
-  it("403 quando cliente_id do payload não corresponde ao usuário autenticado", async () => {
+  it("404 (nunca 403) quando cliente_id do payload é de outro cliente", async () => {
     const res = criarResposta();
     await criarLancamentoContabil(reqAdmin(payloadValido({ cliente_id: CLIENTE_B })), res);
 
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, { erro: "Cliente não encontrado" });
+  });
+
+  // Validação de entrada (#558): só a UI validava; a API aceitava lixo ou
+  // devolvia 500 genérico.
+  for (const [nome, overrides, campo] of [
+    ["valor zero", { valor: 0 }, "valor"],
+    ["valor negativo", { valor: -5 }, "valor"],
+    ["valor que arredonda para 0,00", { valor: 0.001 }, "valor"],
+    ["valor não numérico", { valor: "abc" }, "valor"],
+    ["valor acima do NUMERIC(15,2)", { valor: 1e20 }, "valor"],
+    ["data em dd/mm/aaaa", { data_lancamento: "05/02/2022" }, "data_lancamento"],
+    ["data com dia/mês inexistente", { data_lancamento: "2022-13-45" }, "data_lancamento"],
+    ["data 31 de fevereiro", { data_lancamento: "2022-02-31" }, "data_lancamento"],
+    ["descrição só com espaços", { descricao: "   " }, "descricao"],
+    ["descrição não-texto", { descricao: 123 }, "descricao"],
+  ]) {
+    it(`400 com mensagem do campo quando ${nome}`, async () => {
+      const res = criarResposta();
+      await criarLancamentoContabil(reqAdmin(payloadValido(overrides)), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.ok(res.body.campos[campo], `esperava mensagem para ${campo}`);
+      assert.ok(res.body.erro.includes(res.body.campos[campo]));
+      assert.equal(ultimoPayload, null, "não deveria chegar ao insert");
+    });
+  }
+
+  it("400 lista todos os campos inválidos de uma vez", async () => {
+    const res = criarResposta();
+    await criarLancamentoContabil(
+      reqAdmin(payloadValido({ valor: 0, data_lancamento: "05/02/2022", descricao: " " })),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(Object.keys(res.body.campos).sort(), ["data_lancamento", "descricao", "valor"]);
+  });
+
+  it("aceita valor como string numérica, no limite máximo, e grava descrição sem espaços nas pontas", async () => {
+    queue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+
+    const res = criarResposta();
+    await criarLancamentoContabil(
+      reqAdmin(payloadValido({ valor: "9999999999999.99", descricao: "  Aluguel  " })),
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(ultimoPayload.valor, 9999999999999.99);
+    assert.equal(ultimoPayload.descricao, "Aluguel");
+    assert.equal(ultimoPayload.data_lancamento, "2026-08-05");
   });
 
   it("500 quando o Supabase retorna erro no insert", async () => {
@@ -177,6 +233,29 @@ describe("GET /lancamentos-contabeis", () => {
     await listarLancamentosContabeis(reqAdmin(undefined, { query: {} }), res);
 
     assert.equal(res.statusCode, 500);
+  });
+
+  it("400 quando clienteId não é UUID (admin_efficience)", async () => {
+    const req = reqAdmin(undefined, {
+      usuario: { perfil: PERFIS.ADMIN_EFFICIENCE },
+      query: { clienteId: "abc" },
+    });
+    const res = criarResposta();
+    await listarLancamentosContabeis(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /UUID/);
+  });
+
+  it("400 quando mês vem sem ano", async () => {
+    const res = criarResposta();
+    await listarLancamentosContabeis(
+      reqAdmin(undefined, { query: { mes: "9" } }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /ano/);
   });
 });
 
@@ -234,7 +313,7 @@ describe("PATCH /lancamentos-contabeis/:id", () => {
     assert.equal(res.statusCode, 409);
   });
 
-  it("403 quando admin_cliente tenta alterar lançamento de outro cliente", async () => {
+  it("404 (nunca 403) quando admin_cliente tenta alterar lançamento de outro cliente", async () => {
     queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_B }, error: null });
 
     const res = criarResposta();
@@ -243,7 +322,8 @@ describe("PATCH /lancamentos-contabeis/:id", () => {
       res,
     );
 
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, { erro: "Lançamento contábil não encontrado" });
   });
 
   it("404 quando lançamento não existe", async () => {
@@ -254,6 +334,38 @@ describe("PATCH /lancamentos-contabeis/:id", () => {
     );
 
     assert.equal(res.statusCode, 404);
+  });
+
+  for (const [nome, body, campo] of [
+    ["valor zero", { valor: 0 }, "valor"],
+    ["valor null", { valor: null }, "valor"],
+    ["data em dd/mm/aaaa", { data_lancamento: "13/02/2022" }, "data_lancamento"],
+    ["descrição vazia", { descricao: "  " }, "descricao"],
+  ]) {
+    it(`400 com mensagem do campo quando ${nome}`, async () => {
+      queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+
+      const res = criarResposta();
+      await atualizarLancamentoContabil(reqAdmin(body, { params: { id: LANCAMENTO_ID } }), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.ok(res.body.campos[campo]);
+      assert.equal(ultimoPayload, null, "não deveria chegar ao update");
+    });
+  }
+
+  it("atualiza só os campos enviados, já normalizados", async () => {
+    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID }, error: null });
+
+    const res = criarResposta();
+    await atualizarLancamentoContabil(
+      reqAdmin({ descricao: " Nova ", valor: "10.50" }, { params: { id: LANCAMENTO_ID } }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(ultimoPayload, { descricao: "Nova", valor: 10.5 });
   });
 
   it("400 quando tipo inválido", async () => {
@@ -299,7 +411,7 @@ describe("DELETE /lancamentos-contabeis/:id", () => {
     assert.equal(res.statusCode, 409);
   });
 
-  it("403 quando admin_cliente tenta remover lançamento de outro cliente", async () => {
+  it("404 (nunca 403) quando admin_cliente tenta remover lançamento de outro cliente", async () => {
     queue("lancamentos_contabeis", "single", {
       data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_B, conciliado: false },
       error: null,
@@ -308,7 +420,8 @@ describe("DELETE /lancamentos-contabeis/:id", () => {
     const res = criarResposta();
     await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
 
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, { erro: "Lançamento contábil não encontrado" });
   });
 
   it("404 quando lançamento não existe", async () => {

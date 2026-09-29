@@ -1,3 +1,5 @@
+# Deps de producao instaladas por run-worker-dev.cmd e build/build.sh (BUG-AGENTE-DEPS-01 / #515).
+# Imports de runtime: deps-runtime.txt. Nao incluir scikit-learn/joblib (#513).
 requests>=2.31.0
 watchdog>=6.0.0
 schedule>=1.2.0
@@ -13,6 +15,4 @@ pytesseract
 pandas
 openpyxl
 matplotlib
-scikit-learn
-joblib
 pytest>=7.0.0

@@ -22,6 +22,7 @@ const STATUS_LICENCA_META = {
   active: { label: 'Ativa', classes: 'bg-emerald-100 text-emerald-800 ring-emerald-200' },
   expired: { label: 'Vencida', classes: 'bg-rose-100 text-rose-800 ring-rose-200' },
   suspended: { label: 'Suspensa', classes: 'bg-amber-100 text-amber-800 ring-amber-200' },
+  unlicensed: { label: 'Sem licença', classes: 'bg-zinc-100 text-zinc-700 ring-zinc-200' },
 };
 
 function obterMensagemErro(error, fallback = 'Não foi possível processar a solicitação.') {
