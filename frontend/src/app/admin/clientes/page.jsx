@@ -318,6 +318,8 @@ export default function AdminClientes() {
   }
 
   function handleChangeLinhaHistorico(indice, campo, valor) {
+    // Erro de submit some ao editar o formulário.
+    setErroRegime('');
     setFormRegime((anterior) => ({
       ...anterior,
       historico: anterior.historico.map((linha, posicao) =>
@@ -327,6 +329,7 @@ export default function AdminClientes() {
   }
 
   function adicionarLinhaHistorico() {
+    setErroRegime('');
     setFormRegime((anterior) => ({
       ...anterior,
       historico: [...anterior.historico, { mes: '', ano: '', receita: '' }],
@@ -334,6 +337,7 @@ export default function AdminClientes() {
   }
 
   function removerLinhaHistorico(indice) {
+    setErroRegime('');
     setFormRegime((anterior) => ({
       ...anterior,
       historico: anterior.historico.filter((_, posicao) => posicao !== indice),
@@ -683,7 +687,7 @@ export default function AdminClientes() {
               </button>
             </header>
 
-            <form className="space-y-5 p-5" onSubmit={handleSubmitRegime}>
+            <form className="space-y-5 p-5" onSubmit={handleSubmitRegime} noValidate>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <label htmlFor="regime-editor" className="block text-sm font-medium text-zinc-700">

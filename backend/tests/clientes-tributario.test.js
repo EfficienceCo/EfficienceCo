@@ -319,3 +319,35 @@ describe("validarHistoricoReceita — contrato compartilhado com a apuração", 
     assert.equal(validarHistoricoReceita("nao-e-lista").erro, "HISTORICO_RECEITA_INVALIDO");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Histórico futuro (BUG-APUR-15): barrado na escrita, tolerado na leitura
+// ---------------------------------------------------------------------------
+describe("historico_receita com competência futura", () => {
+  const futuro = [{ mes: 12, ano: 2030, receita: 1000 }];
+
+  it("POST /clientes → 400 sem gravar", async () => {
+    const res = criarResposta();
+    await criarCliente({ body: { nome: "Alfa", historico_receita: futuro } }, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "historico_receita: competência 12/2030 ainda não fechou");
+    assert.equal(operacoes.length, 0);
+  });
+
+  it("PATCH /clientes/:id → 400 sem gravar", async () => {
+    queueClienteExistente();
+
+    const res = criarResposta();
+    await atualizarCliente({ params: { id: CLIENTE_ID }, body: { historico_receita: futuro } }, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /12\/2030 ainda não fechou/);
+    assert.equal(operacoes.filter((operacao) => operacao.metodo === "update").length, 0);
+  });
+
+  it("a leitura (sem rejeitarFuturo) continua aceitando histórico legado futuro", () => {
+    assert.deepEqual(validarHistoricoReceita(futuro), { entradas: futuro });
+    assert.equal(validarHistoricoReceita(futuro, { rejeitarFuturo: true }).erro, "HISTORICO_RECEITA_FUTURO");
+  });
+});
