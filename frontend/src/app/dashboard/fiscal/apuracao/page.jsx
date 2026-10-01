@@ -252,6 +252,7 @@ export default function ApuracoesPage() {
   const [erroRecalcular, setErroRecalcular] = useState('');
 
   const [showAprovarModal, setShowAprovarModal] = useState(false);
+  const [cienteAprovacao, setCienteAprovacao] = useState(false);
   const [isAprovando, setIsAprovando] = useState(false);
   const [erroAprovar, setErroAprovar] = useState('');
 
@@ -457,6 +458,7 @@ export default function ApuracoesPage() {
 
   function handleAbrirAprovar() {
     setErroAprovar('');
+    setCienteAprovacao(false);
     setShowAprovarModal(true);
   }
 
@@ -466,6 +468,7 @@ export default function ApuracoesPage() {
     }
 
     setShowAprovarModal(false);
+    setCienteAprovacao(false);
   }
 
   async function handleConfirmarAprovar() {
@@ -480,6 +483,7 @@ export default function ApuracoesPage() {
       const atualizado = await aprovarApuracao(apuracao.id);
       setApuracao((anterior) => ({ ...anterior, ...atualizado }));
       setShowAprovarModal(false);
+      setCienteAprovacao(false);
     } catch (error) {
       setErroAprovar(obterMensagemErro(error, 'Não foi possível aprovar o DAS.'));
     } finally {
@@ -1152,6 +1156,44 @@ export default function ApuracoesPage() {
               <strong>{competenciaLabel}</strong>?
             </p>
 
+            <dl
+              data-testid="resumo-conferencia"
+              className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm"
+            >
+              <dt className="text-zinc-500">RBT12</dt>
+              <dd className="text-right font-mono font-semibold text-zinc-900">
+                {formatarValor(apuracao?.rbt12 ?? apuracao?.rbt12_usado)}
+              </dd>
+              <dt className="text-zinc-500">Anexo efetivo</dt>
+              <dd className="text-right font-semibold text-zinc-900">{anexoEfetivo ? `Anexo ${anexoEfetivo}` : '-'}</dd>
+              <dt className="text-zinc-500">Alíquota efetiva</dt>
+              <dd className="text-right font-mono font-semibold text-zinc-900">
+                {formatarPercentual(apuracao?.aliquota_efetiva)}
+              </dd>
+              <dt className="text-zinc-500">Valor do DAS</dt>
+              <dd className="text-right font-mono font-semibold text-zinc-900">
+                {formatarValor(obterValorExibido(apuracao))}
+              </dd>
+            </dl>
+
+            <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3">
+              <p className="text-sm leading-relaxed text-amber-900">
+                O valor do DAS é calculado automaticamente a partir das notas fiscais e do cadastro do
+                cliente. Confira RBT12, anexo e alíquota antes de aprovar. A aprovação é de
+                responsabilidade do contador.
+              </p>
+              <label className="mt-3 flex items-center gap-2 text-sm font-medium text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={cienteAprovacao}
+                  onChange={(event) => setCienteAprovacao(event.target.checked)}
+                  disabled={isAprovando}
+                  className="h-4 w-4 rounded border-amber-400"
+                />
+                Conferi os valores acima
+              </label>
+            </div>
+
             {erroAprovar ? (
               <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                 {erroAprovar}
@@ -1171,7 +1213,7 @@ export default function ApuracoesPage() {
               <button
                 type="button"
                 onClick={handleConfirmarAprovar}
-                disabled={isAprovando}
+                disabled={isAprovando || !cienteAprovacao}
                 className="inline-flex items-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isAprovando ? <Spinner /> : null}
