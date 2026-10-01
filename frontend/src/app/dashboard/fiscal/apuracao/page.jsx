@@ -545,6 +545,14 @@ export default function ApuracoesPage() {
   const dadosFolha = apuracao?.dados_folha || null;
   const historicoEdicoes = Array.isArray(apuracao?.historico_edicoes) ? apuracao.historico_edicoes : [];
   const rbt12Mensal = Array.isArray(apuracao?.rbt12_mensal) ? apuracao.rbt12_mensal : [];
+  const rbt12Proporcional = apuracao?.rbt12_metodo === 'proporcional_inicio_atividade';
+  // Sem data de início e com menos de 12 meses de dado: o DAS pode estar abaixo
+  // do devido se a empresa for nova (BUG-APUR-08).
+  const mesesComDado = rbt12Mensal.filter(
+    (item) => Number(item.receita_nfes) > 0 || Number(item.receita_historico) > 0,
+  ).length;
+  const semDataInicioComJanelaCurta =
+    apuracao?.rbt12_metodo === 'janela_12_meses' && rbt12Mensal.length > 0 && mesesComDado < 12;
   const notasConsideradas = Array.isArray(apuracao?.notas_fiscais?.consideradas)
     ? apuracao.notas_fiscais.consideradas
     : [];
@@ -902,6 +910,28 @@ export default function ApuracoesPage() {
               </p>
             </header>
 
+            {rbt12Proporcional ? (
+              <div
+                role="status"
+                data-testid="aviso-rbt12-proporcional"
+                className="border-b border-sky-200 bg-sky-50 px-6 py-3 text-xs text-sky-900"
+              >
+                RBT12 proporcional: média dos {apuracao.meses_atividade} meses de atividade × 12 (Res.
+                CGSN 140/2018, art. 22).
+              </div>
+            ) : null}
+
+            {semDataInicioComJanelaCurta ? (
+              <div
+                role="status"
+                data-testid="aviso-sem-data-inicio"
+                className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-xs text-amber-900"
+              >
+                Este cliente não tem data de início de atividade. Se a empresa tem menos de 13 meses, o
+                DAS pode estar abaixo do devido — informe a data em Clientes.
+              </div>
+            ) : null}
+
             {apuracao.breakdown_desatualizado ? (
               <div
                 role="alert"
@@ -933,13 +963,13 @@ export default function ApuracoesPage() {
                     <tr key={item.referencia}>
                       <td className="px-6 py-3 font-medium text-zinc-700">{formatarReferencia(item)}</td>
                       <td className="px-6 py-3 text-right font-mono text-zinc-600">
-                        {formatarValor(item.receita_nfes)}
+                        {item.anterior_ao_inicio ? '—' : formatarValor(item.receita_nfes)}
                       </td>
                       <td className="px-6 py-3 text-right font-mono text-zinc-600">
-                        {formatarValor(item.receita_historico)}
+                        {item.anterior_ao_inicio ? '—' : formatarValor(item.receita_historico)}
                       </td>
                       <td className="px-6 py-3 text-right font-mono font-semibold text-zinc-900">
-                        {formatarValor(item.total)}
+                        {item.anterior_ao_inicio ? '—' : formatarValor(item.total)}
                       </td>
                     </tr>
                   ))}

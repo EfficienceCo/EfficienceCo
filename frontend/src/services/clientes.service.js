@@ -10,6 +10,7 @@ export async function criarCliente({
   cnpj,
   regime_tributario: regimeTributario,
   anexo_simples: anexoSimples,
+  data_inicio_atividade: dataInicioAtividade,
 }) {
   const payload = {
     nome,
@@ -18,6 +19,7 @@ export async function criarCliente({
     // hora de criar preenche depois pelo editor de regime tributário (#496).
     ...(regimeTributario ? { regime_tributario: regimeTributario } : {}),
     ...(anexoSimples ? { anexo_simples: anexoSimples } : {}),
+    ...(dataInicioAtividade ? { data_inicio_atividade: dataInicioAtividade } : {}),
   };
 
   const response = await api.post('/clientes', payload);

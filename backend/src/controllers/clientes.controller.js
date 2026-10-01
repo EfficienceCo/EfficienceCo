@@ -3,6 +3,7 @@ import { validarTokenLicenca } from "../services/licenca.service.js";
 import {
   ANEXOS_SIMPLES,
   REGIMES_TRIBUTARIOS,
+  validarDataInicioAtividade,
   validarHistoricoReceita,
 } from "../utils/regime-tributario.util.js";
 
@@ -28,7 +29,7 @@ function vazio(valor) {
  * @returns {{ updates: object } | { erro: string }}
  */
 function montarCamposTributarios(body, atual = {}) {
-  const { regime_tributario, anexo_simples, historico_receita } = body;
+  const { regime_tributario, anexo_simples, historico_receita, data_inicio_atividade } = body;
   const updates = {};
 
   if (regime_tributario !== undefined) {
@@ -70,6 +71,14 @@ function montarCamposTributarios(body, atual = {}) {
       };
     }
     updates.historico_receita = validado.entradas;
+  }
+
+  if (data_inicio_atividade !== undefined) {
+    const validada = validarDataInicioAtividade(data_inicio_atividade);
+    if (validada.erro) {
+      return { erro: "Data de início de atividade inválida. Use AAAA-MM-DD, a partir de 2000 e não futura" };
+    }
+    updates.data_inicio_atividade = validada.valor;
   }
 
   // Simples Nacional sem anexo é exatamente o estado que trava a apuração

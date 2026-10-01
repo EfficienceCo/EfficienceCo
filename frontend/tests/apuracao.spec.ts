@@ -700,3 +700,103 @@ test.describe('Apuração Fiscal — excluir rascunho e janela de anos (issue #5
     await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
   });
 });
+
+test.describe('Apuração Fiscal — RBT12 proporcional e data de início (BUG-APUR-08)', () => {
+  const MESES_ANTERIORES = Array.from({ length: 12 }, (_, indice) => {
+    const mes = ((indice + 7) % 12) + 1;
+    return { mes, ano: indice + 7 >= 12 ? 2026 : 2025 };
+  });
+
+  // 12 meses da janela de agosto/2026 (ago/2025 a jul/2026); `comDado` define
+  // quantos meses finais têm receita e `anterioresAoInicio` quantos iniciais
+  // foram marcados como anteriores à abertura da empresa.
+  function janela(comDado: number, anterioresAoInicio = 0) {
+    return MESES_ANTERIORES.map(({ mes, ano }, indice) => {
+      const anterior = indice < anterioresAoInicio;
+      const tem = indice >= 12 - comDado;
+      return {
+        referencia: `${ano}-${String(mes).padStart(2, '0')}`,
+        mes,
+        ano,
+        receita_nfes: tem ? 50000 : 0,
+        receita_historico: 0,
+        total: tem ? 50000 : 0,
+        periodo_fechado: true,
+        anterior_ao_inicio: anterior,
+      };
+    });
+  }
+
+  async function abrirApuracao(page: Page, apuracao: Record<string, unknown>) {
+    await page.addInitScript((token) => window.localStorage.setItem('token', token), tokenFrontendDeTeste());
+    await page.goto('/dashboard/fiscal/apuracao');
+
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+          { id: apuracao.id, regime: 'simples_nacional' },
+        ]) });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}` && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(apuracao) });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.reload();
+    await page.getByLabel('Mês').selectOption('8');
+    await page.getByLabel('Ano').selectOption('2026');
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    await expect(page.getByRole('heading', { name: 'Composição da RBT12' })).toBeVisible();
+  }
+
+  test('RBT12 proporcional exibe o banner azul com N e esconde meses anteriores ao início', async ({ page }) => {
+    await abrirApuracao(page, apuracaoDetalhada({
+      id: 'apuracao-proporcional',
+      rbt12: 600000,
+      rbt12_usado: 600000,
+      rbt12_metodo: 'proporcional_inicio_atividade',
+      meses_atividade: 2,
+      rbt12_mensal: janela(2, 10),
+    }));
+
+    const banner = page.getByTestId('aviso-rbt12-proporcional');
+    await expect(banner).toContainText('média dos 2 meses de atividade × 12');
+    await expect(page.getByTestId('aviso-sem-data-inicio')).toHaveCount(0);
+
+    const composicao = page.locator('section', { hasText: 'Composição da RBT12' }).first();
+    await expect(composicao.locator('tbody tr').first()).toContainText('—');
+    await expect(composicao.locator('tbody tr').first()).not.toContainText('R$ 0,00');
+  });
+
+  test('sem data de início e com poucos meses de dado exibe o banner âmbar', async ({ page }) => {
+    await abrirApuracao(page, apuracaoDetalhada({
+      id: 'apuracao-sem-data',
+      rbt12_metodo: 'janela_12_meses',
+      meses_atividade: null,
+      rbt12_mensal: janela(3),
+    }));
+
+    await expect(page.getByTestId('aviso-sem-data-inicio')).toContainText('não tem data de início de atividade');
+    await expect(page.getByTestId('aviso-rbt12-proporcional')).toHaveCount(0);
+  });
+
+  test('cliente com 12 meses de dado não exibe banner nenhum', async ({ page }) => {
+    await abrirApuracao(page, apuracaoDetalhada({
+      id: 'apuracao-normal',
+      rbt12_metodo: 'janela_12_meses',
+      meses_atividade: null,
+      rbt12_mensal: janela(12),
+    }));
+
+    await expect(page.getByTestId('aviso-sem-data-inicio')).toHaveCount(0);
+    await expect(page.getByTestId('aviso-rbt12-proporcional')).toHaveCount(0);
+  });
+});

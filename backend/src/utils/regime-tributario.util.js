@@ -4,6 +4,8 @@
 // relidos por apuracoes.controller.js — se as duas pontas divergirem, a tela
 // grava um histórico que a apuração depois recusa com HISTORICO_RECEITA_INVALIDO.
 
+import { hojeNoBrasil } from "./periodo.util.js";
+
 export const REGIMES_TRIBUTARIOS = ["simples_nacional", "lucro_presumido", "lucro_real"];
 
 export const ANEXOS_SIMPLES = ["I", "II", "III", "IV", "V"];
@@ -30,6 +32,34 @@ function numeroNaoNegativo(valor) {
 
   const numero = Number(valor);
   return Number.isFinite(numero) && numero >= 0 ? numero : null;
+}
+
+/**
+ * Valida a data de início de atividade do cliente (BUG-APUR-08).
+ *
+ * `null`/`""`/`undefined` limpam o campo. Caso contrário exige `AAAA-MM-DD`
+ * de calendário válido, ano >= 2000 e não futura. A string é mantida como veio
+ * (sem passar por `Date`) para não deslocar um dia por fuso.
+ *
+ * @returns {{ valor: string|null } | { erro: string }}
+ */
+export function validarDataInicioAtividade(valor, hoje = hojeNoBrasil()) {
+  if (valor == null || (typeof valor === "string" && valor.trim() === "")) return { valor: null };
+  if (typeof valor !== "string") return { erro: "data_inicio_atividade inválida" };
+
+  const texto = valor.trim();
+  const correspondencia = /^(\d{4})-(\d{2})-(\d{2})$/.exec(texto);
+  if (!correspondencia) return { erro: "data_inicio_atividade inválida" };
+
+  const [ano, mes, dia] = [correspondencia[1], correspondencia[2], correspondencia[3]].map(Number);
+  const calendario = new Date(Date.UTC(ano, mes - 1, dia));
+  const dataReal = calendario.getUTCFullYear() === ano
+    && calendario.getUTCMonth() === mes - 1
+    && calendario.getUTCDate() === dia;
+
+  if (!dataReal || ano < 2000 || texto > hoje) return { erro: "data_inicio_atividade inválida" };
+
+  return { valor: texto };
 }
 
 export function chaveMes(ano, mes) {

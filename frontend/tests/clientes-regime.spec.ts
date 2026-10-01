@@ -156,6 +156,30 @@ test.describe('Clientes — regime tributário (issue #496)', () => {
     });
   });
 
+  test('envia a data de início de atividade no cadastro e barra data futura', async ({ page }) => {
+    const chamadas = await stubClientes(page);
+    await abrirTela(page);
+
+    await page.getByLabel('Nome').fill('Empresa Nova ME');
+    await page.getByLabel('Data de início de atividade (opcional)').first().fill('2999-01-01');
+    await page.getByRole('button', { name: 'Cadastrar cliente' }).click();
+
+    // `max` = hoje: o navegador barra o envio e a validação do handler (mesma
+    // regra) é a segunda linha de defesa.
+    await expect(page.getByLabel('Data de início de atividade (opcional)').first()).toHaveJSProperty(
+      'validity.rangeOverflow',
+      true,
+    );
+    expect(chamadas.posts).toHaveLength(0);
+
+    await page.getByLabel('Data de início de atividade (opcional)').first().fill('2026-06-10');
+    await page.getByRole('button', { name: 'Cadastrar cliente' }).click();
+
+    await expect(page.getByText('Cliente criado com sucesso.')).toBeVisible();
+    expect(chamadas.posts).toHaveLength(1);
+    expect(chamadas.posts[0]).toMatchObject({ nome: 'Empresa Nova ME', data_inicio_atividade: '2026-06-10' });
+  });
+
   test('o anexo só é editável no Simples Nacional', async ({ page }) => {
     await stubClientes(page);
     await abrirTela(page);
@@ -208,6 +232,7 @@ test.describe('Clientes — regime tributário (issue #496)', () => {
     expect(chamadas.patches[0]).toEqual({
       regime_tributario: 'simples_nacional',
       anexo_simples: 'III',
+      data_inicio_atividade: null,
       historico_receita: [
         { mes: 7, ano: 2025, receita: 50000 },
         { mes: 8, ano: 2025, receita: 60000 },

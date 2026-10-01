@@ -2,7 +2,7 @@ import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { atualizarCliente, criarCliente } from "../src/controllers/clientes.controller.js";
-import { validarHistoricoReceita } from "../src/utils/regime-tributario.util.js";
+import { validarDataInicioAtividade, validarHistoricoReceita } from "../src/utils/regime-tributario.util.js";
 
 const CLIENTE_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -317,5 +317,48 @@ describe("validarHistoricoReceita — contrato compartilhado com a apuração", 
 
   it("devolve HISTORICO_RECEITA_INVALIDO no mesmo código que a apuração usa", () => {
     assert.equal(validarHistoricoReceita("nao-e-lista").erro, "HISTORICO_RECEITA_INVALIDO");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// data_inicio_atividade (BUG-APUR-08) — base da RBT12 proporcional
+// ---------------------------------------------------------------------------
+describe("data_inicio_atividade", () => {
+  it("criarCliente grava a data informada", async () => {
+    queue("clientes", "single", { data: { id: CLIENTE_ID, nome: "Alfa" }, error: null });
+
+    const res = criarResposta();
+    await criarCliente({ body: { nome: "Alfa", data_inicio_atividade: "2026-06-10" } }, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(ultimaOperacao("insert").payload.data_inicio_atividade, "2026-06-10");
+  });
+
+  it("atualizarCliente limpa a data com string vazia (grava null)", async () => {
+    queueClienteExistente();
+
+    const res = criarResposta();
+    await atualizarCliente({ params: { id: CLIENTE_ID }, body: { data_inicio_atividade: "" } }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(ultimaOperacao("update").payload.data_inicio_atividade, null);
+  });
+
+  it("400 para data futura, inexistente ou mal formatada, sem gravar", async () => {
+    for (const valor of ["2999-01-01", "2026-02-31", "10/06/2026", "1999-12-31", 20260610]) {
+      queueClienteExistente();
+      const res = criarResposta();
+      await atualizarCliente({ params: { id: CLIENTE_ID }, body: { data_inicio_atividade: valor } }, res);
+
+      assert.equal(res.statusCode, 400, String(valor));
+      assert.match(res.body.erro, /data de início de atividade/i);
+    }
+    assert.equal(operacoes.filter((operacao) => operacao.metodo === "update").length, 0);
+  });
+
+  it("validarDataInicioAtividade aceita hoje e recusa amanhã", () => {
+    assert.deepEqual(validarDataInicioAtividade("2026-09-25", "2026-09-25"), { valor: "2026-09-25" });
+    assert.equal(validarDataInicioAtividade("2026-09-26", "2026-09-25").erro, "data_inicio_atividade inválida");
+    assert.deepEqual(validarDataInicioAtividade(null), { valor: null });
   });
 });
