@@ -142,12 +142,59 @@ function dataEmissaoISO(nota) {
   return typeof nota?.data_emissao === "string" ? nota.data_emissao.slice(0, 10) : "";
 }
 
-export function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO = dataLocalISO() }) {
+// clientes.data_inicio_atividade (BUG-APUR-06) chega como "AAAA-MM-DD". Só o
+// mês importa: o mês do início conta inteiro como mês de atividade.
+function referenciaInicioAtividade(dataInicioAtividade) {
+  if (dataInicioAtividade == null || dataInicioAtividade === "") return { referencia: null };
+
+  const match = typeof dataInicioAtividade === "string"
+    ? /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(dataInicioAtividade.trim().slice(0, 10))
+    : null;
+  const anoInicio = match ? Number(match[1]) : NaN;
+  const mesInicio = match ? Number(match[2]) : NaN;
+
+  if (!match || mesInicio < 1 || mesInicio > 12) {
+    return { erro: "Data de início de atividade inválida no cadastro do cliente" };
+  }
+
+  return { referencia: chaveMes(anoInicio, mesInicio), indice: anoInicio * 12 + (mesInicio - 1) };
+}
+
+export function montarBasesCalculo({
+  notas,
+  historicoReceita,
+  mes,
+  ano,
+  dataInicioAtividade = null,
+  hojeISO = dataLocalISO(),
+}) {
+  const inicioAtividade = referenciaInicioAtividade(dataInicioAtividade);
+  if (inicioAtividade.erro) return { erro: inicioAtividade.erro };
+
+  // BUG-APUR-07 (LC 123/2006 art. 18 §2º; Res. CGSN 140/2018 art. 22): com
+  // menos de 12 meses de atividade antes da competência, a RBT12 é
+  // proporcionalizada. Sem data de início no cadastro, segue a janela cheia —
+  // ausência nunca é tratada como "empresa nova".
+  const mesesAtividade = inicioAtividade.referencia === null
+    ? null
+    : ano * 12 + (mes - 1) - inicioAtividade.indice;
+
+  if (mesesAtividade !== null && mesesAtividade < 0) {
+    return { erro: "PERIODO_ANTERIOR_AO_INICIO_ATIVIDADE" };
+  }
+
+  const rbt12Proporcional = mesesAtividade !== null && mesesAtividade < 12;
+  const anteriorAoInicio = (referencia) =>
+    inicioAtividade.referencia !== null && referencia < inicioAtividade.referencia;
+
   const janelaRbt12 = calcularJanela12MesesAnteriores(mes, ano);
   // BUG-APUR-08 / QA-F §F8: só meses já fechados no calendário entram na RBT12 —
   // competência futura ou mês corrente parcial não podem inflar/subestimar a base.
+  // Meses anteriores ao início de atividade não existem para a RBT12 (não viram zero).
   const mesesRbt12Fechados = new Set(
-    [...janelaRbt12.meses].filter((referencia) => mesJaFechado(referencia, hojeISO)),
+    [...janelaRbt12.meses].filter(
+      (referencia) => mesJaFechado(referencia, hojeISO) && !anteriorAoInicio(referencia),
+    ),
   );
   const mesReferenciaAtual = chaveMes(ano, mes);
   const linhasNotas = Array.isArray(notas) ? notas : [];
@@ -180,7 +227,8 @@ export function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO 
     );
   }
 
-  const rbt12Mensal = [...janelaRbt12.meses].map((referencia) => {
+  const mesesComposicao = [...janelaRbt12.meses].filter((referencia) => !anteriorAoInicio(referencia));
+  const rbt12Mensal = mesesComposicao.map((referencia) => {
     const [anoReferencia, mesReferencia] = referencia.split("-").map(Number);
     const periodoFechado = mesesRbt12Fechados.has(referencia);
     const receitaNfes = periodoFechado ? (receitaNfesPorMes.get(referencia) || 0) : 0;
@@ -197,10 +245,20 @@ export function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO 
     };
   });
 
-  const rbt12 = arredondar(rbt12Mensal.reduce((soma, item) => soma + item.total, 0));
-  const receitaMes = arredondar(
-    notasReceitaMes.reduce((soma, nota) => soma + Number(nota.valor_total), 0),
-  );
+  const somaJanela = rbt12Mensal.reduce((soma, item) => soma + item.total, 0);
+  const receitaMesBruta = notasReceitaMes.reduce((soma, nota) => soma + Number(nota.valor_total), 0);
+  const receitaMes = arredondar(receitaMesBruta);
+
+  // 1º mês de atividade: receita do próprio mês × 12. Do 2º ao 12º: média dos
+  // meses de atividade anteriores × 12. Arredonda só no final.
+  let rbt12;
+  if (!rbt12Proporcional) {
+    rbt12 = arredondar(somaJanela);
+  } else if (mesesAtividade === 0) {
+    rbt12 = arredondar(receitaMesBruta * 12);
+  } else {
+    rbt12 = arredondar((somaJanela / mesesAtividade) * 12);
+  }
 
   const notasConsideradas = [];
   const notasExcluidasPeriodo = [];
@@ -219,7 +277,9 @@ export function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO 
         compoe_receita_mes: false,
         motivo: emissaoFutura
           ? "Nota fiscal com data de emissão futura — excluída da RBT12 e da receita da competência."
-          : "Período ainda não fechado — excluída da RBT12.",
+          : anteriorAoInicio(referencia)
+            ? "Emitida antes do início de atividade do cliente — excluída da RBT12."
+            : "Período ainda não fechado — excluída da RBT12.",
       }));
       continue;
     }
@@ -251,6 +311,8 @@ export function montarBasesCalculo({ notas, historicoReceita, mes, ano, hojeISO 
     rbt12,
     receitaMes,
     rbt12Mensal,
+    rbt12Metodo: rbt12Proporcional ? "proporcional_inicio_atividade" : "janela_12_meses",
+    mesesAtividade: rbt12Proporcional ? mesesAtividade : null,
     notasFiscais: {
       consideradas: notasConsideradas,
       excluidas: notasExcluidas,
@@ -292,6 +354,9 @@ function enriquecerApuracao(apuracao, resultado, bases) {
     rbt12: resultado.rbt12_usado,
     rbt12_usado: resultado.rbt12_usado,
     receita_mes: resultado.receita_mes,
+    // Derivados na leitura (cliente + período), sem coluna própria (BUG-APUR-07).
+    rbt12_metodo: bases.rbt12Metodo,
+    meses_atividade: bases.mesesAtividade,
     rbt12_mensal: bases.rbt12Mensal,
     notas_fiscais: bases.notasFiscais,
     ...detectarBreakdownDesatualizado(resultado, bases),
@@ -404,7 +469,7 @@ export async function dispararApuracao(req, res) {
       .maybeSingle(),
     supabase
       .from("clientes")
-      .select("anexo_simples, regime_tributario, historico_receita")
+      .select("anexo_simples, regime_tributario, historico_receita, data_inicio_atividade")
       .eq("id", clienteId)
       .maybeSingle(),
   ]);
@@ -450,6 +515,7 @@ export async function dispararApuracao(req, res) {
   const bases = montarBasesCalculo({
     notas: filtrarNotasAtivas(notas),
     historicoReceita: cliente.historico_receita,
+    dataInicioAtividade: cliente.data_inicio_atividade,
     mes: mesNum,
     ano: anoNum,
   });
@@ -574,7 +640,7 @@ export async function detalharApuracao(req, res) {
   const [{ data: cliente, error: erroCliente }, { data: notas, error: erroNotas }] = await Promise.all([
     supabase
       .from("clientes")
-      .select("anexo_simples, historico_receita")
+      .select("anexo_simples, historico_receita, data_inicio_atividade")
       .eq("id", data.cliente_id)
       .maybeSingle(),
     supabase
@@ -601,6 +667,7 @@ export async function detalharApuracao(req, res) {
   const bases = montarBasesCalculo({
     notas: filtrarNotasAtivas(notas),
     historicoReceita: cliente.historico_receita,
+    dataInicioAtividade: cliente.data_inicio_atividade,
     mes: data.periodo_mes,
     ano: data.periodo_ano,
   });
@@ -837,7 +904,7 @@ export async function recalcularApuracao(req, res) {
 
   const { data: cliente, error: erroCliente } = await supabase
     .from("clientes")
-    .select("historico_receita")
+    .select("historico_receita, data_inicio_atividade")
     .eq("id", apuracao.cliente_id)
     .maybeSingle();
 
@@ -874,6 +941,7 @@ export async function recalcularApuracao(req, res) {
   const bases = montarBasesCalculo({
     notas: filtrarNotasAtivas(notas),
     historicoReceita: cliente.historico_receita,
+    dataInicioAtividade: cliente.data_inicio_atividade,
     mes: apuracao.periodo_mes,
     ano: apuracao.periodo_ano,
   });
