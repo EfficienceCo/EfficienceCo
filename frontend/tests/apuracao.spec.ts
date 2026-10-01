@@ -700,3 +700,119 @@ test.describe('Apuração Fiscal — excluir rascunho e janela de anos (issue #5
     await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
   });
 });
+
+test.describe('Apuração Fiscal — aviso ao recalcular e feedback de sucesso (BUG-APUR-10)', () => {
+  // Abre uma apuração em rascunho (GET existente) e devolve os contadores das
+  // chamadas de recálculo/exclusão; `respostaRecalculo` é o corpo do PATCH.
+  async function abrirRascunho(
+    page: Page,
+    apuracao: Record<string, unknown>,
+    respostaRecalculo: Record<string, unknown> = {},
+  ) {
+    const chamadas = { recalculos: 0, exclusoes: 0 };
+
+    await page.addInitScript((token) => window.localStorage.setItem('token', token), tokenFrontendDeTeste());
+    await page.goto('/dashboard/fiscal/apuracao');
+
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+      const metodo = requisicao.method();
+
+      if (url.pathname === '/apuracoes' && metodo === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+          { id: apuracao.id, regime: 'simples_nacional' },
+        ]) });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}` && metodo === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(apuracao) });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}/recalcular` && metodo === 'PATCH') {
+        chamadas.recalculos += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ ...apuracao, valor_editado: null, valor_calculado: 943.48, ...respostaRecalculo }),
+        });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}` && metodo === 'DELETE') {
+        chamadas.exclusoes += 1;
+        await route.fulfill({ status: 204, body: '' });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.reload();
+    await page.getByLabel('Mês').selectOption('8');
+    await page.getByLabel('Ano').selectOption('2026');
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+
+    return chamadas;
+  }
+
+  test('recalcular sem edição manual não abre modal e mostra os dois valores', async ({ page }) => {
+    const chamadas = await abrirRascunho(page, apuracaoDetalhada({ id: 'apuracao-rec-simples' }));
+
+    await page.getByRole('button', { name: 'Recalcular' }).click();
+
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByTestId('mensagem-sucesso')).toHaveText('DAS recalculado: de R$ 984,80 para R$ 943,48.');
+    expect(chamadas.recalculos).toBe(1);
+  });
+
+  test('recalcular com edição manual pede confirmação; Cancelar não chama a API', async ({ page }) => {
+    const chamadas = await abrirRascunho(
+      page,
+      apuracaoDetalhada({ id: 'apuracao-rec-editada', valor_editado: 930 }),
+      { edicao_descartada: true },
+    );
+
+    await page.getByRole('button', { name: 'Recalcular' }).click();
+    const dialogo = page.getByRole('dialog');
+    await expect(dialogo).toContainText('valor editado manualmente (R$ 930,00)');
+    await expect(dialogo.getByRole('button', { name: 'Cancelar' })).toBeFocused();
+
+    await dialogo.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(dialogo).toHaveCount(0);
+    expect(chamadas.recalculos).toBe(0);
+
+    // Esc também fecha.
+    await page.getByRole('button', { name: 'Recalcular' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(chamadas.recalculos).toBe(0);
+
+    await page.getByRole('button', { name: 'Recalcular' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Recalcular' }).click();
+
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByTestId('mensagem-sucesso')).toHaveText(
+      'DAS recalculado: de R$ 930,00 para R$ 943,48. A edição manual anterior foi descartada.',
+    );
+    expect(chamadas.recalculos).toBe(1);
+  });
+
+  test('excluir mostra a mensagem verde mesmo com a tela voltando ao estado inicial', async ({ page }) => {
+    const chamadas = await abrirRascunho(page, apuracaoDetalhada({ id: 'apuracao-exc' }));
+
+    await page.getByRole('button', { name: 'Excluir rascunho' }).click();
+    await page.getByRole('button', { name: 'Confirmar exclusão' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).not.toBeVisible();
+    await expect(page.getByTestId('mensagem-sucesso')).toHaveText('Rascunho de 08/2026 excluído.');
+    expect(chamadas.exclusoes).toBe(1);
+
+    // Some sozinha em ~5 s.
+    await expect(page.getByTestId('mensagem-sucesso')).toHaveCount(0, { timeout: 8000 });
+  });
+});

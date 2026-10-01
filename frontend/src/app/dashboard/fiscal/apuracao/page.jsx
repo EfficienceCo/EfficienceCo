@@ -255,6 +255,8 @@ export default function ApuracoesPage() {
   const [isAprovando, setIsAprovando] = useState(false);
   const [erroAprovar, setErroAprovar] = useState('');
 
+  const [showRecalcularModal, setShowRecalcularModal] = useState(false);
+  const [mensagemSucesso, setMensagemSucesso] = useState('');
   const [showExcluirModal, setShowExcluirModal] = useState(false);
   const [isExcluindo, setIsExcluindo] = useState(false);
   const [erroExcluir, setErroExcluir] = useState('');
@@ -309,6 +311,32 @@ export default function ApuracoesPage() {
     }
   }, [isAuthenticated, isLoading, router]);
 
+  // A faixa de sucesso some sozinha; o cleanup também cobre o unmount.
+  useEffect(() => {
+    if (!mensagemSucesso) {
+      return undefined;
+    }
+
+    const temporizador = setTimeout(() => setMensagemSucesso(''), 5000);
+    return () => clearTimeout(temporizador);
+  }, [mensagemSucesso]);
+
+  // Esc fecha o modal de confirmação do recálculo (a menos que esteja recalculando).
+  useEffect(() => {
+    if (!showRecalcularModal) {
+      return undefined;
+    }
+
+    function aoPressionarTecla(event) {
+      if (event.key === 'Escape' && !isRecalculando) {
+        setShowRecalcularModal(false);
+      }
+    }
+
+    window.addEventListener('keydown', aoPressionarTecla);
+    return () => window.removeEventListener('keydown', aoPressionarTecla);
+  }, [showRecalcularModal, isRecalculando]);
+
   useEffect(() => {
     if (!isLoading && isAuthenticated && isAdminEfficience) {
       carregarClientes();
@@ -318,6 +346,8 @@ export default function ApuracoesPage() {
   function handleSelecionarCliente(event) {
     setClienteId(event.target.value || null);
     setApuracao(null);
+    setMensagemSucesso('');
+    setShowRecalcularModal(false);
     setErro(null);
     setShowAprovarModal(false);
     setShowExcluirModal(false);
@@ -326,6 +356,8 @@ export default function ApuracoesPage() {
   function handleSelecionarMes(event) {
     setMes(Number(event.target.value));
     setApuracao(null);
+    setMensagemSucesso('');
+    setShowRecalcularModal(false);
     setErro(null);
     setShowAprovarModal(false);
     setShowExcluirModal(false);
@@ -334,6 +366,8 @@ export default function ApuracoesPage() {
   function handleSelecionarAno(event) {
     setAno(Number(event.target.value));
     setApuracao(null);
+    setMensagemSucesso('');
+    setShowRecalcularModal(false);
     setErro(null);
     setShowAprovarModal(false);
     setShowExcluirModal(false);
@@ -347,6 +381,8 @@ export default function ApuracoesPage() {
     setLoading(true);
     setErro(null);
     setApuracao(null);
+    setMensagemSucesso('');
+    setShowRecalcularModal(false);
     setShowAprovarModal(false);
     setShowExcluirModal(false);
 
@@ -434,13 +470,38 @@ export default function ApuracoesPage() {
     }
   }
 
-  async function handleRecalcular() {
+  // Com edição manual no rascunho, recalcular a descarta — pede confirmação antes.
+  function handleRecalcular() {
     if (!apuracao?.id || isRecalculando) {
       return;
     }
 
+    if (apuracao.valor_editado != null) {
+      setShowRecalcularModal(true);
+      return;
+    }
+
+    executarRecalculo();
+  }
+
+  function handleFecharRecalcular() {
+    if (isRecalculando) {
+      return;
+    }
+
+    setShowRecalcularModal(false);
+  }
+
+  async function executarRecalculo() {
+    if (!apuracao?.id || isRecalculando) {
+      return;
+    }
+
+    const valorAntes = obterValorExibido(apuracao);
+
     setIsRecalculando(true);
     setErroRecalcular('');
+    setMensagemSucesso('');
 
     try {
       const atualizado = await recalcularApuracao(apuracao.id);
@@ -448,7 +509,14 @@ export default function ApuracoesPage() {
       setValorEditado(formatarValorInput(obterValorExibido(atualizado)));
       setMotivo('');
       setErroEdicao('');
+      setShowRecalcularModal(false);
+      setMensagemSucesso(
+        `DAS recalculado: de ${formatarValor(valorAntes)} para ${formatarValor(obterValorExibido(atualizado))}.${
+          atualizado?.edicao_descartada ? ' A edição manual anterior foi descartada.' : ''
+        }`,
+      );
     } catch (error) {
+      setShowRecalcularModal(false);
       setErroRecalcular(obterMensagemErro(error, 'Não foi possível recalcular o DAS.'));
     } finally {
       setIsRecalculando(false);
@@ -505,8 +573,11 @@ export default function ApuracoesPage() {
       return;
     }
 
+    const competenciaExcluida = `${String(apuracao.periodo_mes ?? mes).padStart(2, '0')}/${apuracao.periodo_ano ?? ano}`;
+
     setIsExcluindo(true);
     setErroExcluir('');
+    setMensagemSucesso('');
 
     try {
       await excluirApuracao(apuracao.id);
@@ -514,6 +585,7 @@ export default function ApuracoesPage() {
       // a competência volta ao estado "nunca apurada" e Calcular DAS recomeça do zero.
       setShowExcluirModal(false);
       setApuracao(null);
+      setMensagemSucesso(`Rascunho de ${competenciaExcluida} excluído.`);
     } catch (error) {
       setErroExcluir(obterMensagemErro(error, 'Não foi possível excluir o rascunho.'));
     } finally {
@@ -640,6 +712,17 @@ export default function ApuracoesPage() {
             </p>
           ) : null}
         </section>
+
+        {mensagemSucesso ? (
+          <p
+            role="status"
+            aria-live="polite"
+            data-testid="mensagem-sucesso"
+            className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-medium text-emerald-800 shadow-sm"
+          >
+            {mensagemSucesso}
+          </p>
+        ) : null}
 
         {erroClientes ? (
           <section className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
@@ -1176,6 +1259,47 @@ export default function ApuracoesPage() {
               >
                 {isAprovando ? <Spinner /> : null}
                 {isAprovando ? 'Aprovando...' : 'Confirmar aprovação'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {showRecalcularModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 p-4">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-recalcular"
+            className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-xl"
+          >
+            <h2 id="titulo-recalcular" className="text-lg font-semibold text-zinc-900">
+              Recalcular apuração
+            </h2>
+            <p className="mt-3 text-sm leading-relaxed text-zinc-700">
+              Este rascunho tem um valor editado manualmente ({formatarValor(apuracao?.valor_editado)}).
+              Recalcular descarta a edição e usa o valor calculado. Continuar?
+            </p>
+
+            <footer className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                autoFocus
+                onClick={handleFecharRecalcular}
+                disabled={isRecalculando}
+                className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={executarRecalculo}
+                disabled={isRecalculando}
+                className="inline-flex items-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isRecalculando ? <Spinner /> : null}
+                {isRecalculando ? 'Recalculando...' : 'Recalcular'}
               </button>
             </footer>
           </section>
