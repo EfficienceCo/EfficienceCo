@@ -525,6 +525,28 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
     assert.equal(update.payload.folha_status, "pendente");
   });
 
+  // BUG-APUR-07 — recálculo usa a mesma regra de RBT12 proporcional da criação.
+  it("200 recalcula com RBT12 proporcional quando o cliente tem início de atividade recente", async () => {
+    queueApuracaoBase();
+    queueCliente({ data_inicio_atividade: "2026-06-10" });
+    queueNotas([
+      { valor_total: 50000, data_emissao: "2026-06-15", tipo: "saida" },
+      { valor_total: 50000, data_emissao: "2026-07-15", tipo: "saida" },
+      { valor_total: 50000, data_emissao: "2026-08-15", tipo: "saida" },
+    ]);
+    queue("apuracoes", "maybeSingle", { data: { id: APURACAO_ID, status: "rascunho" }, error: null });
+
+    const res = criarResposta();
+    await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
+    assert.equal(update.payload.rbt12_usado, 600000);
+    assert.equal(update.payload.valor_calculado, 3595);
+    assert.equal(res.body.rbt12_metodo, "proporcional_inicio_atividade");
+    assert.equal(res.body.meses_atividade, 2);
+  });
+
   it("200 recalcula Anexo V (fator_r preenchido = originalmente V) reconstituindo folha", async () => {
     queueApuracaoBase({ anexo: "III", fator_r: 0.4 });
     queueCliente();
