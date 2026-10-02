@@ -770,10 +770,10 @@ test.describe('Apuração Fiscal — aviso ao recalcular e feedback de sucesso (
   });
 
   test('recalcular com edição manual pede confirmação; Cancelar não chama a API', async ({ page }) => {
+    // O backend não devolve flag de descarte: o aviso vem do estado anterior ao recálculo.
     const chamadas = await abrirRascunho(
       page,
       apuracaoDetalhada({ id: 'apuracao-rec-editada', valor_editado: 930 }),
-      { edicao_descartada: true },
     );
 
     await page.getByRole('button', { name: 'Recalcular' }).click();

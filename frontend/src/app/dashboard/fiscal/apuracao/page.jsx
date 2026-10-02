@@ -498,6 +498,7 @@ export default function ApuracoesPage() {
     }
 
     const valorAntes = obterValorExibido(apuracao);
+    const tinhaEdicao = apuracao.valor_editado != null;
 
     setIsRecalculando(true);
     setErroRecalcular('');
@@ -512,7 +513,7 @@ export default function ApuracoesPage() {
       setShowRecalcularModal(false);
       setMensagemSucesso(
         `DAS recalculado: de ${formatarValor(valorAntes)} para ${formatarValor(obterValorExibido(atualizado))}.${
-          atualizado?.edicao_descartada ? ' A edição manual anterior foi descartada.' : ''
+          tinhaEdicao ? ' A edição manual anterior foi descartada.' : ''
         }`,
       );
     } catch (error) {
