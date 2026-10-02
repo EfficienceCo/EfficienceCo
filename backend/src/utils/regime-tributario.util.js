@@ -4,7 +4,7 @@
 // relidos por apuracoes.controller.js — se as duas pontas divergirem, a tela
 // grava um histórico que a apuração depois recusa com HISTORICO_RECEITA_INVALIDO.
 
-import { hojeNoBrasil } from "./periodo.util.js";
+import { competenciaEstaFechada, hojeNoBrasil } from "./periodo.util.js";
 
 export const REGIMES_TRIBUTARIOS = ["simples_nacional", "lucro_presumido", "lucro_real"];
 
@@ -72,9 +72,13 @@ export function chaveMes(ano, mes) {
  * Aceita `null`/`undefined` como "sem histórico" e devolve `[]` — é o mesmo
  * significado que a apuração dá à ausência do campo.
  *
- * @returns {{ entradas: Array<{mes:number, ano:number, receita:number}> } | { erro: string }}
+ * `rejeitarFuturo` (só nas rotas de ESCRITA) recusa competência ainda não
+ * fechada com `HISTORICO_RECEITA_FUTURO`. Na leitura da apuração fica desligado:
+ * clientes legados com histórico futuro não podem passar a quebrar o cálculo.
+ *
+ * @returns {{ entradas: Array<{mes:number, ano:number, receita:number}> } | { erro: string, competencia?: string }}
  */
-export function validarHistoricoReceita(historico) {
+export function validarHistoricoReceita(historico, { rejeitarFuturo = false } = {}) {
   if (historico == null) return { entradas: [] };
   if (!Array.isArray(historico)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
 
@@ -94,6 +98,13 @@ export function validarHistoricoReceita(historico) {
     // Dois valores para a mesma competência tornariam a RBT12 ambígua.
     if (vistos.has(referencia)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
     vistos.add(referencia);
+
+    if (rejeitarFuturo && !competenciaEstaFechada(ano, mes)) {
+      return {
+        erro: "HISTORICO_RECEITA_FUTURO",
+        competencia: `${String(mes).padStart(2, "0")}/${ano}`,
+      };
+    }
 
     entradas.push({ mes, ano, receita });
   }

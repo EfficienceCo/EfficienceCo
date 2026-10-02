@@ -64,7 +64,10 @@ function montarCamposTributarios(body, atual = {}) {
   }
 
   if (historico_receita !== undefined) {
-    const validado = validarHistoricoReceita(historico_receita);
+    const validado = validarHistoricoReceita(historico_receita, { rejeitarFuturo: true });
+    if (validado.erro === "HISTORICO_RECEITA_FUTURO") {
+      return { erro: `historico_receita: competência ${validado.competencia} ainda não fechou` };
+    }
     if (validado.erro) {
       return {
         erro: "Histórico de receita inválido. Envie uma lista de { mes: 1-12, ano: >= 2020, receita: >= 0 }, sem competências repetidas",
