@@ -156,6 +156,30 @@ test.describe('Clientes — regime tributário (issue #496)', () => {
     });
   });
 
+  test('envia a data de início de atividade no cadastro e barra data futura', async ({ page }) => {
+    const chamadas = await stubClientes(page);
+    await abrirTela(page);
+
+    await page.getByLabel('Nome').fill('Empresa Nova ME');
+    await page.getByLabel('Data de início de atividade (opcional)').first().fill('2999-01-01');
+    await page.getByRole('button', { name: 'Cadastrar cliente' }).click();
+
+    // `max` = hoje: o navegador barra o envio e a validação do handler (mesma
+    // regra) é a segunda linha de defesa.
+    await expect(page.getByLabel('Data de início de atividade (opcional)').first()).toHaveJSProperty(
+      'validity.rangeOverflow',
+      true,
+    );
+    expect(chamadas.posts).toHaveLength(0);
+
+    await page.getByLabel('Data de início de atividade (opcional)').first().fill('2026-06-10');
+    await page.getByRole('button', { name: 'Cadastrar cliente' }).click();
+
+    await expect(page.getByText('Cliente criado com sucesso.')).toBeVisible();
+    expect(chamadas.posts).toHaveLength(1);
+    expect(chamadas.posts[0]).toMatchObject({ nome: 'Empresa Nova ME', data_inicio_atividade: '2026-06-10' });
+  });
+
   test('o anexo só é editável no Simples Nacional', async ({ page }) => {
     await stubClientes(page);
     await abrirTela(page);
@@ -208,6 +232,7 @@ test.describe('Clientes — regime tributário (issue #496)', () => {
     expect(chamadas.patches[0]).toEqual({
       regime_tributario: 'simples_nacional',
       anexo_simples: 'III',
+      data_inicio_atividade: null,
       historico_receita: [
         { mes: 7, ano: 2025, receita: 50000 },
         { mes: 8, ano: 2025, receita: 60000 },
@@ -297,5 +322,61 @@ test.describe('Clientes — regime tributário (issue #496)', () => {
     await expect(page.getByText(/Cliente no Simples Nacional exige o anexo/)).toBeVisible();
     // O editor continua aberto para o contador corrigir sem perder o que digitou.
     await expect(page.getByRole('button', { name: 'Salvar regime' })).toBeVisible();
+  });
+});
+
+test.describe('Clientes — editor de regime: erro e receita negativa (BUG-APUR-15)', () => {
+  test('o erro de competência repetida some ao remover a linha, sem clicar em Salvar', async ({ page }) => {
+    const chamadas = await stubClientes(page);
+    await abrirTela(page);
+
+    await page.getByRole('button', { name: 'Editar regime tributário de Padaria Aurora' }).click();
+    await page.getByRole('button', { name: 'Adicionar mês' }).click();
+    await page.getByLabel('Mês da linha 3').selectOption('8');
+    await page.getByLabel('Ano da linha 3').fill('2025');
+    await page.getByLabel('Receita da linha 3').fill('1000');
+    await page.getByRole('button', { name: 'Salvar regime' }).click();
+
+    const erro = page.getByText('A competência 08/2025 aparece mais de uma vez no histórico.');
+    await expect(erro).toBeVisible();
+
+    await page.getByRole('button', { name: /Remover.*linha 3/i }).click();
+    await expect(erro).toHaveCount(0);
+    expect(chamadas.patches).toHaveLength(0);
+  });
+
+  test('o erro de anexo ausente some ao escolher o anexo ou trocar o regime, sem clicar em Salvar', async ({ page }) => {
+    const chamadas = await stubClientes(page);
+    await abrirTela(page);
+
+    await page.getByRole('button', { name: 'Editar regime tributário de Padaria Aurora' }).click();
+    const regime = page.locator('#regime-editor');
+    const anexo = page.locator('#anexo-editor');
+    const erro = page.getByText('Escolha o anexo do Simples — sem ele a apuração não encontra a tabela de alíquotas.');
+
+    await anexo.selectOption('');
+    await page.getByRole('button', { name: 'Salvar regime' }).click();
+    await expect(erro).toBeVisible();
+    await anexo.selectOption('II');
+    await expect(erro).toHaveCount(0);
+
+    await anexo.selectOption('');
+    await page.getByRole('button', { name: 'Salvar regime' }).click();
+    await expect(erro).toBeVisible();
+    await regime.selectOption('lucro_presumido');
+    await expect(erro).toHaveCount(0);
+    expect(chamadas.patches).toHaveLength(0);
+  });
+
+  test('receita negativa mostra a mensagem da tela (não o tooltip do navegador)', async ({ page }) => {
+    const chamadas = await stubClientes(page);
+    await abrirTela(page);
+
+    await page.getByRole('button', { name: 'Editar regime tributário de Padaria Aurora' }).click();
+    await page.getByLabel('Receita da linha 1').fill('-5');
+    await page.getByRole('button', { name: 'Salvar regime' }).click();
+
+    await expect(page.getByText('Linha 1 do histórico: informe uma receita igual ou maior que zero.')).toBeVisible();
+    expect(chamadas.patches).toHaveLength(0);
   });
 });

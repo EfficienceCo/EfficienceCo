@@ -4,6 +4,8 @@
 // relidos por apuracoes.controller.js — se as duas pontas divergirem, a tela
 // grava um histórico que a apuração depois recusa com HISTORICO_RECEITA_INVALIDO.
 
+import { competenciaEstaFechada, hojeNoBrasil } from "./periodo.util.js";
+
 export const REGIMES_TRIBUTARIOS = ["simples_nacional", "lucro_presumido", "lucro_real"];
 
 export const ANEXOS_SIMPLES = ["I", "II", "III", "IV", "V"];
@@ -32,6 +34,34 @@ function numeroNaoNegativo(valor) {
   return Number.isFinite(numero) && numero >= 0 ? numero : null;
 }
 
+/**
+ * Valida a data de início de atividade do cliente (BUG-APUR-08).
+ *
+ * `null`/`""`/`undefined` limpam o campo. Caso contrário exige `AAAA-MM-DD`
+ * de calendário válido, ano >= 2000 e não futura. A string é mantida como veio
+ * (sem passar por `Date`) para não deslocar um dia por fuso.
+ *
+ * @returns {{ valor: string|null } | { erro: string }}
+ */
+export function validarDataInicioAtividade(valor, hoje = hojeNoBrasil()) {
+  if (valor == null || (typeof valor === "string" && valor.trim() === "")) return { valor: null };
+  if (typeof valor !== "string") return { erro: "data_inicio_atividade inválida" };
+
+  const texto = valor.trim();
+  const correspondencia = /^(\d{4})-(\d{2})-(\d{2})$/.exec(texto);
+  if (!correspondencia) return { erro: "data_inicio_atividade inválida" };
+
+  const [ano, mes, dia] = [correspondencia[1], correspondencia[2], correspondencia[3]].map(Number);
+  const calendario = new Date(Date.UTC(ano, mes - 1, dia));
+  const dataReal = calendario.getUTCFullYear() === ano
+    && calendario.getUTCMonth() === mes - 1
+    && calendario.getUTCDate() === dia;
+
+  if (!dataReal || ano < 2000 || texto > hoje) return { erro: "data_inicio_atividade inválida" };
+
+  return { valor: texto };
+}
+
 export function chaveMes(ano, mes) {
   return `${ano}-${String(mes).padStart(2, "0")}`;
 }
@@ -42,9 +72,13 @@ export function chaveMes(ano, mes) {
  * Aceita `null`/`undefined` como "sem histórico" e devolve `[]` — é o mesmo
  * significado que a apuração dá à ausência do campo.
  *
- * @returns {{ entradas: Array<{mes:number, ano:number, receita:number}> } | { erro: string }}
+ * `rejeitarFuturo` (só nas rotas de ESCRITA) recusa competência ainda não
+ * fechada com `HISTORICO_RECEITA_FUTURO`. Na leitura da apuração fica desligado:
+ * clientes legados com histórico futuro não podem passar a quebrar o cálculo.
+ *
+ * @returns {{ entradas: Array<{mes:number, ano:number, receita:number}> } | { erro: string, competencia?: string }}
  */
-export function validarHistoricoReceita(historico) {
+export function validarHistoricoReceita(historico, { rejeitarFuturo = false } = {}) {
   if (historico == null) return { entradas: [] };
   if (!Array.isArray(historico)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
 
@@ -64,6 +98,13 @@ export function validarHistoricoReceita(historico) {
     // Dois valores para a mesma competência tornariam a RBT12 ambígua.
     if (vistos.has(referencia)) return { erro: "HISTORICO_RECEITA_INVALIDO" };
     vistos.add(referencia);
+
+    if (rejeitarFuturo && !competenciaEstaFechada(ano, mes)) {
+      return {
+        erro: "HISTORICO_RECEITA_FUTURO",
+        competencia: `${String(mes).padStart(2, "0")}/${ano}`,
+      };
+    }
 
     entradas.push({ mes, ano, receita });
   }
