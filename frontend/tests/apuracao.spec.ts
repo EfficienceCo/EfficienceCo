@@ -816,3 +816,68 @@ test.describe('Apuração Fiscal — RBT12 proporcional e data de início (BUG-A
     await expect(page.getByTestId('aviso-rbt12-proporcional')).toHaveCount(0);
   });
 });
+
+test.describe('Apuração Fiscal — Composição da RBT12 no mobile (BUG-APUR-16)', () => {
+  async function abrirComposicao(page: Page) {
+    const apuracao = apuracaoDetalhada({ id: 'apuracao-mobile' });
+
+    await page.addInitScript((token) => window.localStorage.setItem('token', token), tokenFrontendDeTeste());
+    await page.goto('/dashboard/fiscal/apuracao');
+
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+          { id: apuracao.id, regime: 'simples_nacional' },
+        ]) });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}` && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(apuracao) });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.reload();
+    await page.getByLabel('Mês').selectOption('8');
+    await page.getByLabel('Ano').selectOption('2026');
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    await expect(page.getByRole('heading', { name: 'Composição da RBT12' })).toBeVisible();
+  }
+
+  test('a 390 px mostra Histórico informado e Total em cartões, sem overflow de página', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await abrirComposicao(page);
+
+    const cartoes = page.getByTestId('composicao-rbt12-cartoes');
+    await expect(cartoes.locator('dl')).toHaveCount(12);
+    await expect(cartoes.getByText('Histórico informado').first()).toBeVisible();
+    await expect(cartoes.getByText('Total', { exact: true }).first()).toBeVisible();
+    await expect(cartoes.getByText('RBT12', { exact: true })).toBeVisible();
+
+    // A tabela larga fica fora da tela e da árvore de acessibilidade.
+    await expect(page.locator('table').first()).toBeHidden();
+
+    const larguras = await page.evaluate(() => ({
+      pagina: document.documentElement.scrollWidth,
+      janela: window.innerWidth,
+    }));
+    expect(larguras.pagina).toBeLessThanOrEqual(larguras.janela);
+  });
+
+  test('no desktop a tabela segue como antes e os cartões ficam ocultos', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await abrirComposicao(page);
+
+    const composicao = page.locator('section', { hasText: 'Composição da RBT12' }).first();
+    await expect(composicao.locator('tbody tr')).toHaveCount(12);
+    await expect(composicao.getByRole('columnheader', { name: 'Histórico informado' })).toBeVisible();
+    await expect(composicao.getByRole('columnheader', { name: 'Total' })).toBeVisible();
+    await expect(page.getByTestId('composicao-rbt12-cartoes')).toBeHidden();
+  });
+});

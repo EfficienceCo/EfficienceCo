@@ -950,7 +950,35 @@ export default function ApuracoesPage() {
               </div>
             ) : null}
 
-            <div className="overflow-x-auto">
+            {/* Mobile: um cartão por competência, para Histórico e Total não ficarem
+                atrás de rolagem lateral. A tabela segue igual de sm: em diante. */}
+            <div className="divide-y divide-zinc-100 sm:hidden" data-testid="composicao-rbt12-cartoes">
+              {rbt12Mensal.map((item) => (
+                <dl key={item.referencia} className="px-4 py-3 text-sm">
+                  <dt className="font-semibold text-zinc-800">{formatarReferencia(item)}</dt>
+                  <dd className="mt-2 flex items-baseline justify-between gap-3">
+                    <span className="text-xs text-zinc-500">NF-es</span>
+                    <span className="font-mono text-zinc-600">{formatarValor(item.receita_nfes)}</span>
+                  </dd>
+                  <dd className="mt-1 flex items-baseline justify-between gap-3">
+                    <span className="text-xs text-zinc-500">Histórico informado</span>
+                    <span className="font-mono text-zinc-600">{formatarValor(item.receita_historico)}</span>
+                  </dd>
+                  <dd className="mt-1 flex items-baseline justify-between gap-3">
+                    <span className="text-xs font-semibold text-zinc-500">Total</span>
+                    <span className="font-mono font-semibold text-zinc-900">{formatarValor(item.total)}</span>
+                  </dd>
+                </dl>
+              ))}
+              <div className="flex items-baseline justify-between gap-3 bg-zinc-50 px-4 py-3">
+                <span className="text-xs font-semibold uppercase text-zinc-500">RBT12</span>
+                <span className="font-mono font-bold text-zinc-900">
+                  {formatarValor(apuracao.rbt12 ?? apuracao.rbt12_usado)}
+                </span>
+              </div>
+            </div>
+
+            <div className="hidden overflow-x-auto sm:block">
               <table className="w-full min-w-[640px] text-left text-sm">
                 <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
                   <tr>
