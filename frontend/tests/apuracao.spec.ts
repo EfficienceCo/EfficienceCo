@@ -470,6 +470,7 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
     await expect(page.getByRole('heading', { name: 'Composição da RBT12' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Aprovar DAS' }).click();
+    await page.getByLabel('Conferi os valores acima').check();
     await page.getByRole('button', { name: 'Confirmar aprovação' }).click();
     await expect(page.getByText('Aprovado', { exact: true })).toBeVisible();
     await expect(page.getByText(/Aprovado por contador@teste.local em/)).toBeVisible();
@@ -502,6 +503,7 @@ test.describe('Apuração Fiscal — página /dashboard/fiscal/apuracao (issue #
 
     await page.getByRole('button', { name: 'Aprovar DAS' }).click();
     await expect(page.getByRole('heading', { name: 'Confirmar aprovação' })).toBeVisible();
+    await page.getByLabel('Conferi os valores acima').check();
     await page.getByRole('button', { name: 'Confirmar aprovação' }).click();
 
     await expect(page.getByRole('heading', { name: 'Confirmar aprovação' })).not.toBeVisible();
@@ -698,6 +700,99 @@ test.describe('Apuração Fiscal — excluir rascunho e janela de anos (issue #5
     await expect(page.getByText('Apuração já aprovada não pode ser excluída')).toBeVisible();
     await page.getByRole('button', { name: 'Cancelar' }).click();
     await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+  });
+});
+
+test.describe('Apuração Fiscal — aviso de responsabilidade na aprovação (BUG-APUR-18)', () => {
+  async function abrirRascunho(page: Page) {
+    const apuracao = apuracaoDetalhada({ id: 'apuracao-aprovar' });
+    const chamadas = { aprovacoes: 0 };
+
+    await page.addInitScript((token) => window.localStorage.setItem('token', token), tokenFrontendDeTeste());
+    await page.goto('/dashboard/fiscal/apuracao');
+
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+          { id: apuracao.id, regime: 'simples_nacional' },
+        ]) });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}` && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(apuracao) });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}/aprovar` && requisicao.method() === 'PATCH') {
+        chamadas.aprovacoes += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: apuracao.id,
+            status: 'aprovado',
+            aprovado_por: 'contador@teste.local',
+            aprovado_em: '2026-08-21T18:05:00.000Z',
+          }),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.reload();
+    await page.getByLabel('Mês').selectOption('8');
+    await page.getByLabel('Ano').selectOption('2026');
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    await expect(page.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+
+    return chamadas;
+  }
+
+  test('o botão fica desabilitado até marcar a ciência e o modal traz o resumo de conferência', async ({ page }) => {
+    await abrirRascunho(page);
+
+    await page.getByRole('button', { name: 'Aprovar DAS' }).click();
+    const confirmar = page.getByRole('button', { name: 'Confirmar aprovação' });
+
+    await expect(page.getByText(/A aprovação é de responsabilidade do contador/)).toBeVisible();
+    const resumo = page.getByTestId('resumo-conferencia');
+    await expect(resumo).toContainText('R$ 250.000,00');
+    await expect(resumo).toContainText('Anexo I');
+    await expect(resumo).toContainText('4,92%');
+    await expect(resumo).toContainText('R$ 984,80');
+
+    await expect(confirmar).toBeDisabled();
+    await page.getByLabel('Conferi os valores acima').check();
+    await expect(confirmar).toBeEnabled();
+  });
+
+  test('marcar a ciência habilita e a aprovação chama a API', async ({ page }) => {
+    const chamadas = await abrirRascunho(page);
+
+    await page.getByRole('button', { name: 'Aprovar DAS' }).click();
+    await page.getByLabel('Conferi os valores acima').check();
+    await page.getByRole('button', { name: 'Confirmar aprovação' }).click();
+
+    await expect(page.getByText(/Aprovado por contador@teste.local em/)).toBeVisible();
+    expect(chamadas.aprovacoes).toBe(1);
+  });
+
+  test('reabrir o modal reseta a ciência', async ({ page }) => {
+    await abrirRascunho(page);
+
+    await page.getByRole('button', { name: 'Aprovar DAS' }).click();
+    await page.getByLabel('Conferi os valores acima').check();
+    await page.getByRole('button', { name: 'Cancelar' }).click();
+
+    await page.getByRole('button', { name: 'Aprovar DAS' }).click();
+    await expect(page.getByLabel('Conferi os valores acima')).not.toBeChecked();
+    await expect(page.getByRole('button', { name: 'Confirmar aprovação' })).toBeDisabled();
   });
 });
 
