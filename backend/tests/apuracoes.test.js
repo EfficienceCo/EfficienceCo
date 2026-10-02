@@ -141,7 +141,7 @@ function processamentosDosDozeMeses() {
 describe("POST /apuracoes", () => {
   it("201 e persiste quando payload válido (Anexo I, sem Fator R)", async () => {
     queueSemDuplicata();
-    queueCliente("I");
+    queueCliente("I", { nome: "Cliente Teste" });
     queueNotas([
       { valor_total: 40000, data_emissao: "2025-09-15", status: "ativa" },
       { valor_total: 45000, data_emissao: "2026-08-10", status: "ativa" },
@@ -161,6 +161,7 @@ describe("POST /apuracoes", () => {
     assert.equal(res.body.aliquota_nominal, 0.04);
     assert.equal(res.body.parcela_deduzir, 0);
     assert.equal(res.body.valor_calculado, 1800);
+    assert.equal(res.body.cliente_nome, "Cliente Teste");
     assert.equal(res.body.rbt12_mensal.length, 12);
     assert.equal(res.body.notas_fiscais.consideradas.length, 2);
   });
@@ -882,7 +883,7 @@ describe("GET /apuracoes/:id", () => {
       },
       error: null,
     });
-    queueCliente("I");
+    queueCliente("I", { nome: "Cliente Teste" });
     queueNotas([
       { tipo: "saida", valor_total: 40000, data_emissao: "2025-09-15", status: "ativa" },
       { tipo: "saida", valor_total: 45000, data_emissao: "2026-08-10", status: "ativa" },
@@ -894,6 +895,7 @@ describe("GET /apuracoes/:id", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.id, APURACAO_ID);
+    assert.equal(res.body.cliente_nome, "Cliente Teste");
     assert.equal(res.body.anexo_efetivo, "I");
     assert.equal(res.body.aliquota_nominal, 0.04);
     assert.equal(res.body.rbt12_mensal.length, 12);

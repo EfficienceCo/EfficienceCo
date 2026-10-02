@@ -178,6 +178,19 @@ function formatarPercentual(valor) {
   })}%`;
 }
 
+function formatarPercentualPreciso(valor) {
+  const numero = Number(valor);
+
+  if (!Number.isFinite(numero)) {
+    return '-';
+  }
+
+  return `${(numero * 100).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  })}%`;
+}
+
 function formatarDataHora(data) {
   if (!data) {
     return '-';
@@ -286,7 +299,7 @@ export default function ApuracoesPage() {
       return encontrado ? obterNomeCliente(encontrado) : '';
     }
 
-    return user?.cliente_nome || user?.nome || user?.email || '';
+    return user?.cliente_nome || user?.nome || '';
   }, [apuracao, clienteIdEfetivo, clientesOrdenados, isAdminEfficience, user]);
 
   const carregarClientes = useCallback(async () => {
@@ -861,7 +874,7 @@ export default function ApuracoesPage() {
                   Alíquota nominal
                 </div>
                 <div className="mt-1 font-mono text-sm font-semibold text-zinc-700">
-                  {formatarPercentual(apuracao.aliquota_nominal)}
+                  {formatarPercentualPreciso(apuracao.aliquota_nominal)}
                 </div>
               </div>
 
@@ -879,7 +892,7 @@ export default function ApuracoesPage() {
                   Alíquota efetiva
                 </div>
                 <div className="mt-1 font-mono text-sm font-semibold text-zinc-700">
-                  {formatarPercentual(apuracao.aliquota_efetiva)}
+                  {formatarPercentualPreciso(apuracao.aliquota_efetiva)}
                 </div>
               </div>
             </div>
