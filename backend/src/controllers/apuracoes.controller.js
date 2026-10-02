@@ -340,9 +340,10 @@ function detectarBreakdownDesatualizado(resultado, bases) {
   };
 }
 
-function enriquecerApuracao(apuracao, resultado, bases) {
+function enriquecerApuracao(apuracao, resultado, bases, clienteNome) {
   return {
     ...apuracao,
+    cliente_nome: clienteNome,
     anexo_original: resultado.anexo_original,
     anexo_efetivo: resultado.anexo_efetivo,
     faixa_limite: resultado.faixa_limite,
@@ -469,7 +470,7 @@ export async function dispararApuracao(req, res) {
       .maybeSingle(),
     supabase
       .from("clientes")
-      .select("anexo_simples, regime_tributario, historico_receita, data_inicio_atividade")
+      .select("nome, anexo_simples, regime_tributario, historico_receita, data_inicio_atividade")
       .eq("id", clienteId)
       .maybeSingle(),
   ]);
@@ -581,7 +582,7 @@ export async function dispararApuracao(req, res) {
     return res.status(500).json({ erro: "Erro ao registrar apuração" });
   }
 
-  return res.status(201).json(enriquecerApuracao(data, resultado, bases));
+  return res.status(201).json(enriquecerApuracao(data, resultado, bases, cliente.nome));
 }
 
 export async function listarApuracoes(req, res) {
@@ -640,7 +641,7 @@ export async function detalharApuracao(req, res) {
   const [{ data: cliente, error: erroCliente }, { data: notas, error: erroNotas }] = await Promise.all([
     supabase
       .from("clientes")
-      .select("anexo_simples, historico_receita, data_inicio_atividade")
+      .select("nome, anexo_simples, historico_receita, data_inicio_atividade")
       .eq("id", data.cliente_id)
       .maybeSingle(),
     supabase
@@ -691,7 +692,7 @@ export async function detalharApuracao(req, res) {
     return res.status(500).json({ erro: "Erro ao reconstruir cálculo da apuração" });
   }
 
-  return res.status(200).json(enriquecerApuracao(data, resultado, bases));
+  return res.status(200).json(enriquecerApuracao(data, resultado, bases, cliente.nome));
 }
 
 export async function editarApuracao(req, res) {
@@ -904,7 +905,7 @@ export async function recalcularApuracao(req, res) {
 
   const { data: cliente, error: erroCliente } = await supabase
     .from("clientes")
-    .select("historico_receita, data_inicio_atividade")
+    .select("nome, historico_receita, data_inicio_atividade")
     .eq("id", apuracao.cliente_id)
     .maybeSingle();
 
@@ -1007,7 +1008,7 @@ export async function recalcularApuracao(req, res) {
     return res.status(409).json({ erro: "Apuração foi aprovada por outra solicitação" });
   }
 
-  return res.status(200).json(enriquecerApuracao(data, resultado, bases));
+  return res.status(200).json(enriquecerApuracao(data, resultado, bases, cliente.nome));
 }
 
 // Rota do agente — autenticada via x-licenca-token (polling), mesmo padrão de

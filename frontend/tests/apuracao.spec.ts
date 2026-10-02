@@ -1090,3 +1090,77 @@ test.describe('Apuração Fiscal — Composição da RBT12 no mobile (BUG-APUR-1
     await expect(page.getByTestId('composicao-rbt12-cartoes')).toBeHidden();
   });
 });
+
+test.describe('Apuração Fiscal — precisão e nome do cliente (BUG-APUR-14)', () => {
+  async function abrirApuracaoMockada(page: Page, overrides = {}) {
+    const apuracao = apuracaoDetalhada({
+      id: 'apuracao-precisao',
+      cliente_nome: 'Cliente Teste',
+      rbt12: 240000,
+      rbt12_usado: 240000,
+      aliquota_nominal: 0.073,
+      aliquota_efetiva: 0.04825,
+      valor_calculado: 965,
+      ...overrides,
+    });
+
+    await page.addInitScript((token) => window.localStorage.setItem('token', token), tokenFrontendDeTeste());
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+          { id: apuracao.id, regime: 'simples_nacional' },
+        ]) });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}` && requisicao.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(apuracao) });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.goto('/dashboard/fiscal/apuracao');
+    await page.getByLabel('Mês').selectOption('8');
+    await page.getByLabel('Ano').selectOption('2026');
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    const resultado = page.locator('section', { hasText: 'Resultado do cálculo' }).first();
+    await expect(resultado.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+    return resultado;
+  }
+
+  test('mostra até quatro casas nas alíquotas e mantém o DAS de R$ 965,00', async ({ page }) => {
+    const resultado = await abrirApuracaoMockada(page, { fator_r: 0.4 });
+    await expect(resultado.getByText('Alíquota nominal', { exact: true }).locator('..')).toContainText('7,30%');
+    await expect(resultado.getByText('Alíquota efetiva', { exact: true }).locator('..')).toContainText('4,825%');
+    await expect(resultado.getByText('Fator R', { exact: true }).locator('..')).toContainText('40,00%');
+    await expect(resultado.getByText('Valor do DAS', { exact: true }).locator('..')).toContainText('R$ 965,00');
+  });
+
+  test('admin_cliente vê o nome da empresa no cabeçalho e nos dois modais', async ({ page }) => {
+    const resultado = await abrirApuracaoMockada(page);
+    const cabecalho = resultado.getByText('Cliente Teste · Agosto/2026', { exact: true });
+    await expect(cabecalho).toBeVisible();
+    await expect(cabecalho).not.toContainText('@');
+
+    await page.getByRole('button', { name: 'Aprovar DAS' }).click();
+    const modalAprovar = page.getByRole('heading', { name: 'Confirmar aprovação' }).locator('..');
+    await expect(modalAprovar).toContainText('Cliente Teste');
+    await expect(modalAprovar).not.toContainText('@');
+    await page.getByRole('button', { name: 'Cancelar' }).click();
+
+    await page.getByRole('button', { name: 'Excluir rascunho' }).click();
+    const modalExcluir = page.getByRole('heading', { name: 'Excluir rascunho' }).locator('..');
+    await expect(modalExcluir).toContainText('Cliente Teste');
+    await expect(modalExcluir).not.toContainText('@');
+  });
+
+  test('sem nome da empresa não usa o e-mail do usuário como fallback', async ({ page }) => {
+    const resultado = await abrirApuracaoMockada(page, { cliente_nome: null });
+    await expect(resultado.getByText(/Agosto\/2026/)).not.toContainText('@');
+  });
+});
