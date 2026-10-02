@@ -901,7 +901,8 @@ export default function ApuracoesPage() {
           </section>
         ) : null}
 
-        {apuracao && rbt12Mensal.length > 0 ? (
+        {/* No 1º mês de atividade a API devolve rbt12_mensal vazio: o aviso e o total continuam. */}
+        {apuracao && (rbt12Mensal.length > 0 || rbt12Proporcional) ? (
           <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
             <header className="border-b border-zinc-100 px-6 py-4">
               <h2 className="text-base font-bold text-zinc-900">Composição da RBT12</h2>
@@ -916,8 +917,9 @@ export default function ApuracoesPage() {
                 data-testid="aviso-rbt12-proporcional"
                 className="border-b border-sky-200 bg-sky-50 px-6 py-3 text-xs text-sky-900"
               >
-                RBT12 proporcional: média dos {apuracao.meses_atividade} meses de atividade × 12 (Res.
-                CGSN 140/2018, art. 22).
+                {apuracao.meses_atividade === 0
+                  ? 'RBT12 proporcional: 1º mês de atividade, receita do mês × 12 (Res. CGSN 140/2018, art. 22).'
+                  : `RBT12 proporcional: média dos ${apuracao.meses_atividade} meses de atividade × 12 (Res. CGSN 140/2018, art. 22).`}
               </div>
             ) : null}
 
@@ -963,13 +965,13 @@ export default function ApuracoesPage() {
                     <tr key={item.referencia}>
                       <td className="px-6 py-3 font-medium text-zinc-700">{formatarReferencia(item)}</td>
                       <td className="px-6 py-3 text-right font-mono text-zinc-600">
-                        {item.anterior_ao_inicio ? '—' : formatarValor(item.receita_nfes)}
+                        {formatarValor(item.receita_nfes)}
                       </td>
                       <td className="px-6 py-3 text-right font-mono text-zinc-600">
-                        {item.anterior_ao_inicio ? '—' : formatarValor(item.receita_historico)}
+                        {formatarValor(item.receita_historico)}
                       </td>
                       <td className="px-6 py-3 text-right font-mono font-semibold text-zinc-900">
-                        {item.anterior_ao_inicio ? '—' : formatarValor(item.total)}
+                        {formatarValor(item.total)}
                       </td>
                     </tr>
                   ))}

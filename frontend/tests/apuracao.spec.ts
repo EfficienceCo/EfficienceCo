@@ -707,12 +707,12 @@ test.describe('Apuração Fiscal — RBT12 proporcional e data de início (BUG-A
     return { mes, ano: indice + 7 >= 12 ? 2026 : 2025 };
   });
 
-  // 12 meses da janela de agosto/2026 (ago/2025 a jul/2026); `comDado` define
-  // quantos meses finais têm receita e `anterioresAoInicio` quantos iniciais
-  // foram marcados como anteriores à abertura da empresa.
-  function janela(comDado: number, anterioresAoInicio = 0) {
-    return MESES_ANTERIORES.map(({ mes, ano }, indice) => {
-      const anterior = indice < anterioresAoInicio;
+  // Janela de agosto/2026 (ago/2025 a jul/2026); `comDado` define quantos meses
+  // finais têm receita e `omitidos` quantos meses iniciais saem da lista — o
+  // backend (#621) remove os meses anteriores ao início em vez de marcá-los.
+  function janela(comDado: number, omitidos = 0) {
+    return MESES_ANTERIORES.slice(omitidos).map(({ mes, ano }, posicao) => {
+      const indice = posicao + omitidos;
       const tem = indice >= 12 - comDado;
       return {
         referencia: `${ano}-${String(mes).padStart(2, '0')}`,
@@ -722,7 +722,6 @@ test.describe('Apuração Fiscal — RBT12 proporcional e data de início (BUG-A
         receita_historico: 0,
         total: tem ? 50000 : 0,
         periodo_fechado: true,
-        anterior_ao_inicio: anterior,
       };
     });
   }
@@ -757,7 +756,7 @@ test.describe('Apuração Fiscal — RBT12 proporcional e data de início (BUG-A
     await expect(page.getByRole('heading', { name: 'Composição da RBT12' })).toBeVisible();
   }
 
-  test('RBT12 proporcional exibe o banner azul com N e esconde meses anteriores ao início', async ({ page }) => {
+  test('RBT12 proporcional exibe o banner azul com N e lista só os meses de atividade', async ({ page }) => {
     await abrirApuracao(page, apuracaoDetalhada({
       id: 'apuracao-proporcional',
       rbt12: 600000,
@@ -772,8 +771,25 @@ test.describe('Apuração Fiscal — RBT12 proporcional e data de início (BUG-A
     await expect(page.getByTestId('aviso-sem-data-inicio')).toHaveCount(0);
 
     const composicao = page.locator('section', { hasText: 'Composição da RBT12' }).first();
-    await expect(composicao.locator('tbody tr').first()).toContainText('—');
-    await expect(composicao.locator('tbody tr').first()).not.toContainText('R$ 0,00');
+    await expect(composicao.locator('tbody tr')).toHaveCount(2);
+    await expect(composicao.locator('tbody')).toContainText('Junho/2026');
+    await expect(composicao.locator('tbody')).not.toContainText('Maio/2026');
+  });
+
+  test('1º mês de atividade exibe "receita do mês × 12" em vez de média', async ({ page }) => {
+    await abrirApuracao(page, apuracaoDetalhada({
+      id: 'apuracao-primeiro-mes',
+      rbt12: 600000,
+      rbt12_usado: 600000,
+      rbt12_metodo: 'proporcional_inicio_atividade',
+      meses_atividade: 0,
+      rbt12_mensal: [],
+    }));
+
+    const banner = page.getByTestId('aviso-rbt12-proporcional');
+    await expect(banner).toContainText('1º mês de atividade, receita do mês × 12');
+    await expect(banner).not.toContainText('média');
+    await expect(banner).not.toContainText('0 meses');
   });
 
   test('sem data de início e com poucos meses de dado exibe o banner âmbar', async ({ page }) => {
