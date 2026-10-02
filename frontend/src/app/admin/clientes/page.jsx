@@ -310,6 +310,8 @@ export default function AdminClientes() {
 
   function handleChangeRegime(event) {
     const { value } = event.target;
+    // Erro de submit some ao editar o formulário.
+    setErroRegime('');
     setFormRegime((anterior) => ({
       ...anterior,
       regime: value,
@@ -716,9 +718,10 @@ export default function AdminClientes() {
                   <select
                     id="anexo-editor"
                     value={formRegime.anexo}
-                    onChange={(event) =>
-                      setFormRegime((anterior) => ({ ...anterior, anexo: event.target.value }))
-                    }
+                    onChange={(event) => {
+                      setErroRegime('');
+                      setFormRegime((anterior) => ({ ...anterior, anexo: event.target.value }));
+                    }}
                     disabled={isSavingRegime || formRegime.regime !== 'simples_nacional'}
                     className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
                   >

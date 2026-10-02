@@ -320,6 +320,29 @@ test.describe('Clientes — editor de regime: erro e receita negativa (BUG-APUR-
     expect(chamadas.patches).toHaveLength(0);
   });
 
+  test('o erro de anexo ausente some ao escolher o anexo ou trocar o regime, sem clicar em Salvar', async ({ page }) => {
+    const chamadas = await stubClientes(page);
+    await abrirTela(page);
+
+    await page.getByRole('button', { name: 'Editar regime tributário de Padaria Aurora' }).click();
+    const regime = page.locator('#regime-editor');
+    const anexo = page.locator('#anexo-editor');
+    const erro = page.getByText('Escolha o anexo do Simples — sem ele a apuração não encontra a tabela de alíquotas.');
+
+    await anexo.selectOption('');
+    await page.getByRole('button', { name: 'Salvar regime' }).click();
+    await expect(erro).toBeVisible();
+    await anexo.selectOption('II');
+    await expect(erro).toHaveCount(0);
+
+    await anexo.selectOption('');
+    await page.getByRole('button', { name: 'Salvar regime' }).click();
+    await expect(erro).toBeVisible();
+    await regime.selectOption('lucro_presumido');
+    await expect(erro).toHaveCount(0);
+    expect(chamadas.patches).toHaveLength(0);
+  });
+
   test('receita negativa mostra a mensagem da tela (não o tooltip do navegador)', async ({ page }) => {
     const chamadas = await stubClientes(page);
     await abrirTela(page);
