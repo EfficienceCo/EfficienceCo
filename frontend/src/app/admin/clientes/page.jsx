@@ -32,7 +32,35 @@ const MESES = [
 // Mesmo piso do backend: antes disso não há tabela do Simples suportada.
 const ANO_MINIMO = 2020;
 
-const FORM_CLIENTE_INICIAL = { nome: '', cnpj: '', regime_tributario: '', anexo_simples: '' };
+const FORM_CLIENTE_INICIAL = {
+  nome: '',
+  cnpj: '',
+  regime_tributario: '',
+  anexo_simples: '',
+  data_inicio_atividade: '',
+};
+
+// Data local AAAA-MM-DD (sem new Date(valor), que desloca um dia por fuso).
+function hojeISO() {
+  const agora = new Date();
+  const mes = String(agora.getMonth() + 1).padStart(2, '0');
+  const dia = String(agora.getDate()).padStart(2, '0');
+  return `${agora.getFullYear()}-${mes}-${dia}`;
+}
+
+const TEXTO_AJUDA_DATA_INICIO =
+  'Necessária para empresas abertas há menos de 13 meses — o cálculo do DAS proporcionaliza a receita.';
+
+function validarDataInicioAtividade(valor) {
+  if (!valor) return '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(valor) || valor < '2000-01-01') {
+    return 'Informe uma data de início de atividade válida (a partir de 2000).';
+  }
+  if (valor > hojeISO()) {
+    return 'A data de início de atividade não pode ser futura.';
+  }
+  return '';
+}
 
 function obterMensagemErro(error, fallback) {
   return (
@@ -99,7 +127,10 @@ function historicoParaFormulario(historico) {
  * (`validarHistoricoReceita` + coerência regime/anexo), para o contador ver o
  * problema no campo em vez de receber um 400 genérico depois de salvar.
  */
-function validarFormularioRegime({ regime, anexo, historico }) {
+function validarFormularioRegime({ regime, anexo, historico, dataInicio = '' }) {
+  const erroDataInicio = validarDataInicioAtividade(dataInicio);
+  if (erroDataInicio) return erroDataInicio;
+
   if (regime === 'simples_nacional' && !anexo) {
     return 'Escolha o anexo do Simples — sem ele a apuração não encontra a tabela de alíquotas.';
   }
@@ -161,7 +192,7 @@ export default function AdminClientes() {
   // manual — os três campos que `dispararApuracao` lê e que, até esta issue,
   // só dava pra preencher com UPDATE na mão no banco.
   const [clienteEditando, setClienteEditando] = useState(null);
-  const [formRegime, setFormRegime] = useState({ regime: '', anexo: '', historico: [] });
+  const [formRegime, setFormRegime] = useState({ regime: '', anexo: '', historico: [], dataInicio: '' });
   const [erroRegime, setErroRegime] = useState('');
   const [isSavingRegime, setIsSavingRegime] = useState(false);
 
@@ -269,6 +300,12 @@ export default function AdminClientes() {
       return;
     }
 
+    const erroDataInicio = validarDataInicioAtividade(formData.data_inicio_atividade);
+    if (erroDataInicio) {
+      setErroFormulario(erroDataInicio);
+      return;
+    }
+
     setIsCreating(true);
 
     try {
@@ -277,6 +314,7 @@ export default function AdminClientes() {
         ...(cnpj ? { cnpj } : {}),
         regime_tributario: formData.regime_tributario,
         anexo_simples: formData.anexo_simples,
+        data_inicio_atividade: formData.data_inicio_atividade,
       });
 
       setClientes((currentValue) => [
@@ -299,6 +337,7 @@ export default function AdminClientes() {
       regime: cliente.regime_tributario || '',
       anexo: cliente.anexo_simples || '',
       historico: historicoParaFormulario(cliente.historico_receita),
+      dataInicio: cliente.data_inicio_atividade || '',
     });
     setErroRegime('');
   }
@@ -310,6 +349,8 @@ export default function AdminClientes() {
 
   function handleChangeRegime(event) {
     const { value } = event.target;
+    // Erro de submit some ao editar o formulário.
+    setErroRegime('');
     setFormRegime((anterior) => ({
       ...anterior,
       regime: value,
@@ -318,6 +359,8 @@ export default function AdminClientes() {
   }
 
   function handleChangeLinhaHistorico(indice, campo, valor) {
+    // Erro de submit some ao editar o formulário.
+    setErroRegime('');
     setFormRegime((anterior) => ({
       ...anterior,
       historico: anterior.historico.map((linha, posicao) =>
@@ -327,6 +370,7 @@ export default function AdminClientes() {
   }
 
   function adicionarLinhaHistorico() {
+    setErroRegime('');
     setFormRegime((anterior) => ({
       ...anterior,
       historico: [...anterior.historico, { mes: '', ano: '', receita: '' }],
@@ -334,6 +378,7 @@ export default function AdminClientes() {
   }
 
   function removerLinhaHistorico(indice) {
+    setErroRegime('');
     setFormRegime((anterior) => ({
       ...anterior,
       historico: anterior.historico.filter((_, posicao) => posicao !== indice),
@@ -348,6 +393,7 @@ export default function AdminClientes() {
       regime: formRegime.regime,
       anexo: formRegime.anexo,
       historico: formRegime.historico,
+      dataInicio: formRegime.dataInicio,
     });
 
     if (mensagem) {
@@ -364,6 +410,8 @@ export default function AdminClientes() {
         regime_tributario: formRegime.regime,
         anexo_simples: formRegime.anexo,
         historico_receita: historicoParaPayload(formRegime.historico),
+        // Vazio vira null no backend (limpa a coluna).
+        data_inicio_atividade: formRegime.dataInicio || null,
       });
 
       setClientes((prev) => prev.map((c) => (c.id === atualizado.id ? atualizado : c)));
@@ -500,6 +548,26 @@ export default function AdminClientes() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="data_inicio_atividade" className="block text-sm font-medium text-zinc-700">
+              Data de início de atividade (opcional)
+            </label>
+            <input
+              id="data_inicio_atividade"
+              name="data_inicio_atividade"
+              type="date"
+              max={hojeISO()}
+              value={formData.data_inicio_atividade}
+              onChange={handleChange}
+              disabled={isCreating}
+              aria-describedby="data_inicio_atividade-ajuda"
+              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <p id="data_inicio_atividade-ajuda" className="text-xs text-zinc-500">
+              {TEXTO_AJUDA_DATA_INICIO}
+            </p>
           </div>
 
           <div className="sm:col-span-2">
@@ -683,7 +751,7 @@ export default function AdminClientes() {
               </button>
             </header>
 
-            <form className="space-y-5 p-5" onSubmit={handleSubmitRegime}>
+            <form className="space-y-5 p-5" onSubmit={handleSubmitRegime} noValidate>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <label htmlFor="regime-editor" className="block text-sm font-medium text-zinc-700">
@@ -712,9 +780,10 @@ export default function AdminClientes() {
                   <select
                     id="anexo-editor"
                     value={formRegime.anexo}
-                    onChange={(event) =>
-                      setFormRegime((anterior) => ({ ...anterior, anexo: event.target.value }))
-                    }
+                    onChange={(event) => {
+                      setErroRegime('');
+                      setFormRegime((anterior) => ({ ...anterior, anexo: event.target.value }));
+                    }}
                     disabled={isSavingRegime || formRegime.regime !== 'simples_nacional'}
                     className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
                   >
@@ -729,6 +798,30 @@ export default function AdminClientes() {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div className="space-y-2 sm:col-span-2">
+                  <label
+                    htmlFor="data-inicio-editor"
+                    className="block text-sm font-medium text-zinc-700"
+                  >
+                    Data de início de atividade (opcional)
+                  </label>
+                  <input
+                    id="data-inicio-editor"
+                    type="date"
+                    max={hojeISO()}
+                    value={formRegime.dataInicio}
+                    onChange={(event) =>
+                      setFormRegime((anterior) => ({ ...anterior, dataInicio: event.target.value }))
+                    }
+                    disabled={isSavingRegime}
+                    aria-describedby="data-inicio-editor-ajuda"
+                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:opacity-60 sm:max-w-xs"
+                  />
+                  <p id="data-inicio-editor-ajuda" className="text-xs text-zinc-500">
+                    {TEXTO_AJUDA_DATA_INICIO}
+                  </p>
                 </div>
               </div>
 

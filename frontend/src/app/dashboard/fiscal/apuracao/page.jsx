@@ -622,6 +622,14 @@ export default function ApuracoesPage() {
   const dadosFolha = apuracao?.dados_folha || null;
   const historicoEdicoes = Array.isArray(apuracao?.historico_edicoes) ? apuracao.historico_edicoes : [];
   const rbt12Mensal = Array.isArray(apuracao?.rbt12_mensal) ? apuracao.rbt12_mensal : [];
+  const rbt12Proporcional = apuracao?.rbt12_metodo === 'proporcional_inicio_atividade';
+  // Sem data de início e com menos de 12 meses de dado: o DAS pode estar abaixo
+  // do devido se a empresa for nova (BUG-APUR-08).
+  const mesesComDado = rbt12Mensal.filter(
+    (item) => Number(item.receita_nfes) > 0 || Number(item.receita_historico) > 0,
+  ).length;
+  const semDataInicioComJanelaCurta =
+    apuracao?.rbt12_metodo === 'janela_12_meses' && rbt12Mensal.length > 0 && mesesComDado < 12;
   const notasConsideradas = Array.isArray(apuracao?.notas_fiscais?.consideradas)
     ? apuracao.notas_fiscais.consideradas
     : [];
@@ -981,7 +989,8 @@ export default function ApuracoesPage() {
           </section>
         ) : null}
 
-        {apuracao && rbt12Mensal.length > 0 ? (
+        {/* No 1º mês de atividade a API devolve rbt12_mensal vazio: o aviso e o total continuam. */}
+        {apuracao && (rbt12Mensal.length > 0 || rbt12Proporcional) ? (
           <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
             <header className="border-b border-zinc-100 px-6 py-4">
               <h2 className="text-base font-bold text-zinc-900">Composição da RBT12</h2>
@@ -989,6 +998,29 @@ export default function ApuracoesPage() {
                 Receitas dos 12 meses anteriores usadas no cálculo da alíquota.
               </p>
             </header>
+
+            {rbt12Proporcional ? (
+              <div
+                role="status"
+                data-testid="aviso-rbt12-proporcional"
+                className="border-b border-sky-200 bg-sky-50 px-6 py-3 text-xs text-sky-900"
+              >
+                {apuracao.meses_atividade === 0
+                  ? 'RBT12 proporcional: 1º mês de atividade, receita do mês × 12 (Res. CGSN 140/2018, art. 22).'
+                  : `RBT12 proporcional: média dos ${apuracao.meses_atividade} meses de atividade × 12 (Res. CGSN 140/2018, art. 22).`}
+              </div>
+            ) : null}
+
+            {semDataInicioComJanelaCurta ? (
+              <div
+                role="status"
+                data-testid="aviso-sem-data-inicio"
+                className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-xs text-amber-900"
+              >
+                Este cliente não tem data de início de atividade. Se a empresa tem menos de 13 meses, o
+                DAS pode estar abaixo do devido — informe a data em Clientes.
+              </div>
+            ) : null}
 
             {apuracao.breakdown_desatualizado ? (
               <div
