@@ -40,8 +40,13 @@ const MENSAGEM_ERRO_EDICAO =
   'Informe um valor válido e, se ele for diferente do calculado, um motivo para a edição.';
 
 function obterMensagemErro(error, fallback = 'Não foi possível processar a solicitação.') {
+  const codigo = error?.response?.data?.erro;
+  if (codigo === 'FOLHA_PENDENTE') {
+    return 'Aguarde a confirmação da folha pelo agente antes de aprovar o DAS.';
+  }
+
   return (
-    error?.response?.data?.erro ||
+    codigo ||
     error?.response?.data?.message ||
     error?.message ||
     fallback
@@ -630,7 +635,13 @@ export default function ApuracoesPage() {
   const anexoMigrado = Boolean(
     apuracao?.anexo_original && anexoEfetivo && apuracao.anexo_original !== anexoEfetivo,
   );
-  const mostrarFatorR = Boolean(apuracao) && apuracao.fator_r !== null && apuracao.fator_r !== undefined;
+  // fator_r = 0 na criação sem folha é sentinela da fila do agente (#619), não Fator R apurado.
+  const folhaAguardandoAgente = apuracao?.folha_status === 'pendente' && apuracao?.fator_r != null;
+  const mostrarFatorR =
+    Boolean(apuracao) &&
+    apuracao.fator_r !== null &&
+    apuracao.fator_r !== undefined &&
+    !folhaAguardandoAgente;
   const folhaStatusInfo = apuracao?.folha_status ? FOLHA_STATUS_INFO[apuracao.folha_status] : null;
   const dadosFolha = apuracao?.dados_folha || null;
   const historicoEdicoes = Array.isArray(apuracao?.historico_edicoes) ? apuracao.historico_edicoes : [];
@@ -1293,7 +1304,12 @@ export default function ApuracoesPage() {
               <button
                 type="button"
                 onClick={handleAbrirAprovar}
-                disabled={statusAprovado}
+                disabled={statusAprovado || folhaAguardandoAgente}
+                title={
+                  folhaAguardandoAgente
+                    ? 'Aguarde a confirmação da folha pelo agente antes de aprovar.'
+                    : undefined
+                }
                 className="rounded-md bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-70"
               >
                 Aprovar DAS

@@ -5,6 +5,7 @@ import {
   listarFolhaPendente,
   registrarResultadoFolha,
   recalcularApuracao,
+  aprovarApuracao,
 } from "../src/controllers/apuracoes.controller.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { ultimaCompetenciaFechada } from "../src/utils/periodo.util.js";
@@ -183,6 +184,8 @@ describe("GET /apuracoes/folha-pendente (#365)", () => {
 
   it("200 retorna apurações Anexo V pendentes do cliente da licença, com nomeEmpresa (agente localiza pasta pelo nome, não por UUID)", async () => {
     tokenLicencaValido(CLIENTE_A);
+    // #619 — apuração provisória grava fator_r = 0 (sentinela); o filtro
+    // fator_r IS NOT NULL do controller inclui esse caso na fila do agente.
     queue("apuracoes", "await", {
       data: [{ id: APURACAO_ID, cliente_id: CLIENTE_A, periodo_mes: 3, periodo_ano: 2026 }],
       error: null,
@@ -421,6 +424,50 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.folha_status, "sem_dados");
+  });
+
+  // #619 / BUG-APUR-19 (d) — depois do agente, aprovar deixa de ser 409 FOLHA_PENDENTE.
+  it("resultado-folha verificado libera aprovação da apuração Anexo V provisória", async () => {
+    tokenLicencaValido(CLIENTE_A);
+    queue("apuracoes", "maybeSingle", {
+      data: { id: APURACAO_ID, cliente_id: CLIENTE_A, status: "rascunho", fator_r: 0 },
+      error: null,
+    });
+    const mesesEncontrados = Array.from({ length: 12 }, (_, i) => ({ mes: i + 1, ano: 2026 }));
+    queue("apuracoes", "single", { data: { id: APURACAO_ID, folha_status: "verificado", fator_r: 0 }, error: null });
+
+    const resFolha = criarResposta();
+    await registrarResultadoFolha(
+      reqAgente({
+        headers: { "x-licenca-token": "token-valido" },
+        params: { id: APURACAO_ID },
+        body: { temDozeMeses: true, mesesEncontrados, totalMesesEncontrados: 12 },
+      }),
+      resFolha,
+    );
+    assert.equal(resFolha.statusCode, 200);
+    assert.equal(resFolha.body.folha_status, "verificado");
+
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        cliente_id: CLIENTE_A,
+        status: "rascunho",
+        periodo_mes: 8,
+        periodo_ano: 2026,
+        folha_status: "verificado",
+        fator_r: 0,
+      },
+      error: null,
+    });
+    queue("apuracoes", "maybeSingle", {
+      data: { id: APURACAO_ID, status: "aprovado" },
+      error: null,
+    });
+
+    const resAprovar = criarResposta();
+    await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), resAprovar);
+    assert.equal(resAprovar.statusCode, 200);
+    assert.equal(resAprovar.body.status, "aprovado");
   });
 });
 

@@ -72,30 +72,53 @@ function truncarFatorR(valor) {
 // ("I" a "V") e, para o Anexo V, folha12 (folha de pagamento dos últimos 12
 // meses, para calcular o Fator R) ou semDadosFolha: true quando não há dados
 // de folha suficientes para apurar o Fator R.
-export function calcularSimplesNacional({ rbt12, receita_mes, anexo, folha12 = null, semDadosFolha = false }) {
+//
+// provisorioSemFolha (#619 / BUG-APUR-19): na criação da apuração, em vez de
+// FATOR_R_SEM_FOLHA, calcula o DAS no pior caso (Anexo V, sem migrar para III)
+// e devolve fator_r = 0 só para marcar origem Anexo V na fila folha-pendente.
+// A fórmula do Fator R em si não muda — esse ramo não a aplica. Recálculo
+// continua estrito (sem a flag) até a folha existir no banco.
+export function calcularSimplesNacional({
+  rbt12,
+  receita_mes,
+  anexo,
+  folha12 = null,
+  semDadosFolha = false,
+  provisorioSemFolha = false,
+}) {
   if (!TABELAS_SIMPLES[anexo]) return { erro: "ANEXO_INVALIDO" };
   if (!Number.isFinite(rbt12) || rbt12 < 0) return { erro: "RBT12_INVALIDO" };
   if (!Number.isFinite(receita_mes) || receita_mes < 0) return { erro: "RECEITA_MES_INVALIDA" };
 
   let anexo_efetivo = anexo;
   let fator_r = null;
+  let provisorio_sem_folha = false;
 
   if (anexo === "V") {
     if (semDadosFolha || folha12 === null || folha12 === undefined) {
-      return { erro: "FATOR_R_SEM_FOLHA" };
-    }
-    if (!Number.isFinite(folha12) || folha12 < 0) return { erro: "FOLHA12_INVALIDA" };
-
-    // Resolução CGSN 140/2018, art. 26, § 7º:
-    // - FS12 = 0 e RBT12 = 0: Fator R = 0,01;
-    // - FS12 > 0 e RBT12 = 0: Fator R = 0,28.
-    // Nos demais casos o PGDAS-D trunca o quociente em duas casas, sem arredondar.
-    if (rbt12 === 0) {
-      fator_r = folha12 > 0 ? 0.28 : 0.01;
+      if (!provisorioSemFolha) {
+        return { erro: "FATOR_R_SEM_FOLHA" };
+      }
+      // Pior caso fiscal: permanece no Anexo V. fator_r = 0 NÃO é Fator R
+      // apurado — é sentinela para listarFolhaPendente (fator_r IS NOT NULL)
+      // e para a inferência "originou de Anexo V" em detalhar/recalcular.
+      fator_r = 0;
+      anexo_efetivo = "V";
+      provisorio_sem_folha = true;
     } else {
-      fator_r = truncarFatorR(folha12 / rbt12);
+      if (!Number.isFinite(folha12) || folha12 < 0) return { erro: "FOLHA12_INVALIDA" };
+
+      // Resolução CGSN 140/2018, art. 26, § 7º:
+      // - FS12 = 0 e RBT12 = 0: Fator R = 0,01;
+      // - FS12 > 0 e RBT12 = 0: Fator R = 0,28.
+      // Nos demais casos o PGDAS-D trunca o quociente em duas casas, sem arredondar.
+      if (rbt12 === 0) {
+        fator_r = folha12 > 0 ? 0.28 : 0.01;
+      } else {
+        fator_r = truncarFatorR(folha12 / rbt12);
+      }
+      if (fator_r >= FATOR_R_LIMIAR) anexo_efetivo = "III";
     }
-    if (fator_r >= FATOR_R_LIMIAR) anexo_efetivo = "III";
   }
 
   const tabela = TABELAS_SIMPLES[anexo_efetivo];
@@ -124,5 +147,6 @@ export function calcularSimplesNacional({ rbt12, receita_mes, anexo, folha12 = n
     fator_r,
     rbt12_usado: rbt12,
     receita_mes,
+    provisorio_sem_folha,
   };
 }

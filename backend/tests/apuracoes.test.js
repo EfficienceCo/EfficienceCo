@@ -192,17 +192,26 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 404);
   });
 
-  it("422 FATOR_R_SEM_FOLHA quando Anexo V sem processamentos de folha no período", async () => {
+  // #619 / BUG-APUR-19 opção A — sem folha completa cria rascunho pendente (fila do agente).
+  it("201 pendente quando Anexo V sem processamentos de folha no período", async () => {
     queueSemDuplicata();
     queueCliente("V");
     queueNotas([{ valor_total: 50000, data_emissao: "2026-08-10" }]);
     queue("processamentos_folha", "await", { data: [], error: null });
+    queue("apuracoes", "single", {
+      data: { id: "nova-apuracao-v-pendente", anexo: "V", folha_status: "pendente", fator_r: 0 },
+      error: null,
+    });
 
     const res = criarResposta();
     await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
 
-    assert.equal(res.statusCode, 422);
-    assert.equal(res.body.erro, "FATOR_R_SEM_FOLHA");
+    assert.equal(res.statusCode, 201);
+    const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+    assert.equal(insert.payload.folha_status, "pendente");
+    assert.equal(insert.payload.anexo, "V");
+    assert.equal(insert.payload.fator_r, 0);
+    assert.ok(insert.payload.valor_calculado > 0);
   });
 
   it("201 quando Anexo V com folha suficiente para cair no Fator R (Anexo III efetivo)", async () => {
@@ -437,7 +446,7 @@ describe("POST /apuracoes", () => {
     assert.match(excluida.motivo, /data de emissão futura/i);
   });
 
-  it("422 quando faltam meses de folha na janela completa do Fator R", async () => {
+  it("201 pendente quando faltam meses de folha na janela completa do Fator R", async () => {
     queueSemDuplicata();
     queueCliente("V");
     queueNotas([
@@ -448,12 +457,19 @@ describe("POST /apuracoes", () => {
       data: processamentosDosDozeMeses().slice(0, 11),
       error: null,
     });
+    queue("apuracoes", "single", {
+      data: { id: "nova-apuracao-v-parcial", anexo: "V", folha_status: "pendente", fator_r: 0 },
+      error: null,
+    });
 
     const res = criarResposta();
     await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
 
-    assert.equal(res.statusCode, 422);
-    assert.equal(res.body.erro, "FATOR_R_SEM_FOLHA");
+    assert.equal(res.statusCode, 201);
+    const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+    assert.equal(insert.payload.folha_status, "pendente");
+    assert.equal(insert.payload.fator_r, 0);
+    assert.equal(insert.payload.anexo, "V");
   });
 
   it("400 quando mes/ano/regime faltando", async () => {
@@ -1119,7 +1135,17 @@ describe("PATCH /apuracoes/:id", () => {
 
 describe("PATCH /apuracoes/:id/aprovar", () => {
   it("200 e marca como aprovado", async () => {
-    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 }, error: null });
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        cliente_id: CLIENTE_A,
+        status: "rascunho",
+        periodo_mes: 8,
+        periodo_ano: 2026,
+        folha_status: "verificado",
+        fator_r: 0.3,
+      },
+      error: null,
+    });
     queue("apuracoes", "maybeSingle", {
       data: { id: APURACAO_ID, status: "aprovado", aprovado_por: "contador@teste.com" },
       error: null,
@@ -1133,8 +1159,64 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
     assert.equal(res.body.aprovado_por, "contador@teste.com");
   });
 
+  // #619 / BUG-APUR-19 — DAS provisório de Anexo V não pode ser aprovado.
+  it("409 FOLHA_PENDENTE quando Anexo V ainda aguarda confirmação do agente", async () => {
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        cliente_id: CLIENTE_A,
+        status: "rascunho",
+        periodo_mes: 8,
+        periodo_ano: 2026,
+        folha_status: "pendente",
+        fator_r: 0,
+      },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.erro, "FOLHA_PENDENTE");
+    assert.deepEqual(operacoes, []);
+  });
+
+  it("200 aprova Anexo V após resultado-folha marcar verificado", async () => {
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        cliente_id: CLIENTE_A,
+        status: "rascunho",
+        periodo_mes: 8,
+        periodo_ano: 2026,
+        folha_status: "verificado",
+        fator_r: 0,
+      },
+      error: null,
+    });
+    queue("apuracoes", "maybeSingle", {
+      data: { id: APURACAO_ID, status: "aprovado" },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.status, "aprovado");
+  });
+
   it("409 quando outra requisição aprova entre a leitura e a atualização", async () => {
-    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 }, error: null });
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        cliente_id: CLIENTE_A,
+        status: "rascunho",
+        periodo_mes: 8,
+        periodo_ano: 2026,
+        folha_status: "pendente",
+        fator_r: null,
+      },
+      error: null,
+    });
     queue("apuracoes", "maybeSingle", { data: null, error: null });
 
     const res = criarResposta();
@@ -1148,7 +1230,14 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
   it("422 COMPETENCIA_NAO_FECHADA quando a competência ainda não fechou", async () => {
     const ultima = ultimaCompetenciaFechada();
     queue("apuracoes", "maybeSingle", {
-      data: { cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 6, periodo_ano: ultima.ano + 1 },
+      data: {
+        cliente_id: CLIENTE_A,
+        status: "rascunho",
+        periodo_mes: 6,
+        periodo_ano: ultima.ano + 1,
+        folha_status: "pendente",
+        fator_r: null,
+      },
       error: null,
     });
 
@@ -1170,7 +1259,10 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
   });
 
   it("404 quando a apuração pertence a outro cliente", async () => {
-    queue("apuracoes", "maybeSingle", { data: { cliente_id: CLIENTE_B, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 }, error: null });
+    queue("apuracoes", "maybeSingle", {
+      data: { cliente_id: CLIENTE_B, status: "rascunho", periodo_mes: 8, periodo_ano: 2026 },
+      error: null,
+    });
 
     const res = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
