@@ -380,3 +380,65 @@ test.describe('Clientes — editor de regime: erro e receita negativa (BUG-APUR-
     expect(chamadas.patches).toHaveLength(0);
   });
 });
+
+test.describe('Clientes — nits de UI (BUG-APUR-17 / #617)', () => {
+  test('lista mostra CNPJ com máscara 00.000.000/0000-00', async ({ page }) => {
+    await page.route(`${API}/clientes**`, async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([{
+            id: 'cliente-cnpj-mascara',
+            nome: 'Comércio Máscara',
+            cnpj: '12345678000199',
+            status: 'ativo',
+            esocial_configurado: false,
+            criado_em: '2026-01-10T12:00:00.000Z',
+            regime_tributario: 'simples_nacional',
+            anexo_simples: 'I',
+            historico_receita: [],
+          }]),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await abrirTela(page);
+
+    const linha = page.getByRole('row', { name: /Comércio Máscara/ });
+    await expect(linha.getByText('12.345.678/0001-99')).toBeVisible();
+    await expect(linha.getByText('12345678000199')).toHaveCount(0);
+  });
+
+  test('botão fechar do editor tem aria-label, ícone e fecha o painel', async ({ page }) => {
+    await stubClientes(page);
+    await abrirTela(page);
+
+    await page.getByRole('button', { name: 'Editar regime tributário de Padaria Aurora' }).click();
+    await expect(page.getByRole('heading', { name: 'Regime tributário' })).toBeVisible();
+
+    const fechar = page.getByRole('button', { name: 'Fechar editor de regime tributário' });
+    await expect(fechar).toBeVisible();
+    await expect(fechar.locator('svg')).toBeVisible();
+    await fechar.click();
+
+    await expect(page.getByRole('heading', { name: 'Regime tributário' })).toHaveCount(0);
+  });
+
+  test('navegar em /admin/clientes não gera resposta 404', async ({ page }) => {
+    const status404: string[] = [];
+    page.on('response', (response) => {
+      if (response.status() === 404) {
+        status404.push(response.url());
+      }
+    });
+
+    await stubClientes(page);
+    await abrirTela(page);
+    await expect(page.getByRole('heading', { name: 'Clientes' })).toBeVisible();
+
+    expect(status404, `requisições 404: ${status404.join(', ')}`).toEqual([]);
+  });
+});
