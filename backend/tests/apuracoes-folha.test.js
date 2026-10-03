@@ -520,9 +520,26 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
     const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
     assert.equal(update.payload.valor_editado, null);
     assert.equal(update.payload.receita_mes, 60000);
-    // Anexo fora do V — folha_status não é relevante (fator_r fica null,
-    // fora do filtro do polling), mas segue o default por consistência.
-    assert.equal(update.payload.folha_status, "pendente");
+    // BUG-APUR-11 / #611 — Anexo fora do V mantém folha_status null no recálculo.
+    assert.equal(update.payload.folha_status, null);
+  });
+
+  it("200 recalcula Anexo III mantendo folha_status null (BUG-APUR-11)", async () => {
+    queueApuracaoBase({ anexo: "III", fator_r: null });
+    queueCliente();
+    queueNotas([{ valor_total: 40000, data_emissao: "2026-08-10", tipo: "saida", status: "ativa" }]);
+    queue("apuracoes", "maybeSingle", {
+      data: { id: APURACAO_ID, status: "rascunho", anexo: "III", fator_r: null },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
+    assert.equal(update.payload.folha_status, null);
+    assert.equal(update.payload.fator_r, null);
   });
 
   // BUG-APUR-07 — recálculo usa a mesma regra de RBT12 proporcional da criação.
