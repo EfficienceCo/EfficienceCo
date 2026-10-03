@@ -18,6 +18,18 @@ export const COLUNAS_FOLHA = [
   { header: "vale_transporte", key: "vale_transporte", width: 16 },
 ];
 
+// Coluna opcional (BUG-APUR-12 / #612): fica fora de COLUNAS_FOLHA para que
+// planilhas antigas, sem ela, continuem válidas — ausente ou vazia = EMPREGADO.
+// SOCIO marca retirada de pró-labore: entra na FS12 do Fator R (LC 123 art. 18
+// §24; Res. CGSN 140/2018 art. 26), mas sem FGTS (sócio não é empregado).
+export const COLUNA_CATEGORIA = { header: "categoria", key: "categoria", width: 14 };
+const CATEGORIAS_ACEITAS = "EMPREGADO, SOCIO (vazio = EMPREGADO)";
+const CATEGORIA_POR_TEXTO = new Map([
+  ["empregado", "empregado"],
+  ["socio", "socio"],
+  ["sócio", "socio"],
+]);
+
 const LINHAS_DE_DADOS = 500;
 
 // ---------------------------------------------------------------------------
@@ -300,7 +312,9 @@ export function calcularFolhaFuncionario(linha, competencia) {
 
   const inssPreciso = calcularINSS(baseCalculo, tabelaInss);
   const inss = arredondar(inssPreciso);
-  const fgts = arredondar(baseCalculo * ALIQUOTA_FGTS);
+  // Pró-labore de sócio não tem FGTS (#612). A categoria não é persistida
+  // (sem coluna em folha_calculos) — fgts = 0 já basta para a FS12.
+  const fgts = linha.categoria === "socio" ? 0 : arredondar(baseCalculo * ALIQUOTA_FGTS);
 
   const dadosIrrf = {
     baseCalculo,
@@ -425,9 +439,12 @@ export async function lerLinhasPlanilha(buffer) {
   // Mapeia coluna → índice pelo texto do cabeçalho real do arquivo, não pela ordem
   // fixa de COLUNAS_FOLHA — validarColunasPlanilha garante presença, não ordem.
   const indicePorChave = new Map();
+  let indiceCategoria = null;
   sheetInicial.getRow(1).eachCell((cell, indiceColuna) => {
     if (typeof cell.value !== "string") return;
-    const chave = headerPorNome.get(cell.value.trim().toLowerCase());
+    const header = cell.value.trim().toLowerCase();
+    if (header === COLUNA_CATEGORIA.header) indiceCategoria = indiceColuna;
+    const chave = headerPorNome.get(header);
     if (chave) indicePorChave.set(chave, indiceColuna);
   });
 
@@ -516,6 +533,21 @@ export async function lerLinhasPlanilha(buffer) {
       linhaConvertida.vale_transporte = vt.valor;
     }
 
+    const categoriaBruta = indiceCategoria == null
+      ? null
+      : desembrulharValorCelula(linhaExcel.getCell(indiceCategoria).value);
+    if (categoriaBruta === null || categoriaBruta === undefined || String(categoriaBruta).trim() === "") {
+      linhaConvertida.categoria = "empregado";
+    } else {
+      const categoria = CATEGORIA_POR_TEXTO.get(String(categoriaBruta).trim().toLowerCase());
+      if (categoria) {
+        linhaConvertida.categoria = categoria;
+      } else {
+        errosDaLinha.push(`categoria inválida; valores aceitos: ${CATEGORIAS_ACEITAS}`);
+        linhaConvertida.categoria = "empregado";
+      }
+    }
+
     if (errosDaLinha.length > 0) {
       erros.push({ linha: numeroLinha, motivos: errosDaLinha });
     } else {
@@ -554,7 +586,8 @@ export async function gerarTemplateFolha() {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Folha de Pagamento");
 
-  sheet.columns = COLUNAS_FOLHA;
+  const colunasTemplate = [...COLUNAS_FOLHA, COLUNA_CATEGORIA];
+  sheet.columns = colunasTemplate;
 
   const linhaCabecalho = sheet.getRow(1);
   linhaCabecalho.font = { bold: true };
@@ -564,9 +597,18 @@ export async function gerarTemplateFolha() {
 
   for (let numeroLinha = 2; numeroLinha <= LINHAS_DE_DADOS + 1; numeroLinha++) {
     const linha = sheet.getRow(numeroLinha);
-    COLUNAS_FOLHA.forEach((_, indice) => {
+    colunasTemplate.forEach((_, indice) => {
       linha.getCell(indice + 1).protection = { locked: false };
     });
+
+    linha.getCell(colunasTemplate.length).dataValidation = {
+      type: "list",
+      allowBlank: true,
+      formulae: ['"EMPREGADO,SOCIO"'],
+      showErrorMessage: true,
+      errorTitle: "Categoria",
+      error: "Use EMPREGADO ou SOCIO (sócio com pró-labore). Vazio = EMPREGADO.",
+    };
 
     const celulaVt = linha.getCell(COLUNAS_FOLHA.findIndex((c) => c.key === "vale_transporte") + 1);
     celulaVt.dataValidation = {
@@ -777,10 +819,11 @@ function montarLinhasVerbas(calculo) {
 }
 
 // Linha de bases/totais do rodapé do holerite. BASE FGTS reaproveita base_calculo
-// (não existe base de FGTS isolada persistida). BASE IRRF usa a base_ir realmente
-// calculada e persistida em folha_calculos; só cai para "-" quando não há imposto
-// retido (IRRF genuinamente 0) ou quando a base não foi persistida — caso de
-// linhas anteriores à migration 89.sql, onde exibir "0,00" seria um número falso.
+// (não existe base de FGTS isolada persistida); linha sem FGTS (pró-labore de
+// sócio, #612) mostra base 0. BASE IRRF usa a base_ir realmente calculada e
+// persistida em folha_calculos; só cai para "-" quando não há imposto retido
+// (IRRF genuinamente 0) ou quando a base não foi persistida — caso de linhas
+// anteriores à migration 89.sql, onde exibir "0,00" seria um número falso.
 export function montarCelulasBases(calculo) {
   const totalProventos = Number(calculo.salario_bruto) + Number(calculo.valor_horas_extras);
   const totalDescontos =
@@ -792,7 +835,7 @@ export function montarCelulasBases(calculo) {
   return [
     { rotulo: "SALAR. BASE", texto: formatarMoeda(calculo.salario_bruto) },
     { rotulo: "SAL. CONTR.", texto: formatarMoeda(calculo.base_calculo) },
-    { rotulo: "BASE FGTS", texto: formatarMoeda(calculo.base_calculo) },
+    { rotulo: "BASE FGTS", texto: formatarMoeda(Number(calculo.fgts) > 0 ? calculo.base_calculo : 0) },
     { rotulo: "FGTS MES", texto: formatarMoeda(calculo.fgts) },
     { rotulo: "BASE IRRF", texto: baseIrDisponivel ? formatarMoeda(calculo.base_ir) : "-" },
     { rotulo: "DEP IR", texto: String(calculo.num_dependentes) },

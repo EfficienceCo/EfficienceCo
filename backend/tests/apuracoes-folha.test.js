@@ -8,6 +8,7 @@ import {
 } from "../src/controllers/apuracoes.controller.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { ultimaCompetenciaFechada } from "../src/utils/periodo.util.js";
+import { calcularFolhaFuncionario } from "../src/services/folha.service.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -569,6 +570,65 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
     // false) não deve deixar a apuração pendente na fila do agente. Mesmo
     // achado do PR #366 (Vinícius), aplicado também ao caminho de recálculo.
     assert.equal(update.payload.folha_status, "verificado");
+  });
+
+  // BUG-APUR-12 (#612): FS12 inclui pró-labore (sem FGTS). Linhas de
+  // folha_calculos geradas pelo próprio motor, do jeito que o pipeline grava.
+  function fatorRComFolha(linhasPorMes) {
+    queueApuracaoBase({ anexo: "V", fator_r: 0.18 });
+    queueCliente();
+    // RBT12 = 12 × 30.000 = 360.000 na janela 08/2025–07/2026; receita do mês 30.000.
+    const notas = processamentosDosDozeMeses().map((p) => ({
+      valor_total: 30000,
+      data_emissao: p.mes_referencia.replace(/-01$/, "-15"),
+      tipo: "saida",
+    }));
+    notas.push({ valor_total: 30000, data_emissao: "2026-08-15", tipo: "saida" });
+    queueNotas(notas);
+    queue("processamentos_folha", "await", { data: processamentosDosDozeMeses(), error: null });
+    const calculos = Array.from({ length: 12 }, () =>
+      linhasPorMes.map((linha) => {
+        const { base_calculo, fgts } = calcularFolhaFuncionario(linha, "2026-01");
+        return { base_calculo, fgts };
+      }),
+    ).flat();
+    queue("folha_calculos", "await", { data: calculos, error: null });
+    queue("apuracoes", "maybeSingle", { data: { id: APURACAO_ID, status: "rascunho" }, error: null });
+  }
+
+  const linhaFolha = (over) => ({
+    salario_bruto: 0, horas_extras: 0, faltas: 0, adiantamento: 0,
+    num_dependentes: 0, vale_transporte: false, ...over,
+  });
+
+  it("FS12 com pró-labore: 12 × (5.000 + 400 FGTS + 3.400 pró-labore) = 105.600 → Fator R 0,29 → Anexo III", async () => {
+    fatorRComFolha([
+      linhaFolha({ salario_bruto: 5000, categoria: "empregado" }),
+      linhaFolha({ salario_bruto: 3400, categoria: "socio" }),
+    ]);
+
+    const res = criarResposta();
+    await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
+    assert.equal(update.payload.rbt12_usado, 360000);
+    assert.equal(update.payload.folha12, 105600);
+    assert.equal(update.payload.fator_r, 0.29); // 105.600 / 360.000 = 0,2933, truncado
+    assert.equal(update.payload.anexo, "III");
+  });
+
+  it("sem o pró-labore (só a folha CLT), FS12 = 64.800 → Fator R 0,18 → permanece no Anexo V", async () => {
+    fatorRComFolha([linhaFolha({ salario_bruto: 5000, categoria: "empregado" })]);
+
+    const res = criarResposta();
+    await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
+    assert.equal(update.payload.folha12, 64800);
+    assert.equal(update.payload.fator_r, 0.18);
+    assert.equal(update.payload.anexo, "V");
   });
 
   it("409 quando a apuração foi aprovada entre a leitura e o recálculo (trava otimista)", async () => {

@@ -364,7 +364,7 @@ function enriquecerApuracao(apuracao, resultado, bases, clienteNome) {
   };
 }
 
-// Busca folha12 (FS12: base_calculo + fgts) e semDadosFolha pra Anexo V —
+// Busca folha12 (FS12: base_calculo + fgts, pró-labore incluso) e semDadosFolha pra Anexo V —
 // exige processamentos_folha "concluido" para os 12 meses inteiros da janela.
 // Usada tanto na criação (dispararApuracao) quanto no recálculo
 // (recalcularApuracao, #365) depois que o agente confirma a folha local e/ou
@@ -410,8 +410,11 @@ async function coletarFolha12(clienteId, janelaRbt12) {
     return { erro: "Erro ao buscar dados de folha" };
   }
 
-  // FS12 inclui remunerações e FGTS. A contribuição patronal precisa ser
-  // incorporada quando o pipeline de folha passar a persistir esse valor.
+  // FS12 (LC 123 art. 18 §24; Res. CGSN 140/2018 art. 26) = remunerações
+  // (base_calculo, incl. pró-labore das linhas SOCIO) + FGTS recolhido (0 no
+  // sócio) + CPP efetivamente recolhida. O Fator R só roda para cliente do
+  // Anexo V, que resulta em V ou III — nos dois a CPP vai dentro do DAS, então
+  // a CPP recolhida fora dele é 0 e não entra aqui (#612).
   const folha12 = arredondar(
     (calculos || []).reduce((soma, linha) => soma + Number(linha.base_calculo) + Number(linha.fgts), 0),
   );
