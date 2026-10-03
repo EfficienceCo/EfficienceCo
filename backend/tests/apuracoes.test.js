@@ -11,6 +11,7 @@ import {
   detalharApuracao,
   editarApuracao,
   aprovarApuracao,
+  recalcularApuracao,
   excluirApuracao,
 } from "../src/controllers/apuracoes.controller.js";
 
@@ -1255,5 +1256,85 @@ describe("DELETE /apuracoes/:id", () => {
     await excluirApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
     assert.equal(res.statusCode, 500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG-APUR-13 / #613 — id/clienteId não-UUID não pode virar 500 (22P02)
+// ---------------------------------------------------------------------------
+
+describe("validação de UUID em /apuracoes (BUG-APUR-13)", () => {
+  const ID_INVALIDO = "abc";
+  const ID_INEXISTENTE = "99999999-9999-9999-9999-999999999999";
+
+  it("POST /apuracoes com clienteId não-UUID → 400", async () => {
+    // admin_efficience lê clienteId do body — é o caminho que o QA reproduziu.
+    const res = criarResposta();
+    await dispararApuracao(
+      reqAdmin({
+        usuario: { perfil: PERFIS.ADMIN_EFFICIENCE, id: "admin-1", email: "admin@efficience.com" },
+        body: payloadValido({ clienteId: ID_INVALIDO }),
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "clienteId inválido");
+    assert.equal(operacoes.length, 0);
+  });
+
+  it("GET /apuracoes com clienteId não-UUID → 400", async () => {
+    const res = criarResposta();
+    await listarApuracoes(
+      reqAdmin({
+        usuario: { perfil: PERFIS.ADMIN_EFFICIENCE, id: "admin-1", email: "admin@efficience.com" },
+        query: { clienteId: ID_INVALIDO },
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "clienteId inválido");
+  });
+
+  it("GET /apuracoes?mes=abc → 400 com mensagem de faixa", async () => {
+    const res = criarResposta();
+    await listarApuracoes(reqAdmin({ query: { mes: "abc" } }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+  });
+
+  for (const [nome, handler] of [
+    ["GET /apuracoes/:id", detalharApuracao],
+    ["PATCH /apuracoes/:id", editarApuracao],
+    ["PATCH /apuracoes/:id/aprovar", aprovarApuracao],
+    ["PATCH /apuracoes/:id/recalcular", recalcularApuracao],
+    ["DELETE /apuracoes/:id", excluirApuracao],
+  ]) {
+    it(`${nome} com id não-UUID → 404 (sem consultar o banco)`, async () => {
+      const res = criarResposta();
+      await handler(
+        reqAdmin({
+          params: { id: ID_INVALIDO },
+          body: { valor_editado: 1, motivo: "x" },
+        }),
+        res,
+      );
+
+      assert.equal(res.statusCode, 404);
+      assert.equal(res.body.erro, "Apuração não encontrada");
+      assert.equal(operacoes.length, 0);
+    });
+  }
+
+  it("GET /apuracoes/:id com UUID válido inexistente → 404 (regressão)", async () => {
+    queue("apuracoes", "maybeSingle", { data: null, error: null });
+
+    const res = criarResposta();
+    await detalharApuracao(reqAdmin({ params: { id: ID_INEXISTENTE } }), res);
+
+    assert.equal(res.statusCode, 404);
+    assert.equal(res.body.erro, "Apuração não encontrada");
   });
 });

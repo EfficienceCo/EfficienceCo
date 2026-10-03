@@ -314,6 +314,28 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
     assert.equal(res.statusCode, 404);
   });
 
+  // BUG-APUR-13 / #613 — id malformado não pode chegar no Postgres (22P02 → 500).
+  it("404 quando id não é UUID (sem consultar o banco)", async () => {
+    tokenLicencaValido(CLIENTE_A);
+
+    const res = criarResposta();
+    await registrarResultadoFolha(
+      reqAgente({
+        headers: { "x-licenca-token": "token-valido" },
+        params: { id: "abc" },
+        body: { temDozeMeses: true, mesesEncontrados: [], totalMesesEncontrados: 0 },
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 404);
+    assert.equal(res.body.erro, "Apuração não encontrada");
+    assert.equal(
+      operacoes.find((op) => op.tabela === "apuracoes"),
+      undefined,
+    );
+  });
+
   it("404 quando a apuração pertence a outro cliente (isolamento multi-tenant)", async () => {
     tokenLicencaValido(CLIENTE_A);
     queue("apuracoes", "maybeSingle", {
