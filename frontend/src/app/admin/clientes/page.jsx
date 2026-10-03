@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
+import { FecharIcon } from '../../../components/icons/AutomacaoIcons';
 import { atualizarCliente, criarCliente, listarClientes } from '../../../services/clientes.service';
+import { formatarCnpj } from '../../../utils/formatarCnpj';
 
 const PERFIL_ADMIN_EFFICIENCE = 'admin_efficience';
 
@@ -639,7 +641,7 @@ export default function AdminClientes() {
                       {cliente.nome || '-'}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
-                      {cliente.cnpj || '-'}
+                      {cliente.cnpj ? formatarCnpj(cliente.cnpj) : '-'}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
                       <div className="space-y-1">
@@ -744,10 +746,10 @@ export default function AdminClientes() {
                 type="button"
                 onClick={fecharEditorRegime}
                 disabled={isSavingRegime}
-                className="rounded-md border border-zinc-300 px-2 py-1 text-sm text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Fechar editor de regime tributário"
               >
-                X
+                <FecharIcon className="h-4 w-4" />
               </button>
             </header>
 
