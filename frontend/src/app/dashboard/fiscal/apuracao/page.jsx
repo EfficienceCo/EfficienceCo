@@ -1258,7 +1258,12 @@ export default function ApuracoesPage() {
                       {formatarValor(item?.valor_novo)}
                     </span>
                   </div>
-                  <div className="flex-1 text-sm text-zinc-600">{item?.motivo}</div>
+                  <div className="flex-1 text-sm text-zinc-600">
+                    {item?.tipo === 'recalculo' ? (
+                      <span className="mr-1.5 font-medium text-zinc-800">Recálculo —</span>
+                    ) : null}
+                    {item?.motivo}
+                  </div>
                   <div className="text-right text-xs text-zinc-500">
                     <div>{formatarDataHora(item?.editado_em || item?.data)}</div>
                     {item?.editado_por ? <div className="mt-0.5">por {item.editado_por}</div> : null}

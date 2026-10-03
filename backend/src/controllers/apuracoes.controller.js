@@ -875,7 +875,7 @@ export async function recalcularApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("id, cliente_id, periodo_mes, periodo_ano, status, anexo, fator_r")
+    .select("id, cliente_id, periodo_mes, periodo_ano, status, anexo, fator_r, valor_editado, valor_calculado, historico_edicoes")
     .eq("id", id)
     .maybeSingle();
 
@@ -974,6 +974,25 @@ export async function recalcularApuracao(req, res) {
     return res.status(422).json({ erro: resultado.erro });
   }
 
+  // Sempre registra o recálculo no histórico (BUG-APUR-09 / #609): o override
+  // manual continua sendo descartado de propósito, mas a auditoria precisa
+  // explicar a mudança de valor.
+  const edicaoDescartada = apuracao.valor_editado != null;
+  const historicoAnterior = Array.isArray(apuracao.historico_edicoes) ? apuracao.historico_edicoes : [];
+  const historicoAtualizado = [
+    ...historicoAnterior,
+    {
+      tipo: "recalculo",
+      valor_anterior: apuracao.valor_editado ?? apuracao.valor_calculado,
+      valor_novo: resultado.valor_das,
+      motivo: edicaoDescartada
+        ? "Recálculo descartou edição manual anterior"
+        : "Recálculo automático",
+      editado_por: req.usuario?.email || req.usuario?.id,
+      editado_em: new Date().toISOString(),
+    },
+  ];
+
   // .eq("status", "rascunho") de novo: trava otimista contra uma aprovação que
   // aconteça entre o SELECT de cima e este UPDATE.
   const { data, error } = await supabase
@@ -993,6 +1012,7 @@ export async function recalcularApuracao(req, res) {
       // Um override manual anterior foi feito em cima do cálculo antigo — com
       // números novos de folha, ele deixa de fazer sentido sem revisão.
       valor_editado: null,
+      historico_edicoes: historicoAtualizado,
     })
     .eq("id", id)
     .eq("status", "rascunho")
@@ -1008,7 +1028,10 @@ export async function recalcularApuracao(req, res) {
     return res.status(409).json({ erro: "Apuração foi aprovada por outra solicitação" });
   }
 
-  return res.status(200).json(enriquecerApuracao(data, resultado, bases, cliente.nome));
+  return res.status(200).json({
+    ...enriquecerApuracao(data, resultado, bases, cliente.nome),
+    edicao_descartada: edicaoDescartada,
+  });
 }
 
 // Rota do agente — autenticada via x-licenca-token (polling), mesmo padrão de
