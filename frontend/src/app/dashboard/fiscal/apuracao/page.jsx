@@ -631,7 +631,10 @@ export default function ApuracoesPage() {
     apuracao?.anexo_original && anexoEfetivo && apuracao.anexo_original !== anexoEfetivo,
   );
   const mostrarFatorR = Boolean(apuracao) && apuracao.fator_r !== null && apuracao.fator_r !== undefined;
-  const folhaStatusInfo = apuracao?.folha_status ? FOLHA_STATUS_INFO[apuracao.folha_status] : null;
+  // Chip FS12 só faz sentido com Fator R (Anexo V). Legado I–IV com
+  // folha_status='pendente' fica escondido sem migration (BUG-APUR-11 / #611).
+  const folhaStatusInfo =
+    mostrarFatorR && apuracao?.folha_status ? FOLHA_STATUS_INFO[apuracao.folha_status] : null;
   const dadosFolha = apuracao?.dados_folha || null;
   const historicoEdicoes = Array.isArray(apuracao?.historico_edicoes) ? apuracao.historico_edicoes : [];
   const rbt12Mensal = Array.isArray(apuracao?.rbt12_mensal) ? apuracao.rbt12_mensal : [];

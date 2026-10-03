@@ -164,6 +164,11 @@ describe("POST /apuracoes", () => {
     assert.equal(res.body.cliente_nome, "Cliente Teste");
     assert.equal(res.body.rbt12_mensal.length, 12);
     assert.equal(res.body.notas_fiscais.consideradas.length, 2);
+
+    // BUG-APUR-11 / #611 — Anexo I–IV não usam FS12; null explícito vence o
+    // DEFAULT 'pendente' da coluna e evita o chip "Aguardando agente".
+    const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+    assert.equal(insert.payload.folha_status, null);
   });
 
   it("422 quando regime não é simples_nacional", async () => {
@@ -263,9 +268,8 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 201);
     assert.equal(insert.payload.rbt12_usado, 140000);
     assert.equal(insert.payload.receita_mes, 45000);
-    // Anexo fora do V nunca entra na fila de folha do agente (fator_r fica
-    // null), mas o valor gravado segue o default da coluna por consistência.
-    assert.equal(insert.payload.folha_status, "pendente");
+    // BUG-APUR-11 / #611 — Anexo fora do V grava null (não o DEFAULT 'pendente').
+    assert.equal(insert.payload.folha_status, null);
   });
 
   it("expõe a composição mensal e as NFes consideradas e excluídas para auditoria", async () => {
