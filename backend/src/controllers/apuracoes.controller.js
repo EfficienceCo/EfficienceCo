@@ -536,12 +536,16 @@ export async function dispararApuracao(req, res) {
     ({ folha12, semDadosFolha } = insumosFolha);
   }
 
+  // Anexo V sem os 12 meses: cria rascunho provisório (pior caso Anexo V) e
+  // entra na fila do agente — em vez do 422 FATOR_R_SEM_FOLHA que deixava
+  // folha-pendente sempre vazia (#619 / BUG-APUR-19, opção A).
   const resultado = calcularSimplesNacional({
     rbt12: bases.rbt12,
     receita_mes: bases.receitaMes,
     anexo: cliente.anexo_simples,
     folha12,
     semDadosFolha,
+    provisorioSemFolha: cliente.anexo_simples === "V" && semDadosFolha,
   });
 
   if (resultado.erro) {
@@ -765,7 +769,7 @@ export async function aprovarApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("cliente_id, status, periodo_mes, periodo_ano")
+    .select("cliente_id, status, periodo_mes, periodo_ano, folha_status, fator_r")
     .eq("id", id)
     .maybeSingle();
 
@@ -780,6 +784,12 @@ export async function aprovarApuracao(req, res) {
 
   if (apuracao.status === "aprovado") {
     return res.status(409).json({ erro: "Apuração já está aprovada" });
+  }
+
+  // Anexo V (fator_r preenchido) com DAS provisório: não virar número oficial
+  // enquanto o agente não reportar a folha (#619 / BUG-APUR-19).
+  if (apuracao.fator_r != null && apuracao.folha_status === FOLHA_STATUS.PENDENTE) {
+    return res.status(409).json({ erro: "FOLHA_PENDENTE" });
   }
 
   // Aprovar é o que transforma o rascunho em número oficial do cliente, então
