@@ -10,6 +10,7 @@ import {
 const CLIENTE_ID = "11111111-1111-1111-1111-111111111111";
 const PROCESSO_ID = "22222222-2222-2222-2222-222222222222";
 const originalFrom = supabase.from;
+const pastaBaseEnvOriginal = process.env.PASTA_BASE;
 const insercoes = [];
 
 supabase.from = function (tabela) {
@@ -44,10 +45,16 @@ supabase.from = function (tabela) {
 
 after(() => {
   supabase.from = originalFrom;
+  if (pastaBaseEnvOriginal === undefined) {
+    delete process.env.PASTA_BASE;
+  } else {
+    process.env.PASTA_BASE = pastaBaseEnvOriginal;
+  }
 });
 
 beforeEach(() => {
   insercoes.length = 0;
+  delete process.env.PASTA_BASE;
 });
 
 function obterInsercao(tabela) {
@@ -126,7 +133,7 @@ describe("criarProcessoComEtapas", () => {
   it("persiste descrição, tipo e ação das etapas de abertura", async () => {
     const resultado = await criarProcessoComEtapas(CLIENTE_ID, "abertura_empresa", {
       nome_empresa: "Empresa Teste",
-      pasta_base: "Empresa_Teste",
+      pasta_base: "C:\\Souza",
       cenario: "nova",
       socios: [{ nome: "Maria", cpf: "123", participacao: 100 }],
       capital_social: 10000,
@@ -143,7 +150,7 @@ describe("criarProcessoComEtapas", () => {
       cliente_id: CLIENTE_ID,
       tipo: "abertura_empresa",
       nome_empresa: "Empresa Teste",
-      pasta_base: "Empresa_Teste",
+      pasta_base: "C:\\Souza",
       mes_referencia: null,
       cenario: "nova",
       socios: [{ nome: "Maria", cpf: "123", participacao: 100 }],
@@ -175,7 +182,7 @@ describe("criarProcessoComEtapas", () => {
 });
 
 describe("criarProcesso — abertura_empresa", () => {
-  it("usa o catálogo tipado no fluxo real do endpoint para empresa nova", async () => {
+  it("sem pasta_base no body nem no env: cria com null (agente usa PASTA_BASE local)", async () => {
     const req = {
       usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
       query: {},
@@ -195,13 +202,13 @@ describe("criarProcesso — abertura_empresa", () => {
       obterInsercao("etapas"),
       etapasEsperadas(PROCESSO_ID, ETAPAS_PADRAO.abertura_empresa),
     );
-    // Regressão #311: pasta_base não pode ser fabricada a partir de nome_empresa
-    // (isso gerava um nome de pasta, não uma raiz absoluta, e quebrava as automações).
+    // Sem fonte absoluta (#636) ainda pode nascer null; o agente cobre com env local.
+    // Regressão #311: nunca fabricar a partir de nome_empresa.
     assert.equal(obterInsercao("processos").pasta_base, null);
     assert.equal(res.body.pasta_base, null);
   });
 
-  it("ignora pasta_base informada e deixa a raiz para o agente local", async () => {
+  it("persiste pasta_base absoluto informado no body (#636)", async () => {
     const req = {
       usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
       query: {},
@@ -209,7 +216,7 @@ describe("criarProcesso — abertura_empresa", () => {
         tipo: "abertura_empresa",
         nome_empresa: "Empresa Com Raiz",
         cenario: "nova",
-        pasta_base: "C:\\Clientes\\Empresa Com Raiz",
+        pasta_base: "C:\\Clientes\\Raiz",
       },
     };
     const res = criarResposta();
@@ -217,8 +224,48 @@ describe("criarProcesso — abertura_empresa", () => {
     await criarProcesso(req, res);
 
     assert.equal(res.statusCode, 201);
-    assert.equal(obterInsercao("processos").pasta_base, null);
-    assert.equal(res.body.pasta_base, null);
+    assert.equal(obterInsercao("processos").pasta_base, "C:\\Clientes\\Raiz");
+    assert.equal(res.body.pasta_base, "C:\\Clientes\\Raiz");
+  });
+
+  it("usa PASTA_BASE do ambiente quando o body omite a raiz (#636)", async () => {
+    process.env.PASTA_BASE = "C:\\Souza";
+    const req = {
+      usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
+      query: {},
+      body: {
+        tipo: "abertura_empresa",
+        nome_empresa: "Empresa Via Env",
+        cenario: "nova",
+      },
+    };
+    const res = criarResposta();
+
+    await criarProcesso(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(obterInsercao("processos").pasta_base, "C:\\Souza");
+    assert.equal(res.body.pasta_base, "C:\\Souza");
+  });
+
+  it("recusa pasta_base relativa/slug no body (regressão #311)", async () => {
+    const req = {
+      usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
+      query: {},
+      body: {
+        tipo: "abertura_empresa",
+        nome_empresa: "Empresa Slug",
+        cenario: "nova",
+        pasta_base: "Empresa_Slug",
+      },
+    };
+    const res = criarResposta();
+
+    await criarProcesso(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /caminho absoluto/i);
+    assert.equal(insercoes.length, 0);
   });
 
   it("preserva o checklist reduzido do cliente existente e automatiza a criação das pastas", async () => {

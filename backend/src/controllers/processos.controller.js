@@ -8,6 +8,7 @@ import {
   criarProcessoComEtapas,
   ETAPAS_PADRAO,
 } from "../services/processos.service.js";
+import { caminhoWindowsAbsolutoValido } from "../utils/caminho-windows.util.js";
 
 const ACOES_AUTOMATIZADAS = ["gerar_contrato_social", "criar_pastas"];
 const STATUS_ETAPA = {
@@ -207,8 +208,34 @@ export async function criarProcesso(req, res) {
   return res.status(201).json({ ...resultado.processo, etapas: resultado.etapas });
 }
 
+/**
+ * Resolve pasta_base canônica na criação (#636), sem fabricar a partir do nome (#311).
+ * Ordem: body absoluto → PASTA_BASE do ambiente (dev/single-tenant) → null.
+ * Relativo/slug no body é recusado (400) para não reintroduzir o bug #311.
+ */
+function resolverPastaBaseAbertura(pastaBaseBody) {
+  if (pastaBaseBody !== undefined && pastaBaseBody !== null && String(pastaBaseBody).trim() !== "") {
+    const informado = String(pastaBaseBody).trim();
+    if (!caminhoWindowsAbsolutoValido(informado)) {
+      return {
+        erro:
+          "pasta_base inválida: informe um caminho absoluto do Windows (ex.: C:\\Souza). Não use só o nome da empresa.",
+      };
+    }
+    return { pasta_base: informado };
+  }
+
+  const doAmbiente = String(process.env.PASTA_BASE || "").trim();
+  if (doAmbiente && caminhoWindowsAbsolutoValido(doAmbiente)) {
+    return { pasta_base: doAmbiente };
+  }
+
+  return { pasta_base: null };
+}
+
 async function _criarAberturaEmpresa(req, res, clienteId) {
-  const { nome_empresa, socios, capital_social, endereco, objeto_social, cenario } = req.body;
+  const { nome_empresa, socios, capital_social, endereco, objeto_social, cenario, pasta_base } =
+    req.body;
 
   if (!nome_empresa) {
     return res.status(400).json({ erro: "nome_empresa é obrigatório para abertura_empresa" });
@@ -239,12 +266,17 @@ async function _criarAberturaEmpresa(req, res, clienteId) {
     }
   }
 
-  // A raiz pertence à configuração da máquina do agente. O backend não deve
-  // fabricá-la a partir do nome da empresa nem aceitar um caminho remoto que
-  // possa redirecionar a gravação. O agente resolve a PASTA_BASE local.
+  const pastaBaseResolvida = resolverPastaBaseAbertura(pasta_base);
+  if (pastaBaseResolvida.erro) {
+    return res.status(400).json({ erro: pastaBaseResolvida.erro });
+  }
+
+  // Raiz absoluta canônica no banco (#636). O agente ainda pode preferir a
+  // PASTA_BASE local na gravação (resolver_pasta_base); não fabricamos a partir
+  // do nome_empresa (#311).
   const resultado = await criarProcessoComEtapas(clienteId, "abertura_empresa", {
     nome_empresa,
-    pasta_base: null,
+    pasta_base: pastaBaseResolvida.pasta_base,
     cenario,
     socios,
     capital_social,
