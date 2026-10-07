@@ -2,13 +2,14 @@
 
 from pathlib import Path
 
-from checar_deps import modulos
+from checar_deps import faltando, modulos
 
 ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS = ROOT / "requirements.txt"
 
 NAO_SAO_IMPORT_DE_RUNTIME = {"pyinstaller", "pytest"}
 IMPORT_DO_PACOTE = {"Pillow": "PIL", "python-dotenv": "dotenv"}
+PROIBIDOS_NO_RUNTIME = ("scikit-learn", "sklearn", "joblib")
 
 
 def _pacotes_requirements():
@@ -26,17 +27,29 @@ def _pacotes_requirements():
 
 def test_requirements_de_runtime_estao_no_manifesto():
     nomes = set(modulos())
-    faltando = []
+    faltando_no_manifesto = []
     for pacote in _pacotes_requirements():
         if pacote in NAO_SAO_IMPORT_DE_RUNTIME:
             continue
         importado = IMPORT_DO_PACOTE.get(pacote, pacote)
         if importado not in nomes:
-            faltando.append(f"{pacote} -> {importado}")
-    assert not faltando, faltando
+            faltando_no_manifesto.append(f"{pacote} -> {importado}")
+    assert not faltando_no_manifesto, faltando_no_manifesto
 
 
 def test_manifesto_inclui_pytesseract_e_nao_carrega_modulo():
     assert "pytesseract" in modulos()
-    assert "scikit-learn" not in modulos()
-    assert "sklearn" not in modulos()
+    for nome in PROIBIDOS_NO_RUNTIME:
+        assert nome not in modulos()
+
+
+def test_requirements_nao_lista_sklearn_nem_joblib():
+    """#639: sklearn/joblib ausentes e propositalmente fora do requirements."""
+    pacotes = {p.lower() for p in _pacotes_requirements()}
+    for nome in PROIBIDOS_NO_RUNTIME:
+        assert nome not in pacotes
+
+
+def test_ambiente_tem_todos_os_imports_do_manifesto():
+    """Smoke do mesmo check que run-worker-dev.cmd roda antes do main.py."""
+    assert faltando() == []

@@ -1,6 +1,16 @@
 # Artefatos do classificador de documentos (TF-IDF + MLP)
 
 Issue: [#509](https://github.com/EfficienceCo/EfficienceCo/issues/509) (BUG-ML-01).
+Residual deps: [#639](https://github.com/EfficienceCo/EfficienceCo/issues/639) (não instalar sklearn no worker ainda).
+
+## Path oficial vs este módulo
+
+| Peça | Situação |
+|------|----------|
+| `automacoes.rede.classificador` (ResNet) | **Produção hoje** — `identificar_tipo` importa daqui. Deps = `requirements.txt` / `deps-runtime.txt`. |
+| Este pacote (`classificador_documentos`, TF-IDF + joblib) | **Scaffolding / alvo futuro (RN-1b).** **Não** está no runtime. `scikit-learn` / `joblib` **não** vão no `requirements.txt` do worker até ligar a produção. |
+
+`import sklearn` / `import joblib` falhando no Python do worker **é esperado** hoje — não é regredir #515. Ver decisão de rede adiada no vault.
 
 ## O que é isto
 
@@ -50,6 +60,8 @@ py -3 -m pytest tests/test_artefatos_classificador.py -q
 py -3 -m automacoes.classificador_documentos.instalar_artefatos --status
 ```
 
-## Treino (fora do escopo do #509)
+## Treino (fora do escopo do #509 / #639)
 
 Script de treino na stack TF-IDF: `treinar.py` (branch `#525` / pasta histórica `teste_rede_neural/`). Após treinar, copiar os 3 arquivos + atualizar `manifest.json` (`modelo_version`, `sha256`, `publicado: true`) e incluir no pacote do launcher.
+
+Deps de treino (`scikit-learn`, `joblib`) instalam-se **à parte** no ambiente de treino — não via `agente/worker/requirements.txt`. Só entram no manifesto do worker quando RN-1b trocar o import em `identificar_tipo.py`.
