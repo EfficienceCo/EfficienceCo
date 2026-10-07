@@ -1,5 +1,11 @@
 # Deps de producao instaladas por run-worker-dev.cmd e build/build.sh (BUG-AGENTE-DEPS-01 / #515).
-# Imports de runtime: deps-runtime.txt. Nao incluir scikit-learn/joblib (#513).
+# Imports de runtime: deps-runtime.txt.
+#
+# Nao incluir scikit-learn/joblib (#513 / residual #639):
+#   path oficial = automacoes.rede.classificador (ResNet).
+#   TF-IDF (automacoes.classificador_documentos) e scaffolding ate RN-1b;
+#   so entao essas deps entram aqui e em deps-runtime.txt.
+# Smoke: py -3 checar_deps.py  &&  py -3 -c "import pdfplumber, pandas, openpyxl"
 requests>=2.31.0
 watchdog>=6.0.0
 schedule>=1.2.0

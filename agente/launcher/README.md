@@ -21,7 +21,7 @@ Token e URL do backend **nunca** vão no binário — só em `config.yaml`.
 - Go 1.25+ (módulo pede 1.25 por `golang.org/x/sys`; testado com Go 1.26)
 - Windows (alvo de produção). Build cross a partir de Linux/macOS é possível.
 - Tray: [`fyne.io/systray`](https://fyne.io/systray) (sem CGO no Windows)
-- Worker PyInstaller: veja [`../worker/build/build.sh`](../worker/build/build.sh) (instala [`../worker/requirements.txt`](../worker/requirements.txt) antes do bundle). Em dev, `run-worker-dev.cmd` instala o que faltar (BUG-AGENTE-DEPS-01 / #515).
+- Worker PyInstaller: veja [`../worker/build/build.sh`](../worker/build/build.sh) (instala [`../worker/requirements.txt`](../worker/requirements.txt) antes do bundle). Em dev, `run-worker-dev.cmd` instala o que faltar (BUG-AGENTE-DEPS-01 / #515). Classificador oficial = ResNet (`automacoes.rede`); `scikit-learn`/`joblib` **não** entram no runtime até RN-1b (#639).
 
 ## Configuração
 
