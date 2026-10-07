@@ -1,7 +1,6 @@
--- #489: concluir uma execução e registrar seu evento são uma única transação.
--- Aplicar antes de distribuir o agente que remove o POST /eventos de etapas.
--- Pré-requisitos: migrations de etapas/claims (#266) e tipos de notificação (48).
--- #635: cliente_id vem de processos (etapas.cliente_id foi removido na 39).
+-- #635: hotfix do trigger da 94 — etapas.cliente_id não existe desde a 39.
+-- Ambientes que já aplicaram a 94 quebrada precisam desta migration (ou
+-- reaplicar a 94 corrigida). CREATE OR REPLACE é idempotente.
 CREATE OR REPLACE FUNCTION public.registrar_evento_conclusao_etapa()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -45,19 +44,5 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trigger_evento_conclusao_etapa ON public.etapas;
-CREATE TRIGGER trigger_evento_conclusao_etapa
-AFTER UPDATE ON public.etapas
-FOR EACH ROW
-WHEN (
-  OLD.tipo = 'automatizada' AND NEW.tipo = 'automatizada'
-  AND OLD.status = 'processando' AND OLD.execucao_token IS NOT NULL
-  AND NEW.execucao_token IS NULL
-  AND (NEW.status = 'concluida'
-    OR (NEW.status = 'pronta_para_execucao' AND NEW.erro_execucao IS NOT NULL))
-)
-EXECUTE FUNCTION public.registrar_evento_conclusao_etapa();
-
--- Rollback: primeiro restaurar o envio de eventos pelo agente, então executar:
--- DROP TRIGGER IF EXISTS trigger_evento_conclusao_etapa ON public.etapas;
--- DROP FUNCTION IF EXISTS public.registrar_evento_conclusao_etapa();
+-- Rollback: reaplicar a versão anterior da function (não recomendado — quebrava
+-- o schema pós-39). Preferir manter esta definição.
