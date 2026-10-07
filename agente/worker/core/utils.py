@@ -24,10 +24,17 @@ def validar_caminho(caminho):
     if not pasta_base:
         return
 
-    caminho_abs = os.path.abspath(caminho)
-    base_abs = os.path.abspath(pasta_base)
-    
-    if not caminho_abs.startswith(base_abs):
+    # normcase: no Windows C:\Souza e c:\souza são o mesmo path (#638 / QA-A A1).
+    # commonpath: evita falso positivo de startswith (ex.: C:\Souza vs C:\SouzaExtra).
+    caminho_abs = os.path.normcase(os.path.abspath(caminho))
+    base_abs = os.path.normcase(os.path.abspath(pasta_base))
+
+    try:
+        dentro = os.path.commonpath([caminho_abs, base_abs]) == base_abs
+    except ValueError:
+        dentro = False
+
+    if not dentro:
         raise ValueError(f"Caminho fora da PASTA_BASE: {caminho}")
 
 def validar_nome(nome):
