@@ -21,6 +21,15 @@ const FOLHA_STATUS = {
 // resposta ilimitada quando pendências de folha se acumulam para um cliente.
 const LIMITE_APURACOES_POR_POLLING = 50;
 
+// Folha (FS12 / Fator R) só se aplica ao Anexo V. Anexos I–IV devem gravar
+// null explícito — o DEFAULT da coluna é 'pendente' e o CHECK aceita NULL,
+// então omitir o campo faria o banco preencher 'pendente' e a tela mostrar
+// "Aguardando confirmação do agente" sem sentido (BUG-APUR-11 / #611).
+function resolverFolhaStatus(anexoOriginal, semDadosFolha) {
+  if (anexoOriginal !== "V") return null;
+  return semDadosFolha ? FOLHA_STATUS.PENDENTE : FOLHA_STATUS.VERIFICADO;
+}
+
 // GET usa clienteId (camelCase) — mesmo padrão do dashboard em lancamentos-fiscais.controller.js.
 function resolverClienteIdQuery(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
@@ -563,9 +572,8 @@ export async function dispararApuracao(req, res) {
       // Anexo V com folha12 já completa na criação (semDadosFolha: false) não
       // precisa entrar na fila de polling do agente — só fica "pendente"
       // quando a folha realmente está faltando (#365, achado do Vinicius no
-      // review do PR #366: sem isso, toda apuração Anexo V aparecia pendente
-      // pro agente mesmo já calculada com dado completo).
-      folha_status: cliente.anexo_simples === "V" && !semDadosFolha ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.PENDENTE,
+      // review do PR #366). Anexos I–IV: null explícito (BUG-APUR-11 / #611).
+      folha_status: resolverFolhaStatus(cliente.anexo_simples, semDadosFolha),
       aliquota_efetiva: resultado.aliquota_efetiva,
       valor_calculado: resultado.valor_das,
       status: "rascunho",
@@ -1003,10 +1011,9 @@ export async function recalcularApuracao(req, res) {
       anexo: resultado.anexo_efetivo,
       fator_r: resultado.fator_r,
       folha12,
-      // Mesmo raciocínio do insert em dispararApuracao (#365): se o
-      // recálculo já resolveu a folha (semDadosFolha: false), não faz
-      // sentido deixar/voltar a apuração como pendente pro agente.
-      folha_status: anexoOriginal === "V" && !semDadosFolha ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.PENDENTE,
+      // Mesmo raciocínio do insert em dispararApuracao (#365 / BUG-APUR-11):
+      // Anexo V resolvido → verificado; sem dados → pendente; demais → null.
+      folha_status: resolverFolhaStatus(anexoOriginal, semDadosFolha),
       aliquota_efetiva: resultado.aliquota_efetiva,
       valor_calculado: resultado.valor_das,
       // Um override manual anterior foi feito em cima do cálculo antigo — com
