@@ -311,15 +311,52 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     await checkbox.check();
 
     await expect.poll(() => estado.patches.length).toBe(1);
-    await expect(checkbox).toBeEnabled();
+    await expect(checkbox).not.toHaveAttribute('aria-busy', 'true');
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollAntes);
 
     await checkbox.uncheck();
 
     await expect.poll(() => estado.patches.length).toBe(2);
-    await expect(checkbox).toBeEnabled();
+    await expect(checkbox).not.toHaveAttribute('aria-busy', 'true');
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollAntes);
     expect(estado.patches).toEqual([{ concluida: true }, { concluida: false }]);
+  });
+
+  test('não salta ao topo ao marcar etapa no fim da lista longa (#637)', async ({ page }) => {
+    const estado = criarEstadoApi();
+    estado.atrasoRecarregamentoMs = 400;
+    estado.processo.etapas.push(
+      ...Array.from({ length: 40 }, (_, index) => ({
+        id: `etapa-manual-extra-${index + 1}`,
+        descricao: `Etapa manual extra ${String(index + 1).padStart(2, '0')}`,
+        tipo: 'manual',
+        acao: null,
+        status: 'pendente',
+        concluida: false,
+      })),
+    );
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await prepararPagina(page, estado);
+
+    const checkbox = etapaPorTexto(page, 'Etapa manual extra 40').getByRole('checkbox');
+    await checkbox.scrollIntoViewIfNeeded();
+
+    const scrollAntes = await page.evaluate(() => window.scrollY);
+    expect(scrollAntes).toBeGreaterThan(800);
+
+    await checkbox.check();
+    await expect.poll(() => estado.patches.length).toBe(1);
+
+    // Durante e após o reload silencioso o scroll não pode cair quase ao topo (QA: 2800→99).
+    await expect
+      .poll(async () => page.evaluate(() => window.scrollY), { timeout: 3000 })
+      .toBeGreaterThan(scrollAntes - 150);
+
+    await expect(checkbox).not.toHaveAttribute('aria-busy', 'true');
+    const scrollDepois = await page.evaluate(() => window.scrollY);
+    expect(scrollDepois).toBeGreaterThan(800);
+    expect(Math.abs(scrollDepois - scrollAntes)).toBeLessThan(150);
   });
 
   test('mantém o card aberto e respeita scroll intencional durante a atualização (#495)', async ({
@@ -356,7 +393,7 @@ test.describe('Processos — etapas manuais e automatizadas', () => {
     const scrollEscolhidoPeloUsuario = await page.evaluate(() => window.scrollY);
     expect(scrollEscolhidoPeloUsuario).toBeGreaterThan(scrollNoClique);
 
-    await expect(checkbox).toBeEnabled();
+    await expect(checkbox).not.toHaveAttribute('aria-busy', 'true');
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollEscolhidoPeloUsuario);
   });
 
