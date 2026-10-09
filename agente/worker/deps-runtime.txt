@@ -2,7 +2,6 @@
 # run-worker-dev.cmd e build/build.sh leem este arquivo.
 # requirements.txt e o que o pip instala. python-docx entra via docxtpl (import docx).
 # pyinstaller e pytest ficam so no requirements: nao sao import do worker em runtime.
-# sklearn/joblib propositalmente ausentes (#513 / #639) — ver requirements.txt.
 pdfplumber
 pytesseract
 pypdfium2

@@ -4,7 +4,6 @@ REM Em producao use efficience-agente.exe gerado pelo build do worker.
 REM
 REM Confere os imports de deps-runtime.txt com find_spec, sem carregar torch.
 REM Se faltar algum (pdfplumber, pytesseract, pandas, ...), instala requirements.txt.
-REM Nao instala scikit-learn/joblib — fora do runtime (#513 / #639; path = ResNet).
 
 cd /d "%~dp0..\worker"
 

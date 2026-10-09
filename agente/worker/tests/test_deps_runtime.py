@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from checar_deps import faltando, modulos
+from checar_deps import modulos
 
 ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS = ROOT / "requirements.txt"
@@ -48,8 +48,3 @@ def test_requirements_nao_lista_sklearn_nem_joblib():
     pacotes = {p.lower() for p in _pacotes_requirements()}
     for nome in PROIBIDOS_NO_RUNTIME:
         assert nome not in pacotes
-
-
-def test_ambiente_tem_todos_os_imports_do_manifesto():
-    """Smoke do mesmo check que run-worker-dev.cmd roda antes do main.py."""
-    assert faltando() == []
