@@ -126,7 +126,7 @@ describe("criarProcessoComEtapas", () => {
   it("persiste descrição, tipo e ação das etapas de abertura", async () => {
     const resultado = await criarProcessoComEtapas(CLIENTE_ID, "abertura_empresa", {
       nome_empresa: "Empresa Teste",
-      pasta_base: "Empresa_Teste",
+      pasta_base: "C:\\Souza",
       cenario: "nova",
       socios: [{ nome: "Maria", cpf: "123", participacao: 100 }],
       capital_social: 10000,
@@ -143,7 +143,7 @@ describe("criarProcessoComEtapas", () => {
       cliente_id: CLIENTE_ID,
       tipo: "abertura_empresa",
       nome_empresa: "Empresa Teste",
-      pasta_base: "Empresa_Teste",
+      pasta_base: "C:\\Souza",
       mes_referencia: null,
       cenario: "nova",
       socios: [{ nome: "Maria", cpf: "123", participacao: 100 }],
@@ -175,7 +175,7 @@ describe("criarProcessoComEtapas", () => {
 });
 
 describe("criarProcesso — abertura_empresa", () => {
-  it("usa o catálogo tipado no fluxo real do endpoint para empresa nova", async () => {
+  it("cria abertura com pasta_base null — raiz vem do callback do agente (#636)", async () => {
     const req = {
       usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
       query: {},
@@ -195,13 +195,13 @@ describe("criarProcesso — abertura_empresa", () => {
       obterInsercao("etapas"),
       etapasEsperadas(PROCESSO_ID, ETAPAS_PADRAO.abertura_empresa),
     );
-    // Regressão #311: pasta_base não pode ser fabricada a partir de nome_empresa
-    // (isso gerava um nome de pasta, não uma raiz absoluta, e quebrava as automações).
+    // Regressão #311: pasta_base não pode ser fabricada a partir de nome_empresa.
+    // #636: null na criação; o agente grava a raiz no callback de criar_pastas.
     assert.equal(obterInsercao("processos").pasta_base, null);
     assert.equal(res.body.pasta_base, null);
   });
 
-  it("ignora pasta_base informada e deixa a raiz para o agente local", async () => {
+  it("ignora pasta_base informada no body (raiz só pelo agente local)", async () => {
     const req = {
       usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
       query: {},
@@ -219,6 +219,27 @@ describe("criarProcesso — abertura_empresa", () => {
     assert.equal(res.statusCode, 201);
     assert.equal(obterInsercao("processos").pasta_base, null);
     assert.equal(res.body.pasta_base, null);
+  });
+
+  it("ignora PASTA_BASE do ambiente do backend (multi-tenant)", async () => {
+    process.env.PASTA_BASE = "C:\\Souza";
+    const req = {
+      usuario: { perfil: "admin_cliente", cliente_id: CLIENTE_ID },
+      query: {},
+      body: {
+        tipo: "abertura_empresa",
+        nome_empresa: "Empresa Via Env",
+        cenario: "nova",
+      },
+    };
+    const res = criarResposta();
+
+    await criarProcesso(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(obterInsercao("processos").pasta_base, null);
+    assert.equal(res.body.pasta_base, null);
+    delete process.env.PASTA_BASE;
   });
 
   it("preserva o checklist reduzido do cliente existente e automatiza a criação das pastas", async () => {

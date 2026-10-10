@@ -86,6 +86,7 @@ def test_criar_pastas_no_loop(tmp_path, monkeypatch):
     kwargs = mock_concluir.call_args.kwargs
     assert kwargs["sucesso"] is True
     assert kwargs["execucao_token"] == TOKEN
+    assert kwargs["pasta_base"] == str(tmp_path)
 
 
 def test_criar_pastas_pasta_base_relativa_usa_raiz_local(tmp_path, monkeypatch):
@@ -107,6 +108,7 @@ def test_criar_pastas_pasta_base_relativa_usa_raiz_local(tmp_path, monkeypatch):
     assert resultado["sucesso"] is True
     assert Path(resultado["arquivo_gerado"]) == tmp_path / "CLIENTES" / "EM_ABERTURA" / "Empresa Pastas"
     assert mock_concluir.call_args.kwargs["sucesso"] is True
+    assert mock_concluir.call_args.kwargs["pasta_base"] == str(tmp_path)
 
 
 def test_criar_pastas_pasta_base_ausente_usa_raiz_local(tmp_path, monkeypatch):
@@ -129,6 +131,7 @@ def test_criar_pastas_pasta_base_ausente_usa_raiz_local(tmp_path, monkeypatch):
     for sub in SUBPASTAS:
         assert (pasta_empresa / sub).is_dir()
     assert mock_concluir.call_args.kwargs["sucesso"] is True
+    assert mock_concluir.call_args.kwargs["pasta_base"] == str(tmp_path)
 
 
 def test_criar_pastas_caminho_remoto_nao_sobrescreve_raiz_local(tmp_path, monkeypatch):

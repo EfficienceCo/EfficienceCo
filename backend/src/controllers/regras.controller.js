@@ -24,16 +24,9 @@ const ACOES_EXIGEM_ORIGEM = new Set([
   "upload_folha",
 ]);
 
-/**
- * Caminho absoluto Windows: unidade + separador (`C:\x`, `C:/x`) ou UNC (`\\srv\share`).
- * Sem caracteres inválidos de nome de arquivo (`< > " | ? *`) nem `:` fora da unidade.
- * Alinhar ao FE (frontend/src/app/dashboard/regras/page.jsx).
- */
-const CAMINHO_WINDOWS_ABSOLUTO = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/:*?"<>|]+[\\/][^\\/:*?"<>|]+)[^:*?"<>|]*$/;
+import { caminhoWindowsAbsolutoValido } from "../utils/caminho-windows.util.js";
 
-export function caminhoWindowsAbsolutoValido(caminho) {
-  return CAMINHO_WINDOWS_ABSOLUTO.test(String(caminho).trim());
-}
+export { caminhoWindowsAbsolutoValido };
 
 // a validação de formato roda sobre o valor trimado, então persiste o trimado também
 function normalizarOrigem(pasta_origem) {
