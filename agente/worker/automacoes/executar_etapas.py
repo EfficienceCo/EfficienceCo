@@ -51,7 +51,14 @@ def _criar_pastas(etapa):
             "arquivo_gerado": None,
         }
 
-    return {"sucesso": True, "erro": None, "arquivo_gerado": pasta_empresa}
+    # pasta_base = raiz resolvida de fato (PASTA_BASE local); o backend grava
+    # esse valor no callback (#636). arquivo_gerado continua sendo a pasta da empresa.
+    return {
+        "sucesso": True,
+        "erro": None,
+        "arquivo_gerado": pasta_empresa,
+        "pasta_base": pasta_base,
+    }
 
 
 def _executar_acao(etapa):
@@ -88,6 +95,7 @@ def _reportar(etapa, resultado):
             sucesso=sucesso,
             execucao_token=token,
             arquivo_gerado=resultado.get("arquivo_gerado") if sucesso else None,
+            pasta_base=resultado.get("pasta_base") if sucesso else None,
             erro=resultado.get("erro") if not sucesso else None,
         )
     except Exception as e:
