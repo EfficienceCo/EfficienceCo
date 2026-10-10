@@ -40,8 +40,13 @@ const MENSAGEM_ERRO_EDICAO =
   'Informe um valor válido e, se ele for diferente do calculado, um motivo para a edição.';
 
 function obterMensagemErro(error, fallback = 'Não foi possível processar a solicitação.') {
+  const codigo = error?.response?.data?.erro;
+  if (codigo === 'FOLHA_PENDENTE') {
+    return 'Aguarde a confirmação da folha pelo agente antes de aprovar o DAS.';
+  }
+
   return (
-    error?.response?.data?.erro ||
+    codigo ||
     error?.response?.data?.message ||
     error?.message ||
     fallback
@@ -630,11 +635,21 @@ export default function ApuracoesPage() {
   const anexoMigrado = Boolean(
     apuracao?.anexo_original && anexoEfetivo && apuracao.anexo_original !== anexoEfetivo,
   );
-  const mostrarFatorR = Boolean(apuracao) && apuracao.fator_r !== null && apuracao.fator_r !== undefined;
-  // Chip FS12 só faz sentido com Fator R (Anexo V). Legado I–IV com
-  // folha_status='pendente' fica escondido sem migration (BUG-APUR-11 / #611).
+  // DAS provisório: fator_r sentinela sem folha12 — não mostrar "Fator R 0%"
+  // nem liberar aprovação até o recálculo (#619 / review PR #633).
+  const apuracaoProvisoriaSemFolha = apuracao?.fator_r != null && apuracao?.folha12 == null;
+  const folhaAguardandoAgente = apuracaoProvisoriaSemFolha;
+  const mostrarFatorR =
+    Boolean(apuracao) &&
+    apuracao.fator_r !== null &&
+    apuracao.fator_r !== undefined &&
+    !apuracaoProvisoriaSemFolha;
+  // Chip FS12: gatear por fator_r != null (não por mostrarFatorR) para aparecer
+  // também com folha pendente (#619 + #631 / BUG-APUR-11).
   const folhaStatusInfo =
-    mostrarFatorR && apuracao?.folha_status ? FOLHA_STATUS_INFO[apuracao.folha_status] : null;
+    apuracao?.fator_r != null && apuracao?.folha_status
+      ? FOLHA_STATUS_INFO[apuracao.folha_status]
+      : null;
   const dadosFolha = apuracao?.dados_folha || null;
   const historicoEdicoes = Array.isArray(apuracao?.historico_edicoes) ? apuracao.historico_edicoes : [];
   const rbt12Mensal = Array.isArray(apuracao?.rbt12_mensal) ? apuracao.rbt12_mensal : [];
@@ -1301,7 +1316,12 @@ export default function ApuracoesPage() {
               <button
                 type="button"
                 onClick={handleAbrirAprovar}
-                disabled={statusAprovado}
+                disabled={statusAprovado || folhaAguardandoAgente}
+                title={
+                  folhaAguardandoAgente
+                    ? 'Aguarde a confirmação da folha pelo agente antes de aprovar.'
+                    : undefined
+                }
                 className="rounded-md bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-70"
               >
                 Aprovar DAS
