@@ -102,7 +102,7 @@ def _processar_arquivo(caminho, regras):
                         f"Arquivo {nome_final} processado ({acao}) em {regra['pasta_origem']}",
                         True
                     )
-                except RuntimeError as e:
+                except (RuntimeError, ValueError) as e:
                     print(f"[monitor] Falha ao processar: {nome} — {e}")
                     reportar_evento(f"Falha ao processar {nome}: {e}", False)
                 return

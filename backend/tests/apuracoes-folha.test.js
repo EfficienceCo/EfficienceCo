@@ -426,8 +426,9 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
     assert.equal(res.body.folha_status, "sem_dados");
   });
 
-  // #619 / BUG-APUR-19 (d) — depois do agente, aprovar deixa de ser 409 FOLHA_PENDENTE.
-  it("resultado-folha verificado libera aprovação da apuração Anexo V provisória", async () => {
+  // #619 / BUG-APUR-19 (d) — resultado-folha só marca folha_status; o DAS
+  // provisório (folha12 null) continua 409 até um recálculo (review PR #633).
+  it("resultado-folha verificado mantém 409 FOLHA_PENDENTE até recálculo com folha12", async () => {
     tokenLicencaValido(CLIENTE_A);
     queue("apuracoes", "maybeSingle", {
       data: { id: APURACAO_ID, cliente_id: CLIENTE_A, status: "rascunho", fator_r: 0 },
@@ -456,6 +457,25 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
         periodo_ano: 2026,
         folha_status: "verificado",
         fator_r: 0,
+        folha12: null,
+      },
+      error: null,
+    });
+
+    const resAprovarProvisorio = criarResposta();
+    await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), resAprovarProvisorio);
+    assert.equal(resAprovarProvisorio.statusCode, 409);
+    assert.equal(resAprovarProvisorio.body.erro, "FOLHA_PENDENTE");
+
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        cliente_id: CLIENTE_A,
+        status: "rascunho",
+        periodo_mes: 8,
+        periodo_ano: 2026,
+        folha_status: "verificado",
+        fator_r: 0.28,
+        folha12: 120000,
       },
       error: null,
     });
@@ -511,12 +531,22 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
   });
 
   it("409 quando a apuração já está aprovada", async () => {
-    queueApuracaoBase({ status: "aprovado" });
+    // BUG-APUR-09 (c): aprovada continua 409 e não altera o histórico.
+    queueApuracaoBase({
+      status: "aprovado",
+      valor_editado: 930,
+      valor_calculado: 932,
+      historico_edicoes: [{ valor_anterior: 932, valor_novo: 930, motivo: "ajuste" }],
+    });
 
     const res = criarResposta();
     await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
     assert.equal(res.statusCode, 409);
+    assert.equal(
+      operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update"),
+      undefined,
+    );
   });
 
   // #497 — registros de competência futura criados antes da validação de
@@ -547,7 +577,7 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
   });
 
   it("200 recalcula Anexo I com os lançamentos fiscais atuais e limpa valor_editado antigo", async () => {
-    queueApuracaoBase();
+    queueApuracaoBase({ valor_editado: null, valor_calculado: 2400, historico_edicoes: [] });
     queueCliente();
     queueNotas([
       { valor_total: 60000, data_emissao: "2026-08-10", tipo: "saida", status: "ativa" },
@@ -567,9 +597,109 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
     const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
     assert.equal(update.payload.valor_editado, null);
     assert.equal(update.payload.receita_mes, 60000);
-    // Anexo fora do V — folha_status não é relevante (fator_r fica null,
-    // fora do filtro do polling), mas segue o default por consistência.
-    assert.equal(update.payload.folha_status, "pendente");
+    // BUG-APUR-11 / #611 — Anexo fora do V mantém folha_status null no recálculo.
+    assert.equal(update.payload.folha_status, null);
+  });
+
+  it("200 recalcula Anexo III mantendo folha_status null (BUG-APUR-11)", async () => {
+    queueApuracaoBase({ anexo: "III", fator_r: null });
+    queueCliente();
+    queueNotas([{ valor_total: 40000, data_emissao: "2026-08-10", tipo: "saida", status: "ativa" }]);
+    queue("apuracoes", "maybeSingle", {
+      data: { id: APURACAO_ID, status: "rascunho", anexo: "III", fator_r: null },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
+    assert.equal(update.payload.folha_status, null);
+    assert.equal(update.payload.fator_r, null);
+  });
+
+  // BUG-APUR-09 (a) — recálculo com edição manual prévia registra descarte no histórico.
+  it("200 recalcula com edição prévia: histórico ganha entrada recalculo e edicao_descartada true", async () => {
+    const historicoPrevio = [{
+      valor_anterior: 932,
+      valor_novo: 930,
+      motivo: "ajuste combinado",
+      editado_por: "contador@teste.com",
+      editado_em: "2026-09-01T12:00:00.000Z",
+    }];
+    queueApuracaoBase({
+      valor_editado: 930,
+      valor_calculado: 932,
+      historico_edicoes: historicoPrevio,
+    });
+    // RBT12 = 230.000 + receita do mês 20.000 → DAS = 943,48 (Anexo I).
+    queueCliente({ historico_receita: [{ mes: 7, ano: 2026, receita: 230000 }] });
+    queueNotas([{ valor_total: 20000, data_emissao: "2026-08-10", tipo: "saida", status: "ativa" }]);
+    queue("apuracoes", "maybeSingle", {
+      data: {
+        id: APURACAO_ID,
+        status: "rascunho",
+        valor_calculado: 943.48,
+        valor_editado: null,
+        historico_edicoes: [
+          ...historicoPrevio,
+          { tipo: "recalculo", valor_anterior: 930, valor_novo: 943.48 },
+        ],
+      },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.edicao_descartada, true);
+
+    const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
+    assert.equal(update.payload.valor_editado, null);
+    assert.equal(update.payload.valor_calculado, 943.48);
+    assert.equal(update.payload.historico_edicoes.length, 2);
+
+    const entrada = update.payload.historico_edicoes[1];
+    assert.equal(entrada.tipo, "recalculo");
+    assert.equal(entrada.valor_anterior, 930);
+    assert.equal(entrada.valor_novo, 943.48);
+    assert.equal(entrada.motivo, "Recálculo descartou edição manual anterior");
+    assert.equal(entrada.editado_por, "contador@teste.com");
+    assert.ok(entrada.editado_em);
+  });
+
+  // BUG-APUR-09 (b) — recálculo sem edição manual também deixa trilha no histórico.
+  it("200 recalcula sem edição: histórico ganha Recálculo automático e edicao_descartada false", async () => {
+    queueApuracaoBase({
+      valor_editado: null,
+      valor_calculado: 932,
+      historico_edicoes: [],
+    });
+    queueCliente({ historico_receita: [{ mes: 7, ano: 2026, receita: 230000 }] });
+    queueNotas([{ valor_total: 20000, data_emissao: "2026-08-10", tipo: "saida", status: "ativa" }]);
+    queue("apuracoes", "maybeSingle", {
+      data: { id: APURACAO_ID, status: "rascunho", valor_calculado: 943.48, valor_editado: null },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.edicao_descartada, false);
+
+    const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
+    assert.equal(update.payload.historico_edicoes.length, 1);
+
+    const entrada = update.payload.historico_edicoes[0];
+    assert.equal(entrada.tipo, "recalculo");
+    assert.equal(entrada.valor_anterior, 932);
+    assert.equal(entrada.valor_novo, 943.48);
+    assert.equal(entrada.motivo, "Recálculo automático");
+    assert.equal(entrada.editado_por, "contador@teste.com");
+    assert.ok(entrada.editado_em);
   });
 
   // BUG-APUR-07 — recálculo usa a mesma regra de RBT12 proporcional da criação.

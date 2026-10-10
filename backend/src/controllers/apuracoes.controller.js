@@ -21,6 +21,15 @@ const FOLHA_STATUS = {
 // resposta ilimitada quando pendências de folha se acumulam para um cliente.
 const LIMITE_APURACOES_POR_POLLING = 50;
 
+// Folha (FS12 / Fator R) só se aplica ao Anexo V. Anexos I–IV devem gravar
+// null explícito — o DEFAULT da coluna é 'pendente' e o CHECK aceita NULL,
+// então omitir o campo faria o banco preencher 'pendente' e a tela mostrar
+// "Aguardando confirmação do agente" sem sentido (BUG-APUR-11 / #611).
+function resolverFolhaStatus(anexoOriginal, semDadosFolha) {
+  if (anexoOriginal !== "V") return null;
+  return semDadosFolha ? FOLHA_STATUS.PENDENTE : FOLHA_STATUS.VERIFICADO;
+}
+
 // GET usa clienteId (camelCase) — mesmo padrão do dashboard em lancamentos-fiscais.controller.js.
 function resolverClienteIdQuery(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
@@ -567,9 +576,8 @@ export async function dispararApuracao(req, res) {
       // Anexo V com folha12 já completa na criação (semDadosFolha: false) não
       // precisa entrar na fila de polling do agente — só fica "pendente"
       // quando a folha realmente está faltando (#365, achado do Vinicius no
-      // review do PR #366: sem isso, toda apuração Anexo V aparecia pendente
-      // pro agente mesmo já calculada com dado completo).
-      folha_status: cliente.anexo_simples === "V" && !semDadosFolha ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.PENDENTE,
+      // review do PR #366). Anexos I–IV: null explícito (BUG-APUR-11 / #611).
+      folha_status: resolverFolhaStatus(cliente.anexo_simples, semDadosFolha),
       aliquota_efetiva: resultado.aliquota_efetiva,
       valor_calculado: resultado.valor_das,
       status: "rascunho",
@@ -769,7 +777,7 @@ export async function aprovarApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("cliente_id, status, periodo_mes, periodo_ano, folha_status, fator_r")
+    .select("cliente_id, status, periodo_mes, periodo_ano, folha_status, fator_r, folha12")
     .eq("id", id)
     .maybeSingle();
 
@@ -786,9 +794,10 @@ export async function aprovarApuracao(req, res) {
     return res.status(409).json({ erro: "Apuração já está aprovada" });
   }
 
-  // Anexo V (fator_r preenchido) com DAS provisório: não virar número oficial
-  // enquanto o agente não reportar a folha (#619 / BUG-APUR-19).
-  if (apuracao.fator_r != null && apuracao.folha_status === FOLHA_STATUS.PENDENTE) {
+  // Anexo V provisório (fator_r sentinela sem folha12): bloquear até o
+  // recálculo com FS12 real — resultado-folha só troca folha_status e não
+  // recalcula o DAS (#619 / review PR #633).
+  if (apuracao.fator_r != null && apuracao.folha12 == null) {
     return res.status(409).json({ erro: "FOLHA_PENDENTE" });
   }
 
@@ -885,7 +894,7 @@ export async function recalcularApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("id, cliente_id, periodo_mes, periodo_ano, status, anexo, fator_r")
+    .select("id, cliente_id, periodo_mes, periodo_ano, status, anexo, fator_r, valor_editado, valor_calculado, historico_edicoes")
     .eq("id", id)
     .maybeSingle();
 
@@ -984,6 +993,25 @@ export async function recalcularApuracao(req, res) {
     return res.status(422).json({ erro: resultado.erro });
   }
 
+  // Sempre registra o recálculo no histórico (BUG-APUR-09 / #609): o override
+  // manual continua sendo descartado de propósito, mas a auditoria precisa
+  // explicar a mudança de valor.
+  const edicaoDescartada = apuracao.valor_editado != null;
+  const historicoAnterior = Array.isArray(apuracao.historico_edicoes) ? apuracao.historico_edicoes : [];
+  const historicoAtualizado = [
+    ...historicoAnterior,
+    {
+      tipo: "recalculo",
+      valor_anterior: apuracao.valor_editado ?? apuracao.valor_calculado,
+      valor_novo: resultado.valor_das,
+      motivo: edicaoDescartada
+        ? "Recálculo descartou edição manual anterior"
+        : "Recálculo automático",
+      editado_por: req.usuario?.email || req.usuario?.id,
+      editado_em: new Date().toISOString(),
+    },
+  ];
+
   // .eq("status", "rascunho") de novo: trava otimista contra uma aprovação que
   // aconteça entre o SELECT de cima e este UPDATE.
   const { data, error } = await supabase
@@ -994,15 +1022,15 @@ export async function recalcularApuracao(req, res) {
       anexo: resultado.anexo_efetivo,
       fator_r: resultado.fator_r,
       folha12,
-      // Mesmo raciocínio do insert em dispararApuracao (#365): se o
-      // recálculo já resolveu a folha (semDadosFolha: false), não faz
-      // sentido deixar/voltar a apuração como pendente pro agente.
-      folha_status: anexoOriginal === "V" && !semDadosFolha ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.PENDENTE,
+      // Mesmo raciocínio do insert em dispararApuracao (#365 / BUG-APUR-11):
+      // Anexo V resolvido → verificado; sem dados → pendente; demais → null.
+      folha_status: resolverFolhaStatus(anexoOriginal, semDadosFolha),
       aliquota_efetiva: resultado.aliquota_efetiva,
       valor_calculado: resultado.valor_das,
       // Um override manual anterior foi feito em cima do cálculo antigo — com
       // números novos de folha, ele deixa de fazer sentido sem revisão.
       valor_editado: null,
+      historico_edicoes: historicoAtualizado,
     })
     .eq("id", id)
     .eq("status", "rascunho")
@@ -1018,7 +1046,10 @@ export async function recalcularApuracao(req, res) {
     return res.status(409).json({ erro: "Apuração foi aprovada por outra solicitação" });
   }
 
-  return res.status(200).json(enriquecerApuracao(data, resultado, bases, cliente.nome));
+  return res.status(200).json({
+    ...enriquecerApuracao(data, resultado, bases, cliente.nome),
+    edicao_descartada: edicaoDescartada,
+  });
 }
 
 // Rota do agente — autenticada via x-licenca-token (polling), mesmo padrão de

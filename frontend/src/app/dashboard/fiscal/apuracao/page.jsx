@@ -635,14 +635,21 @@ export default function ApuracoesPage() {
   const anexoMigrado = Boolean(
     apuracao?.anexo_original && anexoEfetivo && apuracao.anexo_original !== anexoEfetivo,
   );
-  // fator_r = 0 na criação sem folha é sentinela da fila do agente (#619), não Fator R apurado.
-  const folhaAguardandoAgente = apuracao?.folha_status === 'pendente' && apuracao?.fator_r != null;
+  // DAS provisório: fator_r sentinela sem folha12 — não mostrar "Fator R 0%"
+  // nem liberar aprovação até o recálculo (#619 / review PR #633).
+  const apuracaoProvisoriaSemFolha = apuracao?.fator_r != null && apuracao?.folha12 == null;
+  const folhaAguardandoAgente = apuracaoProvisoriaSemFolha;
   const mostrarFatorR =
     Boolean(apuracao) &&
     apuracao.fator_r !== null &&
     apuracao.fator_r !== undefined &&
-    !folhaAguardandoAgente;
-  const folhaStatusInfo = apuracao?.folha_status ? FOLHA_STATUS_INFO[apuracao.folha_status] : null;
+    !apuracaoProvisoriaSemFolha;
+  // Chip FS12: gatear por fator_r != null (não por mostrarFatorR) para aparecer
+  // também com folha pendente (#619 + #631 / BUG-APUR-11).
+  const folhaStatusInfo =
+    apuracao?.fator_r != null && apuracao?.folha_status
+      ? FOLHA_STATUS_INFO[apuracao.folha_status]
+      : null;
   const dadosFolha = apuracao?.dados_folha || null;
   const historicoEdicoes = Array.isArray(apuracao?.historico_edicoes) ? apuracao.historico_edicoes : [];
   const rbt12Mensal = Array.isArray(apuracao?.rbt12_mensal) ? apuracao.rbt12_mensal : [];
@@ -1269,7 +1276,12 @@ export default function ApuracoesPage() {
                       {formatarValor(item?.valor_novo)}
                     </span>
                   </div>
-                  <div className="flex-1 text-sm text-zinc-600">{item?.motivo}</div>
+                  <div className="flex-1 text-sm text-zinc-600">
+                    {item?.tipo === 'recalculo' ? (
+                      <span className="mr-1.5 font-medium text-zinc-800">Recálculo —</span>
+                    ) : null}
+                    {item?.motivo}
+                  </div>
                   <div className="text-right text-xs text-zinc-500">
                     <div>{formatarDataHora(item?.editado_em || item?.data)}</div>
                     {item?.editado_por ? <div className="mt-0.5">por {item.editado_por}</div> : null}

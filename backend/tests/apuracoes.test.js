@@ -164,6 +164,11 @@ describe("POST /apuracoes", () => {
     assert.equal(res.body.cliente_nome, "Cliente Teste");
     assert.equal(res.body.rbt12_mensal.length, 12);
     assert.equal(res.body.notas_fiscais.consideradas.length, 2);
+
+    // BUG-APUR-11 / #611 — Anexo I–IV não usam FS12; null explícito vence o
+    // DEFAULT 'pendente' da coluna e evita o chip "Aguardando agente".
+    const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+    assert.equal(insert.payload.folha_status, null);
   });
 
   it("422 quando regime não é simples_nacional", async () => {
@@ -272,9 +277,8 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 201);
     assert.equal(insert.payload.rbt12_usado, 140000);
     assert.equal(insert.payload.receita_mes, 45000);
-    // Anexo fora do V nunca entra na fila de folha do agente (fator_r fica
-    // null), mas o valor gravado segue o default da coluna por consistência.
-    assert.equal(insert.payload.folha_status, "pendente");
+    // BUG-APUR-11 / #611 — Anexo fora do V grava null (não o DEFAULT 'pendente').
+    assert.equal(insert.payload.folha_status, null);
   });
 
   it("expõe a composição mensal e as NFes consideradas e excluídas para auditoria", async () => {
@@ -1143,6 +1147,7 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
         periodo_ano: 2026,
         folha_status: "verificado",
         fator_r: 0.3,
+        folha12: 120000,
       },
       error: null,
     });
@@ -1169,6 +1174,7 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
         periodo_ano: 2026,
         folha_status: "pendente",
         fator_r: 0,
+        folha12: null,
       },
       error: null,
     });
@@ -1181,7 +1187,8 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
     assert.deepEqual(operacoes, []);
   });
 
-  it("200 aprova Anexo V após resultado-folha marcar verificado", async () => {
+  // Review PR #633: resultado-folha verificado sem folha12 ainda é provisório.
+  it("409 FOLHA_PENDENTE quando Anexo V está verificado mas sem folha12 recalculada", async () => {
     queue("apuracoes", "maybeSingle", {
       data: {
         cliente_id: CLIENTE_A,
@@ -1190,21 +1197,18 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
         periodo_ano: 2026,
         folha_status: "verificado",
         fator_r: 0,
+        folha12: null,
       },
-      error: null,
-    });
-    queue("apuracoes", "maybeSingle", {
-      data: { id: APURACAO_ID, status: "aprovado" },
       error: null,
     });
 
     const res = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.status, "aprovado");
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.erro, "FOLHA_PENDENTE");
+    assert.deepEqual(operacoes, []);
   });
-
   it("409 quando outra requisição aprova entre a leitura e a atualização", async () => {
     queue("apuracoes", "maybeSingle", {
       data: {
