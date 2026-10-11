@@ -3,9 +3,25 @@ import re
 
 import torch
 import torch.nn as nn
-import joblib
 
 from automacoes.classificador_documentos.extrator import extrair_texto
+
+# joblib/sklearn NÃO estão no requirements do worker (#513 / #639). Path oficial
+# de produção é automacoes.rede.classificador (ResNet). Este módulo (TF-IDF) só
+# entra no runtime quando RN-1b ligar a produção — até lá, import tardio.
+
+
+def _import_joblib():
+    try:
+        import joblib
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            "joblib/sklearn não fazem parte do runtime do worker "
+            "(classificador oficial = automacoes.rede / ResNet). "
+            "Só entram ao ligar o TF-IDF em produção (RN-1b). "
+            "Ver agente/worker/requirements.txt e a decisão de rede adiada."
+        ) from e
+    return joblib
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_MODEL_PATH = os.path.join(BASE_DIR, 'modelo.pt')
@@ -49,6 +65,7 @@ def _carregar_artefatos(model_path, vetorizador_path, indice_path):
         if not os.path.exists(caminho):
             raise FileNotFoundError(caminho)
 
+    joblib = _import_joblib()
     vetorizador = joblib.load(vetorizador_path)
     rotulo_para_indice = joblib.load(indice_path)
     indice_para_rotulo = {indice: rotulo for rotulo, indice in rotulo_para_indice.items()}
@@ -84,6 +101,8 @@ def classificar_documento(
         )
     except FileNotFoundError as e:
         return {"erro": f"Artefato do classificador '{e}' não existe. Execute o treinamento primeiro."}
+    except ModuleNotFoundError as e:
+        return {"erro": str(e)}
 
     try:
         texto = extrair_texto(arquivo_path)
