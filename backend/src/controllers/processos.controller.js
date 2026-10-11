@@ -8,6 +8,7 @@ import {
   criarProcessoComEtapas,
   ETAPAS_PADRAO,
 } from "../services/processos.service.js";
+import { caminhoWindowsAbsolutoValido } from "../utils/caminho-windows.util.js";
 
 const ACOES_AUTOMATIZADAS = ["gerar_contrato_social", "criar_pastas"];
 const STATUS_ETAPA = {
@@ -239,9 +240,9 @@ async function _criarAberturaEmpresa(req, res, clienteId) {
     }
   }
 
-  // A raiz pertence à configuração da máquina do agente. O backend não deve
-  // fabricá-la a partir do nome da empresa nem aceitar um caminho remoto que
-  // possa redirecionar a gravação. O agente resolve a PASTA_BASE local.
+  // A raiz pertence à máquina do agente. Não aceitar caminho do body (UNC/remoto
+  // redirecionaria gravação) nem PASTA_BASE do backend (multi-tenant). O agente
+  // devolve a raiz resolvida no callback de criar_pastas (#636 / review).
   const resultado = await criarProcessoComEtapas(clienteId, "abertura_empresa", {
     nome_empresa,
     pasta_base: null,
@@ -718,7 +719,13 @@ export async function concluirExecucaoEtapaAgente(req, res) {
   }
 
   const { etapaId } = req.params;
-  const { sucesso, arquivo_gerado, erro, execucao_token: execucaoToken } = corpoObjeto(req);
+  const {
+    sucesso,
+    arquivo_gerado,
+    erro,
+    pasta_base: pastaBaseBody,
+    execucao_token: execucaoToken,
+  } = corpoObjeto(req);
 
   if (typeof sucesso !== "boolean") {
     return res.status(400).json({ erro: "sucesso deve ser booleano" });
@@ -735,7 +742,7 @@ export async function concluirExecucaoEtapaAgente(req, res) {
   const { data: etapa, error: erroEtapa } = await supabase
     .from("etapas")
     .select(
-      "id, processo_id, tipo, status, execucao_token, processos!inner(cliente_id, status)",
+      "id, processo_id, tipo, status, acao, execucao_token, processos!inner(cliente_id, status)",
     )
     .eq("id", etapaId)
     .maybeSingle();
@@ -759,6 +766,23 @@ export async function concluirExecucaoEtapaAgente(req, res) {
     etapa.execucao_token !== execucaoToken
   ) {
     return res.status(409).json({ erro: "Claim de execução não é mais válido" });
+  }
+
+  // #636: quem sabe a raiz real é o agente — grava pasta_base só no callback
+  // de criar_pastas (nunca no POST de criação, que aceitaria UNC do cliente).
+  let pastaBaseResolvida = null;
+  if (sucesso && etapa.acao === "criar_pastas") {
+    if (typeof pastaBaseBody !== "string" || !pastaBaseBody.trim()) {
+      return res.status(400).json({
+        erro: "pasta_base é obrigatória na conclusão de criar_pastas",
+      });
+    }
+    pastaBaseResolvida = pastaBaseBody.trim();
+    if (!caminhoWindowsAbsolutoValido(pastaBaseResolvida)) {
+      return res.status(400).json({
+        erro: "pasta_base inválida: informe o caminho absoluto resolvido pelo agente",
+      });
+    }
   }
 
   if (sucesso) {
@@ -788,6 +812,22 @@ export async function concluirExecucaoEtapaAgente(req, res) {
 
     if (!etapaAtualizada) {
       return res.status(409).json({ erro: "Claim de execução não é mais válido" });
+    }
+
+    if (pastaBaseResolvida) {
+      const { error: erroPastaBase } = await supabase
+        .from("processos")
+        .update({ pasta_base: pastaBaseResolvida })
+        .eq("id", etapa.processo_id)
+        .eq("cliente_id", licenca.cliente_id);
+
+      if (erroPastaBase) {
+        console.error(
+          "[processos.controller] Erro ao gravar pasta_base do agente:",
+          erroPastaBase.message,
+        );
+        return res.status(500).json({ erro: "Erro ao gravar pasta_base" });
+      }
     }
 
     const { data: todasEtapas, error: erroTodasEtapas } = await supabase

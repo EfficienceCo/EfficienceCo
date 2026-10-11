@@ -943,6 +943,83 @@ describe("processos.controller — concluirExecucaoEtapaAgente (issue #266, conc
     assert.equal(res.body.arquivo_gerado, "C:/x/contrato.docx");
   });
 
+    it("criar_pastas: grava pasta_base do agente no processo (#636)", async () => {
+    tokenLicencaValido(CLIENTE_A);
+    queue("etapas", "maybeSingle", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        status: "processando",
+        acao: "criar_pastas",
+        execucao_token: EXECUCAO_TOKEN,
+        processos: { cliente_id: CLIENTE_A, status: "em_andamento" },
+      },
+      error: null,
+    });
+    queue("etapas", "maybeSingle", {
+      data: { id: ETAPA_ID, status: "concluida", concluida: true, arquivo_gerado: "C:/Clientes/CLIENTES/EM_ABERTURA/X" },
+      error: null,
+    });
+    queue("processos", "await", { data: null, error: null });
+    queue("etapas", "await", { data: [{ concluida: false }, { concluida: true }], error: null });
+
+    const res = criarRes();
+    await concluirExecucaoEtapaAgente(
+      {
+        headers: { "x-licenca-token": "token-valido" },
+        params: { etapaId: ETAPA_ID },
+        body: {
+          sucesso: true,
+          arquivo_gerado: "C:/Clientes/CLIENTES/EM_ABERTURA/X",
+          pasta_base: "C:\\Clientes",
+          execucao_token: EXECUCAO_TOKEN,
+        },
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    const updatePasta = chamadas.find(
+      (c) => c.tabela === "processos" && c.metodo === "update" && c.args?.[0]?.pasta_base === "C:\\Clientes",
+    );
+    assert.ok(updatePasta, "deveria gravar processos.pasta_base com a raiz do agente");
+  });
+
+  it("criar_pastas: 400 quando pasta_base está ausente no callback (#636)", async () => {
+    tokenLicencaValido(CLIENTE_A);
+    queue("etapas", "maybeSingle", {
+      data: {
+        id: ETAPA_ID,
+        processo_id: PROCESSO_ID,
+        tipo: "automatizada",
+        status: "processando",
+        acao: "criar_pastas",
+        execucao_token: EXECUCAO_TOKEN,
+        processos: { cliente_id: CLIENTE_A, status: "em_andamento" },
+      },
+      error: null,
+    });
+
+    const res = criarRes();
+    await concluirExecucaoEtapaAgente(
+      {
+        headers: { "x-licenca-token": "token-valido" },
+        params: { etapaId: ETAPA_ID },
+        body: {
+          sucesso: true,
+          arquivo_gerado: "C:/Clientes/CLIENTES/EM_ABERTURA/X",
+          execucao_token: EXECUCAO_TOKEN,
+        },
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /pasta_base/i);
+    assert.equal(chamadas.some((c) => c.metodo === "update"), false);
+  });
+
   it("erro: volta a etapa pra pronta_para_execucao guardando a mensagem de erro (contador pode tentar de novo)", async () => {
     tokenLicencaValido(CLIENTE_A);
     queue("etapas", "maybeSingle", {
