@@ -8,11 +8,17 @@ carrega XSD nem faz essa validação em produção.
 
 Portal oficial: <https://www.gov.br/esocial/pt-br/documentacao-tecnica>
 
-| Pacote (leiaute S-1.3) | SHA-256 |
-|---|---|
-| `2026-04-27_esquemas_xsd_v_s_01_03_00.zip` | `2D057BCDCB58982F39194E2DB264141EE8CB18F92DB29D76CBCCEEC98A44A0F0` |
-| `2026-07-01_esquemas_xsd_v_s_01_03_00.zip` | `32535DBA33D0470CF44AFCE410840AF450028FD32D3DDF9123F601C45CF9AF8E` |
-| `2026-10-26_esquemas_xsd_v_s_01_03_00-1.zip` | `AC8B5CD165CD6707D9B2C176B9C31C1F8EBEEB31C8F6490811F54C7510624557` |
+| Pacote (leiaute S-1.3) | Versão | Produção em | SHA-256 |
+|---|---|---|---|
+| `2026-04-27_esquemas_xsd_v_s_01_03_00.zip` | até NT 06/2026 | 27/04/2026 | `2D057BCDCB58982F39194E2DB264141EE8CB18F92DB29D76CBCCEEC98A44A0F0` |
+| `2026-07-01_esquemas_xsd_v_s_01_03_00.zip` | até NT 06/2026 (CNPJ alfanumérico) | 01/07/2026 | `32535DBA33D0470CF44AFCE410840AF450028FD32D3DDF9123F601C45CF9AF8E` |
+| `2026-10-26_esquemas_xsd_v_s_01_03_00-1.zip` | até NT 07/2026 rev. 24/09/2026 | 26/10/2026 | `AC8B5CD165CD6707D9B2C176B9C31C1F8EBEEB31C8F6490811F54C7510624557` |
+
+O prefixo de data no nome de cada pacote é a data em que ele entra em
+produção, não a data de publicação. O terceiro pacote já está publicado no
+portal (NT 07/2026 rev. 24/09/2026), listado como "produção em 26/10/2026", e
+foi baixado em 12/10/2026 junto com os outros dois. Os três hashes foram
+recalculados no dia da validação.
 
 Os dois primeiros são os mesmos do #406. Os arquivos usados foram
 `evtDeslig.xsd`, `evtRemun.xsd`, `tipos.xsd` e `xmldsig-core-schema.xsd`,
