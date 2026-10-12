@@ -1134,7 +1134,8 @@ test.describe('Apuração Fiscal — precisão e nome do cliente (BUG-APUR-14)',
   }
 
   test('mostra até quatro casas nas alíquotas e mantém o DAS de R$ 965,00', async ({ page }) => {
-    const resultado = await abrirApuracaoMockada(page, { fator_r: 0.4 });
+    // folha12 preenchido = Fator R apurado (não provisório #619 / review #633).
+    const resultado = await abrirApuracaoMockada(page, { fator_r: 0.4, folha12: 96000 });
     await expect(resultado.getByText('Alíquota nominal', { exact: true }).locator('..')).toContainText('7,30%');
     await expect(resultado.getByText('Alíquota efetiva', { exact: true }).locator('..')).toContainText('4,825%');
     await expect(resultado.getByText('Fator R', { exact: true }).locator('..')).toContainText('40,00%');
@@ -1225,6 +1226,7 @@ test.describe('Apuração Fiscal — chip FS12 só com Fator R (BUG-APUR-11 / #6
       anexo_original: 'V',
       anexo_efetivo: 'III',
       fator_r: 0.4,
+      folha12: 96000,
       folha_status: 'verificado',
     });
 
