@@ -1,7 +1,6 @@
 from pathlib import Path
-from extrator import extrair_texto  # ajuste pro nome real da sua função no extrator.py
-
-EXTENSOES_SUPORTADAS = {".pdf", ".docx", ".xlsx", ".xls"}
+from automacoes.classificador_documentos.classificador import EXTENSOES_SUPORTADAS
+from automacoes.classificador_documentos.extrator import extrair_texto
 
 def carregar_dataset(pasta_raiz: str) -> list[tuple[str, str]]:
     pasta_raiz = Path(pasta_raiz)

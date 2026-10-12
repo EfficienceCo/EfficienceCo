@@ -10,7 +10,7 @@ def extrair_texto(caminho: str) -> str:
         return extrair_pdf(caminho)
     elif ext ==".docx":
         return extrair_docx(caminho)
-    elif ext in (".xlsx", ".xls"):
+    elif ext == ".xlsx":  # .xls fora: openpyxl não lê o formato antigo
         return extrair_excel(caminho)
     else:
         raise ValueError(f"Tipo de arquivo não suportado: {caminho}")
