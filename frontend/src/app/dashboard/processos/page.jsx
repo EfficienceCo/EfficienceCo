@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
 import { soDigitos, validarCpf } from '../../../lib/esocial-tabelas';
@@ -1031,13 +1031,33 @@ export default function ProcessosPage() {
   const [erroNovoProcesso, setErroNovoProcesso] = useState('');
   const [isCriandoProcesso, setIsCriandoProcesso] = useState(false);
   const ultimaRequisicaoProcessosRef = useRef(0);
+  // #637 / #495: restaura scroll após o commit do React (useLayoutEffect),
+  // capturando a posição imediatamente antes de cada setState — assim um scroll
+  // intencional entre requests não é revertido (ver teste Playwright).
+  const scrollParaRestaurarRef = useRef(null);
+  const etapasEmAtualizacaoRef = useRef(new Set());
 
   const perfilUsuario = String(user?.perfil || '').trim();
   const podeCriarProcesso = perfilUsuario === PERFIL_PODE_CRIAR_PROCESSO;
   const podeMarcarEtapa = PERFIS_PODEM_MARCAR_ETAPA.has(perfilUsuario);
 
+  const preservarScrollNoProximoCommit = useCallback(() => {
+    scrollParaRestaurarRef.current = { x: window.scrollX, y: window.scrollY };
+  }, []);
+
+  useLayoutEffect(() => {
+    const posicao = scrollParaRestaurarRef.current;
+    if (!posicao) {
+      return;
+    }
+    scrollParaRestaurarRef.current = null;
+    if (window.scrollX !== posicao.x || window.scrollY !== posicao.y) {
+      window.scrollTo(posicao.x, posicao.y);
+    }
+  });
+
   const carregarProcessos = useCallback(
-    async ({ silencioso = false, reportarErro = true } = {}) => {
+    async ({ silencioso = false, reportarErro = true, preservarScroll = false } = {}) => {
       const idRequisicao = ultimaRequisicaoProcessosRef.current + 1;
       ultimaRequisicaoProcessosRef.current = idRequisicao;
 
@@ -1059,6 +1079,10 @@ export default function ProcessosPage() {
 
         if (idRequisicao !== ultimaRequisicaoProcessosRef.current) {
           return null;
+        }
+
+        if (preservarScroll) {
+          scrollParaRestaurarRef.current = { x: window.scrollX, y: window.scrollY };
         }
 
         setPayload(data);
@@ -1317,12 +1341,21 @@ export default function ProcessosPage() {
 
     const chaveAtualizacao = `${processoId}::${etapaId}`;
 
+    // Evita double-submit sem desabilitar o checkbox (disabled remove o foco e
+    // o browser pode jogar o scroll quase ao topo — #637).
+    if (etapasEmAtualizacaoRef.current.has(chaveAtualizacao)) {
+      return;
+    }
+    etapasEmAtualizacaoRef.current.add(chaveAtualizacao);
+
+    preservarScrollNoProximoCommit();
     setEtapasEmAtualizacao((valorAtual) => ({
       ...valorAtual,
       [chaveAtualizacao]: true,
     }));
 
     setErro('');
+    preservarScrollNoProximoCommit();
     setProcessos((valorAtual) =>
       aplicarAtualizacaoEtapaNaLista(valorAtual, processoId, etapaId, concluida),
     );
@@ -1332,6 +1365,7 @@ export default function ProcessosPage() {
       const etapaAtualizada = extrairEtapaAtualizada(retorno);
 
       if (etapaAtualizada) {
+        preservarScrollNoProximoCommit();
         setProcessos((valorAtual) =>
           atualizarEtapaNaLista(valorAtual, processoId, etapaId, (etapaAtual) =>
             mesclarRespostaEtapaManual(etapaAtual, etapaAtualizada),
@@ -1339,11 +1373,13 @@ export default function ProcessosPage() {
         );
       }
 
-      await carregarProcessos({ silencioso: true });
+      await carregarProcessos({ silencioso: true, preservarScroll: true });
     } catch (error) {
       setErro(obterMensagemErro(error, 'Não foi possível atualizar a etapa.'));
-      await carregarProcessos({ silencioso: true });
+      await carregarProcessos({ silencioso: true, preservarScroll: true });
     } finally {
+      etapasEmAtualizacaoRef.current.delete(chaveAtualizacao);
+      preservarScrollNoProximoCommit();
       setEtapasEmAtualizacao((valorAtual) => {
         const proximo = { ...valorAtual };
         delete proximo[chaveAtualizacao];
@@ -1769,11 +1805,20 @@ export default function ProcessosPage() {
                           const dependenciaPendente = automatizada
                             ? obterDependenciaPendente(etapa, etapas)
                             : '';
+                          // Não incluir atualizandoEtapa no disabled do checkbox:
+                          // desabilitar o input focado faz o browser perder o foco e
+                          // saltar o scroll (#637). O spinner + guard no handler bastam.
                           const bloqueado =
                             !podeMarcarEtapa ||
                             !processoId ||
                             !etapaId ||
                             atualizandoEtapa ||
+                            enviandoEtapa ||
+                            Boolean(dependenciaPendente);
+                          const checkboxBloqueado =
+                            !podeMarcarEtapa ||
+                            !processoId ||
+                            !etapaId ||
                             enviandoEtapa ||
                             Boolean(dependenciaPendente);
                           const idBase = `etapa-${String(etapaId || etapaIndex).replace(
@@ -1860,7 +1905,8 @@ export default function ProcessosPage() {
                                     <input
                                       type="checkbox"
                                       checked={concluida}
-                                      disabled={bloqueado}
+                                      disabled={checkboxBloqueado}
+                                      aria-busy={atualizandoEtapa}
                                       onChange={(event) =>
                                         handleToggleEtapa(processo, etapa, event.target.checked)
                                       }

@@ -91,6 +91,23 @@ describe("calcularSimplesNacional — Fator R (Anexo V)", () => {
     const r = calcularSimplesNacional({ rbt12: 500000, receita_mes: 40000, anexo: "V", semDadosFolha: true });
     assert.deepEqual(r, { erro: "FATOR_R_SEM_FOLHA" });
   });
+
+  // #619 / BUG-APUR-19 — criação com flag: pior caso Anexo V, sem migrar; Fator R real intacto.
+  it("provisorioSemFolha: DAS no Anexo V sem migrar e fator_r sentinela 0", () => {
+    const r = calcularSimplesNacional({
+      rbt12: 500000,
+      receita_mes: 40000,
+      anexo: "V",
+      semDadosFolha: true,
+      provisorioSemFolha: true,
+    });
+    assert.equal(r.erro, undefined);
+    assert.equal(r.anexo_efetivo, "V");
+    assert.equal(r.fator_r, 0);
+    assert.equal(r.provisorio_sem_folha, true);
+    // Anexo V 3ª faixa: (500000*0.195 - 9900)/500000 = 0.1752 → DAS = 7008
+    assert.equal(r.valor_das, 7008);
+  });
 });
 
 describe("calcularSimplesNacional — RBT12 = 0 (sem faturamento nos últimos 12 meses)", () => {

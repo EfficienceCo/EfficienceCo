@@ -32,6 +32,7 @@ def concluir_execucao(
     sucesso,
     execucao_token,
     arquivo_gerado=None,
+    pasta_base=None,
     erro=None,
 ):
     """
@@ -44,6 +45,9 @@ def concluir_execucao(
     }
     if sucesso and arquivo_gerado is not None:
         payload["arquivo_gerado"] = arquivo_gerado
+    # Raiz resolvida pelo agente — backend persiste em processos.pasta_base (#636).
+    if sucesso and pasta_base is not None:
+        payload["pasta_base"] = pasta_base
     if not sucesso and erro is not None:
         payload["erro"] = erro
 

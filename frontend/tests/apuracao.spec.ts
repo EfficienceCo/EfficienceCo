@@ -1134,7 +1134,8 @@ test.describe('Apuração Fiscal — precisão e nome do cliente (BUG-APUR-14)',
   }
 
   test('mostra até quatro casas nas alíquotas e mantém o DAS de R$ 965,00', async ({ page }) => {
-    const resultado = await abrirApuracaoMockada(page, { fator_r: 0.4 });
+    // folha12 preenchido = Fator R apurado (não provisório #619 / review #633).
+    const resultado = await abrirApuracaoMockada(page, { fator_r: 0.4, folha12: 96000 });
     await expect(resultado.getByText('Alíquota nominal', { exact: true }).locator('..')).toContainText('7,30%');
     await expect(resultado.getByText('Alíquota efetiva', { exact: true }).locator('..')).toContainText('4,825%');
     await expect(resultado.getByText('Fator R', { exact: true }).locator('..')).toContainText('40,00%');
@@ -1162,5 +1163,74 @@ test.describe('Apuração Fiscal — precisão e nome do cliente (BUG-APUR-14)',
   test('sem nome da empresa não usa o e-mail do usuário como fallback', async ({ page }) => {
     const resultado = await abrirApuracaoMockada(page, { cliente_nome: null });
     await expect(resultado.getByText(/Agosto\/2026/)).not.toContainText('@');
+  });
+});
+
+test.describe('Apuração Fiscal — chip FS12 só com Fator R (BUG-APUR-11 / #611)', () => {
+  async function abrirApuracaoMockada(page: Page, overrides = {}) {
+    const apuracao = apuracaoDetalhada({
+      id: 'apuracao-folha-status',
+      cliente_nome: 'Cliente Teste',
+      ...overrides,
+    });
+
+    await page.addInitScript((token) => window.localStorage.setItem('token', token), tokenFrontendDeTeste());
+    await page.route('**/apuracoes**', async (route) => {
+      const requisicao = route.request();
+      const url = new URL(requisicao.url());
+
+      if (url.pathname === '/apuracoes' && requisicao.method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([{ id: apuracao.id, regime: 'simples_nacional' }]),
+        });
+        return;
+      }
+
+      if (url.pathname === `/apuracoes/${apuracao.id}` && requisicao.method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(apuracao),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.goto('/dashboard/fiscal/apuracao');
+    await page.getByLabel('Mês').selectOption('8');
+    await page.getByLabel('Ano').selectOption('2026');
+    await page.getByRole('button', { name: 'Calcular DAS' }).click();
+    const resultado = page.locator('section', { hasText: 'Resultado do cálculo' }).first();
+    await expect(resultado.getByRole('heading', { name: 'Resultado do cálculo' })).toBeVisible();
+    return resultado;
+  }
+
+  test('Anexo I legado com folha_status pendente não mostra o chip FS12', async ({ page }) => {
+    const resultado = await abrirApuracaoMockada(page, {
+      anexo_original: 'I',
+      anexo_efetivo: 'I',
+      fator_r: null,
+      folha_status: 'pendente',
+    });
+
+    await expect(resultado.getByText('Status da folha (FS12)')).toHaveCount(0);
+    await expect(resultado.getByText('Aguardando confirmação do agente')).toHaveCount(0);
+  });
+
+  test('Anexo V com Fator R mostra o chip de status da folha', async ({ page }) => {
+    const resultado = await abrirApuracaoMockada(page, {
+      anexo_original: 'V',
+      anexo_efetivo: 'III',
+      fator_r: 0.4,
+      folha12: 96000,
+      folha_status: 'verificado',
+    });
+
+    await expect(resultado.getByText('Status da folha (FS12)')).toBeVisible();
+    await expect(resultado.getByText('Verificado (12 meses)')).toBeVisible();
   });
 });

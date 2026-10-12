@@ -1,13 +1,13 @@
 -- Somente em banco DESCARTÁVEL vazio. Fixtures em public; ROLLBACK ao final.
+-- Schema alinhado ao pós-39: processos PK(id); etapas sem cliente_id (#635).
 -- psql -X -v ON_ERROR_STOP=1 -f database/tests/94-eventos-etapas-smoke.sql
 BEGIN;
 CREATE TABLE public.processos (
-  id uuid, cliente_id uuid, nome_empresa text, PRIMARY KEY (id, cliente_id)
+  id uuid PRIMARY KEY, cliente_id uuid NOT NULL, nome_empresa text
 );
 CREATE TABLE public.etapas (
-  id int PRIMARY KEY, processo_id uuid, cliente_id uuid, tipo text,
-  acao text, status text, execucao_token uuid, erro_execucao text,
-  FOREIGN KEY (processo_id, cliente_id) REFERENCES public.processos
+  id int PRIMARY KEY, processo_id uuid NOT NULL REFERENCES public.processos(id),
+  tipo text, acao text, status text, execucao_token uuid, erro_execucao text
 );
 CREATE TABLE public.eventos (cliente_id uuid, descricao text, sucesso boolean);
 CREATE TABLE public.notificacoes (cliente_id uuid, tipo text, mensagem text);
@@ -15,15 +15,16 @@ INSERT INTO public.processos VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'Padaria'),
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'Souza');
 INSERT INTO public.etapas VALUES
-  (1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111',
+  (1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
    'automatizada', 'criar_pastas', 'processando', '123e4567-e89b-42d3-a456-426614174000', NULL),
-  (2, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222',
+  (2, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
    'automatizada', 'gerar_contrato_social', 'processando', '123e4567-e89b-42d3-a456-426614174000', NULL),
-  (3, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111',
+  (3, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
    'manual', NULL, 'pendente', NULL, NULL);
 
 \ir ../migrations/94.sql
 \ir ../migrations/94.sql
+\ir ../migrations/100.sql
 
 UPDATE public.etapas SET status = 'concluida', execucao_token = NULL WHERE id = 1;
 -- Callback repetido e conclusão manual não duplicam eventos.

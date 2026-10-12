@@ -13,11 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-# scikit-learn/joblib ainda não estão no requirements do runtime (rede neural
-# adiada até haver documentos reais de cliente). Sem eles o módulo não importa.
-pytest.importorskip("joblib")
-pytest.importorskip("sklearn")
-
+# joblib/sklearn ficam fora do requirements do runtime (#513 / #639). O módulo
+# TF-IDF importa joblib sob demanda — estes testes rodam sem as libs instaladas.
 from automacoes.classificador_documentos.classificador import classificar_documento
 
 
@@ -69,6 +66,38 @@ def test_import_nao_falha_sem_artefatos_no_disco():
     produção (identificar_tipo importava um módulo que não existia mais;
     aqui garantimos que o substituto não tem o mesmo tipo de fragilidade)."""
     import automacoes.classificador_documentos.classificador  # noqa: F401
+
+
+def test_joblib_ausente_retorna_erro_claro_sem_derrubar(tmp_path, monkeypatch):
+    """Sem joblib no runtime, inferência TF-IDF explica o gap (#639)."""
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-1.4")
+    modelo = tmp_path / "modelo.pt"
+    vet = tmp_path / "vet.joblib"
+    idx = tmp_path / "idx.joblib"
+    for caminho in (modelo, vet, idx):
+        caminho.write_bytes(b"x")
+
+    def _sem_joblib():
+        raise ModuleNotFoundError(
+            "joblib/sklearn não fazem parte do runtime do worker "
+            "(classificador oficial = automacoes.rede / ResNet)."
+        )
+
+    monkeypatch.setattr(
+        "automacoes.classificador_documentos.classificador._import_joblib",
+        _sem_joblib,
+    )
+
+    resultado = classificar_documento(
+        str(f),
+        model_path=str(modelo),
+        vetorizador_path=str(vet),
+        indice_path=str(idx),
+    )
+
+    assert "erro" in resultado
+    assert "runtime" in resultado["erro"].lower() or "resnet" in resultado["erro"].lower()
 
 
 # ---------------------------------------------------------------------------

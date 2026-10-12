@@ -88,6 +88,63 @@ test.describe('Regras de automação — pasta_origem validada (issue #484)', ()
   });
 });
 
+test.describe('Regras de automação — extensão vazia por padrão (issue #640)', () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+    await page.goto('/dashboard/regras');
+    await page.getByRole('button', { name: 'Nova regra' }).click();
+  });
+
+  test('Nova regra nasce com extensão vazia (Qualquer extensão)', async ({ page }) => {
+    await expect(page.locator('#condicao_extensao')).toHaveValue('');
+  });
+
+  test('organizar_arquivo sem tocar na extensão não envia filtro .pdf', async ({ page }) => {
+    let corpo: { condicao?: Record<string, unknown> } | null = null;
+    await page.route('**/regras', (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      corpo = route.request().postDataJSON();
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 'mock-640', ...corpo }),
+      });
+    });
+
+    await page.locator('#acao').selectOption('organizar_arquivo');
+    await page.locator('#pasta_origem').fill('C:\\Souza\\ENTRADA');
+    await page.locator('#pasta_destino').fill('C:\\Souza\\CLIENTES\\ATIVO');
+    // Não tocar em #condicao_extensao
+    await page.getByRole('button', { name: 'Criar regra' }).click();
+
+    await expect.poll(() => corpo).not.toBeNull();
+    expect(corpo?.condicao ?? {}).not.toHaveProperty('extensao');
+  });
+
+  test('tipo Folha de pagamento continua forçando extensão .xlsx', async ({ page }) => {
+    await page.locator('#condicao_tipo').selectOption('folha_pagamento');
+    await expect(page.locator('#condicao_extensao')).toHaveValue('xlsx');
+
+    let corpo: { condicao?: Record<string, unknown> } | null = null;
+    await page.route('**/regras', (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      corpo = route.request().postDataJSON();
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 'mock-640-folha', ...corpo }),
+      });
+    });
+
+    await page.locator('#pasta_origem').fill('C:\\Souza\\ENTRADA');
+    await page.locator('#pasta_destino').fill('C:\\Souza\\SAIDA');
+    await page.getByRole('button', { name: 'Criar regra' }).click();
+
+    await expect.poll(() => corpo?.condicao?.extensao).toBe('xlsx');
+    await expect.poll(() => corpo?.condicao?.tipo).toBe('folha_pagamento');
+  });
+});
+
 test.describe('Regras de automação — edição de regra legada (issue #484)', () => {
   const regraLegada = {
     id: 'legada-484',

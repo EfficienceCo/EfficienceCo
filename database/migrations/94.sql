@@ -1,6 +1,7 @@
 -- #489: concluir uma execução e registrar seu evento são uma única transação.
 -- Aplicar antes de distribuir o agente que remove o POST /eventos de etapas.
 -- Pré-requisitos: migrations de etapas/claims (#266) e tipos de notificação (48).
+-- #635: cliente_id vem de processos (etapas.cliente_id foi removido na 39).
 CREATE OR REPLACE FUNCTION public.registrar_evento_conclusao_etapa()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -9,12 +10,16 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   empresa TEXT;
+  cliente_alvo UUID;
   descricao_evento TEXT;
   sucesso_evento BOOLEAN;
 BEGIN
-  SELECT COALESCE(NULLIF(btrim(nome_empresa), ''), 'empresa') INTO STRICT empresa
+  SELECT
+    COALESCE(NULLIF(btrim(nome_empresa), ''), 'empresa'),
+    cliente_id
+  INTO STRICT empresa, cliente_alvo
   FROM public.processos
-  WHERE id = NEW.processo_id AND cliente_id = NEW.cliente_id;
+  WHERE id = NEW.processo_id;
 
   sucesso_evento := NEW.status = 'concluida';
   IF NOT sucesso_evento THEN
@@ -31,9 +36,9 @@ BEGIN
   END IF;
 
   INSERT INTO public.eventos (cliente_id, descricao, sucesso)
-  VALUES (NEW.cliente_id, descricao_evento, sucesso_evento);
+  VALUES (cliente_alvo, descricao_evento, sucesso_evento);
   INSERT INTO public.notificacoes (cliente_id, tipo, mensagem)
-  VALUES (NEW.cliente_id,
+  VALUES (cliente_alvo,
     CASE WHEN sucesso_evento THEN 'arquivo_processado' ELSE 'arquivo_erro' END,
     descricao_evento);
   RETURN NEW;

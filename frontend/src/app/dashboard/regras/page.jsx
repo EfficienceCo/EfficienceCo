@@ -149,7 +149,8 @@ const FORM_INICIAL = {
   pasta_origem: '',
   pasta_destino: '',
   condicao_in_name: '',
-  condicao_extensao: 'pdf',
+  // Vazio = qualquer extensão (#640). Folha força .xlsx via handleFormChange/useEffect.
+  condicao_extensao: '',
   condicao_tipo: '',
   condicao_tamanho_min: '',
   condicao_tamanho_max: '',
