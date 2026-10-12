@@ -1,8 +1,9 @@
 // Espelho de frontend para o catálogo de eventos do eSocial.
 // Fonte da verdade: backend/src/utils/esocial-catalogo.util.js (#ES-4).
 // Aqui adicionamos só o que a tela do wizard (#ES-10) precisa: rótulo do grupo
-// e a flag `geradorDisponivel` — hoje só o S-2200 tem gerador de XML (#ES-6);
-// os outros 11 códigos existem no catálogo mas o backend responde 422
+// e a flag `geradorDisponivel` — liga quando o wizard tem o formulário do
+// evento; hoje só o S-2200. O backend já gera S-2299 e S-1200 (#648), mas
+// ainda sem formulário aqui. Os demais códigos recebem 422
 // (EVENTO_NAO_SUPORTADO) até cada gerador ser implementado.
 
 export const GRUPOS_ESOCIAL = {

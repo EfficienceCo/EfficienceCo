@@ -4,6 +4,7 @@
 // Escopo desta task (#375 / ES-6): implementar SÓ o S-2200 (Admissão), que é o
 // evento mais complexo (40+ campos, o schema muda conforme a categoria do
 // trabalhador). O objetivo é fixar o PADRÃO que os outros 11 eventos vão seguir.
+// #648 adicionou S-2299 (Desligamento) e S-1200 (Remuneração) seguindo o padrão.
 //
 // -------------------------------------------------------------------------
 // COMO ADICIONAR UM NOVO EVENTO (ex.: S-2206, S-2299, S-1200 ...)
@@ -307,6 +308,67 @@ function validarNumeroInscricao(tpInsc, nrInsc, contexto, comprimentos) {
   return numero;
 }
 
+/**
+ * Partes comuns do topo de todo evento: Id, tpAmb, verProc e ideEmpregador.
+ * `dados` traz { empregador: { tpInsc, nrInsc }, ambiente?, verProc?,
+ * dataHoraGeracao?, sequencial? } — mesmo contrato descrito no gerarXmlS2200.
+ */
+function prepararCabecalho(dados, contexto) {
+  exigir(dados, ["empregador.tpInsc", "empregador.nrInsc"], contexto);
+  const tpInsc = validarDominio("tpInsc", dados.empregador.tpInsc, TP_INSC_EMPREGADOR, `${contexto}.empregador`);
+  const nrInsc = validarNumeroInscricao(tpInsc, dados.empregador.nrInsc, `${contexto}.empregador`, { 1: [8, 14], 2: [11] });
+  return {
+    id: gerarIdEvento({
+      tpInsc,
+      nrInsc,
+      dataHora: dados.dataHoraGeracao ?? new Date(),
+      sequencial: dados.sequencial ?? 1,
+    }),
+    tpAmb: dados.ambiente === "producao" ? TP_AMB.PRODUCAO : TP_AMB.HOMOLOGACAO,
+    verProc: verProcValido(dados.verProc),
+    ideEmpregador: { tpInsc, nrInsc: tpInsc === 1 ? nrInsc.slice(0, 8) : nrInsc },
+  };
+}
+
+function validarCpf(valor, campo) {
+  const cpf = soDigitos(valor);
+  if (cpf.length !== 11) throw new ErroXmlESocial(`${campo} deve conter 11 dígitos`);
+  return cpf;
+}
+
+/**
+ * Texto livre do XSD (xs:string com minLength/maxLength). `naoBranco` = padrão
+ * ".*[^\s].*" (não só espaços); `inicioNaoBranco` = padrão "[^\s]{1}[\S\s]*"
+ * dos TS_texto_* (primeiro caractere não pode ser espaço).
+ */
+function validarTexto(valor, campo, max, { min = 1, naoBranco = true, inicioNaoBranco = false } = {}) {
+  const texto = String(valor);
+  if (texto.length < min || texto.length > max || (naoBranco && texto.trim() === "")) {
+    throw new ErroXmlESocial(`${campo} deve ter de ${min} a ${max} caracteres`);
+  }
+  if (inicioNaoBranco && /^\s/.test(texto)) {
+    throw new ErroXmlESocial(`${campo} não pode começar com espaço`);
+  }
+  return texto;
+}
+
+/** Decimal > 0 com 2 casas (TS_vrRubr, TS_qtdRubr, TS_fator, TS_percAliment...). */
+function formatarPositivo(valor, campo, maximo) {
+  const texto = formatarValor(valor);
+  const numero = Number(texto);
+  if (numero <= 0 || numero > maximo) {
+    throw new ErroXmlESocial(`${campo} deve ser maior que 0 e no máximo ${maximo} (recebido: ${valor})`);
+  }
+  return texto;
+}
+
+function validarLista(lista, campo, { min = 1, max }) {
+  if (!Array.isArray(lista) || lista.length < min || lista.length > max) {
+    throw new ErroXmlESocial(`${campo} deve ser uma lista com ${min} a ${max} itens`, [campo]);
+  }
+  return lista;
+}
+
 // ---------------------------------------------------------------------------
 // S-2200 — Cadastramento Inicial do Vínculo e Admissão/Ingresso de Trabalhador
 // ---------------------------------------------------------------------------
@@ -406,33 +468,16 @@ export function gerarXmlS2200(funcionario, dadosAdmissao) {
   }
   const ehEstatutario = tpRegTrab === 2;
 
-  const ambiente = dadosAdmissao.ambiente === "producao" ? TP_AMB.PRODUCAO : TP_AMB.HOMOLOGACAO;
-  const tpInsc = validarDominio("tpInsc", dadosAdmissao.empregador.tpInsc, TP_INSC_EMPREGADOR, "dadosAdmissao.empregador");
-  const nrInsc = validarNumeroInscricao(
-    tpInsc,
-    dadosAdmissao.empregador.nrInsc,
-    "dadosAdmissao.empregador",
-    { 1: [8, 14], 2: [11] },
-  );
-
-  const id = gerarIdEvento({
-    tpInsc,
-    nrInsc,
-    dataHora: dadosAdmissao.dataHoraGeracao ?? new Date(),
-    sequencial: dadosAdmissao.sequencial ?? 1,
-  });
+  const { id, tpAmb, verProc, ideEmpregador } = prepararCabecalho(dadosAdmissao, "dadosAdmissao");
 
   const corpo = {
     ideEvento: {
       indRetif: 1, // 1 = evento original (retificação é fora do escopo do sprint)
-      tpAmb: ambiente,
+      tpAmb,
       procEmi: PROC_EMI_APP_EMPREGADOR,
-      verProc: verProcValido(dadosAdmissao.verProc),
+      verProc,
     },
-    ideEmpregador: {
-      tpInsc,
-      nrInsc: tpInsc === 1 ? nrInsc.slice(0, 8) : nrInsc,
-    },
+    ideEmpregador,
     trabalhador: montarTrabalhador(funcionario),
     vinculo: {
       matricula: dadosAdmissao.matricula,
@@ -837,20 +882,521 @@ export function formatarValor(valor) {
 }
 
 // ---------------------------------------------------------------------------
+// Rubricas — usadas por S-2299 (detVerbas) e S-1200 (itensRemun)
+// ---------------------------------------------------------------------------
+// Os dois eventos têm o mesmo xs:sequence de rubrica (codRubr, ideTabRubr,
+// qtdRubr, fatorRubr, vrRubr, indApurIR). O grupo <descFolha> (empréstimo
+// consignado, natRubr 9253) NÃO é suportado nesta versão.
+
+// indApurIR é "obrigatório e exclusivo" a partir de 2021-07 (mensal) / 2021
+// (anual), conforme anotação do XSD nos dois eventos.
+const INICIO_IND_APUR_IR_MENSAL = "2021-07";
+const INICIO_IND_APUR_IR_ANUAL = "2021";
+
+function montarRubrica(r, contexto, exigeIndApurIR) {
+  exigir(r, ["codigo", "tabela", "valor"], contexto);
+  if (exigeIndApurIR) exigir(r, ["indApurIR"], contexto);
+  if (!exigeIndApurIR && r.indApurIR != null && r.indApurIR !== "") {
+    throw new ErroXmlESocial(
+      `${contexto}.indApurIR só pode ser informado a partir de ${INICIO_IND_APUR_IR_MENSAL} (mensal) / ${INICIO_IND_APUR_IR_ANUAL} (anual)`,
+    );
+  }
+  return {
+    codRubr: validarTexto(r.codigo, `${contexto}.codigo`, 30),
+    ideTabRubr: validarTexto(r.tabela, `${contexto}.tabela`, 8),
+    qtdRubr: r.quantidade == null || r.quantidade === "" ? undefined : formatarPositivo(r.quantidade, `${contexto}.quantidade`, 9999999999.99),
+    fatorRubr: r.fator == null || r.fator === "" ? undefined : formatarPositivo(r.fator, `${contexto}.fator`, 999.99),
+    vrRubr: formatarPositivo(r.valor, `${contexto}.valor`, 999999999999.99),
+    indApurIR: exigeIndApurIR ? validarDominio("indApurIR", r.indApurIR, new Set([0, 1]), contexto) : undefined,
+  };
+}
+
+// ideEstabLot: tpInsc 1 (CNPJ, 14), 3 (CAEPF, 12) ou 4 (CNO, 12) — TS_tpInsc_EstabLot.
+function montarIdeEstabLot(e, contexto) {
+  exigir(e, ["tpInsc", "nrInsc", "codLotacao"], contexto);
+  const tpInsc = validarDominio("tpInsc", e.tpInsc, TP_INSC_LOCAL_GERAL, contexto);
+  return {
+    tpInsc,
+    nrInsc: validarNumeroInscricao(tpInsc, e.nrInsc, contexto, { 1: [14], 3: [12], 4: [12] }),
+    codLotacao: validarTexto(e.codLotacao, `${contexto}.codLotacao`, 30),
+  };
+}
+
+const GRAU_EXP = new Set([1, 2, 3, 4]);
+
+function montarInfoAgNocivo(grauExp, regra, contexto) {
+  const informado = grauExp != null && grauExp !== "";
+  if (regra === "obrigatorio" && !informado) {
+    throw new ErroXmlESocial(`${contexto}.grauExp é obrigatório (grau de exposição a agentes nocivos)`, ["grauExp"]);
+  }
+  if (regra === "proibido" && informado) {
+    throw new ErroXmlESocial(`${contexto}.grauExp não pode ser informado para esta categoria`);
+  }
+  return informado ? { grauExp: validarDominio("grauExp", grauExp, GRAU_EXP, contexto) } : undefined;
+}
+
+function validarIdesDmDevUnicos(demonstrativos, contexto) {
+  const vistos = new Set();
+  for (const dm of demonstrativos) {
+    if (vistos.has(dm.ideDmDev)) {
+      throw new ErroXmlESocial(`${contexto}: ideDmDev "${dm.ideDmDev}" repetido — cada demonstrativo precisa de um identificador único`);
+    }
+    vistos.add(dm.ideDmDev);
+  }
+}
+
+// Grupo infoInterm (trabalho intermitente, codCateg 111): 1..31 dias.
+function montarInfoInterm(lista, contexto) {
+  return validarLista(lista, contexto, { max: 31 }).map((item, i) => {
+    exigir(item, ["dia"], `${contexto}[${i}]`);
+    const dia = Number(item.dia);
+    if (!Number.isInteger(dia) || dia < 0 || dia > 31) {
+      throw new ErroXmlESocial(`${contexto}[${i}].dia deve ser inteiro de 0 a 31`);
+    }
+    const hrsTrab = item.horasTrabalhadas == null || item.horasTrabalhadas === "" ? undefined : String(item.horasTrabalhadas);
+    if (hrsTrab !== undefined && !/^([0-1]\d|2[0-3])[0-5]\d$/.test(hrsTrab)) {
+      throw new ErroXmlESocial(`${contexto}[${i}].horasTrabalhadas deve estar no formato HHMM`);
+    }
+    return { dia, hrsTrab };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// S-2299 — Desligamento
+// ---------------------------------------------------------------------------
+// CONFERIDO CONTRA O XSD OFICIAL S-1.3 (evtDeslig.xsd / tipos.xsd) — ver
+// docs/validacao-s2299-s1200-xsd.md. Regras condicionais das anotações do
+// XSD (CONDICAO_GRUPO / Validação) que dependem só do próprio evento são
+// aplicadas aqui; as que dependem do RET/S-1000 (ex.: início dos periódicos)
+// ficam para o eSocial.
+//
+// Fora do escopo desta versão: infoPerAnt, infoRRA, procJudTrab, infoMV,
+// procCS e infoSimples dentro de verbasResc; consigFGTS; descFolha.
+
+const RAIZ_S2299 = "evtDeslig";
+
+// Tabela 19 — motivos que ligam/desligam grupos do infoDeslig.
+const MTV_SUCESSAO_VINC = new Set([11, 12, 13, 28, 29, 37, 43]);
+const MTV_TRANSF_TIT = 34;
+const MTV_MUDANCA_CPF = 36;
+const MTV_SEM_PDV = new Set([10, 11, 12, 13, 28, 29, 30, 34, 36, 37, 40, 43, 44]);
+const MTV_SEM_VERBAS_RESC = new Set([11, 12, 13, 25, 28, 29, 30, 34, 36, 43, 44]);
+// indRemun (remunAposDeslig) é obrigatório para desligamentos a partir desta data.
+const IND_REMUN_OBRIGATORIO_DESDE = "2023-01-16";
+
+/**
+ * Gera o XML do evento S-2299 (Desligamento).
+ *
+ * @param {object} dados
+ *   { empregador: { tpInsc:1|2, nrInsc }, cpf, matricula,
+ *     tpRegTrab: 1|2 (do S-2200 do vínculo — decide pensAlim e verbasResc),
+ *     tpRegPrev?: 1|2|3|4 (do S-2200; ausente = RGPS para fins de grauExp),
+ *     codCateg?: number (do S-2200; 111 = intermitente exige infoInterm),
+ *     desligamento: {
+ *       motivo (Tabela 19), data, dataAvisoPrevio?, indPagtoAPI (S/N),
+ *       dataProjFimAPI? (obrigatória se indPagtoAPI=S),
+ *       pensaoAlimenticia?: { tipo:0|1|2|3, percentual?, valor? } (obrigatória p/ celetista),
+ *       nrProcTrab?, indPDV?: boolean, observacoes?: string[],
+ *       sucessaoVinc?: { tpInsc:1|2, nrInsc }   (motivos 11,12,13,28,29,37,43),
+ *       transfTit?: { cpfSubstituto, dataNascimento } (motivo 34),
+ *       mudancaCPF?: { novoCPF }                (motivo 36),
+ *       remunAposDeslig?: { indRemun?:1|2|3, dataFim } },
+ *     infoInterm?: [{ dia, horasTrabalhadas? (HHMM) }],
+ *     verbasRescisorias?: { demonstrativos: [{ ideDmDev, estabelecimentos: [{
+ *       tpInsc:1|3|4, nrInsc, codLotacao, grauExp?,
+ *       rubricas: [{ codigo, tabela, quantidade?, fator?, valor, indApurIR? }] }] }] },
+ *     // metadados de geração — mesmo contrato do gerarXmlS2200:
+ *     ambiente?, verProc?, dataHoraGeracao?, sequencial? }
+ *
+ * `desligamento.data` também é o campo lido por desligarFuncionarioDeS2299
+ * após a aprovação.
+ *
+ * @returns {string} XML do evento.
+ */
+export function gerarXmlS2299(dados) {
+  if (!dados || typeof dados !== "object") {
+    throw new ErroXmlESocial("dados do desligamento são obrigatórios");
+  }
+  exigir(
+    dados,
+    [
+      "empregador.tpInsc", "empregador.nrInsc", "cpf", "matricula", "tpRegTrab",
+      "desligamento.motivo", "desligamento.data", "desligamento.indPagtoAPI",
+    ],
+    "dadosDesligamento",
+  );
+  const { id, tpAmb, verProc, ideEmpregador } = prepararCabecalho(dados, "dadosDesligamento");
+  const tpRegTrab = validarDominio("tpRegTrab", dados.tpRegTrab, new Set([1, 2]), "dadosDesligamento");
+
+  const corpo = {
+    ideEvento: { indRetif: 1, tpAmb, procEmi: PROC_EMI_APP_EMPREGADOR, verProc },
+    ideEmpregador,
+    ideVinculo: {
+      cpfTrab: validarCpf(dados.cpf, "dadosDesligamento.cpf"),
+      matricula: validarTexto(dados.matricula, "dadosDesligamento.matricula", 30, { naoBranco: false }),
+    },
+    infoDeslig: montarInfoDeslig(dados, tpRegTrab),
+  };
+
+  return montarEnvelope({ raiz: RAIZ_S2299, xmlns: xmlnsEvento(RAIZ_S2299), id, corpo });
+}
+
+function montarInfoDeslig(dados, tpRegTrab) {
+  const d = dados.desligamento;
+  const ctx = "dadosDesligamento.desligamento";
+
+  const motivo = Number(d.motivo);
+  if (!/^\d{1,2}$/.test(String(d.motivo).trim()) || motivo < 1) {
+    throw new ErroXmlESocial(`${ctx}.motivo deve ser um código da Tabela 19 (01 a 99)`);
+  }
+  const dtDeslig = formatarData(d.data);
+
+  const dtAvPrv = d.dataAvisoPrevio ? formatarData(d.dataAvisoPrevio) : undefined;
+  if (dtAvPrv && dtAvPrv > dtDeslig) {
+    throw new ErroXmlESocial(`${ctx}.dataAvisoPrevio deve ser igual ou anterior à data de desligamento`);
+  }
+
+  const indPagtoAPI = sn(d.indPagtoAPI);
+  if (indPagtoAPI === "S") exigir(d, ["dataProjFimAPI"], ctx);
+  const dtProjFimAPI = d.dataProjFimAPI ? formatarData(d.dataProjFimAPI) : undefined;
+  if (dtProjFimAPI && dtProjFimAPI < dtDeslig) {
+    throw new ErroXmlESocial(`${ctx}.dataProjFimAPI deve ser igual ou posterior à data de desligamento`);
+  }
+
+  const nrProcTrab = d.nrProcTrab ? soDigitos(d.nrProcTrab) : undefined;
+  if (nrProcTrab !== undefined && nrProcTrab.length !== 20) {
+    throw new ErroXmlESocial(`${ctx}.nrProcTrab deve conter 20 dígitos`);
+  }
+
+  const pdv = d.indPDV != null && d.indPDV !== "" && sn(d.indPDV) === "S";
+  if (pdv && MTV_SEM_PDV.has(motivo)) {
+    throw new ErroXmlESocial(`${ctx}.indPDV não pode ser informado para o motivo ${motivo}`);
+  }
+
+  const codCateg = dados.codCateg == null || dados.codCateg === "" ? undefined : Number(dados.codCateg);
+  if (codCateg === 111) exigir(dados, ["infoInterm"], "dadosDesligamento (intermitente)");
+  if (codCateg !== undefined && codCateg !== 111 && dados.infoInterm) {
+    throw new ErroXmlESocial("dadosDesligamento.infoInterm só pode ser informado para codCateg=111 (intermitente)");
+  }
+
+  const observacoes = d.observacoes == null
+    ? undefined
+    : validarLista(d.observacoes, `${ctx}.observacoes`, { min: 0, max: 99 }).map((texto, i) => ({
+      observacao: validarTexto(texto, `${ctx}.observacoes[${i}]`, 255, { inicioNaoBranco: true }),
+    }));
+
+  if (dados.verbasRescisorias && (MTV_SEM_VERBAS_RESC.has(motivo) || tpRegTrab === 2)) {
+    throw new ErroXmlESocial(
+      `dadosDesligamento.verbasRescisorias não pode ser informado ${tpRegTrab === 2 ? "para estatutário (tpRegTrab=2)" : `para o motivo ${motivo}`}`,
+    );
+  }
+
+  return {
+    mtvDeslig: String(motivo).padStart(2, "0"),
+    dtDeslig,
+    dtAvPrv,
+    indPagtoAPI,
+    dtProjFimAPI,
+    ...montarPensaoAlimenticia(d.pensaoAlimenticia, tpRegTrab, ctx),
+    nrProcTrab,
+    indPDV: pdv ? "S" : undefined,
+    infoInterm: dados.infoInterm ? montarInfoInterm(dados.infoInterm, "dadosDesligamento.infoInterm") : undefined,
+    observacoes,
+    sucessaoVinc: montarGrupoPorMotivo(d.sucessaoVinc, MTV_SUCESSAO_VINC.has(motivo), `${ctx}.sucessaoVinc`, motivo, (s, c) => {
+      exigir(s, ["tpInsc", "nrInsc"], c);
+      const tpInsc = validarDominio("tpInsc", s.tpInsc, TP_INSC_ESTAB_VINC, c);
+      return { tpInsc, nrInsc: validarNumeroInscricao(tpInsc, s.nrInsc, c, { 1: [14], 2: [11] }) };
+    }),
+    transfTit: montarGrupoPorMotivo(d.transfTit, motivo === MTV_TRANSF_TIT, `${ctx}.transfTit`, motivo, (t, c) => {
+      exigir(t, ["cpfSubstituto", "dataNascimento"], c);
+      return { cpfSubstituto: validarCpf(t.cpfSubstituto, `${c}.cpfSubstituto`), dtNascto: formatarData(t.dataNascimento) };
+    }),
+    mudancaCPF: montarGrupoPorMotivo(d.mudancaCPF, motivo === MTV_MUDANCA_CPF, `${ctx}.mudancaCPF`, motivo, (m, c) => {
+      exigir(m, ["novoCPF"], c);
+      return { novoCPF: validarCpf(m.novoCPF, `${c}.novoCPF`) };
+    }),
+    verbasResc: dados.verbasRescisorias ? montarVerbasResc(dados, dtDeslig) : undefined,
+    remunAposDeslig: montarRemunAposDeslig(d.remunAposDeslig, dtDeslig, ctx),
+  };
+}
+
+// CONDICAO_GRUPO "O (se mtvDeslig = [...]); N (nos demais casos)".
+function montarGrupoPorMotivo(grupo, obrigatorio, contexto, motivo, montar) {
+  if (obrigatorio && !grupo) {
+    throw new ErroXmlESocial(`${contexto} é obrigatório para o motivo ${motivo}`, [contexto]);
+  }
+  if (!obrigatorio && grupo) {
+    throw new ErroXmlESocial(`${contexto} não pode ser informado para o motivo ${motivo}`);
+  }
+  return grupo ? montar(grupo, contexto) : undefined;
+}
+
+// pensAlim: "obrigatório e exclusivo" para celetista (tpRegTrab=1).
+// percAliment se tipo 1/3; vrAlim se tipo 2/3 — ambos "obrigatório e exclusivo".
+function montarPensaoAlimenticia(p, tpRegTrab, ctx) {
+  if (tpRegTrab === 2) {
+    if (p) throw new ErroXmlESocial(`${ctx}.pensaoAlimenticia só pode ser informada para celetista (tpRegTrab=1)`);
+    return {};
+  }
+  if (!p) throw new ErroXmlESocial(`${ctx}.pensaoAlimenticia.tipo é obrigatório para celetista (tpRegTrab=1)`, ["desligamento.pensaoAlimenticia"]);
+  exigir(p, ["tipo"], `${ctx}.pensaoAlimenticia`);
+  const tipo = validarDominio("tipo", p.tipo, new Set([0, 1, 2, 3]), `${ctx}.pensaoAlimenticia`);
+  const comPercentual = tipo === 1 || tipo === 3;
+  const comValor = tipo === 2 || tipo === 3;
+  if (comPercentual) exigir(p, ["percentual"], `${ctx}.pensaoAlimenticia`);
+  if (comValor) exigir(p, ["valor"], `${ctx}.pensaoAlimenticia`);
+  if (!comPercentual && p.percentual != null && p.percentual !== "") {
+    throw new ErroXmlESocial(`${ctx}.pensaoAlimenticia.percentual só pode ser informado quando tipo=1 ou 3`);
+  }
+  if (!comValor && p.valor != null && p.valor !== "") {
+    throw new ErroXmlESocial(`${ctx}.pensaoAlimenticia.valor só pode ser informado quando tipo=2 ou 3`);
+  }
+  return {
+    pensAlim: tipo,
+    percAliment: comPercentual ? formatarPositivo(p.percentual, `${ctx}.pensaoAlimenticia.percentual`, 100) : undefined,
+    vrAlim: comValor ? formatarPositivo(p.valor, `${ctx}.pensaoAlimenticia.valor`, 999999999999.99) : undefined,
+  };
+}
+
+function montarVerbasResc(dados, dtDeslig) {
+  const ctx = "dadosDesligamento.verbasRescisorias";
+  const demonstrativos = validarLista(dados.verbasRescisorias.demonstrativos, `${ctx}.demonstrativos`, { max: 50 });
+  validarIdesDmDevUnicos(demonstrativos, ctx);
+  const exigeIndApurIR = dtDeslig.slice(0, 7) >= INICIO_IND_APUR_IR_MENSAL;
+  // infoAgNocivo: "O (se o trabalhador estiver amparado pelo RGPS); N (nos demais casos)".
+  const regraAgNocivo = dados.tpRegPrev == null || Number(dados.tpRegPrev) === 1 ? "obrigatorio" : "proibido";
+
+  return {
+    dmDev: demonstrativos.map((dm, i) => {
+      const cDm = `${ctx}.demonstrativos[${i}]`;
+      exigir(dm, ["ideDmDev"], cDm);
+      return {
+        ideDmDev: validarTexto(dm.ideDmDev, `${cDm}.ideDmDev`, 30),
+        // Só verbas do mês do desligamento (infoPerApur) — infoPerAnt fora do escopo,
+        // então infoPerApur passa a ser obrigatório.
+        infoPerApur: {
+          ideEstabLot: validarLista(dm.estabelecimentos, `${cDm}.estabelecimentos`, { max: 24 }).map((e, j) => {
+            const cE = `${cDm}.estabelecimentos[${j}]`;
+            return {
+              ...montarIdeEstabLot(e, cE),
+              detVerbas: validarLista(e.rubricas, `${cE}.rubricas`, { max: 200 })
+                .map((r, k) => montarRubrica(r, `${cE}.rubricas[${k}]`, exigeIndApurIR)),
+              infoAgNocivo: montarInfoAgNocivo(e.grauExp, regraAgNocivo, cE),
+            };
+          }),
+        },
+      };
+    }),
+  };
+}
+
+function montarRemunAposDeslig(r, dtDeslig, ctx) {
+  if (!r) return undefined;
+  const c = `${ctx}.remunAposDeslig`;
+  exigir(r, ["dataFim"], c);
+  if (dtDeslig >= IND_REMUN_OBRIGATORIO_DESDE) exigir(r, ["indRemun"], c);
+  const dtFimRemun = formatarData(r.dataFim);
+  if (dtFimRemun <= dtDeslig) {
+    throw new ErroXmlESocial(`${c}.dataFim deve ser posterior à data de desligamento`);
+  }
+  return {
+    indRemun: r.indRemun == null || r.indRemun === "" ? undefined : validarDominio("indRemun", r.indRemun, new Set([1, 2, 3]), c),
+    dtFimRemun,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// S-1200 — Remuneração de trabalhador vinculado ao RGPS
+// ---------------------------------------------------------------------------
+// CONFERIDO CONTRA O XSD OFICIAL S-1.3 (evtRemun.xsd / tipos.xsd) — ver
+// docs/validacao-s2299-s1200-xsd.md.
+//
+// Um evento por trabalhador por competência (CHAVE: cpfTrab + perApur). As
+// rubricas vêm prontas no formulário: a folha do sistema (folha.service.js)
+// ainda não tem tabela de rubricas (S-1010), então não há mapeamento
+// automático folha -> S-1200 nesta versão.
+//
+// Fora do escopo desta versão: infoPerAnt (diferenças de períodos
+// anteriores), infoRRA, infoMV, procJudTrab, sucessaoVinc e descFolha.
+
+const RAIZ_S1200 = "evtRemun";
+
+/**
+ * Gera o XML do evento S-1200 (Remuneração).
+ *
+ * @param {object} dados
+ *   { empregador: { tpInsc:1|2, nrInsc },
+ *     indApuracao: 1 (mensal) | 2 (anual — 13º),
+ *     perApur: "AAAA-MM" (mensal) | "AAAA" (anual),
+ *     cpf,
+ *     infoComplementar?: { nome, dataNascimento } (trabalhador sem cadastro no RET),
+ *     infoInterm?: [{ dia, horasTrabalhadas? }] (obrigatório se algum demonstrativo
+ *                  for codCateg 111 em apuração mensal),
+ *     demonstrativos: [{
+ *       ideDmDev, codCateg,
+ *       estabelecimentos: [{ tpInsc:1|3|4, nrInsc, codLotacao, qtdDiasAvulso?,
+ *         remuneracoes: [{ matricula?, indSimples?:1|2|3, grauExp?,
+ *           rubricas: [{ codigo, tabela, quantidade?, fator?, valor, indApurIR? }] }] }],
+ *       infoComplCont?: { codCBO, natAtividade?:1|2, qtdDiasTrab? } }],
+ *     ambiente?, verProc?, dataHoraGeracao?, sequencial? }
+ *
+ * @returns {string} XML do evento.
+ */
+export function gerarXmlS1200(dados) {
+  if (!dados || typeof dados !== "object") {
+    throw new ErroXmlESocial("dados da remuneração são obrigatórios");
+  }
+  exigir(
+    dados,
+    ["empregador.tpInsc", "empregador.nrInsc", "indApuracao", "perApur", "cpf", "demonstrativos"],
+    "dadosRemuneracao",
+  );
+  const { id, tpAmb, verProc, ideEmpregador } = prepararCabecalho(dados, "dadosRemuneracao");
+  const indApuracao = validarDominio("indApuracao", dados.indApuracao, new Set([1, 2]), "dadosRemuneracao");
+  const perApur = formatarPerApur(dados.perApur, indApuracao);
+  const exigeIndApurIR = indApuracao === 1
+    ? perApur >= INICIO_IND_APUR_IR_MENSAL
+    : perApur >= INICIO_IND_APUR_IR_ANUAL;
+
+  const demonstrativos = validarLista(dados.demonstrativos, "dadosRemuneracao.demonstrativos", { max: 999 });
+  validarIdesDmDevUnicos(demonstrativos, "dadosRemuneracao");
+
+  // infoInterm: "O (se codCateg = [111], indApuracao = [1] e existir infoPerApur); N (nos demais casos)".
+  const exigeInterm = indApuracao === 1 && demonstrativos.some((dm) => Number(dm.codCateg) === 111);
+  if (exigeInterm) exigir(dados, ["infoInterm"], "dadosRemuneracao (intermitente)");
+  if (!exigeInterm && dados.infoInterm) {
+    throw new ErroXmlESocial("dadosRemuneracao.infoInterm só pode ser informado em apuração mensal com demonstrativo de codCateg=111");
+  }
+
+  const ic = dados.infoComplementar;
+  if (ic) exigir(ic, ["nome", "dataNascimento"], "dadosRemuneracao.infoComplementar");
+
+  const corpo = {
+    ideEvento: {
+      indRetif: 1,
+      indApuracao,
+      perApur,
+      tpAmb,
+      procEmi: PROC_EMI_APP_EMPREGADOR,
+      verProc,
+    },
+    ideEmpregador,
+    ideTrabalhador: {
+      cpfTrab: validarCpf(dados.cpf, "dadosRemuneracao.cpf"),
+      infoComplem: ic
+        ? { nmTrab: validarTexto(ic.nome, "dadosRemuneracao.infoComplementar.nome", 70, { min: 2 }), dtNascto: formatarData(ic.dataNascimento) }
+        : undefined,
+      infoInterm: exigeInterm ? montarInfoInterm(dados.infoInterm, "dadosRemuneracao.infoInterm") : undefined,
+    },
+    dmDev: demonstrativos.map((dm, i) => montarDmDevRemun(dm, `dadosRemuneracao.demonstrativos[${i}]`, exigeIndApurIR)),
+  };
+
+  return montarEnvelope({ raiz: RAIZ_S1200, xmlns: xmlnsEvento(RAIZ_S1200), id, corpo });
+}
+
+function formatarPerApur(valor, indApuracao) {
+  const texto = String(valor).trim();
+  if (indApuracao === 2) {
+    if (!/^2\d{3}$/.test(texto)) {
+      throw new ErroXmlESocial(`dadosRemuneracao.perApur deve ser "AAAA" quando indApuracao=2 (recebido: "${valor}")`);
+    }
+    return texto;
+  }
+  if (!/^\d{4}-\d{2}$/.test(texto)) {
+    throw new ErroXmlESocial(`dadosRemuneracao.perApur deve ser "AAAA-MM" quando indApuracao=1 (recebido: "${valor}")`);
+  }
+  return formatarCompetencia(texto);
+}
+
+// infoAgNocivo: "O (se codCateg = [1XX, 2XX, 3XX, 731, 734, 738] ou [4XX] com
+// categOrig compatível em S-2300); N (nos demais casos)". categOrig não está no
+// S-1200, então para 4XX o grupo é aceito mas não exigido.
+function regraAgNocivoS1200(codCateg) {
+  const grupo = Math.floor(codCateg / 100);
+  if ([1, 2, 3].includes(grupo) || [731, 734, 738].includes(codCateg)) return "obrigatorio";
+  if (grupo === 4) return "opcional";
+  return "proibido";
+}
+
+function montarDmDevRemun(dm, ctx, exigeIndApurIR) {
+  exigir(dm, ["ideDmDev", "codCateg"], ctx);
+  const codCateg = Number(dm.codCateg);
+  if (!Number.isInteger(codCateg) || codCateg < 100 || codCateg > 999) {
+    throw new ErroXmlESocial(`${ctx}.codCateg deve ser um código de 3 dígitos da Tabela 01 (recebido: ${dm.codCateg})`);
+  }
+  const regraAgNocivo = regraAgNocivoS1200(codCateg);
+
+  return {
+    ideDmDev: validarTexto(dm.ideDmDev, `${ctx}.ideDmDev`, 30),
+    codCateg,
+    // infoPerAnt fora do escopo -> infoPerApur obrigatório.
+    infoPerApur: {
+      ideEstabLot: validarLista(dm.estabelecimentos, `${ctx}.estabelecimentos`, { max: 500 }).map((e, j) => {
+        const cE = `${ctx}.estabelecimentos[${j}]`;
+        let qtdDiasAv;
+        if (e.qtdDiasAvulso != null && e.qtdDiasAvulso !== "") {
+          qtdDiasAv = Number(e.qtdDiasAvulso);
+          if (!Number.isInteger(qtdDiasAv) || qtdDiasAv < 0 || qtdDiasAv > 31) {
+            throw new ErroXmlESocial(`${cE}.qtdDiasAvulso deve ser inteiro de 0 a 31`);
+          }
+        }
+        return {
+          ...montarIdeEstabLot(e, cE),
+          qtdDiasAv,
+          remunPerApur: validarLista(e.remuneracoes, `${cE}.remuneracoes`, { max: 8 }).map((r, k) => {
+            const cR = `${cE}.remuneracoes[${k}]`;
+            return {
+              matricula: r.matricula == null || r.matricula === "" ? undefined : validarTexto(r.matricula, `${cR}.matricula`, 30, { naoBranco: false }),
+              indSimples: r.indSimples == null || r.indSimples === "" ? undefined : validarDominio("indSimples", r.indSimples, new Set([1, 2, 3]), cR),
+              itensRemun: validarLista(r.rubricas, `${cR}.rubricas`, { max: 200 })
+                .map((rub, m) => montarRubrica(rub, `${cR}.rubricas[${m}]`, exigeIndApurIR)),
+              infoAgNocivo: montarInfoAgNocivo(r.grauExp, regraAgNocivo, cR),
+            };
+          }),
+        };
+      }),
+    },
+    infoComplCont: montarInfoComplCont(dm.infoComplCont, ctx),
+  };
+}
+
+function montarInfoComplCont(c, ctx) {
+  if (!c) return undefined;
+  const cc = `${ctx}.infoComplCont`;
+  exigir(c, ["codCBO"], cc);
+  const codCBO = soDigitos(c.codCBO);
+  if (codCBO.length !== 6) throw new ErroXmlESocial(`${cc}.codCBO deve conter 6 dígitos`);
+  let qtdDiasTrab;
+  if (c.qtdDiasTrab != null && c.qtdDiasTrab !== "") {
+    qtdDiasTrab = Number(c.qtdDiasTrab);
+    if (!Number.isInteger(qtdDiasTrab) || qtdDiasTrab < 0 || qtdDiasTrab > 31) {
+      throw new ErroXmlESocial(`${cc}.qtdDiasTrab deve ser inteiro de 0 a 31`);
+    }
+  }
+  return {
+    codCBO,
+    natAtividade: c.natAtividade == null || c.natAtividade === "" ? undefined : validarDominio("natAtividade", c.natAtividade, new Set([1, 2]), cc),
+    qtdDiasTrab,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Registro de eventos + dispatcher genérico
 // ---------------------------------------------------------------------------
-// Só S-2200 está implementado nesta task. Os outros 11 códigos existem no
-// catálogo (ES-4) mas ainda não têm gerador — ES-7 deve tratar isso como
-// "evento não suportado ainda" (não como erro de entrada do usuário).
+// Implementados: S-2200 (#375), S-2299 e S-1200 (#648). Os demais códigos
+// existem no catálogo (ES-4) mas ainda não têm gerador — ES-7 deve tratar
+// isso como "evento não suportado ainda" (não como erro de entrada do usuário).
 //
-// PRÓXIMAS ITERAÇÕES (fora de #375, cada uma uma task incremental):
-//   Grupo 2: S-2205, S-2206, S-2230, S-2298, S-2299
+// PRÓXIMAS ITERAÇÕES (cada uma uma task incremental):
+//   Grupo 2: S-2205, S-2206, S-2230, S-2298
 //   Grupo 3: S-2210, S-2220, S-2240
-//   Grupo 4: S-1200, S-1210, S-1299
+//   Grupo 4: S-1210, S-1299
 // ---------------------------------------------------------------------------
 
 export const EVENTOS = {
   "S-2200": { raiz: RAIZ_S2200, versao: VERSAO_LEIAUTE, gerar: gerarXmlS2200 },
+  "S-2299": { raiz: RAIZ_S2299, versao: VERSAO_LEIAUTE, gerar: gerarXmlS2299 },
+  "S-1200": { raiz: RAIZ_S1200, versao: VERSAO_LEIAUTE, gerar: gerarXmlS1200 },
 };
 
 export function eventoSuportado(codigo) {
