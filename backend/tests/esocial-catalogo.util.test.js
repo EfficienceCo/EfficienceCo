@@ -62,15 +62,17 @@ describe("CATALOGO_ESOCIAL — códigos válidos", () => {
 });
 
 describe("CATALOGO_ESOCIAL — geradorDisponivel (via registro EVENTOS)", () => {
-  // No backend a flag `geradorDisponivel` do front espelha `eventoSuportado`:
-  // só códigos presentes em EVENTOS têm gerador de XML. Hoje só S-2200.
-  it("só S-2200 tem gerador disponível", () => {
+  // Só códigos presentes em EVENTOS têm gerador de XML: S-2200 (#375),
+  // S-2299 e S-1200 (#648). A flag `geradorDisponivel` do front só liga
+  // quando o wizard ganha o formulário do evento — hoje só o S-2200.
+  const COM_GERADOR = new Set(["S-2200", "S-2299", "S-1200"]);
+  it("só S-2200, S-2299 e S-1200 têm gerador disponível", () => {
     for (const codigo of Object.keys(CATALOGO_ESOCIAL)) {
       const disponivel = eventoSuportado(codigo);
       assert.equal(
         disponivel,
-        codigo === "S-2200",
-        `${codigo}: geradorDisponivel esperado ${codigo === "S-2200"}`,
+        COM_GERADOR.has(codigo),
+        `${codigo}: geradorDisponivel esperado ${COM_GERADOR.has(codigo)}`,
       );
     }
   });

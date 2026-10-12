@@ -705,8 +705,8 @@ describe("gerarXmlEvento — dispatcher para ES-7", () => {
   });
 
   it("evento do catálogo ainda sem gerador lança erro claro (não é erro do usuário)", () => {
-    assert.ok(!eventoSuportado("S-2299"));
-    assert.throws(() => gerarXmlEvento("S-2299", {}, {}), /ainda não tem gerador/);
+    assert.ok(!eventoSuportado("S-2230"));
+    assert.throws(() => gerarXmlEvento("S-2230", {}, {}), /ainda não tem gerador/);
   });
 
   it("código fora do catálogo lança 'desconhecido'", () => {
