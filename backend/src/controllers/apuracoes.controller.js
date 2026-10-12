@@ -10,6 +10,7 @@ import {
   ultimoDiaDoMes,
 } from "../utils/periodo.util.js";
 import { validarHistoricoReceita } from "../utils/regime-tributario.util.js";
+import { ehUuid } from "../utils/uuid.util.js";
 
 const REGIMES_SUPORTADOS = new Set(["simples_nacional"]);
 const FOLHA_STATUS = {
@@ -437,6 +438,13 @@ export async function dispararApuracao(req, res) {
     return res.status(400).json({ erro: "clienteId é obrigatório" });
   }
 
+  // BUG-APUR-13 / #613 — clienteId não-UUID vira 22P02 no Postgres e o
+  // handler genérico respondia 500. Mesmo helper de lancamentos-fiscais /
+  // conciliações (uuid.util.js).
+  if (!ehUuid(clienteId)) {
+    return res.status(400).json({ erro: "clienteId inválido" });
+  }
+
   const { mes, ano, regime } = req.body;
   // Distinguir ausente (undefined/null/"") de fora de faixa (ex.: mes=0) —
   // `!mes` tratava 0 como ausente e devolvia mensagem enganosa (QA-F §F7 / #502).
@@ -607,6 +615,11 @@ export async function listarApuracoes(req, res) {
     return res.status(400).json({ erro: "clienteId é obrigatório" });
   }
 
+  // BUG-APUR-13 / #613 — ver dispararApuracao.
+  if (!ehUuid(clienteId)) {
+    return res.status(400).json({ erro: "clienteId inválido" });
+  }
+
   const { mes, ano } = req.query;
   const mesNum = mes === undefined ? null : inteiroEstrito(mes);
   const anoNum = ano === undefined ? null : inteiroEstrito(ano);
@@ -638,6 +651,12 @@ export async function listarApuracoes(req, res) {
 
 export async function detalharApuracao(req, res) {
   const { id } = req.params;
+
+  // BUG-APUR-13 / #613 — id malformado responde igual a inexistente (404),
+  // sem vazar existência nem cair no 500 do Postgres (22P02).
+  if (!ehUuid(id)) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
 
   const { data, error } = await supabase.from("apuracoes").select("*").eq("id", id).maybeSingle();
 
@@ -712,6 +731,12 @@ export async function detalharApuracao(req, res) {
 
 export async function editarApuracao(req, res) {
   const { id } = req.params;
+
+  // BUG-APUR-13 / #613 — ver detalharApuracao.
+  if (!ehUuid(id)) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
+
   const { valor_editado: valorEditado, motivo } = req.body;
   const motivoNormalizado = typeof motivo === "string" ? motivo.trim() : "";
   const valorNumerico = numeroNaoNegativo(valorEditado);
@@ -777,6 +802,11 @@ export async function editarApuracao(req, res) {
 
 export async function aprovarApuracao(req, res) {
   const { id } = req.params;
+
+  // BUG-APUR-13 / #613 — ver detalharApuracao.
+  if (!ehUuid(id)) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
@@ -846,6 +876,11 @@ export async function aprovarApuracao(req, res) {
 export async function excluirApuracao(req, res) {
   const { id } = req.params;
 
+  // BUG-APUR-13 / #613 — ver detalharApuracao.
+  if (!ehUuid(id)) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
+
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
     .select("cliente_id, status")
@@ -894,6 +929,11 @@ export async function excluirApuracao(req, res) {
 // substitui fator_r/aliquota_efetiva/valor_calculado.
 export async function recalcularApuracao(req, res) {
   const { id } = req.params;
+
+  // BUG-APUR-13 / #613 — ver detalharApuracao.
+  if (!ehUuid(id)) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
@@ -1120,6 +1160,12 @@ export async function registrarResultadoFolha(req, res) {
   }
 
   const { id } = req.params;
+
+  // BUG-APUR-13 / #613 — ver detalharApuracao.
+  if (!ehUuid(id)) {
+    return res.status(404).json({ erro: "Apuração não encontrada" });
+  }
+
   const { temDozeMeses, mesesEncontrados, totalMesesEncontrados } = req.body || {};
 
   if (typeof temDozeMeses !== "boolean") {
