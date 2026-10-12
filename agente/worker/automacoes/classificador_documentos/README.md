@@ -60,8 +60,27 @@ py -3 -m pytest tests/test_artefatos_classificador.py -q
 py -3 -m automacoes.classificador_documentos.instalar_artefatos --status
 ```
 
-## Treino (fora do escopo do #509 / #639)
+## Treino e publicação (#649)
 
-Script de treino na stack TF-IDF: `treinar.py` (branch `#525` / pasta histórica `teste_rede_neural/`). Após treinar, copiar os 3 arquivos + atualizar `manifest.json` (`modelo_version`, `sha256`, `publicado: true`) e incluir no pacote do launcher.
+Treina-se **uma vez**, com documentos **reais e anonimizados** de cliente (decisão 2026-09-29 — nada de dataset sintético pro artefato publicado). Escopo: PDF, DOCX e XLSX (`.xls` e imagem ficam fora).
 
-Deps de treino (`scikit-learn`, `joblib`) instalam-se **à parte** no ambiente de treino — não via `agente/worker/requirements.txt`. Só entram no manifesto do worker quando RN-1b trocar o import em `identificar_tipo.py`.
+1. Montar o dataset: uma subpasta por classe (nome da pasta = rótulo), mínimo **10 documentos por classe** (`--minimo-por-classe`). PDF escaneado sem texto é pulado com aviso.
+2. Em um ambiente com `scikit-learn` + `joblib` (instalados **à parte**, não via `requirements.txt` do worker), na raiz do worker:
+
+```powershell
+py -3 -m automacoes.classificador_documentos.treinar --dataset C:\dataset --saida C:\artefatos-1.0.0
+```
+
+   Gera `modelo.pt`, `vetorizador.joblib`, `indice_para_rotulo.joblib` e `relatorio_treino.json`, com a acurácia de teste **por tipo** — por argmax e com o limiar de produção (0.75; abaixo dele vira `nao_identificado`). O TF-IDF é fitado só no split de treino, então o número de teste não vaza vocabulário. Seed fixa (`--seed`), resultado reprodutível.
+3. Se o relatório estiver bom, publicar (mesmo comando + `--publicar`):
+
+```powershell
+py -3 -m automacoes.classificador_documentos.treinar --dataset C:\dataset --saida C:\artefatos-1.0.0 --publicar 1.0.0
+```
+
+   Preenche os SHA-256 no `manifest.json` versionado, marca `publicado: true`, grava o baseline (`baseline.acuracia_teste_por_classe`) e copia o manifest pra pasta de saída (o `instalar_artefatos --fonte` confere os hashes por ela). Commitar o `manifest.json` — os binários **não** vão pro git.
+4. Empacotar com `-ArtefatosFonte C:\artefatos-1.0.0`. Com o manifest publicado, o `empacotar.ps1` **falha** se faltar artefato ou se o hash não bater.
+
+A inferência (`classificar_documento`) lê os artefatos do destino canônico (`artefatos.destino_artefatos`), então o que o pacote do launcher instala é o que ela usa.
+
+Ligar a produção (trocar o import em `core/identificar_tipo.py`, `scikit-learn`/`joblib` no `requirements.txt` e no `deps-runtime.txt`) é o RN-1b, fora deste passo.

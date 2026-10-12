@@ -1,9 +1,11 @@
 import os
 import re
+import sys
 
 import torch
 import torch.nn as nn
 
+from automacoes.classificador_documentos import artefatos as art
 from automacoes.classificador_documentos.extrator import extrair_texto
 
 # joblib/sklearn NÃO estão no requirements do worker (#513 / #639). Path oficial
@@ -23,12 +25,10 @@ def _import_joblib():
         ) from e
     return joblib
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_MODEL_PATH = os.path.join(BASE_DIR, 'modelo.pt')
-DEFAULT_VETORIZADOR_PATH = os.path.join(BASE_DIR, 'vetorizador.joblib')
-DEFAULT_INDICE_PATH = os.path.join(BASE_DIR, 'indice_para_rotulo.joblib')
+# .xls fica fora: o extrator usa openpyxl, que não lê o formato antigo (#649).
+EXTENSOES_SUPORTADAS = ('.pdf', '.docx', '.xlsx')
 
-EXTENSOES_SUPORTADAS = ('.pdf', '.docx', '.xlsx', '.xls')
+TAMANHO_OCULTO = 32  # tem que bater com o treino (treinar.py)
 
 _artefatos_cache = {}
 
@@ -73,7 +73,7 @@ def _carregar_artefatos(model_path, vetorizador_path, indice_path):
     tamanho_vocabulario = len(vetorizador.get_feature_names_out())
     modelo = ClassificadorDocumentos(
         tamanho_entrada=tamanho_vocabulario,
-        tamanho_oculto=32,
+        tamanho_oculto=TAMANHO_OCULTO,
         numero_classes=len(rotulo_para_indice),
     )
     modelo.load_state_dict(torch.load(model_path, map_location="cpu"))
@@ -86,14 +86,21 @@ def _carregar_artefatos(model_path, vetorizador_path, indice_path):
 
 def classificar_documento(
     arquivo_path,
-    model_path=DEFAULT_MODEL_PATH,
-    vetorizador_path=DEFAULT_VETORIZADOR_PATH,
-    indice_path=DEFAULT_INDICE_PATH,
+    model_path=None,
+    vetorizador_path=None,
+    indice_path=None,
     threshold=0.75,
 ):
     extensao = os.path.splitext(arquivo_path)[1].lower()
     if extensao not in EXTENSOES_SUPORTADAS:
-        return {"erro": f"Extensão '{extensao}' não suportada. Use PDF, DOCX, XLSX ou XLS."}
+        return {"erro": f"Extensão '{extensao}' não suportada. Use PDF, DOCX ou XLSX."}
+
+    # Sem caminho explícito, segue o destino canônico dos artefatos
+    # (CLASSIFICADOR_ARTEFATOS_DIR > pacote do launcher > pasta do módulo).
+    caminhos = art.caminhos_arquivo()
+    model_path = model_path or str(caminhos["modelo.pt"])
+    vetorizador_path = vetorizador_path or str(caminhos["vetorizador.joblib"])
+    indice_path = indice_path or str(caminhos["indice_para_rotulo.joblib"])
 
     try:
         vetorizador, indice_para_rotulo, modelo = _carregar_artefatos(
@@ -134,7 +141,10 @@ def classificar_documento(
 
 
 if __name__ == "__main__":
-    resultado = classificar_documento("C:/Users/USUARIO/Desktop/Meus Arquivos no geral/artigos IC/Kim.pdf")
+    if len(sys.argv) != 2:
+        print("uso: python -m automacoes.classificador_documentos.classificador <arquivo>")
+        raise SystemExit(2)
+    resultado = classificar_documento(sys.argv[1])
     if "erro" in resultado:
         print(f"Erro: {resultado['erro']}")
     else:

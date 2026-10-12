@@ -1,10 +1,11 @@
-# Empacota launcher + worker + pasta de modelos do classificador.
+﻿# Empacota launcher + worker + pasta de modelos do classificador.
 # Uso (a partir de agente/):
 #   powershell -File worker/scripts/empacotar.ps1 -SaidaDir "C:\dist\Efficience"
 #
 # Os binários dos artefatos (modelo.pt / *.joblib) só entram se existirem em
-# -ArtefatosFonte. Sem eles o pacote ainda é válido: a gestão de paths fica
-# pronta; a inferência ML fica para quando houver treino publicado (#509).
+# -ArtefatosFonte. Enquanto o manifest estiver publicado=false, o pacote é
+# válido sem eles (#509). Com publicado=true, o empacote falha se faltar
+# algum artefato ou se o SHA-256 não bater com o manifest (#649).
 
 param(
     [Parameter(Mandatory = $true)]
@@ -45,6 +46,26 @@ if ($ArtefatosFonte -and (Test-Path $ArtefatosFonte)) {
         if (Test-Path $src) {
             Copy-Item -Force $src (Join-Path $ModelosDir $nome)
         }
+    }
+}
+
+# Manifest publicado (#649): o pacote só sai com os 3 artefatos e hashes batendo.
+$Manifest = Get-Content -Raw -Encoding UTF8 $ManifestSrc | ConvertFrom-Json
+if ($Manifest.publicado) {
+    $erros = @()
+    foreach ($item in $Manifest.arquivos) {
+        $alvo = Join-Path $ModelosDir $item.nome
+        if (-not (Test-Path $alvo)) {
+            $erros += "$($item.nome) ausente (passe -ArtefatosFonte)"
+            continue
+        }
+        $hash = (Get-FileHash -Algorithm SHA256 $alvo).Hash.ToLower()
+        if ($item.sha256 -and $hash -ne $item.sha256.ToLower()) {
+            $erros += "$($item.nome) com SHA-256 diferente do manifest"
+        }
+    }
+    if ($erros.Count -gt 0) {
+        throw ("Manifest publicado (versão $($Manifest.modelo_version)), mas: " + ($erros -join "; "))
     }
 }
 

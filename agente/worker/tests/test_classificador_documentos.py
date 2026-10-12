@@ -1,7 +1,7 @@
 """Testa o classificador ML de tipo de documento (PDF/DOCX/XLSX).
 
 Escopo combinado com o time: a rede só processa arquivos editáveis
-(PDF, DOCX, XLSX/XLS) — imagem (JPG/PNG) fica de fora por decisão de
+(PDF, DOCX, XLSX) — imagem (JPG/PNG) fica de fora por decisão de
 produto, não por regressão. Os testes abaixo travam esse contrato e
 garantem que o módulo é seguro de importar mesmo sem o artefato de
 treino (modelo.pt / vetorizador.joblib / indice_para_rotulo.joblib)
@@ -23,7 +23,8 @@ from automacoes.classificador_documentos.classificador import classificar_docume
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("nome", ["foto.jpg", "scan.png", "nota.jpeg", "notas.txt"])
+# .xls também: o extrator usa openpyxl, que não lê o formato antigo (#649).
+@pytest.mark.parametrize("nome", ["foto.jpg", "scan.png", "nota.jpeg", "notas.txt", "antigo.xls"])
 def test_extensao_fora_de_escopo_retorna_erro_explicito(tmp_path, nome):
     f = tmp_path / nome
     f.write_bytes(b"conteudo qualquer")
@@ -39,7 +40,7 @@ def test_extensao_fora_de_escopo_retorna_erro_explicito(tmp_path, nome):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("nome", ["doc.pdf", "doc.docx", "doc.xlsx", "doc.xls"])
+@pytest.mark.parametrize("nome", ["doc.pdf", "doc.docx", "doc.xlsx"])
 def test_extensao_em_escopo_sem_artefato_retorna_erro_de_artefato(tmp_path, nome):
     """PDF/DOCX/XLSX passam pela checagem de extensão — o erro aqui é de
     artefato ausente, não de extensão não suportada (é a diferença que
@@ -58,6 +59,21 @@ def test_extensao_em_escopo_sem_artefato_retorna_erro_de_artefato(tmp_path, nome
     assert "erro" in resultado
     assert "suportad" not in resultado["erro"].lower()
     assert "não existe" in resultado["erro"].lower()
+
+
+def test_sem_caminho_explicito_usa_destino_canonico(tmp_path, monkeypatch):
+    """Sem paths explícitos, a inferência procura os artefatos no destino de
+    artefatos.destino_artefatos (env / pacote do launcher), não só na pasta
+    do módulo — senão o que o empacote copia nunca seria lido (#649)."""
+    destino = tmp_path / "modelos" / "classificador_documentos"
+    monkeypatch.setenv("CLASSIFICADOR_ARTEFATOS_DIR", str(destino))
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-1.4")
+
+    resultado = classificar_documento(str(f))
+
+    assert "erro" in resultado
+    assert str(destino / "modelo.pt") in resultado["erro"]
 
 
 def test_import_nao_falha_sem_artefatos_no_disco():

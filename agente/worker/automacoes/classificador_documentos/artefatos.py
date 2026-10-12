@@ -208,6 +208,58 @@ def instalar_artefatos(
     }
 
 
+def publicar_manifest(
+    diretorio: str | Path,
+    versao: str,
+    *,
+    relatorio: dict | None = None,
+    caminho_manifest: Path | None = None,
+) -> dict:
+    """Grava no manifest os SHA-256 dos 3 artefatos em `diretorio` e marca publicado.
+
+    Usado uma vez, depois do treino (#649). Com `relatorio`, registra também a
+    acurácia de teste por tipo (o baseline que o re-QA-J compara).
+    """
+    path = caminho_manifest or MANIFEST_PATH
+    dest = Path(diretorio).expanduser().resolve()
+    faltando = [n for n in ARQUIVOS_OBRIGATORIOS if not (dest / n).is_file()]
+    if faltando:
+        raise FileNotFoundError(
+            f"Não dá pra publicar: faltam em {dest}: {', '.join(faltando)}"
+        )
+    if not versao or "unpublished" in versao:
+        raise ValueError(f"Versão de publicação inválida: {versao!r}")
+
+    man = carregar_manifest(path)
+    nomes_manifest = {item["nome"] for item in man.get("arquivos", [])}
+    for nome in ARQUIVOS_OBRIGATORIOS:
+        if nome not in nomes_manifest:
+            man.setdefault("arquivos", []).append({"nome": nome, "obrigatorio": True})
+    for item in man["arquivos"]:
+        if item["nome"] in ARQUIVOS_OBRIGATORIOS:
+            item["sha256"] = _sha256_arquivo(dest / item["nome"])
+
+    man["modelo_version"] = versao
+    man["publicado"] = True
+    man.pop("nota", None)
+    if relatorio is not None:
+        teste = relatorio["metricas"]["teste"]
+        man["baseline"] = {
+            "documentos_por_classe": relatorio["documentos_por_classe"],
+            "limiar": teste["limiar"],
+            "acuracia_teste": teste["acuracia"],
+            "acuracia_teste_com_limiar": teste["acuracia_com_limiar"],
+            "acuracia_teste_por_classe": {
+                rotulo: m["acuracia_com_limiar"] for rotulo, m in teste["por_classe"].items()
+            },
+        }
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(man, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return man
+
+
 def caminhos_arquivo(
     diretorio: str | Path | None = None,
 ) -> dict[str, Path]:

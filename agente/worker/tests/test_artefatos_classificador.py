@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -84,7 +86,13 @@ def test_manifest_versionado_lista_os_tres_arquivos():
     nomes = [a["nome"] for a in man["arquivos"]]
     assert nomes == list(art.ARQUIVOS_OBRIGATORIOS)
     assert man["destino_relativo_pacote"] == "modelos/classificador_documentos"
-    assert man["publicado"] is False
+    if man["publicado"]:
+        # Publicação (#649): versão real e os 3 hashes preenchidos.
+        assert "unpublished" not in man["modelo_version"]
+        for item in man["arquivos"]:
+            assert re.fullmatch(r"[0-9a-f]{64}", item["sha256"] or ""), item["nome"]
+    else:
+        assert all(item["sha256"] is None for item in man["arquivos"])
 
 
 def test_cli_status_exit_code(tmp_path, monkeypatch):
@@ -95,3 +103,66 @@ def test_cli_status_exit_code(tmp_path, monkeypatch):
 
     _escrever_trio(tmp_path)
     assert main(["--status", "--sem-hash"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# publicar_manifest (#649)
+# ---------------------------------------------------------------------------
+
+
+def _manifest_temporario(tmp_path: Path) -> Path:
+    copia = tmp_path / "manifest.json"
+    shutil.copy2(art.MANIFEST_PATH, copia)
+    return copia
+
+
+def test_publicar_preenche_hashes_e_marca_publicado(tmp_path):
+    artefatos = tmp_path / "artefatos"
+    _escrever_trio(artefatos, b"pesos")
+    manifest = _manifest_temporario(tmp_path)
+    relatorio = {
+        "documentos_por_classe": {"holerite": 12, "contrato_social": 10},
+        "metricas": {
+            "teste": {
+                "limiar": 0.75,
+                "acuracia": 0.9,
+                "acuracia_com_limiar": 0.8,
+                "por_classe": {
+                    "contrato_social": {"acuracia_com_limiar": 0.5},
+                    "holerite": {"acuracia_com_limiar": 1.0},
+                },
+            }
+        },
+    }
+
+    art.publicar_manifest(artefatos, "1.0.0", relatorio=relatorio, caminho_manifest=manifest)
+
+    man = art.carregar_manifest(manifest)
+    assert man["publicado"] is True
+    assert man["modelo_version"] == "1.0.0"
+    assert "nota" not in man
+    dig = art._sha256_arquivo(artefatos / "modelo.pt")
+    assert {item["sha256"] for item in man["arquivos"]} == {dig}
+    assert man["baseline"]["acuracia_teste_por_classe"] == {
+        "contrato_social": 0.5,
+        "holerite": 1.0,
+    }
+    # O manifest publicado valida os próprios artefatos.
+    assert art.verificar_artefatos(artefatos, manifest=man)["completo"] is True
+
+
+def test_publicar_sem_artefatos_falha_e_nao_altera_manifest(tmp_path):
+    manifest = _manifest_temporario(tmp_path)
+    antes = manifest.read_bytes()
+    with pytest.raises(FileNotFoundError, match="faltam"):
+        art.publicar_manifest(tmp_path / "vazio", "1.0.0", caminho_manifest=manifest)
+    assert manifest.read_bytes() == antes
+
+
+@pytest.mark.parametrize("versao", ["", "0.0.0-unpublished"])
+def test_publicar_recusa_versao_invalida(tmp_path, versao):
+    artefatos = tmp_path / "artefatos"
+    _escrever_trio(artefatos)
+    manifest = _manifest_temporario(tmp_path)
+    with pytest.raises(ValueError, match="inválida"):
+        art.publicar_manifest(artefatos, versao, caminho_manifest=manifest)
