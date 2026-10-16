@@ -9,14 +9,19 @@ from __future__ import annotations
 import shutil
 import sys
 import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import comunicacao.api_client as client
 from comunicacao.api_client import ApiError
 from comunicacao.buscar_empresa import buscar_empresa_por_cnpj
-from core.configuracao import obter_pasta_base, obter_pasta_nfe
+from comunicacao.reportar_evento import reportar_evento
+from core.configuracao import (
+    INTERVALO_POLLING_SEGUNDOS,
+    obter_pasta_base,
+    obter_pasta_nfe,
+)
 from core.estrutura_pastas import criar_estrutura_empresa_em, resolver_destino
 from core.utils import validar_caminho, validar_nome
 
@@ -24,6 +29,8 @@ NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
 _ASCII_DIGITS = "0123456789"
 PASTA_NAO_IDENTIFICADO = "nao_identificado"
 PASTA_EVENTOS_CANCELAMENTO = "eventos_cancelamento"
+# 404 no cancelamento após esgotar a espera pela nota (NFE-4 / #656).
+PASTA_EVENTOS_PENDENTES = "eventos_pendentes"
 # Erro 4xx do POST não some reenviando; fica fora do inbox (polling de 30s).
 PASTA_REJEITADOS = "rejeitados"
 # 409: a NF-e já está no ledger — não gera outra cópia em Notas Fiscais/.
@@ -35,6 +42,10 @@ ENDPOINT_LANCAMENTOS = "/lancamentos-fiscais"
 ENDPOINT_CANCELAMENTO = "/lancamentos-fiscais/cancelar"
 _CSTAT_AUTORIZADOS = {"100", "150"}
 _CSTAT_CANCELAMENTO_AUTORIZADO = {"135", "155"}
+# Pior caso legitimo (QA-E / polling): 1o 404, ciclo seguinte escritura a nota,
+# ciclo seguinte cancela = 2 * INTERVALO. Margem 150% = 3 * INTERVALO (90s se 30s).
+ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS = int(INTERVALO_POLLING_SEGUNDOS * 2 * 1.5)
+_SUFIXO_ESPERA_CANCEL = ".espera-cancel"
 
 
 def _find(pai: ET.Element, path: str) -> ET.Element | None:
@@ -487,6 +498,98 @@ def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> No
     _mover_para_subpasta(xml_path, pasta_path, PASTA_NAO_IDENTIFICADO, "não identificado", motivo)
 
 
+def _caminho_espera_cancelamento(xml_path: Path) -> Path:
+    return xml_path.with_name(xml_path.name + _SUFIXO_ESPERA_CANCEL)
+
+
+def _agora_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _limpar_espera_cancelamento(xml_path: Path) -> None:
+    sidecar = _caminho_espera_cancelamento(xml_path)
+    try:
+        if sidecar.is_file():
+            sidecar.unlink()
+    except OSError:
+        pass
+
+
+def _espera_cancelamento_esgotada(xml_path: Path) -> bool:
+    """Registra o 1º 404 e diz se a espera pela nota já estourou (NFE-4).
+
+    Sidecar com timestamp da primeira falha 404 — mede duração da espera, não
+    quantos polls o agente fez. Retorna False na primeira vez (ainda dentro da
+    janela); True quando agora − início ≥ ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS.
+    """
+    agora = _agora_utc()
+    sidecar = _caminho_espera_cancelamento(xml_path)
+    if not sidecar.is_file():
+        try:
+            sidecar.write_text(agora.isoformat(), encoding="utf-8")
+        except OSError as e:
+            print(f"[processar_nfe] falha ao gravar espera de cancelamento: {e}")
+        return False
+
+    try:
+        inicio = datetime.fromisoformat(sidecar.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        try:
+            sidecar.write_text(agora.isoformat(), encoding="utf-8")
+        except OSError:
+            pass
+        return False
+
+    if inicio.tzinfo is None:
+        inicio = inicio.replace(tzinfo=timezone.utc)
+    return (agora - inicio).total_seconds() >= ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS
+
+
+def _tratar_falha_cancelamento(
+    xml_path: Path, pasta_path: Path, evento: dict, erro: BaseException
+) -> None:
+    """404: retenta até esgotar a espera; depois eventos_pendentes/ + aviso no painel.
+
+    Demais erros: só log (permanentes no cancelamento ficam para issue futura —
+    mesma classe do #569 no ramo de lançamento).
+    """
+    nome = xml_path.name
+    if isinstance(erro, ApiError) and erro.status_code == 404:
+        if not _espera_cancelamento_esgotada(xml_path):
+            print(
+                f"[processar_nfe] falha no cancelamento ({nome}): {erro} "
+                f"— aguardando nota no ledger"
+            )
+            return
+
+        motivo = (
+            "cancelamento sem nota no ledger após espera "
+            f"(chave={evento.get('chave_nfe', '')})"
+        )
+        _limpar_espera_cancelamento(xml_path)
+        try:
+            _mover_para_subpasta(
+                xml_path,
+                pasta_path,
+                PASTA_EVENTOS_PENDENTES,
+                "evento pendente",
+                motivo,
+            )
+        except Exception as move_err:
+            print(
+                f"[processar_nfe] espera esgotada, mas falha ao mover {nome} "
+                f"para {PASTA_EVENTOS_PENDENTES}/: {move_err}"
+            )
+            return
+        reportar_evento(
+            f"[NF-e] Evento de cancelamento sem nota correspondente: {motivo}",
+            False,
+        )
+        return
+
+    print(f"[processar_nfe] falha no cancelamento ({nome}): {erro}")
+
+
 def _copiar_criados(origem: Path, resultados: list[str], caminhos: list[Path]) -> None:
     """Copia o XML para cada empresa cujo POST criou o lançamento. Não remove a origem."""
     for resultado, destino in zip(resultados, caminhos):
@@ -555,6 +658,7 @@ def processar_pasta_nfe(pasta: str) -> None:
         if evento is not None:
             try:
                 _postar_cancelamento(evento)
+                _limpar_espera_cancelamento(xml_path)
                 destino = pasta_path / PASTA_EVENTOS_CANCELAMENTO / nome
                 movido = _mover_xml(xml_path, destino)
                 print(
@@ -562,9 +666,8 @@ def processar_pasta_nfe(pasta: str) -> None:
                     f"e evento arquivado -> {movido}"
                 )
             except Exception as e:
-                # Mantém na entrada para retentar, inclusive se o evento chegar
-                # antes da NF-e original ser escriturada.
-                print(f"[processar_nfe] falha no cancelamento ({nome}): {e}")
+                # 404: evento pode ter chegado antes da nota — espera limitada (NFE-4).
+                _tratar_falha_cancelamento(xml_path, pasta_path, evento, e)
             continue
 
         try:
