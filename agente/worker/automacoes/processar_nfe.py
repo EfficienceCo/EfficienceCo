@@ -74,19 +74,41 @@ def _ler_xml(caminho_xml: str) -> ET.Element:
         raise ValueError(f"falha ao ler XML: {e}") from e
 
 
-def _validar_protocolo_autorizacao(root: ET.Element) -> str | None:
-    """Valida o protocolo quando o documento é um nfeProc da SEFAZ."""
+def _validar_protocolo_autorizacao(root: ET.Element) -> str:
+    """Exige nfeProc com protocolo de autorização da própria nota (cStat 100/150).
+
+    Fail-closed: qualquer raiz que não seja nfeProc é recusada. Lote de envio
+    (enviNFe) e envelopes inventados não têm efeito fiscal.
+    """
     nome_raiz = _nome_local(root)
     if nome_raiz == "NFe":
         raise ValueError("NF-e sem protocolo de autorização da SEFAZ")
+    if nome_raiz == "enviNFe":
+        raise ValueError(
+            "arquivo de envio à SEFAZ (enviNFe), sem autorização — não escritura"
+        )
     if nome_raiz != "nfeProc":
-        return None
+        raise ValueError(
+            f"XML com raiz '{nome_raiz}' não é NF-e autorizada (nfeProc)"
+        )
 
     cstat = (_text(root, ".//nfe:protNFe/nfe:infProt/nfe:cStat") or "").strip()
     if cstat not in _CSTAT_AUTORIZADOS:
         status = cstat or "ausente"
         raise ValueError(f"NF-e sem autorização fiscal (cStat={status})")
     return cstat
+
+
+def _validar_chave_protocolo(root: ET.Element, chave_nfe: str) -> None:
+    """Garante que o protocolo cita a mesma chave da nota (sem expor as chaves)."""
+    ch_prot = _somente_digitos(
+        (_text(root, ".//nfe:protNFe/nfe:infProt/nfe:chNFe") or "").strip()
+    )
+    if not ch_prot:
+        raise ValueError("nfeProc sem chNFe no protocolo de autorização")
+    if ch_prot != chave_nfe:
+        # Chave embute CNPJ do emitente; motivo pode ir a log/evento — não expor.
+        raise ValueError("protocolo de autorização refere outra NF-e")
 
 
 def _somente_digitos(v: str) -> str:
@@ -171,6 +193,7 @@ def _parsear_nfe_root(root: ET.Element) -> dict:
     chave = id_attr[3:] if id_attr.startswith("NFe") else id_attr
     if len(chave) != 44 or _somente_digitos(chave) != chave:
         raise ValueError(f"chave_nfe inválida no atributo Id: {id_attr!r}")
+    _validar_chave_protocolo(root, chave)
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
     cnpj_dest = _documento_destinatario(inf)
