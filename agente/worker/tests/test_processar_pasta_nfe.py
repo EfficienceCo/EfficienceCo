@@ -178,7 +178,10 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
         </ICMSTot></total>
       </infNFe>
     </NFe>
-    <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
+    <protNFe><infProt>
+      <chNFe>35260712345678000199550010000000041000000044</chNFe>
+      <cStat>100</cStat>
+    </infProt></protNFe>
     </nfeProc>
     """
 
@@ -418,6 +421,105 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
     mock_post.assert_not_called()
     assert not ruim.exists()
     assert (inbox / "nao_identificado" / "quebrado.xml").is_file()
+
+
+@pytest.mark.parametrize(
+    "nome,xml,trecho_motivo",
+    [
+        (
+            "n03-sem-nfeproc.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+            <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+              <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+                <emit><CNPJ>98765432000110</CNPJ></emit>
+                <dest><CNPJ>12345678000199</CNPJ></dest>
+                <total><ICMSTot>
+                  <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+                </ICMSTot></total>
+              </infNFe>
+            </NFe>
+            """,
+            "sem protocolo de autorização",
+        ),
+        (
+            "n04-lote-enviNFe.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+            <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+              <NFe>
+                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                  <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+                  <emit><CNPJ>98765432000110</CNPJ></emit>
+                  <dest><CNPJ>12345678000199</CNPJ></dest>
+                  <total><ICMSTot>
+                    <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+                  </ICMSTot></total>
+                </infNFe>
+              </NFe>
+            </enviNFe>
+            """,
+            "enviNFe",
+        ),
+        (
+            "n05-raiz-qualquer.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+            <pacote xmlns="http://www.portalfiscal.inf.br/nfe">
+              <NFe>
+                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                  <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+                  <emit><CNPJ>98765432000110</CNPJ></emit>
+                  <dest><CNPJ>12345678000199</CNPJ></dest>
+                  <total><ICMSTot>
+                    <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+                  </ICMSTot></total>
+                </infNFe>
+              </NFe>
+            </pacote>
+            """,
+            "raiz 'pacote'",
+        ),
+        (
+            "n06-prot-de-outra-nota.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+            <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+              <NFe>
+                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                  <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+                  <emit><CNPJ>98765432000110</CNPJ></emit>
+                  <dest><CNPJ>12345678000199</CNPJ></dest>
+                  <total><ICMSTot>
+                    <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+                  </ICMSTot></total>
+                </infNFe>
+              </NFe>
+              <protNFe><infProt>
+                <chNFe>35260712345678000190550010000000991000000099</chNFe>
+                <cStat>100</cStat>
+              </infProt></protNFe>
+            </nfeProc>
+            """,
+            "refere outra NF-e",
+        ),
+    ],
+)
+def test_sem_autorizacao_sefaz_vai_para_nao_identificado(
+    pasta_nfe, nome, xml, trecho_motivo, capsys
+):
+    """NFE-1 (#653): sem protocolo próprio → nao_identificado, zero lançamento."""
+    inbox, _base = pasta_nfe
+    (inbox / nome).write_text(xml, encoding="utf-8")
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+
+    mock_post.assert_not_called()
+    assert not (inbox / nome).exists()
+    assert (inbox / "nao_identificado" / nome).is_file()
+    saida = capsys.readouterr().out
+    assert trecho_motivo in saida
 
 
 def test_erro_api_nao_move(pasta_nfe):
