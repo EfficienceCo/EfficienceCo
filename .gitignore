@@ -31,6 +31,7 @@ modelo.pt
 datasets/
 dataset/
 gravacao-demo/
+supabase/
 
 # Manifest do classificador é texto versionado (não é peso treinado)
 !agente/worker/automacoes/classificador_documentos/manifest.json
