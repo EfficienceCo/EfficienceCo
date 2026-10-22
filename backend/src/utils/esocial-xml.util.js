@@ -60,6 +60,10 @@
 
 import { create } from "xmlbuilder2";
 import { CATALOGO_ESOCIAL } from "./esocial-catalogo.util.js";
+import { soDigitos } from "./comum.util.js";
+import { cpfValido } from "./cpf.util.js";
+
+export { soDigitos };
 
 // Versão do leiaute usada na URN do namespace e em ideEvento/verProc.
 // S-1.3 -> "S_01_03_00". Trocar aqui quando o governo publicar nova versão.
@@ -110,12 +114,6 @@ export class ErroXmlESocial extends Error {
 // ---------------------------------------------------------------------------
 // Helpers reutilizáveis por TODOS os eventos
 // ---------------------------------------------------------------------------
-
-/** Remove tudo que não for dígito (CPF, CNPJ, CEP, telefone). */
-export function soDigitos(valor) {
-  if (valor === null || valor === undefined) return "";
-  return String(valor).replace(/\D+/g, "");
-}
 
 /**
  * Normaliza data para "AAAA-MM-DD" (formato de xs:date do eSocial).
@@ -333,6 +331,7 @@ function prepararCabecalho(dados, contexto) {
 function validarCpf(valor, campo) {
   const cpf = soDigitos(valor);
   if (cpf.length !== 11) throw new ErroXmlESocial(`${campo} deve conter 11 dígitos`);
+  if (!cpfValido(cpf)) throw new ErroXmlESocial(`${campo} é inválido (dígito verificador)`);
   return cpf;
 }
 

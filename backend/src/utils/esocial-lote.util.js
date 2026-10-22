@@ -3,8 +3,9 @@
 
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import { create } from "xmlbuilder2";
-import { soDigitos } from "./esocial-xml.util.js";
+import { soDigitos } from "./comum.util.js";
 import { grupoLoteParaEvento } from "./esocial-grupo-lote.util.js";
+import { extrairTag } from "./comum.util.js";
 
 export const VERSAO_LOTE = "v1_3_0";
 export const NS_ENVIO_LOTE = `http://www.esocial.gov.br/schema/lote/eventos/envio/${VERSAO_LOTE}`;
@@ -16,12 +17,6 @@ export class ErroLoteESocial extends Error {
     this.name = "ErroLoteESocial";
     this.codigo = codigo;
   }
-}
-
-function extrairTag(xml, tag) {
-  const re = new RegExp(`<${tag}[^>]*>([^<]+)</${tag}>`, "i");
-  const match = xml.match(re);
-  return match ? match[1].trim() : null;
 }
 
 /** Extrai ideEmpregador, tpAmb e Id do XML do evento (pré ou pós-assinatura). */

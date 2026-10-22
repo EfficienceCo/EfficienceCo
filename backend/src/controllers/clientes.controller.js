@@ -6,10 +6,7 @@ import {
   validarDataInicioAtividade,
   validarHistoricoReceita,
 } from "../utils/regime-tributario.util.js";
-
-function normalizarCnpj(valor) {
-  return String(valor || "").replace(/\D/g, "");
-}
+import { soDigitos } from "../utils/comum.util.js";
 
 function vazio(valor) {
   return valor === null || (typeof valor === "string" && valor.trim() === "");
@@ -157,7 +154,7 @@ export async function buscarClientePorCnpj(req, res) {
     return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
   }
 
-  const digitos = normalizarCnpj(req.query.cnpj);
+  const digitos = soDigitos(req.query.cnpj);
   if (digitos.length !== 14) {
     return res.status(400).json({ erro: "CNPJ inválido" });
   }
@@ -205,7 +202,7 @@ export async function criarCliente(req, res) {
 
   let cnpjNormalizado = null;
   if (cnpj !== undefined && cnpj !== null && String(cnpj).trim() !== "") {
-    cnpjNormalizado = normalizarCnpj(cnpj);
+    cnpjNormalizado = soDigitos(cnpj);
     if (cnpjNormalizado.length !== 14) {
       return res.status(400).json({ erro: "CNPJ inválido" });
     }
@@ -263,7 +260,7 @@ export async function atualizarCliente(req, res) {
     if (cnpj === null || String(cnpj).trim() === "") {
       updates.cnpj = null;
     } else {
-      const digitos = normalizarCnpj(cnpj);
+      const digitos = soDigitos(cnpj);
       if (digitos.length !== 14) {
         return res.status(400).json({ erro: "CNPJ inválido" });
       }

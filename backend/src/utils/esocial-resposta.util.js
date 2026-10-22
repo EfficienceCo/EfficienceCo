@@ -1,3 +1,4 @@
+import { extrairTag } from "./comum.util.js";
 // Parser das respostas SOAP/XML do eSocial (#ES-8).
 // Manual §7.5.10 (RetornoEnvioLoteEventos) e §7.6.10 (RetornoProcessamentoLote).
 
@@ -47,12 +48,6 @@ export function extrairXmlResposta(resultado) {
   const serializado = JSON.stringify(resultado);
   const match = serializado.match(/<eSocial[\s\S]*<\/eSocial>/);
   return match ? match[0] : serializado;
-}
-
-function extrairTag(xml, tag) {
-  const re = new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, "i");
-  const match = xml.match(re);
-  return match ? match[1].trim() : null;
 }
 
 function extrairOcorrencias(xml) {
