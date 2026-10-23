@@ -60,8 +60,7 @@
 
 import { create } from "xmlbuilder2";
 import { CATALOGO_ESOCIAL } from "./esocial-catalogo.util.js";
-import { soDigitos } from "./comum.util.js";
-import { cpfValido } from "./cpf.util.js";
+import { cpfValido, soDigitos } from "./comum.util.js";
 
 export { soDigitos };
 

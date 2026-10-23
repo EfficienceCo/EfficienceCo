@@ -1,5 +1,5 @@
 import { dataIsoValida } from "./data.util.js";
-import { cpfValido } from "./cpf.util.js";
+import { cpfValido } from "./comum.util.js";
 
 // Faixa de negócio do valor fiscal: no máximo 12 dígitos inteiros e 2 casas
 // (o antigo numeric(14,2)). A coluna original arredondava o excesso antes de

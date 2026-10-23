@@ -1,7 +1,7 @@
 import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
-import { cpfValido, normalizarCpf } from "../utils/cpf.util.js";
+import { cpfValido, normalizarCpf } from "../utils/comum.util.js";
 import { dataIsoValida } from "../utils/data.util.js";
 import { camposFaltando } from "../utils/comum.util.js";
 
