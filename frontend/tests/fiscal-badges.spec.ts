@@ -116,6 +116,20 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(fiscalLink).toHaveClass(/bg-sky-400\/10/);
     await expect(sidebar.getByRole('link', { name: 'Home' })).not.toHaveClass(/bg-sky-400\/10/);
   });
+
+  test('seletor de Ano inclui o ano atual e os 5 anteriores (issue #660)', async ({ page }) => {
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    const anoAtual = new Date().getFullYear();
+    const seletor = page.getByLabel('Ano');
+
+    await expect(seletor.locator('option')).toHaveCount(6);
+    await expect(seletor.locator('option').first()).toHaveText(String(anoAtual));
+    await expect(seletor.locator('option').last()).toHaveText(String(anoAtual - 5));
+
+    await seletor.selectOption(String(anoAtual - 5));
+    await expect(seletor).toHaveValue(String(anoAtual - 5));
+  });
 });
 
 test.describe('Fiscal — erro de rede em pt-BR e sem duplicação (issue #572)', () => {

@@ -98,7 +98,9 @@ function obterNomeCliente(cliente) {
 
 function obterAnosDisponiveis() {
   const anoAtual = new Date().getFullYear();
-  return [anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3, anoAtual - 4];
+  // Guarda/fiscalização: 5 anos a contar de 1º de janeiro do ano seguinte à
+  // emissão. Em 2026 o intervalo é 2021–2026 (anoAtual até anoAtual - 5).
+  return [anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3, anoAtual - 4, anoAtual - 5];
 }
 
 function obterMesAnoAtual() {
