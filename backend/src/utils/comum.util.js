@@ -101,3 +101,26 @@ export function cpfValido(cpf) {
 
   return calcularDigito(9) === Number(cpf[9]) && calcularDigito(10) === Number(cpf[10]);
 }
+
+/**
+ * CNPJ numérico (14 dígitos) com dígitos verificadores. Recebe só dígitos
+ * (use soDigitos antes). shortcut: CNPJ alfanumérico fora do escopo, tratar na sprint própria.
+ */
+export function cnpjValido(cnpj) {
+  if (!/^\d{14}$/.test(cnpj) || /^(\d)\1{13}$/.test(cnpj)) {
+    return false;
+  }
+
+  const calcularDigito = (quantidade) => {
+    let peso = quantidade - 7;
+    let soma = 0;
+    for (let i = 0; i < quantidade; i += 1) {
+      soma += Number(cnpj[i]) * peso;
+      peso = peso === 2 ? 9 : peso - 1;
+    }
+    const resto = soma % 11;
+    return resto < 2 ? 0 : 11 - resto;
+  };
+
+  return calcularDigito(12) === Number(cnpj[12]) && calcularDigito(13) === Number(cnpj[13]);
+}

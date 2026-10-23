@@ -6,7 +6,7 @@ import {
   validarDataInicioAtividade,
   validarHistoricoReceita,
 } from "../utils/regime-tributario.util.js";
-import { soDigitos } from "../utils/comum.util.js";
+import { cnpjValido, soDigitos } from "../utils/comum.util.js";
 
 function vazio(valor) {
   return valor === null || (typeof valor === "string" && valor.trim() === "");
@@ -203,7 +203,7 @@ export async function criarCliente(req, res) {
   let cnpjNormalizado = null;
   if (cnpj !== undefined && cnpj !== null && String(cnpj).trim() !== "") {
     cnpjNormalizado = soDigitos(cnpj);
-    if (cnpjNormalizado.length !== 14) {
+    if (!cnpjValido(cnpjNormalizado)) {
       return res.status(400).json({ erro: "CNPJ inválido" });
     }
   }
@@ -261,7 +261,7 @@ export async function atualizarCliente(req, res) {
       updates.cnpj = null;
     } else {
       const digitos = soDigitos(cnpj);
-      if (digitos.length !== 14) {
+      if (!cnpjValido(digitos)) {
         return res.status(400).json({ erro: "CNPJ inválido" });
       }
       updates.cnpj = digitos;

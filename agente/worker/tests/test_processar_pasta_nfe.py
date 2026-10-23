@@ -13,15 +13,15 @@ from automacoes.processar_nfe import _caminho_xml_relativo, _ler_xml, processar_
 from core.estrutura_pastas import SUBPASTAS
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
-CNPJ_CLIENTE = "12345678000199"
-CNPJ_FORNECEDOR = "98765432000110"
+CNPJ_CLIENTE = "12345678000195"
+CNPJ_FORNECEDOR = "98765432000198"
 # Licença do agente = Padaria (dest nas notas de entrada / emit nas de saída).
 CLIENTE_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 CLIENTE_ID_EMIT = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 NOME_EMPRESA = "Padaria do João"
 NOME_FILIAL = "Filial Centro"
 NOME_FORNECEDOR = "Mercado Central"
-CHAVE_DOIS_CLIENTES = "35261298765432000110550010000000031000000033"
+CHAVE_DOIS_CLIENTES = "35261298765432000198550010000000031000000033"
 
 
 @pytest.fixture
@@ -169,7 +169,7 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
     <NFe>
-      <infNFe Id="NFe35260712345678000199550010000000041000000044" versao="4.00">
+      <infNFe Id="NFe35260712345678000195550010000000041000000044" versao="4.00">
         <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit><CNPJ>{CNPJ_CLIENTE}</CNPJ></emit>
         <dest><CPF>12345678909</CPF></dest>
