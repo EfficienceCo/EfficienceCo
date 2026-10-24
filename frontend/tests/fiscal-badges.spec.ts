@@ -108,6 +108,11 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(cancelada).toBeVisible();
     await expect(cancelada).toHaveClass(/bg-zinc-200/);
 
+    // Issue #655: a cancelada fica na lista mas fora dos totais — a tela explica.
+    await expect(page.getByTestId('aviso-canceladas')).toContainText(
+      '1 nota cancelada aparece na lista abaixo, mas não entra nos totais acima.',
+    );
+
     const sidebar = page.locator('aside.nova-sidebar');
     const fiscalLink = sidebar.getByRole('link', { name: 'Fiscal', exact: true });
 

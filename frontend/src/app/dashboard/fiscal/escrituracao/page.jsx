@@ -316,6 +316,8 @@ export default function FiscalPage() {
 
   const anosDisponiveis = useMemo(obterAnosDisponiveis, []);
 
+  const totalCanceladas = lancamentos.filter((item) => item?.status === 'cancelada').length;
+
   const clientesOrdenados = useMemo(
     () =>
       [...clientes].sort((clienteA, clienteB) =>
@@ -532,6 +534,18 @@ export default function FiscalPage() {
             <CardResumo titulo="IPI total" valor={formatarValor(resumo.ipi)} isLoading={false} />
           ) : null}
         </section>
+      ) : null}
+
+      {!aguardandoSelecaoCliente && !erroLista && !isLoadingLancamentos && totalCanceladas > 0 ? (
+        <p
+          data-testid="aviso-canceladas"
+          className="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700"
+        >
+          {totalCanceladas === 1
+            ? '1 nota cancelada aparece na lista abaixo, mas não entra nos totais acima.'
+            : `${totalCanceladas} notas canceladas aparecem na lista abaixo, mas não entram nos totais acima.`}{' '}
+          Nota cancelada não tem efeito fiscal; ela fica na lista só para conferência.
+        </p>
       ) : null}
 
       <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
