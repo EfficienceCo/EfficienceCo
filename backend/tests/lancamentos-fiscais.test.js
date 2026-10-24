@@ -648,13 +648,8 @@ describe("GET /lancamentos-fiscais/resumo", () => {
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body, {
       total_nfe: 3,
-      valor_total: 350,
-      icms: 35,
-      pis: 3.5,
-      cofins: 7,
-      ipi: 5,
-      entradas: 1,
-      saidas: 2,
+      entradas: { quantidade: 1, valor_total: 100, icms: 10, pis: 1, cofins: 2, ipi: 0 },
+      saidas: { quantidade: 2, valor_total: 250, icms: 25, pis: 2.5, cofins: 5, ipi: 5 },
     });
     assert.ok(filtros.some(([t, c, v]) => t === "lancamentos_fiscais" && c === "status" && v === "ativa"));
   });
@@ -680,9 +675,24 @@ describe("GET /lancamentos-fiscais/resumo", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.total_nfe, 1);
-    assert.equal(res.body.saidas, 1);
-    assert.equal(res.body.entradas, 0);
-    assert.equal(res.body.valor_total, 250);
+    assert.equal(res.body.saidas.quantidade, 1);
+    assert.equal(res.body.entradas.quantidade, 0);
+    assert.equal(res.body.saidas.valor_total, 250);
+    assert.equal(res.body.entradas.valor_total, 0);
+  });
+
+  it("mês só com entradas deixa as saídas zeradas (e vice-versa)", async () => {
+    queue("lancamentos_fiscais", "await", {
+      data: [{ tipo: "entrada", valor_total: 2222.21, icms: 400, pis: 0, cofins: 0, ipi: 0 }],
+      error: null,
+    });
+
+    const res = criarResposta();
+    await resumoLancamentosFiscais(reqBase(), res);
+
+    assert.equal(res.body.entradas.icms, 400);
+    assert.equal(res.body.saidas.icms, 0);
+    assert.equal(res.body.saidas.quantidade, 0);
   });
 
   it("200 com zeros quando não há lançamentos no período", async () => {
@@ -693,7 +703,8 @@ describe("GET /lancamentos-fiscais/resumo", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.total_nfe, 0);
-    assert.equal(res.body.valor_total, 0);
+    assert.equal(res.body.entradas.valor_total, 0);
+    assert.equal(res.body.saidas.valor_total, 0);
   });
 
   it("400 quando clienteId ausente", async () => {

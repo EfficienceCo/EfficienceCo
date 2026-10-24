@@ -25,13 +25,8 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
         await route.fulfill({
           json: {
             total_nfe: 3,
-            valor_total: 2_750,
-            icms: 180,
-            pis: 20,
-            cofins: 90,
-            ipi: 0,
-            entradas: 1,
-            saidas: 2,
+            entradas: { quantidade: 1, valor_total: 1_000, icms: 80, pis: 10, cofins: 40, ipi: 0 },
+            saidas: { quantidade: 2, valor_total: 1_750, icms: 100, pis: 10, cofins: 50, ipi: 0 },
           },
         });
         return;
@@ -172,63 +167,29 @@ test.describe('Fiscal — erro de rede em pt-BR e sem duplicação (issue #572)'
   });
 });
 
-test.describe('Fiscal — card de IPI não fica órfão no grid de resumo (issue #573)', () => {
-  test.beforeEach(async ({ page }) => {
+test.describe('Fiscal — resumo separa entradas (crédito) de saídas (débito) (issue #654)', () => {
+  test('mostra entradas e saídas em cards distintos, sem "ICMS total" misturado', async ({ page }) => {
     await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
-
     await page.route('**/lancamentos-fiscais**', async (route) => {
       const { pathname } = new URL(route.request().url());
-
-      if (pathname.endsWith('/resumo')) {
-        await route.fulfill({
-          json: {
-            total_nfe: 2,
-            valor_total: 2_500,
-            icms: 180,
-            pis: 20,
-            cofins: 90,
-            ipi: 50,
-            entradas: 1,
-            saidas: 1,
-          },
-        });
-        return;
-      }
-
-      await route.fulfill({ json: [] });
+      await route.fulfill({
+        json: pathname.endsWith('/resumo')
+          ? {
+              total_nfe: 2,
+              entradas: { quantidade: 1, valor_total: 2_222.21, icms: 400, pis: 0, cofins: 0, ipi: 0 },
+              saidas: { quantidade: 1, valor_total: 3_140, icms: 565.2, pis: 0, cofins: 0, ipi: 50 },
+            }
+          : [],
+      });
     });
-
     await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
-  });
 
-  async function contarColunasDoGrid(page) {
-    return page.evaluate(() => {
-      const titulo = [...document.querySelectorAll('p')].find(
-        (p) => p.textContent === 'Total de NFes processadas',
-      );
-      const grid = titulo?.closest('section');
-      if (!grid) return null;
-      return getComputedStyle(grid).gridTemplateColumns.split(' ').length;
-    });
-  }
-
-  test('em 768px (md, faixa testada no QA), com IPI > 0, o grid fica em 1 coluna — nenhum card sozinho numa linha', async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 768, height: 1024 });
     await page.goto('/dashboard/fiscal/escrituracao');
 
-    await expect(page.getByText('IPI total')).toBeVisible();
-    expect(await contarColunasDoGrid(page)).toBe(1);
-  });
-
-  test('em 1440px (xl), com IPI > 0, os 5 cards ficam numa única linha de 5 colunas', async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/dashboard/fiscal/escrituracao');
-
-    await expect(page.getByText('IPI total')).toBeVisible();
-    expect(await contarColunasDoGrid(page)).toBe(5);
+    await expect(page.getByText('Entradas (crédito)')).toBeVisible();
+    await expect(page.getByText('Saídas (débito)')).toBeVisible();
+    await expect(page.getByText(/ICMS R\$\s*400,00/)).toBeVisible();
+    await expect(page.getByText(/ICMS R\$\s*565,20/)).toBeVisible();
+    await expect(page.getByText('ICMS total')).toHaveCount(0);
   });
 });

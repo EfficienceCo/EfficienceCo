@@ -225,16 +225,28 @@ function Spinner() {
   );
 }
 
-function CardResumo({ titulo, valor, isLoading }) {
+function detalharImpostos(grupo) {
+  const partes = [
+    `ICMS ${formatarValor(grupo?.icms ?? 0)}`,
+    `PIS + COFINS ${formatarValor((grupo?.pis ?? 0) + (grupo?.cofins ?? 0))}`,
+  ];
+  if (Number(grupo?.ipi) > 0) partes.push(`IPI ${formatarValor(grupo.ipi)}`);
+  return partes.join(' · ');
+}
+
+function CardResumo({ titulo, valor, detalhe, isLoading }) {
   return (
     <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{titulo}</p>
       {isLoading ? (
         <div className="mt-3 h-8 w-24 animate-pulse rounded bg-zinc-100" />
       ) : (
-        <p className="mt-2 text-3xl font-semibold leading-none tracking-tight text-zinc-900">
-          {valor}
-        </p>
+        <>
+          <p className="mt-2 text-3xl font-semibold leading-none tracking-tight text-zinc-900">
+            {valor}
+          </p>
+          {detalhe ? <p className="mt-2 text-xs text-zinc-500">{detalhe}</p> : null}
+        </>
       )}
     </article>
   );
@@ -496,41 +508,26 @@ export default function FiscalPage() {
       ) : null}
 
       {!aguardandoSelecaoCliente && !erroResumo ? (
-        <section
-          // 5 é primo: qualquer contagem de colunas intermediária (2, 3, 4)
-          // deixa o 5º card (IPI) órfão numa linha sozinho. Sem o card de
-          // IPI, mantém o 2 colunas a partir do sm de sempre (4 cards, sempre
-          // divide certo); com IPI, fica em 1 coluna até o xl, onde pula
-          // direto pras 5 colunas — nunca sobra card em nenhuma largura.
-          className={`grid gap-4 ${
-            !isLoadingResumo && Number(resumo?.ipi) > 0
-              ? 'xl:grid-cols-5'
-              : 'sm:grid-cols-2 xl:grid-cols-4'
-          }`}
-        >
+        // Entrada é crédito e saída é débito de imposto: nunca somados num card só.
+        <section className="grid gap-4 md:grid-cols-3">
           <CardResumo
             titulo="Total de NFes processadas"
             valor={resumo?.total_nfe ?? 0}
+            detalhe={`${resumo?.entradas?.quantidade ?? 0} entradas · ${resumo?.saidas?.quantidade ?? 0} saídas`}
             isLoading={isLoadingResumo}
           />
           <CardResumo
-            titulo="Valor total"
-            valor={formatarValor(resumo?.valor_total ?? 0)}
+            titulo="Entradas (crédito)"
+            valor={formatarValor(resumo?.entradas?.valor_total ?? 0)}
+            detalhe={detalharImpostos(resumo?.entradas)}
             isLoading={isLoadingResumo}
           />
           <CardResumo
-            titulo="ICMS total"
-            valor={formatarValor(resumo?.icms ?? 0)}
+            titulo="Saídas (débito)"
+            valor={formatarValor(resumo?.saidas?.valor_total ?? 0)}
+            detalhe={detalharImpostos(resumo?.saidas)}
             isLoading={isLoadingResumo}
           />
-          <CardResumo
-            titulo="PIS + COFINS total"
-            valor={formatarValor((resumo?.pis ?? 0) + (resumo?.cofins ?? 0))}
-            isLoading={isLoadingResumo}
-          />
-          {!isLoadingResumo && Number(resumo?.ipi) > 0 ? (
-            <CardResumo titulo="IPI total" valor={formatarValor(resumo.ipi)} isLoading={false} />
-          ) : null}
         </section>
       ) : null}
 
