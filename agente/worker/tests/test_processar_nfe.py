@@ -42,6 +42,8 @@ def test_parsear_nfe_entrada():
     assert dados["cofins"] == Decimal("114.00")
     assert dados["ipi"] == Decimal("50.00")
     assert dados["data_emissao"] == date(2026, 7, 15)
+    assert dados["tp_nf"] == 1
+    assert dados["itens"][0]["cfop"] == "5102"
     assert isinstance(dados["valor_total"], Decimal)
     assert isinstance(dados["data_emissao"], date)
 
@@ -138,13 +140,31 @@ def test_campo_obrigatorio_ausente(tmp_path):
         parsear_nfe(str(caminho))
 
 
-def _xml_nfe(emit: str, dest: str, valor: str = "10.00") -> str:
+def _det(cfop: str = "5102", ncm: str = "19059090", n_item: int = 1) -> str:
+    return (
+        f'<det nItem="{n_item}">'
+        f"<prod><cProd>1</cProd><xProd>Item</xProd>"
+        f"<NCM>{ncm}</NCM><CFOP>{cfop}</CFOP><vProd>10.00</vProd></prod>"
+        f"</det>"
+    )
+
+
+def _xml_nfe(
+    emit: str,
+    dest: str,
+    valor: str = "10.00",
+    *,
+    tp_nf: str = "1",
+    det: str | None = None,
+) -> str:
+    bloco_det = det if det is not None else _det()
     return _envolver_nfe_autorizada(f"""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
       <infNFe Id="NFe35260712345678000199550010000000021000000022" versao="4.00">
-        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <ide><tpNF>{tp_nf}</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit>{emit}</emit>
         <dest>{dest}</dest>
+        {bloco_det}
         <total><ICMSTot>
           <vNF>{valor}</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
         </ICMSTot></total>
@@ -308,3 +328,79 @@ def test_nfe_proc_autorizada_tem_efeito_fiscal(tmp_path, cstat):
     caminho.write_text(xml, encoding="utf-8")
 
     assert parsear_nfe(str(caminho))["cstat"] == cstat
+
+
+def test_parsear_nfe_le_tpnf_e_itens():
+    dados = parsear_nfe(str(FIXTURES / "entrada.xml"))
+    assert dados["tp_nf"] == 1
+    assert dados["itens"] == [{"n_item": 1, "cfop": "5102", "ncm": "19059090"}]
+
+
+def test_parsear_nfe_tpnf_0_com_cfop_entrada_nao_recusa(tmp_path):
+    caminho = tmp_path / "entrada-propria.xml"
+    caminho.write_text(
+        _xml_nfe(
+            f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>",
+            "<CNPJ>98765432000110</CNPJ>",
+            tp_nf="0",
+            det=_det("1102"),
+        ),
+        encoding="utf-8",
+    )
+    dados = parsear_nfe(str(caminho))
+    assert dados["tp_nf"] == 0
+    assert dados["itens"][0]["cfop"] == "1102"
+
+
+def test_parsear_nfe_cfop_incompativel_ainda_parseia(tmp_path):
+    """v10: tpNF=1 + CFOP 1102. Recusa é formato, não a inconsistência fiscal."""
+    caminho = tmp_path / "v10.xml"
+    caminho.write_text(
+        _xml_nfe(
+            f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>",
+            "<CNPJ>98765432000110</CNPJ>",
+            det=_det("1102"),
+        ),
+        encoding="utf-8",
+    )
+    dados = parsear_nfe(str(caminho))
+    assert dados["tp_nf"] == 1
+    assert dados["itens"][0]["cfop"] == "1102"
+
+
+def test_sem_det_recusa(tmp_path):
+    caminho = tmp_path / "sem-det.xml"
+    caminho.write_text(
+        _xml_nfe(f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", "<CNPJ>98765432000110</CNPJ>", det=""),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="det"):
+        parsear_nfe(str(caminho))
+
+
+def test_cfop_formato_invalido_recusa(tmp_path):
+    caminho = tmp_path / "cfop-curto.xml"
+    caminho.write_text(
+        _xml_nfe(
+            f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>",
+            "<CNPJ>98765432000110</CNPJ>",
+            det=_det("51"),
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="CFOP"):
+        parsear_nfe(str(caminho))
+
+
+def test_ncm_formato_invalido_recusa(tmp_path):
+    caminho = tmp_path / "ncm-curto.xml"
+    caminho.write_text(
+        _xml_nfe(
+            f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>",
+            "<CNPJ>98765432000110</CNPJ>",
+            det=_det(ncm="1905909"),
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="NCM"):
+        parsear_nfe(str(caminho))

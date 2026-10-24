@@ -102,6 +102,8 @@ function payloadValido(overrides = {}) {
     valor_total: 1000.5,
     data_emissao: "2026-07-15",
     cliente_id: CLIENTE_ID,
+    tp_nf: 1,
+    itens: [{ n_item: 1, cfop: "5102", ncm: "19059090" }],
     ...overrides,
   };
 }
@@ -130,6 +132,90 @@ describe("POST /lancamentos-fiscais", () => {
     assert.equal(insercoes[0].cofins, "0.00");
     assert.equal(insercoes[0].ipi, "0.00");
     assert.equal(insercoes[0].arquivo_xml, null);
+    assert.equal(insercoes[0].tp_nf, 1);
+    assert.deepEqual(insercoes[0].inconsistencias, []);
+    assert.equal(insercoes[0].lancamentos_fiscais_itens[0].cfop, "5102");
+    assert.equal(insercoes[0].lancamentos_fiscais_itens[0].ncm, "19059090");
+  });
+
+  it("201 grava alerta quando CFOP de entrada vem em tpNF=1 (caso v10)", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "v10" }, error: null });
+
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: payloadValido({ itens: [{ n_item: 1, cfop: "1102", ncm: "19059090" }] }),
+    };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(insercoes.length, 1);
+    assert.equal(insercoes[0].inconsistencias[0].tipo, "cfop_incompativel_tpnf");
+    assert.equal(insercoes[0].inconsistencias[0].n_item, 1);
+  });
+
+  it("201 grava alerta quando o NCM não existe no catálogo", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "ncm-fake" }, error: null });
+
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: payloadValido({ itens: [{ n_item: 1, cfop: "5102", ncm: "99999999" }] }),
+    };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(insercoes[0].inconsistencias[0].tipo, "ncm_inexistente");
+  });
+
+  it("201 sem alerta quando tpNF=0 e CFOP de entrada (nota emitida pelo cliente)", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "tp0" }, error: null });
+
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: payloadValido({
+        tp_nf: 0,
+        itens: [{ n_item: 1, cfop: "1102", ncm: "19059090" }],
+      }),
+    };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(insercoes[0].inconsistencias, []);
+    assert.equal(insercoes[0].tp_nf, 0);
+  });
+
+  it("422 quando itens está vazio ou o CFOP tem formato inválido", async () => {
+    tokenValido();
+    const vazio = criarResposta();
+    await criarLancamentoFiscal(
+      { headers: { "x-licenca-token": "tok" }, body: payloadValido({ itens: [] }) },
+      vazio,
+    );
+    assert.equal(vazio.statusCode, 422);
+    assert.match(vazio.body.campos.itens, /pelo menos um item/i);
+
+    tokenValido();
+    const cfop = criarResposta();
+    await criarLancamentoFiscal(
+      {
+        headers: { "x-licenca-token": "tok" },
+        body: payloadValido({ itens: [{ n_item: 1, cfop: "51", ncm: "19059090" }] }),
+      },
+      cfop,
+    );
+    assert.equal(cfop.statusCode, 422);
+    assert.match(cfop.body.campos.itens, /4 dígitos/i);
   });
 
   it("201 aceita datetime e CPF com dígito verificador, gravando só a data", async () => {
@@ -559,6 +645,31 @@ describe("GET /lancamentos-fiscais", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.length, 2);
+    assert.deepEqual(res.body[0].itens, []);
+    assert.deepEqual(res.body[0].inconsistencias, []);
+    assert.equal(res.body[0].tp_nf, null);
+  });
+
+  it("200 devolve CFOP/NCM dos itens e esconde o nome interno do embed", async () => {
+    queue("lancamentos_fiscais", "await", {
+      data: [
+        {
+          id: "1",
+          tp_nf: 1,
+          inconsistencias: [{ tipo: "cfop_incompativel_tpnf", n_item: 1, detalhe: "x" }],
+          lancamentos_fiscais_itens: [{ n_item: 1, cfop: "1102", ncm: "19059090" }],
+        },
+      ],
+      error: null,
+    });
+
+    const res = criarResposta();
+    await listarLancamentosFiscais(reqBase(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body[0].itens, [{ n_item: 1, cfop: "1102", ncm: "19059090" }]);
+    assert.equal(res.body[0].lancamentos_fiscais_itens, undefined);
+    assert.equal(res.body[0].inconsistencias[0].tipo, "cfop_incompativel_tpnf");
   });
 
   it("400 quando clienteId ausente (perfil admin_efficience sem query)", async () => {

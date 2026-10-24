@@ -4,7 +4,9 @@ import { PERFIS } from "../config/perfis.js";
 import { aplicarFiltroPeriodo, dataLocalISO, erroPeriodoConsulta } from "../utils/periodo.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
 import {
+  apresentarLancamentoFiscal,
   camposRejeicaoBanco,
+  recomputarInconsistencias,
   validarLancamentoFiscal,
 } from "../utils/lancamento-fiscal.util.js";
 
@@ -19,6 +21,8 @@ const CAMPOS_OBRIGATORIOS = [
   "valor_total",
   "data_emissao",
   "cliente_id",
+  "tp_nf",
+  "itens",
 ];
 
 function camposFaltando(body) {
@@ -101,6 +105,8 @@ export async function criarLancamentoFiscal(req, res) {
     ipi,
     data_emissao,
     arquivo_xml,
+    tp_nf,
+    itens,
   } = validacao.dados;
 
   if (!TIPOS_VALIDOS.has(tipo)) {
@@ -156,6 +162,8 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(409).json({ erro: "Já existe um lançamento fiscal para esta chave de NFe" });
   }
 
+  const inconsistencias = recomputarInconsistencias(tp_nf, itens);
+
   const { data, error } = await supabase
     .from("lancamentos_fiscais")
     .insert({
@@ -177,8 +185,16 @@ export async function criarLancamentoFiscal(req, res) {
       ipi,
       data_emissao,
       arquivo_xml,
+      tp_nf,
+      inconsistencias,
+      lancamentos_fiscais_itens: itens.map((item) => ({
+        cliente_id,
+        n_item: item.n_item,
+        cfop: item.cfop,
+        ncm: item.ncm,
+      })),
     })
-    .select()
+    .select("*, lancamentos_fiscais_itens(n_item, cfop, ncm)")
     .single();
 
   if (error) {
@@ -199,7 +215,7 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(500).json({ erro: "Erro ao registrar lançamento fiscal" });
   }
 
-  return res.status(201).json(data);
+  return res.status(201).json(apresentarLancamentoFiscal(data));
 }
 
 // POST /lancamentos-fiscais/cancelar — chamado pelo agente ao receber um
@@ -263,7 +279,7 @@ export async function listarLancamentosFiscais(req, res) {
 
   let query = supabase
     .from("lancamentos_fiscais")
-    .select("*")
+    .select("*, lancamentos_fiscais_itens(n_item, cfop, ncm)")
     .eq("cliente_id", clienteId)
     .order("data_emissao", { ascending: false });
 
@@ -276,7 +292,7 @@ export async function listarLancamentosFiscais(req, res) {
     return res.status(500).json({ erro: "Erro ao listar lançamentos fiscais" });
   }
 
-  return res.status(200).json(data);
+  return res.status(200).json((data || []).map(apresentarLancamentoFiscal));
 }
 
 export async function resumoLancamentosFiscais(req, res) {
