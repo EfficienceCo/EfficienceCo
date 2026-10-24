@@ -392,6 +392,23 @@ describe("gerarXmlS2200 — validação de entrada", () => {
     assert.throws(() => gerarXmlS2200({}, null), ErroXmlESocial);
   });
 
+  it("recusa CPF do trabalhador com dígito verificador errado (#658)", () => {
+    assert.throws(
+      () => gerarXmlS2200({ ...funcionarioCLT(), cpf: "123.456.789-00" }, admissaoCLT()),
+      /funcionario\.cpf é inválido \(dígito verificador\)/,
+    );
+  });
+
+  it("recusa CPF de dependente com dígito verificador errado (#658)", () => {
+    const f = {
+      ...funcionarioCLT(),
+      dependentes: [
+        { tipo: "03", nome: "Filho", dataNascimento: "2020-01-01", cpf: "123.456.789-00", depIRRF: "N", depSF: "N", incTrab: "N" },
+      ],
+    };
+    assert.throws(() => gerarXmlS2200(f, admissaoCLT()), /dependentes\[\]\.cpf é inválido \(dígito verificador\)/);
+  });
+
   it("acumula campos obrigatórios faltando do funcionário", () => {
     try {
       gerarXmlS2200({ cpf: "1" }, admissaoCLT());

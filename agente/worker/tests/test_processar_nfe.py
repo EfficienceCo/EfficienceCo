@@ -231,6 +231,17 @@ def test_dest_cpf_sem_digito_verificador(tmp_path):
         parsear_nfe(str(caminho))
 
 
+def test_dest_cpf_dv_errado_com_emitente_valido_recusa_pelo_cpf(tmp_path):
+    """Emitente com CNPJ válido: a recusa tem que vir do CPF, não do CNPJ (#658)."""
+    caminho = tmp_path / "cpf_dv_errado.xml"
+    caminho.write_text(
+        _xml_nfe(f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", "<CPF>123.456.789-00</CPF>"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"dest/CPF inválido \(dígito verificador\)"):
+        parsear_nfe(str(caminho))
+
+
 def test_cnpj_cliente_ausente_na_nota():
     with pytest.raises(ValueError, match="não é emitente nem destinatário"):
         identificar_tipo_operacao(

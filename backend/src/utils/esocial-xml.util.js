@@ -510,7 +510,7 @@ function montarDesligamento(d) {
 
 function montarTrabalhador(f) {
   return {
-    cpfTrab: soDigitos(f.cpf),
+    cpfTrab: validarCpf(f.cpf, "funcionario.cpf"),
     nmTrab: f.nome,
     sexo: f.sexo,
     racaCor: Number(f.racaCor),
@@ -561,7 +561,7 @@ function montarDependente(d) {
     tpDep: d.tipo,
     nmDep: d.nome,
     dtNascto: formatarData(d.dataNascimento),
-    cpfDep: d.cpf ? soDigitos(d.cpf) : undefined,
+    cpfDep: d.cpf ? validarCpf(d.cpf, "funcionario.dependentes[].cpf") : undefined,
     sexoDep: d.sexo,
     depIRRF: sn(d.depIRRF),
     depSF: sn(d.depSF),
@@ -678,7 +678,7 @@ function montarTrabTemporario(t) {
         { 1: [14], 2: [11] },
       ),
     },
-    ideTrabSubstituido: substituidos.map((cpf) => ({ cpfTrabSubst: soDigitos(cpf) })),
+    ideTrabSubstituido: substituidos.map((cpf) => ({ cpfTrabSubst: validarCpf(cpf, "dadosAdmissao.trabalhadorTemporario.trabalhadoresSubstituidos[]") })),
   };
 }
 
