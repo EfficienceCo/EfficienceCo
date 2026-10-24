@@ -316,7 +316,10 @@ export default function FiscalPage() {
 
   const anosDisponiveis = useMemo(obterAnosDisponiveis, []);
 
-  const totalCanceladas = lancamentos.filter((item) => item?.status === 'cancelada').length;
+  const totalCanceladas = useMemo(
+    () => lancamentos.filter((item) => item?.status === 'cancelada').length,
+    [lancamentos],
+  );
 
   const clientesOrdenados = useMemo(
     () =>
@@ -511,7 +514,7 @@ export default function FiscalPage() {
           }`}
         >
           <CardResumo
-            titulo="Total de NFes processadas"
+            titulo="NFes processadas (sem canceladas)"
             valor={resumo?.total_nfe ?? 0}
             isLoading={isLoadingResumo}
           />
@@ -536,15 +539,17 @@ export default function FiscalPage() {
         </section>
       ) : null}
 
-      {!aguardandoSelecaoCliente && !erroLista && !isLoadingLancamentos && totalCanceladas > 0 ? (
+      {!aguardandoSelecaoCliente &&
+      !erroLista &&
+      !erroResumo &&
+      !isLoadingLancamentos &&
+      totalCanceladas > 0 ? (
         <p
           data-testid="aviso-canceladas"
           className="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700"
         >
-          {totalCanceladas === 1
-            ? '1 nota cancelada aparece na lista abaixo, mas não entra nos totais acima.'
-            : `${totalCanceladas} notas canceladas aparecem na lista abaixo, mas não entram nos totais acima.`}{' '}
-          Nota cancelada não tem efeito fiscal; ela fica na lista só para conferência.
+          Cancelada(s) na lista abaixo: {totalCanceladas}. Nota cancelada não tem efeito fiscal, por
+          isso não entra nos totais acima; ela fica na lista só para conferência.
         </p>
       ) : null}
 

@@ -108,11 +108,6 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(cancelada).toBeVisible();
     await expect(cancelada).toHaveClass(/bg-zinc-200/);
 
-    // Issue #655: a cancelada fica na lista mas fora dos totais — a tela explica.
-    await expect(page.getByTestId('aviso-canceladas')).toContainText(
-      '1 nota cancelada aparece na lista abaixo, mas não entra nos totais acima.',
-    );
-
     const sidebar = page.locator('aside.nova-sidebar');
     const fiscalLink = sidebar.getByRole('link', { name: 'Fiscal', exact: true });
 
@@ -209,7 +204,7 @@ test.describe('Fiscal — card de IPI não fica órfão no grid de resumo (issue
   async function contarColunasDoGrid(page) {
     return page.evaluate(() => {
       const titulo = [...document.querySelectorAll('p')].find(
-        (p) => p.textContent === 'Total de NFes processadas',
+        (p) => p.textContent === 'NFes processadas (sem canceladas)',
       );
       const grid = titulo?.closest('section');
       if (!grid) return null;
@@ -235,5 +230,59 @@ test.describe('Fiscal — card de IPI não fica órfão no grid de resumo (issue
 
     await expect(page.getByText('IPI total')).toBeVisible();
     expect(await contarColunasDoGrid(page)).toBe(5);
+  });
+});
+
+test.describe('Fiscal — nota cancelada fora dos totais é explicada (issue #655)', () => {
+  const nota = (id: string, status: string) => ({
+    id,
+    status,
+    data_emissao: '2025-02-10',
+    chave_nfe: id.padEnd(44, '1'),
+    tipo: 'saida',
+    cnpj_emitente: '12345678000190',
+    cnpj_destinatario: '98765432000110',
+    valor_total: 100,
+  });
+
+  async function mockar(
+    page: import('@playwright/test').Page,
+    lista: object[],
+    resumoFalha = false,
+  ) {
+    await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
+    await page.route('**/lancamentos-fiscais**', async (route) => {
+      if (new URL(route.request().url()).pathname.endsWith('/resumo')) {
+        if (resumoFalha) return route.abort('failed');
+        return route.fulfill({
+          json: { total_nfe: 1, valor_total: 100, icms: 0, pis: 0, cofins: 0, ipi: 0 },
+        });
+      }
+      return route.fulfill({ json: lista });
+    });
+    await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
+  }
+
+  test('com canceladas, mostra o aviso com a contagem', async ({ page }) => {
+    await mockar(page, [nota('a', 'ativa'), nota('b', 'cancelada'), nota('c', 'cancelada')]);
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    await expect(page.getByTestId('aviso-canceladas')).toContainText('Cancelada(s) na lista abaixo: 2');
+  });
+
+  test('sem canceladas, não mostra o aviso', async ({ page }) => {
+    await mockar(page, [nota('a', 'ativa')]);
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    await expect(page.getByText('NFes processadas (sem canceladas)')).toBeVisible();
+    await expect(page.getByTestId('aviso-canceladas')).toHaveCount(0);
+  });
+
+  test('resumo falhou (cards ocultos): não mostra o aviso', async ({ page }) => {
+    await mockar(page, [nota('a', 'ativa'), nota('b', 'cancelada')], true);
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    await expect(page.getByRole('button', { name: 'Tentar novamente' })).toBeVisible();
+    await expect(page.getByTestId('aviso-canceladas')).toHaveCount(0);
   });
 });
