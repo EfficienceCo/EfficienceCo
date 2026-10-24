@@ -22,3 +22,6 @@ pandas
 openpyxl
 matplotlib
 pytest>=7.0.0
+signxml>=4.0.0
+lxml>=5.0.0
+cryptography>=42.0.0
