@@ -225,12 +225,12 @@ function Spinner() {
   );
 }
 
-function detalharImpostos(grupo) {
+function detalharImpostos(grupo, natureza) {
   const partes = [
-    `ICMS ${formatarValor(grupo?.icms ?? 0)}`,
-    `PIS + COFINS ${formatarValor((grupo?.pis ?? 0) + (grupo?.cofins ?? 0))}`,
+    `ICMS (${natureza}) ${formatarValor(grupo?.icms ?? 0)}`,
+    `PIS + COFINS (${natureza}) ${formatarValor((grupo?.pis ?? 0) + (grupo?.cofins ?? 0))}`,
+    `IPI (${natureza}) ${formatarValor(grupo?.ipi ?? 0)}`,
   ];
-  if (Number(grupo?.ipi) > 0) partes.push(`IPI ${formatarValor(grupo.ipi)}`);
   return partes.join(' · ');
 }
 
@@ -509,7 +509,7 @@ export default function FiscalPage() {
 
       {!aguardandoSelecaoCliente && !erroResumo ? (
         // Entrada é crédito e saída é débito de imposto: nunca somados num card só.
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-4 lg:grid-cols-3">
           <CardResumo
             titulo="Total de NFes processadas"
             valor={resumo?.total_nfe ?? 0}
@@ -517,15 +517,15 @@ export default function FiscalPage() {
             isLoading={isLoadingResumo}
           />
           <CardResumo
-            titulo="Entradas (crédito)"
+            titulo="Valor das entradas"
             valor={formatarValor(resumo?.entradas?.valor_total ?? 0)}
-            detalhe={detalharImpostos(resumo?.entradas)}
+            detalhe={detalharImpostos(resumo?.entradas, 'crédito')}
             isLoading={isLoadingResumo}
           />
           <CardResumo
-            titulo="Saídas (débito)"
+            titulo="Valor das saídas"
             valor={formatarValor(resumo?.saidas?.valor_total ?? 0)}
-            detalhe={detalharImpostos(resumo?.saidas)}
+            detalhe={detalharImpostos(resumo?.saidas, 'débito')}
             isLoading={isLoadingResumo}
           />
         </section>

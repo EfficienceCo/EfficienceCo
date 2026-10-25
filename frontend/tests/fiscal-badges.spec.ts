@@ -186,10 +186,64 @@ test.describe('Fiscal — resumo separa entradas (crédito) de saídas (débito)
 
     await page.goto('/dashboard/fiscal/escrituracao');
 
-    await expect(page.getByText('Entradas (crédito)')).toBeVisible();
-    await expect(page.getByText('Saídas (débito)')).toBeVisible();
-    await expect(page.getByText(/ICMS R\$\s*400,00/)).toBeVisible();
-    await expect(page.getByText(/ICMS R\$\s*565,20/)).toBeVisible();
+    const entradas = page.locator('article').filter({ has: page.getByText('Valor das entradas') });
+    const saidas = page.locator('article').filter({ has: page.getByText('Valor das saídas') });
+
+    await expect(entradas).toContainText('R$ 2.222,21');
+    await expect(entradas).toContainText('ICMS (crédito) R$ 400,00');
+    await expect(entradas).toContainText('IPI (crédito) R$ 0,00');
+    await expect(saidas).toContainText('R$ 3.140,00');
+    await expect(saidas).toContainText('ICMS (débito) R$ 565,20');
+    await expect(saidas).toContainText('IPI (débito) R$ 50,00');
+    await expect(entradas).not.toContainText('565,20');
+    await expect(saidas).not.toContainText('400,00');
     await expect(page.getByText('ICMS total')).toHaveCount(0);
+
+    await page.setViewportSize({ width: 768, height: 1024 });
+    for (const card of [entradas, saidas]) {
+      const valor = card.locator('p.text-3xl');
+      expect(await valor.evaluate((elemento) => elemento.scrollWidth <= elemento.clientWidth)).toBe(true);
+    }
+  });
+
+  test('mês só de entradas ou só de saídas deixa o outro card zerado', async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
+    await page.route('**/lancamentos-fiscais**', async (route) => {
+      const url = new URL(route.request().url());
+      if (!url.pathname.endsWith('/resumo')) {
+        await route.fulfill({ json: [] });
+        return;
+      }
+
+      const zero = { quantidade: 0, valor_total: 0, icms: 0, pis: 0, cofins: 0, ipi: 0 };
+      const mes = url.searchParams.get('mes');
+      await route.fulfill({
+        json: {
+          total_nfe: mes === '2' || mes === '3' ? 1 : 0,
+          entradas: mes === '2'
+            ? { quantidade: 1, valor_total: 2_222.21, icms: 400, pis: 0, cofins: 0, ipi: 0 }
+            : zero,
+          saidas: mes === '3'
+            ? { quantidade: 1, valor_total: 3_140, icms: 565.2, pis: 0, cofins: 0, ipi: 0 }
+            : zero,
+        },
+      });
+    });
+    await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
+    await page.goto('/dashboard/fiscal/escrituracao');
+    await page.getByLabel('Ano').selectOption('2025');
+
+    const entradas = page.locator('article').filter({ has: page.getByText('Valor das entradas') });
+    const saidas = page.locator('article').filter({ has: page.getByText('Valor das saídas') });
+
+    await page.getByLabel('Mês').selectOption('2');
+    await expect(entradas).toContainText('R$ 2.222,21');
+    await expect(saidas).toContainText('R$ 0,00');
+    await expect(saidas).toContainText('ICMS (débito) R$ 0,00');
+
+    await page.getByLabel('Mês').selectOption('3');
+    await expect(saidas).toContainText('R$ 3.140,00');
+    await expect(entradas).toContainText('R$ 0,00');
+    await expect(entradas).toContainText('ICMS (crédito) R$ 0,00');
   });
 });
