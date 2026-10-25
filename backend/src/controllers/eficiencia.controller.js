@@ -1,5 +1,6 @@
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
+import { arredondar } from "../utils/comum.util.js";
 
 const PERIODOS_VALIDOS = new Set([7, 15, 30]);
 const PERIODO_PADRAO_DIAS = 30;
@@ -9,10 +10,6 @@ const PERIODO_PADRAO_DIAS = 30;
 // categoria estável não dá pra agrupar por automação, então usamos uma média
 // genérica de minutos por evento até essa migration existir.
 const MINUTOS_POR_EVENTO = 30;
-
-function arredondar(valor) {
-  return Math.round(valor * 100) / 100;
-}
 
 function resolverPeriodoDias(query) {
   const periodo = parseInt(query.periodo, 10);

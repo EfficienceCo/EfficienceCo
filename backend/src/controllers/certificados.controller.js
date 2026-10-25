@@ -5,17 +5,12 @@ import {
   calcularDiasRestantes,
   calcularFaixa,
 } from "../utils/certificado-prazo.util.js";
+import { camposFaltando } from "../utils/comum.util.js";
 
 const TIPOS_VALIDOS = new Set(["A1", "A3"]);
 const CAMPOS_OBRIGATORIOS_POST = ["tipo", "validade"];
 const CAMPOS_EDITAVEIS_PATCH = ["validade", "serial", "caminho_local"];
 const CAMPOS_CONTEXTO_CLIENTE = ["clienteId", "cliente_id"];
-
-function camposFaltando(body, campos) {
-  return campos.filter(
-    (campo) => body[campo] === undefined || body[campo] === null || body[campo] === "",
-  );
-}
 
 function comFaixa(certificado) {
   const diasRestantes = calcularDiasRestantes(certificado.validade);

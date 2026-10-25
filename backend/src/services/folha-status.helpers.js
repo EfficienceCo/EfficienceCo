@@ -1,12 +1,6 @@
-/** Sanitiza um segmento de nome de arquivo: sem acento, minúsculo, só [a-z0-9_.-]. */
-export function sanitizarNomeArquivo(nome) {
-  return String(nome ?? "")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-z0-9_.-]/g, "");
-}
+import { sanitizarNomeArquivo } from "../utils/comum.util.js";
+
+export { sanitizarNomeArquivo };
 
 /** Basename do path no storage (ex.: .../holerites/foo.pdf → foo.pdf). */
 export function nomeArquivoDePath(caminho) {

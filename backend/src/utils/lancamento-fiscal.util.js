@@ -1,5 +1,5 @@
 import { dataIsoValida } from "./data.util.js";
-import { cpfValido } from "./cpf.util.js";
+import { cnpjValido, cpfValido } from "./comum.util.js";
 
 // Faixa de negócio do valor fiscal: no máximo 12 dígitos inteiros e 2 casas
 // (o antigo numeric(14,2)). A coluna original arredondava o excesso antes de
@@ -120,12 +120,14 @@ function validarChaveNfe(valor) {
 }
 
 function validarCnpjEmitente(valor) {
-  if (typeof valor === "string" && /^\d{14}$/.test(valor)) return null;
-  return "cnpj_emitente deve ter exatamente 14 dígitos";
+  if (typeof valor !== "string" || !/^\d{14}$/.test(valor)) return "cnpj_emitente deve ter exatamente 14 dígitos";
+  return cnpjValido(valor) ? null : "cnpj_emitente não é um CNPJ válido";
 }
 
 function validarDocumentoDestinatario(valor) {
-  if (typeof valor === "string" && /^\d{14}$/.test(valor)) return null;
+  if (typeof valor === "string" && /^\d{14}$/.test(valor)) {
+    return cnpjValido(valor) ? null : "cnpj_destinatario não é um CNPJ válido";
+  }
   if (typeof valor === "string" && /^\d{11}$/.test(valor)) {
     return cpfValido(valor) ? null : "cnpj_destinatario não é um CPF válido";
   }

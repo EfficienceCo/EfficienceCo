@@ -7,6 +7,7 @@ import {
   camposRejeicaoBanco,
   validarLancamentoFiscal,
 } from "../utils/lancamento-fiscal.util.js";
+import { arredondar, camposFaltando, soDigitos } from "../utils/comum.util.js";
 
 const TIPOS_VALIDOS = new Set(["entrada", "saida"]);
 const CHAVE_NFE_REGEX = /^\d{44}$/;
@@ -21,23 +22,9 @@ const CAMPOS_OBRIGATORIOS = [
   "cliente_id",
 ];
 
-function camposFaltando(body) {
-  return CAMPOS_OBRIGATORIOS.filter(
-    (campo) => body[campo] === undefined || body[campo] === null || body[campo] === "",
-  );
-}
-
-function arredondar(valor) {
-  return Math.round(valor * 100) / 100;
-}
-
-function soDigitosCnpj(valor) {
-  return String(valor || "").replace(/\D/g, "");
-}
-
 function cnpjEsperadoParaTipo(tipo, cnpj_emitente, cnpj_destinatario) {
-  if (tipo === "entrada") return soDigitosCnpj(cnpj_destinatario);
-  if (tipo === "saida") return soDigitosCnpj(cnpj_emitente);
+  if (tipo === "entrada") return soDigitos(cnpj_destinatario);
+  if (tipo === "saida") return soDigitos(cnpj_emitente);
   return "";
 }
 
@@ -73,7 +60,7 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
   }
 
-  const faltando = camposFaltando(req.body);
+  const faltando = camposFaltando(req.body, CAMPOS_OBRIGATORIOS);
   if (faltando.length > 0) {
     return res.status(400).json({ erro: "Campos obrigatórios faltando", faltando });
   }
@@ -129,7 +116,7 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(403).json({ erro: "cliente_id não encontrado" });
   }
 
-  const cnpjCliente = soDigitosCnpj(cliente.cnpj);
+  const cnpjCliente = soDigitos(cliente.cnpj);
   const cnpjEsperado = cnpjEsperadoParaTipo(tipo, cnpj_emitente, cnpj_destinatario);
   if (!cnpjCliente || cnpjCliente !== cnpjEsperado) {
     return res.status(403).json({

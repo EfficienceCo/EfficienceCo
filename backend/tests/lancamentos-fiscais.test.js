@@ -11,8 +11,8 @@ import {
 
 const CLIENTE_ID = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_ID_OUTRO = "22222222-2222-2222-2222-222222222222";
-const CNPJ_EMIT = "12345678000190";
-const CNPJ_DEST = "98765432000155";
+const CNPJ_EMIT = "12345678000195";
+const CNPJ_DEST = "98765432000198";
 const CNPJ_ALHEIO = "11111111000191";
 
 // ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ function clienteComCnpj(cnpj, id = CLIENTE_ID) {
 
 function payloadValido(overrides = {}) {
   return {
-    chave_nfe: "35240612345678000190550010000000011234567890",
+    chave_nfe: "35240612345678000195550010000000011234567890",
     tipo: "saida",
     cnpj_emitente: CNPJ_EMIT,
     cnpj_destinatario: CNPJ_DEST,
