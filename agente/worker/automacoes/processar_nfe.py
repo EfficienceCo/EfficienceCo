@@ -101,11 +101,30 @@ def _digitos(valor: str | None, campo: str) -> str:
     so = _somente_digitos(valor)
     if len(so) != 14:
         raise ValueError(f"{campo} inválido (esperado 14 dígitos): {valor!r}")
+    if not _cnpj_valido(so):
+        raise ValueError(f"{campo} inválido (dígito verificador): {valor!r}")
     return so
 
 
+def _cnpj_valido(cnpj: str) -> bool:
+    """Mesma regra de cnpjValido em backend/src/utils/comum.util.js."""
+    if len(cnpj) != 14 or not cnpj.isascii() or not cnpj.isdigit() or cnpj == cnpj[0] * 14:
+        return False
+
+    def digito(quantidade: int) -> int:
+        peso = quantidade - 7
+        soma = 0
+        for i in range(quantidade):
+            soma += int(cnpj[i]) * peso
+            peso = 9 if peso == 2 else peso - 1
+        resto = soma % 11
+        return 0 if resto < 2 else 11 - resto
+
+    return digito(12) == int(cnpj[12]) and digito(13) == int(cnpj[13])
+
+
 def _cpf_valido(cpf: str) -> bool:
-    """Mesma regra de cpfValido em backend/src/utils/cpf.util.js."""
+    """Mesma regra de cpfValido em backend/src/utils/comum.util.js."""
     if len(cpf) != 11 or not cpf.isdigit() or cpf == cpf[0] * 11:
         return False
 
@@ -130,6 +149,8 @@ def _documento_destinatario(inf: ET.Element) -> str:
     cpf = _somente_digitos(cpf_bruto) if cpf_bruto else ""
 
     if len(cnpj) == 14:
+        if not _cnpj_valido(cnpj):
+            raise ValueError(f"dest/CNPJ inválido (dígito verificador): {cnpj_bruto!r}")
         return cnpj
     if len(cpf) == 11:
         if not _cpf_valido(cpf):

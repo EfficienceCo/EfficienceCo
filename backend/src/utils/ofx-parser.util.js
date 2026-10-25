@@ -21,7 +21,7 @@ export function decodificarOfx(buffer) {
   return buffer.toString("latin1");
 }
 
-function extrairTag(bloco, tag) {
+function extrairCampoOfx(bloco, tag) {
   const match = bloco.match(new RegExp(`<${tag}>([^<\r\n]*)`, "i"));
   return match ? match[1].trim() : null;
 }
@@ -59,20 +59,20 @@ export function parseOfx(conteudo) {
     throw new OfxParseError("Nenhuma transação (<STMTTRN>) encontrada no arquivo");
   }
 
-  const bankId = extrairTag(conteudo, "BANKID") || extrairTag(conteudo, "BRANCHID");
+  const bankId = extrairCampoOfx(conteudo, "BANKID") || extrairCampoOfx(conteudo, "BRANCHID");
   if (!bankId) {
     throw new OfxParseError("Cabeçalho do banco (BANKID/BRANCHID) não encontrado");
   }
-  const acctId = extrairTag(conteudo, "ACCTID");
+  const acctId = extrairCampoOfx(conteudo, "ACCTID");
 
   const transacoes = blocosTransacao.map((bloco, indice) => {
     const contexto = `na transação #${indice + 1}`;
-    const dtposted = extrairTag(bloco, "DTPOSTED");
-    const trnamt = extrairTag(bloco, "TRNAMT");
-    const memo = extrairTag(bloco, "MEMO");
-    const name = extrairTag(bloco, "NAME");
-    const fitid = extrairTag(bloco, "FITID");
-    const trntype = extrairTag(bloco, "TRNTYPE");
+    const dtposted = extrairCampoOfx(bloco, "DTPOSTED");
+    const trnamt = extrairCampoOfx(bloco, "TRNAMT");
+    const memo = extrairCampoOfx(bloco, "MEMO");
+    const name = extrairCampoOfx(bloco, "NAME");
+    const fitid = extrairCampoOfx(bloco, "FITID");
+    const trntype = extrairCampoOfx(bloco, "TRNTYPE");
 
     const valorNumerico = parseValor(trnamt, contexto);
     const tipo = valorNumerico >= 0 ? "credito" : "debito";

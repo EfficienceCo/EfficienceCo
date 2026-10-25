@@ -8,7 +8,7 @@ export function formatarMoeda(valor) {
   return FORMATADOR_MOEDA.format(Number(valor ?? 0)).replace(/\s/g, " ");
 }
 
-function formatarData(dataIso) {
+function formatarDataBR(dataIso) {
   if (!dataIso) return "-";
   const [ano, mes, dia] = String(dataIso).slice(0, 10).split("-");
   return `${dia}/${mes}/${ano}`;
@@ -254,7 +254,7 @@ export function gerarRelatorioConciliacaoPDF({ cliente, banco, conta, mes, ano, 
       "MATCHES CONFIRMADOS",
       COLUNAS_MATCHES(larguraUtil),
       matches.map((m) => ({
-        data: formatarData(m.data),
+        data: formatarDataBR(m.data),
         descricao_banco: m.descricaoBanco || "-",
         descricao_lancamento: m.descricaoLancamento || "-",
         valor: formatarMoeda(m.valor),
@@ -273,7 +273,7 @@ export function gerarRelatorioConciliacaoPDF({ cliente, banco, conta, mes, ano, 
       "ITENS SEM PAR",
       COLUNAS_SEM_PAR(larguraUtil),
       semPar.map((item) => ({
-        data: formatarData(item.data),
+        data: formatarDataBR(item.data),
         descricao: item.descricao || "-",
         valor: formatarMoeda(item.valor),
         origem: item.origem === "banco" ? "Banco" : "Lançamento interno",

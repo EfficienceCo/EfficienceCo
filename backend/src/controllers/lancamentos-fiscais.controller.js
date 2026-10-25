@@ -7,6 +7,7 @@ import {
   camposRejeicaoBanco,
   validarLancamentoFiscal,
 } from "../utils/lancamento-fiscal.util.js";
+import { arredondar, camposFaltando, soDigitos } from "../utils/comum.util.js";
 
 const TIPOS_VALIDOS = new Set(["entrada", "saida"]);
 const CHAVE_NFE_REGEX = /^\d{44}$/;
@@ -21,23 +22,9 @@ const CAMPOS_OBRIGATORIOS = [
   "cliente_id",
 ];
 
-function camposFaltando(body) {
-  return CAMPOS_OBRIGATORIOS.filter(
-    (campo) => body[campo] === undefined || body[campo] === null || body[campo] === "",
-  );
-}
-
-function arredondar(valor) {
-  return Math.round(valor * 100) / 100;
-}
-
-function soDigitosCnpj(valor) {
-  return String(valor || "").replace(/\D/g, "");
-}
-
 function cnpjEsperadoParaTipo(tipo, cnpj_emitente, cnpj_destinatario) {
-  if (tipo === "entrada") return soDigitosCnpj(cnpj_destinatario);
-  if (tipo === "saida") return soDigitosCnpj(cnpj_emitente);
+  if (tipo === "entrada") return soDigitos(cnpj_destinatario);
+  if (tipo === "saida") return soDigitos(cnpj_emitente);
   return "";
 }
 
@@ -73,7 +60,7 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
   }
 
-  const faltando = camposFaltando(req.body);
+  const faltando = camposFaltando(req.body, CAMPOS_OBRIGATORIOS);
   if (faltando.length > 0) {
     return res.status(400).json({ erro: "Campos obrigatórios faltando", faltando });
   }
@@ -129,7 +116,7 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(403).json({ erro: "cliente_id não encontrado" });
   }
 
-  const cnpjCliente = soDigitosCnpj(cliente.cnpj);
+  const cnpjCliente = soDigitos(cliente.cnpj);
   const cnpjEsperado = cnpjEsperadoParaTipo(tipo, cnpj_emitente, cnpj_destinatario);
   if (!cnpjCliente || cnpjCliente !== cnpjEsperado) {
     return res.status(403).json({
@@ -311,18 +298,18 @@ export async function resumoLancamentosFiscais(req, res) {
   // do filtro solicitado ao banco.
   const linhas = (data || []).filter((lancamento) => lancamento.status !== "cancelada");
 
-  const totais = linhas.reduce(
-    (acc, lancamento) => ({
-      valor_total: arredondar(acc.valor_total + Number(lancamento.valor_total)),
-      icms: arredondar(acc.icms + Number(lancamento.icms)),
-      pis: arredondar(acc.pis + Number(lancamento.pis)),
-      cofins: arredondar(acc.cofins + Number(lancamento.cofins)),
-      ipi: arredondar(acc.ipi + Number(lancamento.ipi)),
-      entradas: acc.entradas + (lancamento.tipo === "entrada" ? 1 : 0),
-      saidas: acc.saidas + (lancamento.tipo === "saida" ? 1 : 0),
-    }),
-    { valor_total: 0, icms: 0, pis: 0, cofins: 0, ipi: 0, entradas: 0, saidas: 0 },
-  );
+  // Entrada = crédito de imposto, saída = débito: nunca somar os dois juntos.
+  const zerado = () => ({ quantidade: 0, valor_total: 0, icms: 0, pis: 0, cofins: 0, ipi: 0 });
+  const totais = { entradas: zerado(), saidas: zerado() };
+
+  for (const lancamento of linhas) {
+    const grupo = lancamento.tipo === "entrada" ? totais.entradas : lancamento.tipo === "saida" ? totais.saidas : null;
+    if (!grupo) continue;
+    grupo.quantidade += 1;
+    for (const campo of ["valor_total", "icms", "pis", "cofins", "ipi"]) {
+      grupo[campo] = arredondar(grupo[campo] + Number(lancamento[campo]));
+    }
+  }
 
   return res.status(200).json({ total_nfe: linhas.length, ...totais });
 }
