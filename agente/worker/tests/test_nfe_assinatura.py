@@ -14,8 +14,8 @@ from signxml import DigestAlgorithm, SignatureMethod
 from helpers_nfe_assinatura import assinar_xml_nfe, gerar_certificado_teste, gravar_nfe_assinada
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
-CNPJ_CLIENTE = "12345678000199"
-CNPJ_FORNECEDOR = "98765432000110"
+CNPJ_CLIENTE = "12345678000195"
+CNPJ_FORNECEDOR = "98765432000198"
 CNPJ_OUTRO = "11222333000181"
 CLIENTE_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 NOME_EMPRESA = "Padaria do João"
