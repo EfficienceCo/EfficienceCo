@@ -407,3 +407,59 @@ def test_nfe_proc_sem_chnfe_nao_tem_efeito_fiscal(tmp_path):
 
     with pytest.raises(ValueError, match="nfeProc sem chNFe no protocolo"):
         parsear_nfe(str(caminho))
+
+
+def test_chnfe_com_letra_extra_nao_tem_efeito_fiscal(tmp_path):
+    """Review #667: letra extra em chNFe não pode virar match via strip de dígitos."""
+    chave = "35260712345678000190550010000000011000000011"
+    xml = _envolver_nfe_autorizada(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+    <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+      <infNFe Id="NFe{chave}" versao="4.00">
+        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <emit><CNPJ>98765432000110</CNPJ></emit>
+        <dest><CNPJ>12345678000199</CNPJ></dest>
+        <total><ICMSTot>
+          <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+        </ICMSTot></total>
+      </infNFe>
+    </NFe>
+    """,
+        ch_nfe=chave + "X",
+    )
+    caminho = tmp_path / "chnfe-letra-extra.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="chNFe inválido no protocolo") as excinfo:
+        parsear_nfe(str(caminho))
+    assert chave not in str(excinfo.value)
+    assert "X" not in str(excinfo.value)
+
+
+def test_cstat_e_chnfe_em_protocolos_distintos_nao_tem_efeito_fiscal(tmp_path):
+    """Review #667: cStat=100 num protNFe e chNFe da nota em outro não autoriza."""
+    chave = "35260712345678000190550010000000011000000011"
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+      <NFe>
+        <infNFe Id="NFe{chave}" versao="4.00">
+          <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+          <emit><CNPJ>98765432000110</CNPJ></emit>
+          <dest><CNPJ>12345678000199</CNPJ></dest>
+          <total><ICMSTot>
+            <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+          </ICMSTot></total>
+        </infNFe>
+      </NFe>
+      <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
+      <protNFe><infProt>
+        <chNFe>{chave}</chNFe><cStat>110</cStat>
+      </infProt></protNFe>
+    </nfeProc>
+    """
+    caminho = tmp_path / "prot-misturados.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="mais de um protocolo de autorização") as excinfo:
+        parsear_nfe(str(caminho))
+    assert chave not in str(excinfo.value)

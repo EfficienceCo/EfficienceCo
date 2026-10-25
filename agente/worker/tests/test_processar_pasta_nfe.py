@@ -500,6 +500,51 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
             """,
             "refere outra NF-e",
         ),
+        (
+            "chnfe-letra-extra.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+            <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+              <NFe>
+                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                  <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+                  <emit><CNPJ>98765432000110</CNPJ></emit>
+                  <dest><CNPJ>12345678000199</CNPJ></dest>
+                  <total><ICMSTot>
+                    <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+                  </ICMSTot></total>
+                </infNFe>
+              </NFe>
+              <protNFe><infProt>
+                <chNFe>35260712345678000190550010000000011000000011X</chNFe>
+                <cStat>100</cStat>
+              </infProt></protNFe>
+            </nfeProc>
+            """,
+            "chNFe inválido no protocolo",
+        ),
+        (
+            "prot-cstat-e-chave-separados.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+            <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+              <NFe>
+                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                  <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+                  <emit><CNPJ>98765432000110</CNPJ></emit>
+                  <dest><CNPJ>12345678000199</CNPJ></dest>
+                  <total><ICMSTot>
+                    <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+                  </ICMSTot></total>
+                </infNFe>
+              </NFe>
+              <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
+              <protNFe><infProt>
+                <chNFe>35260712345678000190550010000000011000000011</chNFe>
+                <cStat>110</cStat>
+              </infProt></protNFe>
+            </nfeProc>
+            """,
+            "mais de um protocolo de autorização",
+        ),
     ],
 )
 def test_sem_autorizacao_sefaz_vai_para_nao_identificado(
