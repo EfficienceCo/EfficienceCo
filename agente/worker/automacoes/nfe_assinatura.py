@@ -218,6 +218,12 @@ def validar_assinatura_nfe(caminho_xml: str) -> None:
     if nfe is None or _assinatura(nfe) is None:
         raise ValueError(_MSG_SEM_ASSINATURA)
 
+    # processar_nfe lê o primeiro infNFe do arquivo; só um, dentro do NFe conferido,
+    # senão a assinatura vale para uma nota e os campos vêm de outra.
+    tag_inf = f"{{{NS_NFE}}}infNFe"
+    if len(list(doc.iter(tag_inf))) != 1 or len(list(nfe.iter(tag_inf))) != 1:
+        raise ValueError(_MSG_INVALIDA)
+
     standalone = _nfe_standalone(nfe)
     cert = _certificado_da_assinatura(standalone)
     emitente = _documento_emitente(standalone)

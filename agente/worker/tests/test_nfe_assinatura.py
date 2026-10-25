@@ -47,6 +47,19 @@ def test_vnf_alterado_depois_de_assinada_recusa(tmp_path):
         parsear_nfe(str(caminho))
 
 
+def test_infnfe_falso_fora_do_nfe_assinado_recusa(tmp_path):
+    assinado = assinar_xml_nfe(_entrada_xml())
+    inicio = assinado.index("<infNFe")
+    falso = assinado[inicio : assinado.index("</infNFe>") + len("</infNFe>")].replace(
+        ">1500.00<", ">9999.00<", 1
+    )
+    adulterado = assinado.replace("<NFe>", f"<extra>{falso}</extra><NFe>", 1)
+    caminho = tmp_path / "infnfe-falso.xml"
+    caminho.write_text(adulterado, encoding="utf-8")
+    with pytest.raises(ValueError, match="adulterada"):
+        parsear_nfe(str(caminho))
+
+
 def test_sem_signature_recusa(tmp_path):
     caminho = tmp_path / "sem-sig.xml"
     caminho.write_text(_entrada_xml(), encoding="utf-8")
