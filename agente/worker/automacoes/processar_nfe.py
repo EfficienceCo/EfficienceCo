@@ -18,6 +18,7 @@ from comunicacao.api_client import ApiError
 from comunicacao.buscar_empresa import buscar_empresa_por_cnpj
 from core.configuracao import obter_pasta_base, obter_pasta_nfe
 from core.estrutura_pastas import criar_estrutura_empresa_em, resolver_destino
+from automacoes.nfe_assinatura import validar_assinatura_nfe
 from core.utils import validar_caminho, validar_nome
 
 NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
@@ -183,7 +184,7 @@ def _data_emissao(inf: ET.Element) -> date:
         raise ValueError(f"data de emissão inválida: {texto!r}") from e
 
 
-def _parsear_nfe_root(root: ET.Element) -> dict:
+def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
     cstat = _validar_protocolo_autorizacao(root)
 
     inf = _inf_nfe(root)
@@ -195,8 +196,7 @@ def _parsear_nfe_root(root: ET.Element) -> dict:
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
     cnpj_dest = _documento_destinatario(inf)
-
-    return {
+    dados = {
         "chave_nfe": chave,
         "cnpj_emitente": cnpj_emit,
         "cnpj_destinatario": cnpj_dest,
@@ -208,11 +208,15 @@ def _parsear_nfe_root(root: ET.Element) -> dict:
         "data_emissao": _data_emissao(inf),
         "cstat": cstat,
     }
+    # Depois dos campos: XML incompleto falha no campo, não na Signature.
+    # A conferência usa os bytes originais do arquivo (C14N).
+    validar_assinatura_nfe(caminho_xml)
+    return dados
 
 
 def parsear_nfe(caminho_xml: str) -> dict:
     """Lê XML de NF-e SEFAZ e retorna campos relevantes tipados."""
-    return _parsear_nfe_root(_ler_xml(caminho_xml))
+    return _parsear_nfe_root(_ler_xml(caminho_xml), caminho_xml)
 
 
 def _parsear_evento_cancelamento_root(root: ET.Element) -> dict | None:
@@ -589,7 +593,7 @@ def processar_pasta_nfe(pasta: str) -> None:
             continue
 
         try:
-            dados = _parsear_nfe_root(root)
+            dados = _parsear_nfe_root(root, str(xml_path))
         except ValueError as e:
             try:
                 _mover_nao_identificado(xml_path, pasta_path, str(e))

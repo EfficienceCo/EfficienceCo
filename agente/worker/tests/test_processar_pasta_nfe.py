@@ -2,7 +2,6 @@
 
 import contextlib
 import io
-import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +10,7 @@ import pytest
 from comunicacao.api_client import ApiError
 from automacoes.processar_nfe import _caminho_xml_relativo, _ler_xml, processar_pasta_nfe
 from core.estrutura_pastas import SUBPASTAS
+from helpers_nfe_assinatura import assinar_xml_nfe, gravar_nfe_assinada
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
 CNPJ_CLIENTE = "12345678000195"
@@ -59,10 +59,8 @@ def stdout_cp1252():
 
 
 def _copiar_fixture(nome: str, destino: Path) -> Path:
-    src = FIXTURES / nome
-    alvo = destino / nome
-    shutil.copy(src, alvo)
-    return alvo
+    xml = (FIXTURES / nome).read_text(encoding="utf-8")
+    return gravar_nfe_assinada(destino / nome, xml)
 
 
 def _lookup_padaria(cnpj):
@@ -166,7 +164,7 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
 
 
 def _xml_saida_cpf(valor: str = "250.00") -> str:
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
+    return assinar_xml_nfe(f"""<?xml version="1.0" encoding="UTF-8"?>
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
     <NFe>
       <infNFe Id="NFe35260712345678000195550010000000041000000044" versao="4.00">
@@ -180,7 +178,7 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
     </NFe>
     <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
     </nfeProc>
-    """
+    """)
 
 
 def test_processar_pasta_saida_dest_cpf_posta_e_nao_quarentena(pasta_nfe):
@@ -348,7 +346,10 @@ def test_falha_mover_nao_identificado_nao_aborta_pasta(pasta_nfe):
     inbox, _base = pasta_nfe
     quebrado = inbox / "a-quebrado.xml"
     quebrado.write_text("<nfeProc><NFe>", encoding="utf-8")
-    shutil.copy(FIXTURES / "entrada.xml", inbox / "b-valido.xml")
+    gravar_nfe_assinada(
+        inbox / "b-valido.xml",
+        (FIXTURES / "entrada.xml").read_text(encoding="utf-8"),
+    )
 
     with (
         patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
@@ -679,12 +680,9 @@ def test_nao_identificado_loga_sem_falha_em_cp1252(pasta_nfe, stdout_cp1252):
 def test_nfe_data_emissao_futura_vai_para_nao_identificado(pasta_nfe):
     """BUG-APUR-08: NF-e com dhEmi futura não entra no ledger."""
     inbox, _base = pasta_nfe
-    xml = _copiar_fixture("entrada.xml", inbox)
-    texto = xml.read_text(encoding="utf-8")
-    xml.write_text(
-        texto.replace("2026-07-15T14:30:00-03:00", "2099-12-08T14:30:00-03:00"),
-        encoding="utf-8",
-    )
+    texto = (FIXTURES / "entrada.xml").read_text(encoding="utf-8")
+    texto = texto.replace("2026-07-15T14:30:00-03:00", "2099-12-08T14:30:00-03:00")
+    gravar_nfe_assinada(inbox / "entrada.xml", texto)
 
     with (
         patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
