@@ -546,9 +546,13 @@ def _espera_cancelamento_esgotada(xml_path: Path) -> bool:
 
 
 def _tratar_falha_cancelamento(
-    xml_path: Path, pasta_path: Path, evento: dict, erro: BaseException
+    xml_path: Path, pasta_path: Path, erro: BaseException
 ) -> None:
-    """404: retenta até esgotar a espera; depois eventos_pendentes/ + aviso no painel.
+    """404: retenta até esgotar a espera; depois tira do inbox + aviso no painel.
+
+    Sidecar só some depois do XML sair da varredura. Se a pasta falhar,
+    `_tirar_do_inbox` renomeia (padrão #569); se os dois falharem, o timestamp
+    permanece e o aviso já foi enviado.
 
     Demais erros: só log (permanentes no cancelamento ficam para issue futura —
     mesma classe do #569 no ramo de lançamento).
@@ -562,29 +566,21 @@ def _tratar_falha_cancelamento(
             )
             return
 
-        motivo = (
-            "cancelamento sem nota no ledger após espera "
-            f"(chave={evento.get('chave_nfe', '')})"
+        # Sem chave de acesso: embute CNPJ; vai a log/evento/notificação (NFE-1).
+        motivo = f"cancelamento sem nota no ledger após espera ({nome})"
+        _tirar_do_inbox(
+            xml_path,
+            pasta_path,
+            PASTA_EVENTOS_PENDENTES,
+            "evento pendente",
+            motivo,
         )
-        _limpar_espera_cancelamento(xml_path)
-        try:
-            _mover_para_subpasta(
-                xml_path,
-                pasta_path,
-                PASTA_EVENTOS_PENDENTES,
-                "evento pendente",
-                motivo,
-            )
-        except Exception as move_err:
-            print(
-                f"[processar_nfe] espera esgotada, mas falha ao mover {nome} "
-                f"para {PASTA_EVENTOS_PENDENTES}/: {move_err}"
-            )
-            return
         reportar_evento(
             f"[NF-e] Evento de cancelamento sem nota correspondente: {motivo}",
             False,
         )
+        if not xml_path.is_file():
+            _limpar_espera_cancelamento(xml_path)
         return
 
     print(f"[processar_nfe] falha no cancelamento ({nome}): {erro}")
@@ -667,7 +663,7 @@ def processar_pasta_nfe(pasta: str) -> None:
                 )
             except Exception as e:
                 # 404: evento pode ter chegado antes da nota — espera limitada (NFE-4).
-                _tratar_falha_cancelamento(xml_path, pasta_path, evento, e)
+                _tratar_falha_cancelamento(xml_path, pasta_path, e)
             continue
 
         try:
