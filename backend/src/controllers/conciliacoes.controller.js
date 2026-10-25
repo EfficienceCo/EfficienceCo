@@ -6,15 +6,7 @@ import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
 import { gerarRelatorioConciliacaoPDF, montarConteudoRelatorio } from "../services/conciliacao-relatorio.service.js";
-
-function sanitizarNomeArquivo(nome) {
-  return nome
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-z0-9_.-]/g, "");
-}
+import { sanitizarNomeArquivo } from "../utils/comum.util.js";
 
 const STATUS_EXTRATO = {
   AGUARDANDO: "aguardando",

@@ -18,6 +18,7 @@ from comunicacao.api_client import ApiError
 from comunicacao.buscar_empresa import buscar_empresa_por_cnpj
 from core.configuracao import obter_pasta_base, obter_pasta_nfe
 from core.estrutura_pastas import criar_estrutura_empresa_em, resolver_destino
+from automacoes.nfe_assinatura import validar_assinatura_nfe
 from core.utils import validar_caminho, validar_nome
 
 NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
@@ -100,11 +101,30 @@ def _digitos(valor: str | None, campo: str) -> str:
     so = _somente_digitos(valor)
     if len(so) != 14:
         raise ValueError(f"{campo} inválido (esperado 14 dígitos): {valor!r}")
+    if not _cnpj_valido(so):
+        raise ValueError(f"{campo} inválido (dígito verificador): {valor!r}")
     return so
 
 
+def _cnpj_valido(cnpj: str) -> bool:
+    """Mesma regra de cnpjValido em backend/src/utils/comum.util.js."""
+    if len(cnpj) != 14 or not cnpj.isascii() or not cnpj.isdigit() or cnpj == cnpj[0] * 14:
+        return False
+
+    def digito(quantidade: int) -> int:
+        peso = quantidade - 7
+        soma = 0
+        for i in range(quantidade):
+            soma += int(cnpj[i]) * peso
+            peso = 9 if peso == 2 else peso - 1
+        resto = soma % 11
+        return 0 if resto < 2 else 11 - resto
+
+    return digito(12) == int(cnpj[12]) and digito(13) == int(cnpj[13])
+
+
 def _cpf_valido(cpf: str) -> bool:
-    """Mesma regra de cpfValido em backend/src/utils/cpf.util.js."""
+    """Mesma regra de cpfValido em backend/src/utils/comum.util.js."""
     if len(cpf) != 11 or not cpf.isdigit() or cpf == cpf[0] * 11:
         return False
 
@@ -129,6 +149,8 @@ def _documento_destinatario(inf: ET.Element) -> str:
     cpf = _somente_digitos(cpf_bruto) if cpf_bruto else ""
 
     if len(cnpj) == 14:
+        if not _cnpj_valido(cnpj):
+            raise ValueError(f"dest/CNPJ inválido (dígito verificador): {cnpj_bruto!r}")
         return cnpj
     if len(cpf) == 11:
         if not _cpf_valido(cpf):
@@ -212,7 +234,7 @@ def _itens_nfe(inf: ET.Element) -> list[dict]:
     return itens
 
 
-def _parsear_nfe_root(root: ET.Element) -> dict:
+def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
     cstat = _validar_protocolo_autorizacao(root)
 
     inf = _inf_nfe(root)
@@ -224,8 +246,7 @@ def _parsear_nfe_root(root: ET.Element) -> dict:
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
     cnpj_dest = _documento_destinatario(inf)
-
-    return {
+    dados = {
         "chave_nfe": chave,
         "cnpj_emitente": cnpj_emit,
         "cnpj_destinatario": cnpj_dest,
@@ -239,11 +260,15 @@ def _parsear_nfe_root(root: ET.Element) -> dict:
         "tp_nf": _tp_nf(inf),
         "itens": _itens_nfe(inf),
     }
+    # Depois dos campos: XML incompleto falha no campo, não na Signature.
+    # A conferência usa os bytes originais do arquivo (C14N).
+    validar_assinatura_nfe(caminho_xml)
+    return dados
 
 
 def parsear_nfe(caminho_xml: str) -> dict:
     """Lê XML de NF-e SEFAZ e retorna campos relevantes tipados."""
-    return _parsear_nfe_root(_ler_xml(caminho_xml))
+    return _parsear_nfe_root(_ler_xml(caminho_xml), caminho_xml)
 
 
 def _parsear_evento_cancelamento_root(root: ET.Element) -> dict | None:
@@ -622,7 +647,7 @@ def processar_pasta_nfe(pasta: str) -> None:
             continue
 
         try:
-            dados = _parsear_nfe_root(root)
+            dados = _parsear_nfe_root(root, str(xml_path))
         except ValueError as e:
             try:
                 _mover_nao_identificado(xml_path, pasta_path, str(e))

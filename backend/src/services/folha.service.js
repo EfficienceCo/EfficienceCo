@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
-import { cpfValido, normalizarCpf } from "../utils/cpf.util.js";
+import { arredondar, cpfValido, normalizarCpf } from "../utils/comum.util.js";
 
 // Spec de colunas da planilha de folha de pagamento — contrato entre
 // BK-FOLHA-TEMPLATE (gera) e BK-FOLHA-UPLOAD (valida). Ordem e nomes fixos.
@@ -210,16 +210,6 @@ const ALIQUOTA_FGTS = 0.08;
 const ALIQUOTA_DESCONTO_VT = 0.06;
 const DIVISOR_HORA_EXTRA = 220;
 const ADICIONAL_HORA_EXTRA = 1.5;
-
-function arredondar(valor) {
-  // Math.round(x * 100) / 100 sozinho erra a meia-unidade exata: o produto x * 100
-  // "cai para baixo" por erro de representação binária (ex.: 1621 * 0,075 chega como
-  // 121.57499999999999 e arredondaria para 121,57 em vez de 121,58 — que é o valor
-  // que INSS/RFB e o lote de reconciliação do #437 esperam). O nudge de 1 epsilon
-  // relativo, afastando de zero, corrige a fronteira .xx5 sem mexer em nenhum outro valor.
-  const cents = valor * 100;
-  return Math.round(cents + Math.sign(cents) * Number.EPSILON * Math.abs(cents)) / 100;
-}
 
 // INSS é calculado por faixas marginais: cada pedaço da base paga a alíquota da sua
 // própria faixa, não a alíquota da faixa final sobre o total. Acima do teto salarial,
@@ -669,7 +659,7 @@ export async function validarColunasPlanilha(buffer) {
   return { valido: faltando.length === 0, faltando };
 }
 
-function formatarMoeda(valor) {
+function formatarDecimalBR(valor) {
   return Number(valor).toFixed(2).replace(".", ",");
 }
 
@@ -754,7 +744,7 @@ function montarLinhasVerbas(calculo) {
       verba: "0001",
       descricao: "SALARIO BASE",
       referencia: String(calculo.dias_trabalhados),
-      proventos: formatarMoeda(calculo.salario_bruto),
+      proventos: formatarDecimalBR(calculo.salario_bruto),
       descontos: "",
     },
   ];
@@ -764,7 +754,7 @@ function montarLinhasVerbas(calculo) {
       verba: "0002",
       descricao: "HORAS EXTRAS 50%",
       referencia: String(calculo.horas_extras),
-      proventos: formatarMoeda(calculo.valor_horas_extras),
+      proventos: formatarDecimalBR(calculo.valor_horas_extras),
       descontos: "",
     });
   }
@@ -775,16 +765,16 @@ function montarLinhasVerbas(calculo) {
       descricao: "FALTAS",
       referencia: String(calculo.faltas),
       proventos: "",
-      descontos: formatarMoeda(calculo.valor_faltas),
+      descontos: formatarDecimalBR(calculo.valor_faltas),
     });
   }
 
   linhas.push({
     verba: "0011",
     descricao: "INSS",
-    referencia: formatarMoeda(calculo.base_calculo),
+    referencia: formatarDecimalBR(calculo.base_calculo),
     proventos: "",
-    descontos: formatarMoeda(calculo.inss),
+    descontos: formatarDecimalBR(calculo.inss),
   });
 
   linhas.push({
@@ -792,7 +782,7 @@ function montarLinhasVerbas(calculo) {
     descricao: "IRRF",
     referencia: "",
     proventos: "",
-    descontos: formatarMoeda(calculo.ir),
+    descontos: formatarDecimalBR(calculo.ir),
   });
 
   if (Number(calculo.adiantamento) > 0) {
@@ -801,7 +791,7 @@ function montarLinhasVerbas(calculo) {
       descricao: "ADIANTAMENTO SALARIAL",
       referencia: "",
       proventos: "",
-      descontos: formatarMoeda(calculo.adiantamento),
+      descontos: formatarDecimalBR(calculo.adiantamento),
     });
   }
 
@@ -811,7 +801,7 @@ function montarLinhasVerbas(calculo) {
       descricao: "VALE-TRANSPORTE (6%)",
       referencia: "",
       proventos: "",
-      descontos: formatarMoeda(calculo.desconto_vt),
+      descontos: formatarDecimalBR(calculo.desconto_vt),
     });
   }
 
@@ -833,14 +823,14 @@ export function montarCelulasBases(calculo) {
   const baseIrDisponivel = calculo.base_ir != null && Number.isFinite(Number(calculo.base_ir));
 
   return [
-    { rotulo: "SALAR. BASE", texto: formatarMoeda(calculo.salario_bruto) },
-    { rotulo: "SAL. CONTR.", texto: formatarMoeda(calculo.base_calculo) },
-    { rotulo: "BASE FGTS", texto: formatarMoeda(Number(calculo.fgts) > 0 ? calculo.base_calculo : 0) },
-    { rotulo: "FGTS MES", texto: formatarMoeda(calculo.fgts) },
-    { rotulo: "BASE IRRF", texto: baseIrDisponivel ? formatarMoeda(calculo.base_ir) : "-" },
+    { rotulo: "SALAR. BASE", texto: formatarDecimalBR(calculo.salario_bruto) },
+    { rotulo: "SAL. CONTR.", texto: formatarDecimalBR(calculo.base_calculo) },
+    { rotulo: "BASE FGTS", texto: formatarDecimalBR(Number(calculo.fgts) > 0 ? calculo.base_calculo : 0) },
+    { rotulo: "FGTS MES", texto: formatarDecimalBR(calculo.fgts) },
+    { rotulo: "BASE IRRF", texto: baseIrDisponivel ? formatarDecimalBR(calculo.base_ir) : "-" },
     { rotulo: "DEP IR", texto: String(calculo.num_dependentes) },
-    { rotulo: "TOT. PROVENTOS", texto: formatarMoeda(totalProventos) },
-    { rotulo: "TOT. DESCONTOS", texto: formatarMoeda(totalDescontos) },
+    { rotulo: "TOT. PROVENTOS", texto: formatarDecimalBR(totalProventos) },
+    { rotulo: "TOT. DESCONTOS", texto: formatarDecimalBR(totalDescontos) },
   ];
 }
 
@@ -930,7 +920,7 @@ export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
     );
     y += alturaBases;
 
-    desenharCelula(doc, x0, y, larguraUtil, alturaTotalLiquido, `R$ ${formatarMoeda(calculo.liquido)}`, {
+    desenharCelula(doc, x0, y, larguraUtil, alturaTotalLiquido, `R$ ${formatarDecimalBR(calculo.liquido)}`, {
       rotulo: "TOTAL LÍQUIDO",
       alinhamento: "right",
       negrito: true,
@@ -996,9 +986,9 @@ export function gerarRelatorioFechamentoPDF({ empresa, mesReferenciaFormatado, c
     const larguraCelulaTotal = larguraUtil / 4;
     desenharLinhaCelulas(doc, x0, y, alturaTotais, [
       { largura: larguraCelulaTotal, rotulo: "TOTAL FUNCIONÁRIOS", texto: String(totais.totalFuncionarios), alinhamento: "right" },
-      { largura: larguraCelulaTotal, rotulo: "TOTAL BRUTO", texto: formatarMoeda(totais.totalBruto), alinhamento: "right" },
-      { largura: larguraCelulaTotal, rotulo: "TOTAL ENCARGOS", texto: formatarMoeda(totais.totalEncargos), alinhamento: "right" },
-      { largura: larguraCelulaTotal, rotulo: "TOTAL LÍQUIDO", texto: formatarMoeda(totais.totalLiquido), alinhamento: "right", negrito: true },
+      { largura: larguraCelulaTotal, rotulo: "TOTAL BRUTO", texto: formatarDecimalBR(totais.totalBruto), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "TOTAL ENCARGOS", texto: formatarDecimalBR(totais.totalEncargos), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "TOTAL LÍQUIDO", texto: formatarDecimalBR(totais.totalLiquido), alinhamento: "right", negrito: true },
     ]);
     y += alturaTotais;
     y += 10;
@@ -1024,7 +1014,7 @@ export function gerarRelatorioFechamentoPDF({ empresa, mesReferenciaFormatado, c
       desenharLinhaVerba(doc, x0, y, colunasFuncionarios, {
         funcionario: calculo.funcionario,
         cargo: calculo.cargo,
-        liquido: formatarMoeda(calculo.liquido),
+        liquido: formatarDecimalBR(calculo.liquido),
       });
       y += alturaLinha;
     });

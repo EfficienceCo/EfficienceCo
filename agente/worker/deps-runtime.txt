@@ -17,3 +17,6 @@ requests
 watchdog
 schedule
 dotenv
+signxml
+lxml
+cryptography
