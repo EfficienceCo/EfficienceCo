@@ -9,6 +9,11 @@ describe("comum.util (UTIL-1 / #657)", () => {
     assert.equal(arredondar(1.004), 1);
   });
 
+  it("arredondar: x.xx5 exato sobe (padrão definido pelo João; antes variava entre as 3 cópias)", () => {
+    assert.equal(arredondar(10.075), 10.08);
+    assert.equal(arredondar(1.005), 1.01);
+  });
+
   it("camposFaltando acusa ausente, nulo e vazio", () => {
     assert.deepEqual(camposFaltando({ a: 1, b: "", c: null }, ["a", "b", "c", "d"]), ["b", "c", "d"]);
   });

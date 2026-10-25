@@ -5,12 +5,11 @@
 // grava um histórico que a apuração depois recusa com HISTORICO_RECEITA_INVALIDO.
 
 import { competenciaEstaFechada, hojeNoBrasil } from "./periodo.util.js";
+import { chaveMes, inteiroEstrito, numeroNaoNegativo } from "./comum.util.js";
 
 export const REGIMES_TRIBUTARIOS = ["simples_nacional", "lucro_presumido", "lucro_real"];
 
 export const ANEXOS_SIMPLES = ["I", "II", "III", "IV", "V"];
-
-import { chaveMes, inteiroEstrito, numeroNaoNegativo } from "./comum.util.js";
 
 // Primeiro ano com tabela do Simples suportada — mesmo piso que a leitura da
 // apuração aplica ao histórico manual.

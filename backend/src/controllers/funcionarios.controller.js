@@ -1,9 +1,8 @@
 import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
-import { cpfValido, normalizarCpf } from "../utils/comum.util.js";
+import { camposFaltando, cpfValido, normalizarCpf } from "../utils/comum.util.js";
 import { dataIsoValida } from "../utils/data.util.js";
-import { camposFaltando } from "../utils/comum.util.js";
 
 const CAMPOS_OBRIGATORIOS_POST = ["cpf", "nome", "data_admissao", "categoria", "salario"];
 const CAMPOS_EDITAVEIS_PATCH = ["nome", "endereco", "cargo", "cbo", "salario"];

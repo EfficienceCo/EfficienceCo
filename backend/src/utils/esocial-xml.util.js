@@ -62,8 +62,6 @@ import { create } from "xmlbuilder2";
 import { CATALOGO_ESOCIAL } from "./esocial-catalogo.util.js";
 import { cpfValido, soDigitos } from "./comum.util.js";
 
-export { soDigitos };
-
 // Versão do leiaute usada na URN do namespace e em ideEvento/verProc.
 // S-1.3 -> "S_01_03_00". Trocar aqui quando o governo publicar nova versão.
 export const VERSAO_LEIAUTE = "S_01_03_00";

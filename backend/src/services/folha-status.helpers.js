@@ -1,6 +1,7 @@
 import { sanitizarNomeArquivo } from "../utils/comum.util.js";
 
 export { sanitizarNomeArquivo };
+
 /** Basename do path no storage (ex.: .../holerites/foo.pdf → foo.pdf). */
 export function nomeArquivoDePath(caminho) {
   if (!caminho || typeof caminho !== "string") return null;

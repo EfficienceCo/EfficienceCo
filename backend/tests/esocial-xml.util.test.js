@@ -5,7 +5,6 @@ import {
   gerarXmlEvento,
   eventoSuportado,
   ErroXmlESocial,
-  soDigitos,
   formatarData,
   formatarCompetencia,
   formatarValor,
@@ -15,6 +14,7 @@ import {
   podarVazios,
   VERSAO_LEIAUTE,
 } from "../src/utils/esocial-xml.util.js";
+import { soDigitos } from "../src/utils/comum.util.js";
 
 // --- fixtures: montadas aqui, nunca dentro do gerador (regra da task) --------
 

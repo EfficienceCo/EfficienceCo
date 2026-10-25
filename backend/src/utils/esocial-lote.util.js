@@ -3,9 +3,8 @@
 
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import { create } from "xmlbuilder2";
-import { soDigitos } from "./comum.util.js";
+import { extrairTag, soDigitos } from "./comum.util.js";
 import { grupoLoteParaEvento } from "./esocial-grupo-lote.util.js";
-import { extrairTag } from "./comum.util.js";
 
 export const VERSAO_LOTE = "v1_3_0";
 export const NS_ENVIO_LOTE = `http://www.esocial.gov.br/schema/lote/eventos/envio/${VERSAO_LOTE}`;

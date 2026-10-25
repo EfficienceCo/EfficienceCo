@@ -1,7 +1,6 @@
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
-import { cpfValido, normalizarCpf } from "../utils/comum.util.js";
-import { arredondar } from "../utils/comum.util.js";
+import { arredondar, cpfValido, normalizarCpf } from "../utils/comum.util.js";
 
 // Spec de colunas da planilha de folha de pagamento — contrato entre
 // BK-FOLHA-TEMPLATE (gera) e BK-FOLHA-UPLOAD (valida). Ordem e nomes fixos.

@@ -1,6 +1,7 @@
-import { extrairTag } from "./comum.util.js";
 // Parser das respostas SOAP/XML do eSocial (#ES-8).
 // Manual §7.5.10 (RetornoEnvioLoteEventos) e §7.6.10 (RetornoProcessamentoLote).
+
+import { extrairTag } from "./comum.util.js";
 
 export const CD_ENVIO_SUCESSO = new Set([201, 202]);
 export const CD_ENVIO_AGUARDANDO = new Set([203]);
