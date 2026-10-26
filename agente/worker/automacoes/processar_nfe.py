@@ -235,6 +235,56 @@ def _data_emissao(inf: ET.Element) -> date:
         raise ValueError(f"data de emissão inválida: {texto!r}") from e
 
 
+def _tp_nf(inf: ET.Element) -> int:
+    texto = (_text(inf, "nfe:ide/nfe:tpNF") or "").strip()
+    if texto not in {"0", "1"}:
+        raise ValueError(f"ide/tpNF inválido (esperado 0 ou 1): {texto!r}")
+    return int(texto)
+
+
+def _codigo_digitos(valor: str | None, campo: str, tamanho: int) -> str:
+    if not valor or not str(valor).strip():
+        raise ValueError(f"campo obrigatório ausente: {campo}")
+    so = _somente_digitos(valor)
+    if len(so) != tamanho:
+        raise ValueError(f"{campo} inválido (esperado {tamanho} dígitos): {valor!r}")
+    return so
+
+
+def _itens_nfe(inf: ET.Element) -> list[dict]:
+    dets = inf.findall("nfe:det", NS)
+    if not dets:
+        raise ValueError("campo obrigatório ausente: det")
+
+    itens: list[dict] = []
+    vistos: set[int] = set()
+    for det in dets:
+        n_item_bruto = (det.get("nItem") or "").strip()
+        if not n_item_bruto.isdigit() or int(n_item_bruto) < 1:
+            raise ValueError(f"det/@nItem inválido: {n_item_bruto!r}")
+        n_item = int(n_item_bruto)
+        if n_item in vistos:
+            raise ValueError(f"det/@nItem duplicado: {n_item}")
+        vistos.add(n_item)
+        itens.append(
+            {
+                "n_item": n_item,
+                "cfop": _codigo_digitos(
+                    _text(det, "nfe:prod/nfe:CFOP"),
+                    f"det[@nItem={n_item}]/prod/CFOP",
+                    4,
+                ),
+                "ncm": _codigo_digitos(
+                    _text(det, "nfe:prod/nfe:NCM"),
+                    f"det[@nItem={n_item}]/prod/NCM",
+                    8,
+                ),
+            }
+        )
+    itens.sort(key=lambda item: item["n_item"])
+    return itens
+
+
 def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
     cstat, inf_prot = _validar_protocolo_autorizacao(root)
 
@@ -259,6 +309,8 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
         "ipi": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vIPI"), "total/ICMSTot/vIPI", obrigatorio=False),
         "data_emissao": _data_emissao(inf),
         "cstat": cstat,
+        "tp_nf": _tp_nf(inf),
+        "itens": _itens_nfe(inf),
     }
     # Depois dos campos: XML incompleto falha no campo, não na Signature.
     # A conferência usa os bytes originais do arquivo (C14N).
@@ -503,6 +555,8 @@ def _payload_lancamento(
         "data_emissao": dados["data_emissao"].isoformat(),
         "arquivo_xml": caminho_destino,
         "cliente_id": cliente,
+        "tp_nf": dados["tp_nf"],
+        "itens": dados["itens"],
     }
 
 

@@ -1,5 +1,6 @@
 import { dataIsoValida } from "./data.util.js";
 import { cnpjValido, cpfValido } from "./comum.util.js";
+import { ncmExiste } from "./ncm.util.js";
 
 // Faixa de negócio do valor fiscal: no máximo 12 dígitos inteiros e 2 casas
 // (o antigo numeric(14,2)). A coluna original arredondava o excesso antes de
@@ -152,6 +153,89 @@ function validarDataEmissao(valor, hojeISO) {
   return null;
 }
 
+const DIGITO_CFOP_SAIDA = new Set(["5", "6", "7"]);
+const DIGITO_CFOP_ENTRADA = new Set(["1", "2", "3"]);
+
+export function validarTpNf(valor) {
+  if (valor === 0 || valor === "0") return { valor: 0 };
+  if (valor === 1 || valor === "1") return { valor: 1 };
+  return { erro: "tp_nf deve ser 0 (entrada) ou 1 (saída)" };
+}
+
+export function validarItensNfe(valor) {
+  if (!Array.isArray(valor) || valor.length === 0) {
+    return { erro: "itens deve ser uma lista com pelo menos um item" };
+  }
+
+  const vistos = new Set();
+  const itens = [];
+  for (let i = 0; i < valor.length; i += 1) {
+    const item = valor[i];
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { erro: `itens[${i}] inválido` };
+    }
+
+    const nItemBruto = item.n_item;
+    const nItem =
+      typeof nItemBruto === "number" ? nItemBruto : Number.parseInt(String(nItemBruto ?? ""), 10);
+    if (!Number.isInteger(nItem) || nItem < 1) {
+      return { erro: `itens[${i}].n_item deve ser um inteiro positivo` };
+    }
+    if (vistos.has(nItem)) {
+      return { erro: `itens n_item duplicado: ${nItem}` };
+    }
+    vistos.add(nItem);
+
+    const cfop = String(item.cfop ?? "").replace(/\D/g, "");
+    if (!/^\d{4}$/.test(cfop)) {
+      return { erro: `itens[${i}].cfop deve ter exatamente 4 dígitos` };
+    }
+
+    const ncm = String(item.ncm ?? "").replace(/\D/g, "");
+    if (!/^\d{8}$/.test(ncm)) {
+      return { erro: `itens[${i}].ncm deve ter exatamente 8 dígitos` };
+    }
+
+    itens.push({ n_item: nItem, cfop, ncm });
+  }
+
+  itens.sort((a, b) => a.n_item - b.n_item);
+  return { valor: itens };
+}
+
+export function recomputarInconsistencias(tpNf, itens) {
+  const lista = [];
+  const digitosEsperados = tpNf === 0 ? DIGITO_CFOP_ENTRADA : DIGITO_CFOP_SAIDA;
+  for (const item of itens) {
+    if (!digitosEsperados.has(item.cfop[0])) {
+      lista.push({
+        tipo: "cfop_incompativel_tpnf",
+        n_item: item.n_item,
+        detalhe: `CFOP ${item.cfop} incompatível com tpNF=${tpNf}`,
+      });
+    }
+    if (!ncmExiste(item.ncm)) {
+      lista.push({
+        tipo: "ncm_inexistente",
+        n_item: item.n_item,
+        detalhe: `NCM ${item.ncm} não consta na tabela TIPI`,
+      });
+    }
+  }
+  return lista;
+}
+
+export function apresentarLancamentoFiscal(row) {
+  if (!row) return row;
+  const { lancamentos_fiscais_itens, ...resto } = row;
+  return {
+    ...resto,
+    itens: lancamentos_fiscais_itens ?? row.itens ?? [],
+    inconsistencias: Array.isArray(row.inconsistencias) ? row.inconsistencias : [],
+    tp_nf: row.tp_nf ?? null,
+  };
+}
+
 // Contrato do POST /lancamentos-fiscais. Devolve os campos canônicos só
 // quando todos passam — o controller grava `dados`, nunca o body cru.
 export function validarLancamentoFiscal(body, hojeISO) {
@@ -191,6 +275,14 @@ export function validarLancamentoFiscal(body, hojeISO) {
   const arquivo = validarArquivoXml(body.arquivo_xml);
   if (arquivo.erro) erros.arquivo_xml = arquivo.erro;
   else dados.arquivo_xml = arquivo.valor;
+
+  const tpNf = validarTpNf(body.tp_nf);
+  if (tpNf.erro) erros.tp_nf = tpNf.erro;
+  else dados.tp_nf = tpNf.valor;
+
+  const itens = validarItensNfe(body.itens);
+  if (itens.erro) erros.itens = itens.erro;
+  else dados.itens = itens.valor;
 
   return { valido: Object.keys(erros).length === 0, erros, dados };
 }

@@ -163,6 +163,8 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
     assert payload["valor_total"] == "1500.00"
     assert payload["data_emissao"] == "2026-07-15"
     assert payload["arquivo_xml"] == f"{NOME_EMPRESA}/Notas Fiscais/2026-07/entrada.xml"
+    assert payload["tp_nf"] == 1
+    assert payload["itens"] == [{"n_item": 1, "cfop": "5102", "ncm": "19059090"}]
     assert not Path(payload["arquivo_xml"]).is_absolute()
     assert str(base) not in payload["arquivo_xml"]
 
@@ -178,9 +180,10 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
     <NFe>
       <infNFe Id="NFe35260712345678000195550010000000041000000044" versao="4.00">
-        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <ide><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit><CNPJ>{CNPJ_CLIENTE}</CNPJ></emit>
         <dest><CPF>12345678909</CPF></dest>
+        <det nItem="1"><prod><cProd>1</cProd><xProd>Item</xProd><NCM>19059090</NCM><CFOP>5102</CFOP><vProd>{valor}</vProd></prod></det>
         <total><ICMSTot>
           <vNF>{valor}</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
         </ICMSTot></total>
@@ -337,6 +340,40 @@ def test_dois_clientes_reprocesso_idempotente(pasta_nfe):
     arquivados = list(pasta_dest.glob("dois-clientes*.xml"))
     assert [p.name for p in arquivados] == ["dois-clientes.xml"]
     assert (inbox / "duplicadas" / "dois-clientes.xml").is_file()
+
+
+def test_cfop_incompativel_ainda_posta(pasta_nfe):
+    """v10: tpNF=1 + CFOP 1102 entra no ledger; o alerta fica a cargo do backend."""
+    inbox, _base = pasta_nfe
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+    <NFe>
+      <infNFe Id="NFe35260712345678000199550010000000051000000055" versao="4.00">
+        <ide><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <emit><CNPJ>{CNPJ_CLIENTE}</CNPJ></emit>
+        <dest><CNPJ>{CNPJ_FORNECEDOR}</CNPJ></dest>
+        <det nItem="1"><prod><cProd>1</cProd><xProd>Item</xProd><NCM>19059090</NCM><CFOP>1102</CFOP><vProd>10.00</vProd></prod></det>
+        <total><ICMSTot>
+          <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+        </ICMSTot></total>
+      </infNFe>
+    </NFe>
+    <protNFe><infProt><chNFe>35260712345678000199550010000000051000000055</chNFe><cStat>100</cStat></infProt></protNFe>
+    </nfeProc>"""
+    (inbox / "v10-saida-cfop-entrada.xml").write_text(assinar_xml_nfe(xml), encoding="utf-8")
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        mock_post.return_value = MagicMock()
+        processar_pasta_nfe(str(inbox))
+
+    payload = mock_post.call_args.args[1]
+    assert payload["tipo"] == "saida"
+    assert payload["tp_nf"] == 1
+    assert payload["itens"][0]["cfop"] == "1102"
+    assert not (inbox / "nao_identificado" / "v10-saida-cfop-entrada.xml").exists()
 
 
 def test_nao_identificado_move_sem_post(pasta_nfe):
