@@ -1,5 +1,6 @@
 """Testes do parser de NF-e SEFAZ e classificação entrada/saída."""
 
+import re
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -11,14 +12,22 @@ from helpers_nfe_assinatura import assinar_xml_nfe, gravar_nfe_assinada
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
 CNPJ_CLIENTE = "12345678000195"
+_RE_CHAVE_ID = re.compile(r'Id="NFe(\d{44})"')
 
 
-def _envolver_nfe_autorizada(xml: str, *, assinar: bool = True) -> str:
+def _envolver_nfe_autorizada(
+    xml: str, *, ch_nfe: str | None = None, assinar: bool = True
+) -> str:
     conteudo = xml.split("?>", 1)[-1]
+    if ch_nfe is None:
+        m = _RE_CHAVE_ID.search(conteudo)
+        ch_nfe = m.group(1) if m else "0" * 44
     wrapped = f"""<?xml version="1.0" encoding="UTF-8"?>
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
       {conteudo}
-      <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
+      <protNFe><infProt>
+        <chNFe>{ch_nfe}</chNFe><cStat>100</cStat>
+      </infProt></protNFe>
     </nfeProc>"""
     return assinar_xml_nfe(wrapped) if assinar else wrapped
 
@@ -121,7 +130,12 @@ def test_arquivo_inexistente():
 def test_sem_inf_nfe(tmp_path):
     caminho = tmp_path / "sem_inf.xml"
     caminho.write_text(
-        '<?xml version="1.0"?><root xmlns="http://www.portalfiscal.inf.br/nfe"/>',
+        '<?xml version="1.0"?>'
+        '<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">'
+        "<protNFe><infProt>"
+        "<chNFe>35260712345678000190550010000000011000000011</chNFe>"
+        "<cStat>100</cStat></infProt></protNFe>"
+        "</nfeProc>",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="infNFe"):
@@ -426,6 +440,147 @@ def test_ncm_formato_invalido_recusa(tmp_path):
         parsear_nfe(str(caminho))
 
 
+def test_envi_nfe_lote_nao_tem_efeito_fiscal(tmp_path):
+    """n04: lote de envio à SEFAZ não é documento autorizado."""
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+      <idLote>1</idLote>
+      <NFe>
+        <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+          <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+          <emit><CNPJ>98765432000110</CNPJ></emit>
+          <dest><CNPJ>12345678000199</CNPJ></dest>
+          <total><ICMSTot>
+            <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+          </ICMSTot></total>
+        </infNFe>
+      </NFe>
+    </enviNFe>
+    """
+    caminho = tmp_path / "n04-lote-enviNFe.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"arquivo de envio à SEFAZ \(enviNFe\)"):
+        parsear_nfe(str(caminho))
+
+
+def test_raiz_inventada_nao_tem_efeito_fiscal(tmp_path):
+    """n05: raiz qualquer com NFe aninhada não escritura."""
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <pacote xmlns="http://www.portalfiscal.inf.br/nfe">
+      <NFe>
+        <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+          <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+          <emit><CNPJ>98765432000110</CNPJ></emit>
+          <dest><CNPJ>12345678000199</CNPJ></dest>
+          <total><ICMSTot>
+            <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+          </ICMSTot></total>
+        </infNFe>
+      </NFe>
+    </pacote>
+    """
+    caminho = tmp_path / "n05-raiz-qualquer.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"raiz 'pacote'.*nfeProc"):
+        parsear_nfe(str(caminho))
+
+
+def test_protocolo_de_outra_nota_nao_tem_efeito_fiscal(tmp_path):
+    """n06: nfeProc com chNFe diferente da chave da nota."""
+    chave_nota = "35260712345678000190550010000000011000000011"
+    chave_outra = "35260712345678000190550010000000991000000099"
+    xml = _envolver_nfe_autorizada(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+    <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+      <infNFe Id="NFe{chave_nota}" versao="4.00">
+        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <emit><CNPJ>98765432000110</CNPJ></emit>
+        <dest><CNPJ>12345678000199</CNPJ></dest>
+        <total><ICMSTot>
+          <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+        </ICMSTot></total>
+      </infNFe>
+    </NFe>
+    """,
+        ch_nfe=chave_outra,
+    )
+    caminho = tmp_path / "n06-prot-de-outra-nota.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="protocolo de autorização refere outra NF-e") as excinfo:
+        parsear_nfe(str(caminho))
+    # Motivo não deve vazar as chaves (CNPJ embutido / log remoto).
+    assert chave_nota not in str(excinfo.value)
+    assert chave_outra not in str(excinfo.value)
+
+
+def test_nfe_proc_sem_chnfe_nao_tem_efeito_fiscal(tmp_path):
+    """nfeProc autorizado sem chNFe no protocolo é incompleto."""
+    xml = (FIXTURES / "entrada.xml").read_text(encoding="utf-8")
+    xml = re.sub(r"<chNFe>[^<]*</chNFe>\s*", "", xml)
+    caminho = tmp_path / "sem-chnfe.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="nfeProc sem chNFe no protocolo"):
+        parsear_nfe(str(caminho))
+
+
+def test_chnfe_com_letra_extra_nao_tem_efeito_fiscal(tmp_path):
+    """Review #667: letra extra em chNFe não pode virar match via strip de dígitos."""
+    chave = "35260712345678000190550010000000011000000011"
+    xml = _envolver_nfe_autorizada(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+    <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+      <infNFe Id="NFe{chave}" versao="4.00">
+        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <emit><CNPJ>98765432000110</CNPJ></emit>
+        <dest><CNPJ>12345678000199</CNPJ></dest>
+        <total><ICMSTot>
+          <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+        </ICMSTot></total>
+      </infNFe>
+    </NFe>
+    """,
+        ch_nfe=chave + "X",
+    )
+    caminho = tmp_path / "chnfe-letra-extra.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="chNFe inválido no protocolo") as excinfo:
+        parsear_nfe(str(caminho))
+    assert chave not in str(excinfo.value)
+    assert "X" not in str(excinfo.value)
+
+
+def test_cstat_e_chnfe_em_protocolos_distintos_nao_tem_efeito_fiscal(tmp_path):
+    """Review #667: cStat=100 num protNFe e chNFe da nota em outro não autoriza."""
+    chave = "35260712345678000190550010000000011000000011"
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+      <NFe>
+        <infNFe Id="NFe{chave}" versao="4.00">
+          <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+          <emit><CNPJ>98765432000110</CNPJ></emit>
+          <dest><CNPJ>12345678000199</CNPJ></dest>
+          <total><ICMSTot>
+            <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+          </ICMSTot></total>
+        </infNFe>
+      </NFe>
+      <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
+      <protNFe><infProt>
+        <chNFe>{chave}</chNFe><cStat>110</cStat>
+      </infProt></protNFe>
+    </nfeProc>
+    """
+    caminho = tmp_path / "prot-misturados.xml"
+    caminho.write_text(xml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="mais de um protocolo de autorização") as excinfo:
+        parsear_nfe(str(caminho))
+    assert chave not in str(excinfo.value)
 # Mesma bateria de backend/tests/comum.util.test.js e do front (esocial-tabelas.js).
 @pytest.mark.parametrize("cnpj,esperado", [
     ("12345678000195", True),
