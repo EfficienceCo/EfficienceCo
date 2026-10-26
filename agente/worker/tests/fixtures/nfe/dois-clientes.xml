@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
   <NFe>
-    <infNFe Id="NFe35261298765432000110550010000000031000000033" versao="4.00">
+    <infNFe Id="NFe35261298765432000198550010000000031000000033" versao="4.00">
       <ide>
         <tpNF>1</tpNF>
         <dhEmi>2026-06-08T10:00:00-03:00</dhEmi>
       </ide>
       <emit>
-        <CNPJ>98765432000110</CNPJ>
+        <CNPJ>98765432000198</CNPJ>
       </emit>
       <dest>
-        <CNPJ>12345678000199</CNPJ>
+        <CNPJ>12345678000195</CNPJ>
       </dest>
       <total>
         <ICMSTot>
@@ -25,7 +25,7 @@
   </NFe>
   <protNFe>
     <infProt>
-      <chNFe>35261298765432000110550010000000031000000033</chNFe>
+      <chNFe>35261298765432000198550010000000031000000033</chNFe>
       <cStat>100</cStat>
     </infProt>
   </protNFe>

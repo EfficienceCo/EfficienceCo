@@ -11,6 +11,7 @@ import {
 } from "../utils/periodo.util.js";
 import { validarHistoricoReceita } from "../utils/regime-tributario.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
+import { arredondar, chaveMes, inteiroEstrito, numeroNaoNegativo } from "../utils/comum.util.js";
 
 const REGIMES_SUPORTADOS = new Set(["simples_nacional"]);
 const FOLHA_STATUS = {
@@ -46,34 +47,6 @@ function resolverClienteIdBody(req) {
     return req.body.clienteId;
   }
   return req.usuario?.cliente_id;
-}
-
-function arredondar(valor) {
-  return Math.round((valor + Number.EPSILON) * 100) / 100;
-}
-
-function inteiroEstrito(valor) {
-  if (typeof valor === "string" && !/^\d+$/.test(valor.trim())) return null;
-  if (typeof valor !== "string" && typeof valor !== "number") return null;
-  const numero = Number(valor);
-  return Number.isInteger(numero) ? numero : null;
-}
-
-function numeroNaoNegativo(valor) {
-  if (typeof valor === "string") {
-    const normalizado = valor.trim();
-    if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalizado)) return null;
-    valor = normalizado;
-  } else if (typeof valor !== "number") {
-    return null;
-  }
-
-  const numero = Number(valor);
-  return Number.isFinite(numero) && numero >= 0 ? numero : null;
-}
-
-function chaveMes(ano, mes) {
-  return `${ano}-${String(mes).padStart(2, "0")}`;
 }
 
 // A RBT12 e a FS12 usam os 12 meses ANTERIORES ao período de apuração. Para

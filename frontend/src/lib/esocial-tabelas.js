@@ -285,6 +285,25 @@ export function validarCpf(valor) {
   return digito1 === Number(cpf[9]) && digito2 === Number(cpf[10]);
 }
 
+/** CNPJ numérico válido: 14 dígitos + dígitos verificadores. Mesma regra de cnpjValido no backend. */
+export function validarCnpj(valor) {
+  const cnpj = soDigitos(valor);
+  if (cnpj.length !== 14 || /^(\d)\1{13}$/.test(cnpj)) return false;
+
+  const calcularDigito = (quantidade) => {
+    let peso = quantidade - 7;
+    let soma = 0;
+    for (let i = 0; i < quantidade; i += 1) {
+      soma += Number(cnpj[i]) * peso;
+      peso = peso === 2 ? 9 : peso - 1;
+    }
+    const resto = soma % 11;
+    return resto < 2 ? 0 : 11 - resto;
+  };
+
+  return calcularDigito(12) === Number(cnpj[12]) && calcularDigito(13) === Number(cnpj[13]);
+}
+
 /**
  * Data civil aceita pelo gerador: "dd/mm/aaaa" ou "aaaa-mm-dd", existente no
  * calendário. Mesma lógica de `formatarData` em esocial-xml.util.js.

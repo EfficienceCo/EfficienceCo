@@ -3,6 +3,7 @@ import { PERFIS } from "../config/perfis.js";
 import { aplicarFiltroPeriodo, erroPeriodoConsulta } from "../utils/periodo.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
 import { dataIsoValida } from "../utils/data.util.js";
+import { camposFaltando } from "../utils/comum.util.js";
 
 const TIPOS_VALIDOS = new Set(["credito", "debito"]);
 
@@ -13,12 +14,6 @@ const CAMPOS_OBRIGATORIOS = [
   "tipo",
   "descricao",
 ];
-
-function camposFaltando(body) {
-  return CAMPOS_OBRIGATORIOS.filter(
-    (campo) => body[campo] === undefined || body[campo] === null || body[campo] === "",
-  );
-}
 
 // valor é NUMERIC(15,2) (migration 67): 13 dígitos inteiros. Acima disso o
 // Postgres estoura com "numeric field overflow" e o insert vira 500.
@@ -99,7 +94,7 @@ function resolverClienteIdQuery(req) {
 }
 
 export async function criarLancamentoContabil(req, res) {
-  const faltando = camposFaltando(req.body);
+  const faltando = camposFaltando(req.body, CAMPOS_OBRIGATORIOS);
   if (faltando.length > 0) {
     return res.status(400).json({ erro: "Campos obrigatórios faltando", faltando });
   }

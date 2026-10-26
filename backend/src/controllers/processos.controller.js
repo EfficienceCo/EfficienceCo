@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import supabase from "../config/database.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
-import { normalizarCpf, cpfValido } from "../utils/cpf.util.js";
+import { normalizarCpf, cpfValido } from "../utils/comum.util.js";
 import { ehUuidV4 } from "../utils/uuid.util.js";
 import {
   criarProcessoComEtapas,
