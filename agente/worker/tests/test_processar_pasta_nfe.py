@@ -181,6 +181,24 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
     """)
 
 
+def _xml_entrada_emit_cpf(valor: str = "300.00") -> str:
+    return assinar_xml_nfe(f"""<?xml version="1.0" encoding="UTF-8"?>
+    <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+    <NFe>
+      <infNFe Id="NFe35260700011144477735550010000000301000000055" versao="4.00">
+        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <emit><CPF>11144477735</CPF></emit>
+        <dest><CNPJ>{CNPJ_CLIENTE}</CNPJ></dest>
+        <total><ICMSTot>
+          <vNF>{valor}</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+        </ICMSTot></total>
+      </infNFe>
+    </NFe>
+    <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
+    </nfeProc>
+    """)
+
+
 def test_processar_pasta_saida_dest_cpf_posta_e_nao_quarentena(pasta_nfe):
     """NF-e de saída para CPF vira lançamento (não vai para nao_identificado)."""
     inbox, base = pasta_nfe
@@ -204,6 +222,31 @@ def test_processar_pasta_saida_dest_cpf_posta_e_nao_quarentena(pasta_nfe):
     assert not (inbox / "saida-cpf.xml").exists()
     assert not (inbox / "nao_identificado" / "saida-cpf.xml").exists()
     assert _arquivo_nfe(base, NOME_EMPRESA, "saida-cpf.xml").is_file()
+
+
+def test_processar_pasta_entrada_emit_cpf_posta_e_nao_quarentena(pasta_nfe):
+    """NF-e de produtor rural (emit/CPF) vira entrada (não vai para nao_identificado)."""
+    inbox, base = pasta_nfe
+    xml_path = inbox / "entrada-produtor-cpf.xml"
+    xml_path.write_text(_xml_entrada_emit_cpf(), encoding="utf-8")
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        mock_post.return_value = MagicMock()
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 1
+    payload = mock_post.call_args.args[1]
+    assert payload["tipo"] == "entrada"
+    assert payload["cnpj_emitente"] == "11144477735"
+    assert payload["cnpj_destinatario"] == CNPJ_CLIENTE
+    assert payload["valor_total"] == "300.00"
+    assert payload["cliente_id"] == CLIENTE_ID
+    assert not (inbox / "entrada-produtor-cpf.xml").exists()
+    assert not (inbox / "nao_identificado" / "entrada-produtor-cpf.xml").exists()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "entrada-produtor-cpf.xml").is_file()
 
 
 def test_processar_pasta_saida(pasta_nfe):

@@ -149,13 +149,11 @@ export async function criarLancamentoFiscal(req, res) {
       cliente_id,
       chave_nfe,
       tipo,
+      // CNPJ (14) ou CPF (11) em emitente e destinatário. VARCHAR(14) cabe os
+      // 11 dígitos sem padar. Dest = venda a PF (#566); emit = produtor rural
+      // PF (#659). Já passaram por cpfValido/cnpjValido em
+      // validarLancamentoFiscal.
       cnpj_emitente,
-      // CNPJ (14) ou CPF (11). A coluna é VARCHAR(14); CPF de 11 dígitos cabe
-      // e a venda para pessoa física segue escriturada (#566) — esse era o
-      // parser do agente, que exigia 14 dígitos; este insert nunca travou o
-      // tamanho. CPF de 11 dígitos já passou por cpfValido em
-      // validarLancamentoFiscal/validarDocumentoDestinatario, antes de chegar
-      // aqui.
       cnpj_destinatario,
       valor_total,
       icms,

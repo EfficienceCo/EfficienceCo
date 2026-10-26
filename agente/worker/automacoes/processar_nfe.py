@@ -95,17 +95,6 @@ def _somente_digitos(v: str) -> str:
     return "".join(c for c in v if c in _ASCII_DIGITS)
 
 
-def _digitos(valor: str | None, campo: str) -> str:
-    if not valor:
-        raise ValueError(f"campo obrigatório ausente: {campo}")
-    so = _somente_digitos(valor)
-    if len(so) != 14:
-        raise ValueError(f"{campo} inválido (esperado 14 dígitos): {valor!r}")
-    if not _cnpj_valido(so):
-        raise ValueError(f"{campo} inválido (dígito verificador): {valor!r}")
-    return so
-
-
 def _cnpj_valido(cnpj: str) -> bool:
     """Mesma regra de cnpjValido em backend/src/utils/comum.util.js."""
     if len(cnpj) != 14 or not cnpj.isascii() or not cnpj.isdigit() or cnpj == cnpj[0] * 14:
@@ -163,6 +152,34 @@ def _documento_destinatario(inf: ET.Element) -> str:
     raise ValueError("campo obrigatório ausente: dest/CNPJ ou dest/CPF")
 
 
+def _documento_emitente(inf: ET.Element) -> str:
+    """CNPJ (14) ou CPF (11) do emitente.
+
+    Produtor rural pessoa física emite NF-e com CPF. O CPF entra em
+    cnpj_emitente: a coluna é VARCHAR(14), então 11 dígitos cabem sem
+    padar. Só dígitos, no mesmo formato do destinatário (#566 / #659).
+    Mensagens sem o número — a chave/CPF não vai para log (NFE-1 / LGPD).
+    """
+    cnpj_bruto = _text(inf, "nfe:emit/nfe:CNPJ")
+    cpf_bruto = _text(inf, "nfe:emit/nfe:CPF")
+    cnpj = _somente_digitos(cnpj_bruto) if cnpj_bruto else ""
+    cpf = _somente_digitos(cpf_bruto) if cpf_bruto else ""
+
+    if len(cnpj) == 14:
+        if not _cnpj_valido(cnpj):
+            raise ValueError("emit/CNPJ inválido (dígito verificador)")
+        return cnpj
+    if len(cpf) == 11:
+        if not _cpf_valido(cpf):
+            raise ValueError("emit/CPF inválido (dígito verificador)")
+        return cpf
+    if cnpj_bruto:
+        raise ValueError("emit/CNPJ inválido (esperado 14 dígitos)")
+    if cpf_bruto is not None:
+        raise ValueError("emit/CPF inválido (esperado 11 dígitos)")
+    raise ValueError("campo obrigatório ausente: emit/CNPJ ou emit/CPF")
+
+
 def _dec(texto: str | None, campo: str, obrigatorio: bool = True) -> Decimal:
     if texto is None or texto.strip() == "":
         if obrigatorio:
@@ -194,7 +211,7 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
     if len(chave) != 44 or _somente_digitos(chave) != chave:
         raise ValueError(f"chave_nfe inválida no atributo Id: {id_attr!r}")
 
-    cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
+    cnpj_emit = _documento_emitente(inf)
     cnpj_dest = _documento_destinatario(inf)
     dados = {
         "chave_nfe": chave,
