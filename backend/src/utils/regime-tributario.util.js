@@ -5,6 +5,7 @@
 // grava um histórico que a apuração depois recusa com HISTORICO_RECEITA_INVALIDO.
 
 import { competenciaEstaFechada, hojeNoBrasil } from "./periodo.util.js";
+import { chaveMes, inteiroEstrito, numeroNaoNegativo } from "./comum.util.js";
 
 export const REGIMES_TRIBUTARIOS = ["simples_nacional", "lucro_presumido", "lucro_real"];
 
@@ -13,26 +14,6 @@ export const ANEXOS_SIMPLES = ["I", "II", "III", "IV", "V"];
 // Primeiro ano com tabela do Simples suportada — mesmo piso que a leitura da
 // apuração aplica ao histórico manual.
 const ANO_MINIMO = 2020;
-
-function inteiroEstrito(valor) {
-  if (typeof valor === "string" && !/^\d+$/.test(valor.trim())) return null;
-  if (typeof valor !== "string" && typeof valor !== "number") return null;
-  const numero = Number(valor);
-  return Number.isInteger(numero) ? numero : null;
-}
-
-function numeroNaoNegativo(valor) {
-  if (typeof valor === "string") {
-    const normalizado = valor.trim();
-    if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalizado)) return null;
-    valor = normalizado;
-  } else if (typeof valor !== "number") {
-    return null;
-  }
-
-  const numero = Number(valor);
-  return Number.isFinite(numero) && numero >= 0 ? numero : null;
-}
 
 /**
  * Valida a data de início de atividade do cliente (BUG-APUR-08).
@@ -60,10 +41,6 @@ export function validarDataInicioAtividade(valor, hoje = hojeNoBrasil()) {
   if (!dataReal || ano < 2000 || texto > hoje) return { erro: "data_inicio_atividade inválida" };
 
   return { valor: texto };
-}
-
-export function chaveMes(ano, mes) {
-  return `${ano}-${String(mes).padStart(2, "0")}`;
 }
 
 /**

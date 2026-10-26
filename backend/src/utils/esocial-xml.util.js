@@ -60,6 +60,7 @@
 
 import { create } from "xmlbuilder2";
 import { CATALOGO_ESOCIAL } from "./esocial-catalogo.util.js";
+import { cpfValido, soDigitos } from "./comum.util.js";
 
 // Versão do leiaute usada na URN do namespace e em ideEvento/verProc.
 // S-1.3 -> "S_01_03_00". Trocar aqui quando o governo publicar nova versão.
@@ -110,12 +111,6 @@ export class ErroXmlESocial extends Error {
 // ---------------------------------------------------------------------------
 // Helpers reutilizáveis por TODOS os eventos
 // ---------------------------------------------------------------------------
-
-/** Remove tudo que não for dígito (CPF, CNPJ, CEP, telefone). */
-export function soDigitos(valor) {
-  if (valor === null || valor === undefined) return "";
-  return String(valor).replace(/\D+/g, "");
-}
 
 /**
  * Normaliza data para "AAAA-MM-DD" (formato de xs:date do eSocial).
@@ -333,6 +328,7 @@ function prepararCabecalho(dados, contexto) {
 function validarCpf(valor, campo) {
   const cpf = soDigitos(valor);
   if (cpf.length !== 11) throw new ErroXmlESocial(`${campo} deve conter 11 dígitos`);
+  if (!cpfValido(cpf)) throw new ErroXmlESocial(`${campo} é inválido (dígito verificador)`);
   return cpf;
 }
 
@@ -512,7 +508,7 @@ function montarDesligamento(d) {
 
 function montarTrabalhador(f) {
   return {
-    cpfTrab: soDigitos(f.cpf),
+    cpfTrab: validarCpf(f.cpf, "funcionario.cpf"),
     nmTrab: f.nome,
     sexo: f.sexo,
     racaCor: Number(f.racaCor),
@@ -563,7 +559,7 @@ function montarDependente(d) {
     tpDep: d.tipo,
     nmDep: d.nome,
     dtNascto: formatarData(d.dataNascimento),
-    cpfDep: d.cpf ? soDigitos(d.cpf) : undefined,
+    cpfDep: d.cpf ? validarCpf(d.cpf, "funcionario.dependentes[].cpf") : undefined,
     sexoDep: d.sexo,
     depIRRF: sn(d.depIRRF),
     depSF: sn(d.depSF),
@@ -680,7 +676,7 @@ function montarTrabTemporario(t) {
         { 1: [14], 2: [11] },
       ),
     },
-    ideTrabSubstituido: substituidos.map((cpf) => ({ cpfTrabSubst: soDigitos(cpf) })),
+    ideTrabSubstituido: substituidos.map((cpf) => ({ cpfTrabSubst: validarCpf(cpf, "dadosAdmissao.trabalhadorTemporario.trabalhadoresSubstituidos[]") })),
   };
 }
 

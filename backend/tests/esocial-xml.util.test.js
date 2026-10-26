@@ -5,7 +5,6 @@ import {
   gerarXmlEvento,
   eventoSuportado,
   ErroXmlESocial,
-  soDigitos,
   formatarData,
   formatarCompetencia,
   formatarValor,
@@ -15,6 +14,7 @@ import {
   podarVazios,
   VERSAO_LEIAUTE,
 } from "../src/utils/esocial-xml.util.js";
+import { soDigitos } from "../src/utils/comum.util.js";
 
 // --- fixtures: montadas aqui, nunca dentro do gerador (regra da task) --------
 
@@ -390,6 +390,23 @@ describe("gerarXmlS2200 — validação de entrada", () => {
   it("exige funcionario e dadosAdmissao", () => {
     assert.throws(() => gerarXmlS2200(null, {}), ErroXmlESocial);
     assert.throws(() => gerarXmlS2200({}, null), ErroXmlESocial);
+  });
+
+  it("recusa CPF do trabalhador com dígito verificador errado (#658)", () => {
+    assert.throws(
+      () => gerarXmlS2200({ ...funcionarioCLT(), cpf: "123.456.789-00" }, admissaoCLT()),
+      /funcionario\.cpf é inválido \(dígito verificador\)/,
+    );
+  });
+
+  it("recusa CPF de dependente com dígito verificador errado (#658)", () => {
+    const f = {
+      ...funcionarioCLT(),
+      dependentes: [
+        { tipo: "03", nome: "Filho", dataNascimento: "2020-01-01", cpf: "123.456.789-00", depIRRF: "N", depSF: "N", incTrab: "N" },
+      ],
+    };
+    assert.throws(() => gerarXmlS2200(f, admissaoCLT()), /dependentes\[\]\.cpf é inválido \(dígito verificador\)/);
   });
 
   it("acumula campos obrigatórios faltando do funcionário", () => {

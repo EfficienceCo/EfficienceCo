@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 
 RAIZ_AGENTE = Path(__file__).resolve().parent.parent
-if str(RAIZ_AGENTE) not in sys.path:
-    sys.path.insert(0, str(RAIZ_AGENTE))
+TESTES = Path(__file__).resolve().parent
+for caminho in (RAIZ_AGENTE, TESTES):
+    if str(caminho) not in sys.path:
+        sys.path.insert(0, str(caminho))
 
 
 

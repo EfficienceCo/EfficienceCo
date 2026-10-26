@@ -11,8 +11,8 @@ import {
 
 const CLIENTE_ID = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_ID_OUTRO = "22222222-2222-2222-2222-222222222222";
-const CNPJ_EMIT = "12345678000190";
-const CNPJ_DEST = "98765432000155";
+const CNPJ_EMIT = "12345678000195";
+const CNPJ_DEST = "98765432000198";
 const CNPJ_ALHEIO = "11111111000191";
 
 // ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ function clienteComCnpj(cnpj, id = CLIENTE_ID) {
 
 function payloadValido(overrides = {}) {
   return {
-    chave_nfe: "35240612345678000190550010000000011234567890",
+    chave_nfe: "35240612345678000195550010000000011234567890",
     tipo: "saida",
     cnpj_emitente: CNPJ_EMIT,
     cnpj_destinatario: CNPJ_DEST,
@@ -648,13 +648,8 @@ describe("GET /lancamentos-fiscais/resumo", () => {
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body, {
       total_nfe: 3,
-      valor_total: 350,
-      icms: 35,
-      pis: 3.5,
-      cofins: 7,
-      ipi: 5,
-      entradas: 1,
-      saidas: 2,
+      entradas: { quantidade: 1, valor_total: 100, icms: 10, pis: 1, cofins: 2, ipi: 0 },
+      saidas: { quantidade: 2, valor_total: 250, icms: 25, pis: 2.5, cofins: 5, ipi: 5 },
     });
     assert.ok(filtros.some(([t, c, v]) => t === "lancamentos_fiscais" && c === "status" && v === "ativa"));
   });
@@ -680,9 +675,48 @@ describe("GET /lancamentos-fiscais/resumo", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.total_nfe, 1);
-    assert.equal(res.body.saidas, 1);
-    assert.equal(res.body.entradas, 0);
-    assert.equal(res.body.valor_total, 250);
+    assert.equal(res.body.saidas.quantidade, 1);
+    assert.equal(res.body.entradas.quantidade, 0);
+    assert.equal(res.body.saidas.valor_total, 250);
+    assert.equal(res.body.entradas.valor_total, 0);
+  });
+
+  it("mês só com entradas deixa os valores e impostos das saídas zerados", async () => {
+    queue("lancamentos_fiscais", "await", {
+      data: [{ tipo: "entrada", valor_total: 2222.21, icms: 400, pis: 20, cofins: 50, ipi: 10 }],
+      error: null,
+    });
+
+    const res = criarResposta();
+    await resumoLancamentosFiscais(reqBase(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.total_nfe, 1);
+    assert.deepEqual(res.body.entradas, {
+      quantidade: 1, valor_total: 2222.21, icms: 400, pis: 20, cofins: 50, ipi: 10,
+    });
+    assert.deepEqual(res.body.saidas, {
+      quantidade: 0, valor_total: 0, icms: 0, pis: 0, cofins: 0, ipi: 0,
+    });
+  });
+
+  it("mês só com saídas deixa os valores e impostos das entradas zerados", async () => {
+    queue("lancamentos_fiscais", "await", {
+      data: [{ tipo: "saida", valor_total: 3140, icms: 565.2, pis: 30, cofins: 100, ipi: 40 }],
+      error: null,
+    });
+
+    const res = criarResposta();
+    await resumoLancamentosFiscais(reqBase(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.total_nfe, 1);
+    assert.deepEqual(res.body.entradas, {
+      quantidade: 0, valor_total: 0, icms: 0, pis: 0, cofins: 0, ipi: 0,
+    });
+    assert.deepEqual(res.body.saidas, {
+      quantidade: 1, valor_total: 3140, icms: 565.2, pis: 30, cofins: 100, ipi: 40,
+    });
   });
 
   it("200 com zeros quando não há lançamentos no período", async () => {
@@ -693,7 +727,8 @@ describe("GET /lancamentos-fiscais/resumo", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.total_nfe, 0);
-    assert.equal(res.body.valor_total, 0);
+    assert.equal(res.body.entradas.valor_total, 0);
+    assert.equal(res.body.saidas.valor_total, 0);
   });
 
   it("400 quando clienteId ausente", async () => {

@@ -25,13 +25,8 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
         await route.fulfill({
           json: {
             total_nfe: 3,
-            valor_total: 2_750,
-            icms: 180,
-            pis: 20,
-            cofins: 90,
-            ipi: 0,
-            entradas: 1,
-            saidas: 2,
+            entradas: { quantidade: 1, valor_total: 1_000, icms: 80, pis: 10, cofins: 40, ipi: 0 },
+            saidas: { quantidade: 2, valor_total: 1_750, icms: 100, pis: 10, cofins: 50, ipi: 0 },
           },
         });
         return;
@@ -116,6 +111,20 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(fiscalLink).toHaveClass(/bg-sky-400\/10/);
     await expect(sidebar.getByRole('link', { name: 'Home' })).not.toHaveClass(/bg-sky-400\/10/);
   });
+
+  test('seletor de Ano inclui o ano atual e os 5 anteriores (issue #660)', async ({ page }) => {
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    const anoAtual = new Date().getFullYear();
+    const seletor = page.getByLabel('Ano');
+
+    await expect(seletor.locator('option')).toHaveCount(6);
+    await expect(seletor.locator('option').first()).toHaveText(String(anoAtual));
+    await expect(seletor.locator('option').last()).toHaveText(String(anoAtual - 5));
+
+    await seletor.selectOption(String(anoAtual - 5));
+    await expect(seletor).toHaveValue(String(anoAtual - 5));
+  });
 });
 
 test.describe('Fiscal — erro de rede em pt-BR e sem duplicação (issue #572)', () => {
@@ -172,63 +181,83 @@ test.describe('Fiscal — erro de rede em pt-BR e sem duplicação (issue #572)'
   });
 });
 
-test.describe('Fiscal — card de IPI não fica órfão no grid de resumo (issue #573)', () => {
-  test.beforeEach(async ({ page }) => {
+test.describe('Fiscal — resumo separa entradas (crédito) de saídas (débito) (issue #654)', () => {
+  test('mostra entradas e saídas em cards distintos, sem "ICMS total" misturado', async ({ page }) => {
     await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
-
     await page.route('**/lancamentos-fiscais**', async (route) => {
       const { pathname } = new URL(route.request().url());
+      await route.fulfill({
+        json: pathname.endsWith('/resumo')
+          ? {
+              total_nfe: 2,
+              entradas: { quantidade: 1, valor_total: 2_222.21, icms: 400, pis: 0, cofins: 0, ipi: 0 },
+              saidas: { quantidade: 1, valor_total: 3_140, icms: 565.2, pis: 0, cofins: 0, ipi: 50 },
+            }
+          : [],
+      });
+    });
+    await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
 
-      if (pathname.endsWith('/resumo')) {
-        await route.fulfill({
-          json: {
-            total_nfe: 2,
-            valor_total: 2_500,
-            icms: 180,
-            pis: 20,
-            cofins: 90,
-            ipi: 50,
-            entradas: 1,
-            saidas: 1,
-          },
-        });
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    const entradas = page.locator('article').filter({ has: page.getByText('Valor das entradas') });
+    const saidas = page.locator('article').filter({ has: page.getByText('Valor das saídas') });
+
+    await expect(entradas).toContainText('R$ 2.222,21');
+    await expect(entradas).toContainText('ICMS (crédito) R$ 400,00');
+    await expect(entradas).toContainText('IPI (crédito) R$ 0,00');
+    await expect(saidas).toContainText('R$ 3.140,00');
+    await expect(saidas).toContainText('ICMS (débito) R$ 565,20');
+    await expect(saidas).toContainText('IPI (débito) R$ 50,00');
+    await expect(entradas).not.toContainText('565,20');
+    await expect(saidas).not.toContainText('400,00');
+    await expect(page.getByText('ICMS total')).toHaveCount(0);
+
+    await page.setViewportSize({ width: 768, height: 1024 });
+    for (const card of [entradas, saidas]) {
+      const valor = card.locator('p.text-3xl');
+      expect(await valor.evaluate((elemento) => elemento.scrollWidth <= elemento.clientWidth)).toBe(true);
+    }
+  });
+
+  test('mês só de entradas ou só de saídas deixa o outro card zerado', async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
+    await page.route('**/lancamentos-fiscais**', async (route) => {
+      const url = new URL(route.request().url());
+      if (!url.pathname.endsWith('/resumo')) {
+        await route.fulfill({ json: [] });
         return;
       }
 
-      await route.fulfill({ json: [] });
+      const zero = { quantidade: 0, valor_total: 0, icms: 0, pis: 0, cofins: 0, ipi: 0 };
+      const mes = url.searchParams.get('mes');
+      await route.fulfill({
+        json: {
+          total_nfe: mes === '2' || mes === '3' ? 1 : 0,
+          entradas: mes === '2'
+            ? { quantidade: 1, valor_total: 2_222.21, icms: 400, pis: 0, cofins: 0, ipi: 0 }
+            : zero,
+          saidas: mes === '3'
+            ? { quantidade: 1, valor_total: 3_140, icms: 565.2, pis: 0, cofins: 0, ipi: 0 }
+            : zero,
+        },
+      });
     });
-
     await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
-  });
-
-  async function contarColunasDoGrid(page) {
-    return page.evaluate(() => {
-      const titulo = [...document.querySelectorAll('p')].find(
-        (p) => p.textContent === 'Total de NFes processadas',
-      );
-      const grid = titulo?.closest('section');
-      if (!grid) return null;
-      return getComputedStyle(grid).gridTemplateColumns.split(' ').length;
-    });
-  }
-
-  test('em 768px (md, faixa testada no QA), com IPI > 0, o grid fica em 1 coluna — nenhum card sozinho numa linha', async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 768, height: 1024 });
     await page.goto('/dashboard/fiscal/escrituracao');
+    await page.getByLabel('Ano').selectOption('2025');
 
-    await expect(page.getByText('IPI total')).toBeVisible();
-    expect(await contarColunasDoGrid(page)).toBe(1);
-  });
+    const entradas = page.locator('article').filter({ has: page.getByText('Valor das entradas') });
+    const saidas = page.locator('article').filter({ has: page.getByText('Valor das saídas') });
 
-  test('em 1440px (xl), com IPI > 0, os 5 cards ficam numa única linha de 5 colunas', async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/dashboard/fiscal/escrituracao');
+    await page.getByLabel('Mês').selectOption('2');
+    await expect(entradas).toContainText('R$ 2.222,21');
+    await expect(saidas).toContainText('R$ 0,00');
+    await expect(saidas).toContainText('ICMS (débito) R$ 0,00');
 
-    await expect(page.getByText('IPI total')).toBeVisible();
-    expect(await contarColunasDoGrid(page)).toBe(5);
+    await page.getByLabel('Mês').selectOption('3');
+    await expect(saidas).toContainText('R$ 3.140,00');
+    await expect(entradas).toContainText('R$ 0,00');
+    await expect(entradas).toContainText('ICMS (crédito) R$ 0,00');
   });
 });

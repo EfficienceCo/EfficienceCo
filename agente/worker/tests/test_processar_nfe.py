@@ -6,19 +6,26 @@ from pathlib import Path
 
 import pytest
 
-from automacoes.processar_nfe import identificar_tipo_operacao, parsear_nfe
+from automacoes.processar_nfe import _cnpj_valido, _cpf_valido, identificar_tipo_operacao, parsear_nfe
+from helpers_nfe_assinatura import assinar_xml_nfe, gravar_nfe_assinada
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
-CNPJ_CLIENTE = "12345678000199"
+CNPJ_CLIENTE = "12345678000195"
 
 
-def _envolver_nfe_autorizada(xml: str) -> str:
+def _envolver_nfe_autorizada(xml: str, *, assinar: bool = True) -> str:
     conteudo = xml.split("?>", 1)[-1]
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
+    wrapped = f"""<?xml version="1.0" encoding="UTF-8"?>
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
       {conteudo}
       <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
     </nfeProc>"""
+    return assinar_xml_nfe(wrapped) if assinar else wrapped
+
+
+def _fixture_assinada(tmp_path, nome: str) -> str:
+    xml = (FIXTURES / nome).read_text(encoding="utf-8")
+    return str(gravar_nfe_assinada(tmp_path / nome, xml))
 
 
 @pytest.fixture(autouse=True)
@@ -28,13 +35,13 @@ def _sem_pasta_base(monkeypatch):
     monkeypatch.setattr("comunicacao.api_client.PASTA_BASE", "")
 
 
-def test_parsear_nfe_entrada():
-    dados = parsear_nfe(str(FIXTURES / "entrada.xml"))
+def test_parsear_nfe_entrada(tmp_path):
+    dados = parsear_nfe(_fixture_assinada(tmp_path, "entrada.xml"))
 
     assert dados["chave_nfe"] == "35260712345678000190550010000000011000000011"
     assert len(dados["chave_nfe"]) == 44
     assert dados["chave_nfe"].isascii() and dados["chave_nfe"].isdigit()
-    assert dados["cnpj_emitente"] == "98765432000110"
+    assert dados["cnpj_emitente"] == "98765432000198"
     assert dados["cnpj_destinatario"] == CNPJ_CLIENTE
     assert dados["valor_total"] == Decimal("1500.00")
     assert dados["icms"] == Decimal("270.00")
@@ -46,10 +53,10 @@ def test_parsear_nfe_entrada():
     assert isinstance(dados["data_emissao"], date)
 
 
-def test_parsear_nfe_saida_sem_vipi_e_demi():
-    dados = parsear_nfe(str(FIXTURES / "saida.xml"))
+def test_parsear_nfe_saida_sem_vipi_e_demi(tmp_path):
+    dados = parsear_nfe(_fixture_assinada(tmp_path, "saida.xml"))
 
-    assert dados["chave_nfe"] == "35260712345678000199550010000000021000000022"
+    assert dados["chave_nfe"] == "35260712345678000195550010000000021000000022"
     assert dados["cnpj_emitente"] == CNPJ_CLIENTE
     assert dados["cnpj_destinatario"] == "11222333000181"
     assert dados["valor_total"] == Decimal("890.50")
@@ -57,8 +64,8 @@ def test_parsear_nfe_saida_sem_vipi_e_demi():
     assert dados["data_emissao"] == date(2026, 7, 20)
 
 
-def test_identificar_entrada_e_saida():
-    entrada = parsear_nfe(str(FIXTURES / "entrada.xml"))
+def test_identificar_entrada_e_saida(tmp_path):
+    entrada = parsear_nfe(_fixture_assinada(tmp_path, "entrada.xml"))
     assert (
         identificar_tipo_operacao(
             entrada["cnpj_emitente"],
@@ -68,7 +75,7 @@ def test_identificar_entrada_e_saida():
         == "entrada"
     )
 
-    saida = parsear_nfe(str(FIXTURES / "saida.xml"))
+    saida = parsear_nfe(_fixture_assinada(tmp_path, "saida.xml"))
     assert (
         identificar_tipo_operacao(
             saida["cnpj_emitente"],
@@ -124,8 +131,8 @@ def test_campo_obrigatorio_ausente(tmp_path):
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
       <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
         <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
-        <emit><CNPJ>98765432000110</CNPJ></emit>
-        <dest><CNPJ>12345678000199</CNPJ></dest>
+        <emit><CNPJ>98765432000198</CNPJ></emit>
+        <dest><CNPJ>12345678000195</CNPJ></dest>
         <total><ICMSTot>
           <vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
         </ICMSTot></total>
@@ -141,7 +148,7 @@ def test_campo_obrigatorio_ausente(tmp_path):
 def _xml_nfe(emit: str, dest: str, valor: str = "10.00") -> str:
     return _envolver_nfe_autorizada(f"""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
-      <infNFe Id="NFe35260712345678000199550010000000021000000022" versao="4.00">
+      <infNFe Id="NFe35260712345678000195550010000000021000000022" versao="4.00">
         <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit>{emit}</emit>
         <dest>{dest}</dest>
@@ -231,10 +238,21 @@ def test_dest_cpf_sem_digito_verificador(tmp_path):
         parsear_nfe(str(caminho))
 
 
+def test_dest_cpf_dv_errado_com_emitente_valido_recusa_pelo_cpf(tmp_path):
+    """Emitente com CNPJ válido: a recusa tem que vir do CPF, não do CNPJ (#658)."""
+    caminho = tmp_path / "cpf_dv_errado.xml"
+    caminho.write_text(
+        _xml_nfe(f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", "<CPF>123.456.789-00</CPF>"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"dest/CPF inválido \(dígito verificador\)"):
+        parsear_nfe(str(caminho))
+
+
 def test_cnpj_cliente_ausente_na_nota():
     with pytest.raises(ValueError, match="não é emitente nem destinatário"):
         identificar_tipo_operacao(
-            "98765432000110",
+            "98765432000198",
             "11222333000181",
             CNPJ_CLIENTE,
         )
@@ -242,7 +260,7 @@ def test_cnpj_cliente_ausente_na_nota():
 
 def test_cnpj_cliente_vazio():
     with pytest.raises(ValueError, match="cnpj_cliente vazio"):
-        identificar_tipo_operacao("98765432000110", "12345678000199", "abc")
+        identificar_tipo_operacao("98765432000198", "12345678000195", "abc")
 
 
 def test_caminho_fora_pasta_base(monkeypatch, tmp_path):
@@ -259,18 +277,21 @@ def test_caminho_fora_pasta_base(monkeypatch, tmp_path):
 def test_chave_com_digito_unicode_rejeitada(tmp_path):
     # 43 ASCII + ² (isdigit True, mas não ASCII 0-9)
     chave_ruim = "3" * 43 + "²"
-    xml = _envolver_nfe_autorizada(f"""<?xml version="1.0" encoding="UTF-8"?>
+    xml = _envolver_nfe_autorizada(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
       <infNFe Id="NFe{chave_ruim}" versao="4.00">
         <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
-        <emit><CNPJ>98765432000110</CNPJ></emit>
-        <dest><CNPJ>12345678000199</CNPJ></dest>
+        <emit><CNPJ>98765432000198</CNPJ></emit>
+        <dest><CNPJ>12345678000195</CNPJ></dest>
         <total><ICMSTot>
           <vNF>10.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
         </ICMSTot></total>
       </infNFe>
     </NFe>
-    """)
+    """,
+        assinar=False,
+    )
     caminho = tmp_path / "unicode_id.xml"
     caminho.write_text(xml, encoding="utf-8")
     with pytest.raises(ValueError, match="chave_nfe inválida"):
@@ -304,7 +325,30 @@ def test_nfe_sem_nfe_proc_nao_tem_efeito_fiscal(tmp_path):
 def test_nfe_proc_autorizada_tem_efeito_fiscal(tmp_path, cstat):
     xml = (FIXTURES / "entrada.xml").read_text(encoding="utf-8")
     xml = xml.replace("<cStat>100</cStat>", f"<cStat>{cstat}</cStat>")
-    caminho = tmp_path / f"autorizada-{cstat}.xml"
-    caminho.write_text(xml, encoding="utf-8")
+    caminho = gravar_nfe_assinada(tmp_path / f"autorizada-{cstat}.xml", xml)
 
     assert parsear_nfe(str(caminho))["cstat"] == cstat
+
+
+# Mesma bateria de backend/tests/comum.util.test.js e do front (esocial-tabelas.js).
+@pytest.mark.parametrize("cnpj,esperado", [
+    ("12345678000195", True),
+    ("11222333000181", True),
+    ("12345678000190", False),
+    ("12345678000185", False),
+    ("11111111111111", False),
+    ("0000000000000", False),
+    ("1234567800019", False),
+])
+def test_cnpj_valido(cnpj, esperado):
+    assert _cnpj_valido(cnpj) is esperado
+
+
+@pytest.mark.parametrize("cpf,esperado", [
+    ("52998224725", True),
+    ("52998224724", False),
+    ("52998224735", False),
+    ("11111111111", False),
+])
+def test_cpf_valido_bateria_comum(cpf, esperado):
+    assert _cpf_valido(cpf) is esperado
