@@ -75,19 +75,59 @@ def _ler_xml(caminho_xml: str) -> ET.Element:
         raise ValueError(f"falha ao ler XML: {e}") from e
 
 
-def _validar_protocolo_autorizacao(root: ET.Element) -> str | None:
-    """Valida o protocolo quando o documento é um nfeProc da SEFAZ."""
+def _inf_prot_unico(root: ET.Element) -> ET.Element:
+    """Um nfeProc oficial traz um único protNFe; cStat e chNFe saem desse infProt."""
+    protocolos = root.findall(".//nfe:protNFe", NS)
+    if not protocolos:
+        raise ValueError("nfeProc sem protocolo de autorização da SEFAZ")
+    if len(protocolos) > 1:
+        raise ValueError("nfeProc com mais de um protocolo de autorização")
+    inf_prot = protocolos[0].find("nfe:infProt", NS)
+    if inf_prot is None:
+        inf_prot = protocolos[0].find(".//nfe:infProt", NS)
+    if inf_prot is None:
+        raise ValueError("nfeProc sem infProt no protocolo de autorização")
+    return inf_prot
+
+
+def _validar_protocolo_autorizacao(root: ET.Element) -> tuple[str, ET.Element]:
+    """Exige nfeProc com um protocolo de autorização da própria nota (cStat 100/150).
+
+    Fail-closed: qualquer raiz que não seja nfeProc é recusada. Lote de envio
+    (enviNFe) e envelopes inventados não têm efeito fiscal. cStat e chNFe
+    vêm do mesmo infProt — dois protNFe não se complementam.
+    """
     nome_raiz = _nome_local(root)
     if nome_raiz == "NFe":
         raise ValueError("NF-e sem protocolo de autorização da SEFAZ")
+    if nome_raiz == "enviNFe":
+        raise ValueError(
+            "arquivo de envio à SEFAZ (enviNFe), sem autorização — não escritura"
+        )
     if nome_raiz != "nfeProc":
-        return None
+        raise ValueError(
+            f"XML com raiz '{nome_raiz}' não é NF-e autorizada (nfeProc)"
+        )
 
-    cstat = (_text(root, ".//nfe:protNFe/nfe:infProt/nfe:cStat") or "").strip()
+    inf_prot = _inf_prot_unico(root)
+    cstat = (_text(inf_prot, "nfe:cStat") or "").strip()
     if cstat not in _CSTAT_AUTORIZADOS:
         status = cstat or "ausente"
         raise ValueError(f"NF-e sem autorização fiscal (cStat={status})")
-    return cstat
+    return cstat, inf_prot
+
+
+def _validar_chave_protocolo(inf_prot: ET.Element, chave_nfe: str) -> None:
+    """Garante que o mesmo infProt cita a chave da nota (sem expor as chaves)."""
+    ch_prot = (_text(inf_prot, "nfe:chNFe") or "").strip()
+    if not ch_prot:
+        raise ValueError("nfeProc sem chNFe no protocolo de autorização")
+    # Sem _somente_digitos: letra extra não pode virar match com a chave da nota.
+    if len(ch_prot) != 44 or _somente_digitos(ch_prot) != ch_prot:
+        raise ValueError("nfeProc com chNFe inválido no protocolo de autorização")
+    if ch_prot != chave_nfe:
+        # Chave embute CNPJ do emitente; motivo pode ir a log/evento — não expor.
+        raise ValueError("protocolo de autorização refere outra NF-e")
 
 
 def _somente_digitos(v: str) -> str:
@@ -185,7 +225,7 @@ def _data_emissao(inf: ET.Element) -> date:
 
 
 def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
-    cstat = _validar_protocolo_autorizacao(root)
+    cstat, inf_prot = _validar_protocolo_autorizacao(root)
 
     inf = _inf_nfe(root)
 
@@ -193,6 +233,7 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
     chave = id_attr[3:] if id_attr.startswith("NFe") else id_attr
     if len(chave) != 44 or _somente_digitos(chave) != chave:
         raise ValueError(f"chave_nfe inválida no atributo Id: {id_attr!r}")
+    _validar_chave_protocolo(inf_prot, chave)
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
     cnpj_dest = _documento_destinatario(inf)
