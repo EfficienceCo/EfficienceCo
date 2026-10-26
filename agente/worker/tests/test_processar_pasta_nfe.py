@@ -2,13 +2,20 @@
 
 import contextlib
 import io
+import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from comunicacao.api_client import ApiError
-from automacoes.processar_nfe import _caminho_xml_relativo, _ler_xml, processar_pasta_nfe
+from automacoes.processar_nfe import (
+    ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS,
+    _caminho_xml_relativo,
+    _ler_xml,
+    processar_pasta_nfe,
+)
 from core.estrutura_pastas import SUBPASTAS
 from helpers_nfe_assinatura import assinar_xml_nfe, gravar_nfe_assinada
 
@@ -34,6 +41,9 @@ def pasta_nfe(tmp_path, monkeypatch):
     monkeypatch.setattr("comunicacao.api_client.CLIENTE_ID", CLIENTE_ID)
     monkeypatch.setattr("comunicacao.api_client.LICENSE_TOKEN", "tok-teste")
     monkeypatch.setattr("comunicacao.api_client.PASTA_BASE", str(base))
+    monkeypatch.setattr(
+        "comunicacao.fila_eventos.FILA_PATH", str(tmp_path / "fila_eventos.json")
+    )
     return inbox, base
 
 
@@ -884,23 +894,215 @@ def test_evento_cancelamento_cancela_e_arquiva(pasta_nfe):
     assert (inbox / "eventos_cancelamento" / "cancelamento.xml").is_file()
 
 
+def _xml_evento_cancelamento(chave: str) -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+    <procEventoNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00">
+      <evento><infEvento Id="ID110111{chave}01">
+        <chNFe>{chave}</chNFe><dhEvento>2026-07-16T10:00:00-03:00</dhEvento>
+        <tpEvento>110111</tpEvento>
+        <detEvento versao="1.00"><descEvento>Cancelamento</descEvento><xJust>teste</xJust></detEvento>
+      </infEvento></evento>
+      <retEvento><infEvento>
+        <cStat>135</cStat><chNFe>{chave}</chNFe>
+        <dhRegEvento>2026-07-16T10:00:01-03:00</dhRegEvento><nProt>135260000000001</nProt>
+      </infEvento></retEvento>
+    </procEventoNFe>
+    """
+
+
+def _post_cancelar_404_eventos_ok(endpoint, payload=None, *args, **kwargs):
+    """404 no cancelamento; POST /eventos (reportar_evento) chega ao backend."""
+    if endpoint == "/lancamentos-fiscais/cancelar":
+        raise ApiError(404, "lançamento não encontrado")
+    if endpoint == "/eventos":
+        return MagicMock()
+    raise AssertionError(f"POST inesperado: {endpoint}")
+
+
+def _payloads_eventos(mock_post):
+    return [
+        chamada.args[1]
+        for chamada in mock_post.call_args_list
+        if chamada.args and chamada.args[0] == "/eventos"
+    ]
+
+
 def test_evento_cancelamento_sem_nota_mantem_para_retentar(pasta_nfe):
+    """Dentro da janela: 404 mantém no inbox (evento pode ter chegado antes da nota)."""
     inbox, _base = pasta_nfe
     chave = "35260712345678000190550010000000011000000011"
     evento = inbox / "cancelamento.xml"
-    evento.write_text(
-        f"""<procEventoNFe xmlns="http://www.portalfiscal.inf.br/nfe">
-          <evento><infEvento><chNFe>{chave}</chNFe><tpEvento>110111</tpEvento></infEvento></evento>
-          <retEvento><infEvento><cStat>135</cStat></infEvento></retEvento>
-        </procEventoNFe>""",
-        encoding="utf-8",
-    )
+    evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
 
-    with patch(
-        "automacoes.processar_nfe.client.post",
-        side_effect=ApiError(404, "lançamento não encontrado"),
+    with (
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=ApiError(404, "lançamento não encontrado"),
+        ),
+        patch("automacoes.processar_nfe.reportar_evento") as mock_evento,
     ):
         processar_pasta_nfe(str(inbox))
 
     assert evento.is_file()
+    assert (inbox / "cancelamento.xml.espera-cancel").is_file()
     assert not (inbox / "eventos_cancelamento" / "cancelamento.xml").exists()
+    assert not (inbox / "eventos_pendentes" / "cancelamento.xml").exists()
+    mock_evento.assert_not_called()
+
+
+def test_evento_cancelamento_404_expira_para_eventos_pendentes(pasta_nfe):
+    """NFE-4 (#656): após esgotar a espera, sai do inbox e POST /eventos."""
+    inbox, _base = pasta_nfe
+    chave = "35260712345678000190550010000000011000000011"
+    evento = inbox / "ev2-cancela-inexistente.xml"
+    evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
+
+    with (
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=_post_cancelar_404_eventos_ok,
+        ) as mock_post,
+        patch("automacoes.processar_nfe.ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS", 0),
+    ):
+        processar_pasta_nfe(str(inbox))
+        assert evento.is_file()
+        processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
+
+    assert not evento.exists()
+    assert not (inbox / "ev2-cancela-inexistente.xml.espera-cancel").exists()
+    assert (inbox / "eventos_pendentes" / "ev2-cancela-inexistente.xml").is_file()
+    assert not (inbox / "eventos_cancelamento" / "ev2-cancela-inexistente.xml").exists()
+    avisos = _payloads_eventos(mock_post)
+    assert len(avisos) == 1
+    assert avisos[0]["sucesso"] is False
+    assert "sem nota" in avisos[0]["descricao"]
+    assert evento.name in avisos[0]["descricao"]
+    assert chave not in avisos[0]["descricao"]
+
+
+def test_evento_cancelamento_404_expira_no_limite_real_de_90s(pasta_nfe):
+    """Antes de 90s continua no inbox; na 4ª passagem (t=90) vai a eventos_pendentes/."""
+    inbox, _base = pasta_nfe
+    chave = "35260712345678000190550010000000011000000011"
+    evento = inbox / "ev2-cancela-inexistente.xml"
+    evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
+    inicio = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
+    instantes = [
+        inicio,
+        inicio + timedelta(seconds=30),
+        inicio + timedelta(seconds=60),
+        inicio + timedelta(seconds=90),
+    ]
+    assert ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS == 90
+
+    with (
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=_post_cancelar_404_eventos_ok,
+        ) as mock_post,
+        patch("automacoes.processar_nfe._agora_utc", side_effect=instantes),
+    ):
+        processar_pasta_nfe(str(inbox))
+        assert evento.is_file()
+        assert not _payloads_eventos(mock_post)
+
+        processar_pasta_nfe(str(inbox))
+        assert evento.is_file()
+        assert not _payloads_eventos(mock_post)
+
+        processar_pasta_nfe(str(inbox))
+        assert evento.is_file()
+        assert not _payloads_eventos(mock_post)
+
+        processar_pasta_nfe(str(inbox))
+
+    assert not evento.exists()
+    assert (inbox / "eventos_pendentes" / evento.name).is_file()
+    avisos = _payloads_eventos(mock_post)
+    assert len(avisos) == 1
+    assert avisos[0]["sucesso"] is False
+    assert chave not in avisos[0]["descricao"]
+
+
+def test_evento_cancelamento_falha_ao_mover_avisa_e_sai_da_varredura(pasta_nfe):
+    """Pasta eventos_pendentes/ falha: rename tira o XML da varredura e avisa."""
+    inbox, _base = pasta_nfe
+    chave = "35260712345678000190550010000000011000000011"
+    evento = inbox / "ev2-cancela-inexistente.xml"
+    evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
+
+    with (
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=_post_cancelar_404_eventos_ok,
+        ) as mock_post,
+        patch("automacoes.processar_nfe.ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS", 0),
+        patch("automacoes.processar_nfe._mover_xml", side_effect=OSError("disco cheio")),
+    ):
+        processar_pasta_nfe(str(inbox))
+        assert evento.is_file()
+        processar_pasta_nfe(str(inbox))
+        processar_pasta_nfe(str(inbox))
+
+    assert not evento.exists()
+    assert not (inbox / "eventos_pendentes" / evento.name).exists()
+    assert (inbox / f"{evento.name}.eventos_pendentes-pendente").is_file()
+    assert not (inbox / f"{evento.name}.espera-cancel").exists()
+    avisos = _payloads_eventos(mock_post)
+    assert len(avisos) == 1
+    assert avisos[0]["sucesso"] is False
+    assert chave not in avisos[0]["descricao"]
+
+
+def test_evento_cancelamento_falha_ao_tirar_preserva_espera_e_avisa(pasta_nfe):
+    """Se o XML não sai do inbox, o sidecar permanece e o aviso dispara."""
+    inbox, _base = pasta_nfe
+    chave = "35260712345678000190550010000000011000000011"
+    evento = inbox / "ev2-cancela-inexistente.xml"
+    evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
+    sidecar = inbox / f"{evento.name}.espera-cancel"
+
+    with (
+        patch(
+            "automacoes.processar_nfe.client.post",
+            side_effect=_post_cancelar_404_eventos_ok,
+        ) as mock_post,
+        patch("automacoes.processar_nfe.ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS", 0),
+        patch("automacoes.processar_nfe._tirar_do_inbox"),
+    ):
+        processar_pasta_nfe(str(inbox))
+        assert sidecar.is_file()
+        ts_antes = sidecar.read_text(encoding="utf-8")
+        processar_pasta_nfe(str(inbox))
+        ts_depois = sidecar.read_text(encoding="utf-8")
+
+    assert evento.is_file()
+    assert sidecar.is_file()
+    assert ts_antes == ts_depois
+    avisos = _payloads_eventos(mock_post)
+    assert len(avisos) == 1
+    assert avisos[0]["sucesso"] is False
+    assert chave not in avisos[0]["descricao"]
+
+
+def test_evento_cancelamento_sucesso_limpa_sidecar_de_espera(pasta_nfe):
+    """Regressão: após 404 e depois sucesso, não sobra .espera-cancel."""
+    inbox, _base = pasta_nfe
+    chave = "35260712345678000190550010000000011000000011"
+    evento = inbox / "cancelamento.xml"
+    evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
+
+    with patch(
+        "automacoes.processar_nfe.client.post",
+        side_effect=[
+            ApiError(404, "lançamento não encontrado"),
+            MagicMock(),
+        ],
+    ):
+        processar_pasta_nfe(str(inbox))
+        assert (inbox / "cancelamento.xml.espera-cancel").is_file()
+        processar_pasta_nfe(str(inbox))
+
+    assert not (inbox / "cancelamento.xml.espera-cancel").exists()
+    assert (inbox / "eventos_cancelamento" / "cancelamento.xml").is_file()
