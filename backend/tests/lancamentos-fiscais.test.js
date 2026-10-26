@@ -95,7 +95,7 @@ function clienteComCnpj(cnpj, id = CLIENTE_ID) {
 
 function payloadValido(overrides = {}) {
   return {
-    chave_nfe: "35240612345678000195550010000000011234567890",
+    chave_nfe: "35260712345678000195550010000000011234567894",
     tipo: "saida",
     cnpj_emitente: CNPJ_EMIT,
     cnpj_destinatario: CNPJ_DEST,
@@ -314,6 +314,9 @@ describe("POST /lancamentos-fiscais", () => {
       ["chave com 44 letras", { chave_nfe: "A".repeat(44) }, "chave_nfe", /44 dígitos/i],
       ["chave com 45 caracteres", { chave_nfe: "1".repeat(45) }, "chave_nfe", /44 dígitos/i],
       ["chave com 10 caracteres", { chave_nfe: "1234567890" }, "chave_nfe", /44 dígitos/i],
+      ["chave com DV inválido", { chave_nfe: "35260712345678000195550010000000011234567895" }, "chave_nfe", /dígito verificador/i],
+      ["chave com CNPJ diferente do emitente", { chave_nfe: "35260711222333000181550010000000011000000013" }, "chave_nfe", /emitente/i],
+      ["chave com AAMM diferente da emissão", { chave_nfe: "35240612345678000195550010000000011234567897" }, "chave_nfe", /data de emissão/i],
       ["cnpj_emitente com 15 caracteres", { cnpj_emitente: "112223330001811" }, "cnpj_emitente", /14 dígitos/i],
       ["cnpj_destinatario com 15 caracteres", { cnpj_destinatario: "112223330001811" }, "cnpj_destinatario", /14 dígitos|11 dígitos/i],
       ["cpf sem dígito verificador", { cnpj_destinatario: "00000000000" }, "cnpj_destinatario", /CPF válido/i],
@@ -529,6 +532,20 @@ describe("POST /lancamentos-fiscais/cancelar", () => {
     await cancelarLancamentoFiscal(req, res);
 
     assert.equal(res.statusCode, 404);
+  });
+
+  it("400 quando a chave tem dígito verificador inválido", async () => {
+    tokenValido();
+    const req = {
+      headers: { "x-licenca-token": "tok" },
+      body: { chave_nfe: "35260712345678000195550010000000011234567895" },
+    };
+    const res = criarResposta();
+    await cancelarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /dígito verificador/i);
+    assert.equal(ultimoUpdate, null);
   });
 });
 

@@ -136,6 +136,49 @@ def _cpf_valido(cpf: str) -> bool:
     return digito(9) == int(cpf[9]) and digito(10) == int(cpf[10])
 
 
+def _dv_chave_nfe(base43: str) -> int:
+    """Módulo 11 da chave NF-e. Mesma regra de chaveNfeDvValido no backend."""
+    pesos = (2, 3, 4, 5, 6, 7, 8, 9)
+    soma = 0
+    for i, d in enumerate(reversed(base43)):
+        soma += int(d) * pesos[i % 8]
+    resto = soma % 11
+    return 0 if resto < 2 else 11 - resto
+
+
+def _chave_nfe_dv_valida(chave: str) -> bool:
+    """Mesma regra de chaveNfeDvValido em backend/src/utils/comum.util.js."""
+    if len(chave) != 44 or _somente_digitos(chave) != chave:
+        return False
+    return int(chave[43]) == _dv_chave_nfe(chave[:43])
+
+
+def _documento_na_chave(doc: str) -> str:
+    """Slot 7–20 da chave SEFAZ: CNPJ ou CPF com zfill(14). NFE-5 / NFE-7."""
+    if len(doc) == 11:
+        return doc.zfill(14)
+    return doc
+
+
+def _validar_consistencia_chave(
+    chave: str, inf: ET.Element, cnpj_emit: str, data_emissao: date
+) -> None:
+    """Confere UF, AAMM e documento do emitente contra a chave. Sem ecoar a chave."""
+    cuf_bruto = _text(inf, "nfe:ide/nfe:cUF")
+    if cuf_bruto is None or not str(cuf_bruto).strip():
+        raise ValueError("campo obrigatório ausente: ide/cUF")
+    cuf = _somente_digitos(cuf_bruto)
+    if len(cuf) != 2:
+        raise ValueError("ide/cUF inválido (esperado 2 dígitos)")
+    if chave[0:2] != cuf:
+        raise ValueError("chave de acesso inconsistente com a UF do emitente")
+    aamm = f"{data_emissao.year % 100:02d}{data_emissao.month:02d}"
+    if chave[2:6] != aamm:
+        raise ValueError("chave de acesso inconsistente com a data de emissão")
+    if chave[6:20] != _documento_na_chave(cnpj_emit):
+        raise ValueError("chave de acesso inconsistente com o emitente")
+
+
 def _documento_destinatario(inf: ET.Element) -> str:
     """CNPJ (14) ou CPF (11) do destinatário.
 
@@ -192,10 +235,14 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
     id_attr = inf.get("Id") or ""
     chave = id_attr[3:] if id_attr.startswith("NFe") else id_attr
     if len(chave) != 44 or _somente_digitos(chave) != chave:
-        raise ValueError(f"chave_nfe inválida no atributo Id: {id_attr!r}")
+        raise ValueError("chave de acesso inválida no atributo Id")
+    if not _chave_nfe_dv_valida(chave):
+        raise ValueError("chave de acesso com dígito verificador inválido")
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
     cnpj_dest = _documento_destinatario(inf)
+    data_emissao = _data_emissao(inf)
+    _validar_consistencia_chave(chave, inf, cnpj_emit, data_emissao)
     dados = {
         "chave_nfe": chave,
         "cnpj_emitente": cnpj_emit,
@@ -205,7 +252,7 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
         "pis": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vPIS"), "total/ICMSTot/vPIS"),
         "cofins": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vCOFINS"), "total/ICMSTot/vCOFINS"),
         "ipi": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vIPI"), "total/ICMSTot/vIPI", obrigatorio=False),
-        "data_emissao": _data_emissao(inf),
+        "data_emissao": data_emissao,
         "cstat": cstat,
     }
     # Depois dos campos: XML incompleto falha no campo, não na Signature.
@@ -239,6 +286,8 @@ def _parsear_evento_cancelamento_root(root: ET.Element) -> dict | None:
     chave = _somente_digitos(_text(inf_evento, "nfe:chNFe") or "")
     if len(chave) != 44:
         raise ValueError("chNFe inválida no evento de cancelamento")
+    if not _chave_nfe_dv_valida(chave):
+        raise ValueError("chNFe com dígito verificador inválido no evento de cancelamento")
 
     return {
         "chave_nfe": chave,

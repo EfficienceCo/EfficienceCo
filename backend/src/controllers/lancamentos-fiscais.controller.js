@@ -7,7 +7,7 @@ import {
   camposRejeicaoBanco,
   validarLancamentoFiscal,
 } from "../utils/lancamento-fiscal.util.js";
-import { arredondar, camposFaltando, soDigitos } from "../utils/comum.util.js";
+import { arredondar, camposFaltando, chaveNfeDvValido, soDigitos } from "../utils/comum.util.js";
 
 const TIPOS_VALIDOS = new Set(["entrada", "saida"]);
 const CHAVE_NFE_REGEX = /^\d{44}$/;
@@ -203,6 +203,9 @@ export async function cancelarLancamentoFiscal(req, res) {
   const { chave_nfe, motivo, protocolo, data_evento } = req.body || {};
   if (!CHAVE_NFE_REGEX.test(String(chave_nfe || ""))) {
     return res.status(400).json({ erro: "chave_nfe deve conter 44 dígitos" });
+  }
+  if (!chaveNfeDvValido(chave_nfe)) {
+    return res.status(400).json({ erro: "chave_nfe com dígito verificador inválido" });
   }
 
   const dataCancelamento = data_evento ? new Date(data_evento) : new Date();

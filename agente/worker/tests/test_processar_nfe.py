@@ -6,11 +6,22 @@ from pathlib import Path
 
 import pytest
 
-from automacoes.processar_nfe import _cnpj_valido, _cpf_valido, identificar_tipo_operacao, parsear_nfe
+from automacoes.processar_nfe import (
+    _chave_nfe_dv_valida,
+    _cnpj_valido,
+    _cpf_valido,
+    _documento_na_chave,
+    identificar_tipo_operacao,
+    parsear_evento_cancelamento,
+    parsear_nfe,
+)
 from helpers_nfe_assinatura import assinar_xml_nfe, gravar_nfe_assinada
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "nfe"
 CNPJ_CLIENTE = "12345678000195"
+CNPJ_FORNECEDOR = "98765432000198"
+CHAVE_ENTRADA = "35260798765432000198550010000000011000000012"
+CHAVE_SAIDA = "35260712345678000195550010000000021000000020"
 
 
 def _envolver_nfe_autorizada(xml: str, *, assinar: bool = True) -> str:
@@ -38,7 +49,7 @@ def _sem_pasta_base(monkeypatch):
 def test_parsear_nfe_entrada(tmp_path):
     dados = parsear_nfe(_fixture_assinada(tmp_path, "entrada.xml"))
 
-    assert dados["chave_nfe"] == "35260712345678000190550010000000011000000011"
+    assert dados["chave_nfe"] == CHAVE_ENTRADA
     assert len(dados["chave_nfe"]) == 44
     assert dados["chave_nfe"].isascii() and dados["chave_nfe"].isdigit()
     assert dados["cnpj_emitente"] == "98765432000198"
@@ -56,7 +67,7 @@ def test_parsear_nfe_entrada(tmp_path):
 def test_parsear_nfe_saida_sem_vipi_e_demi(tmp_path):
     dados = parsear_nfe(_fixture_assinada(tmp_path, "saida.xml"))
 
-    assert dados["chave_nfe"] == "35260712345678000195550010000000021000000022"
+    assert dados["chave_nfe"] == CHAVE_SAIDA
     assert dados["cnpj_emitente"] == CNPJ_CLIENTE
     assert dados["cnpj_destinatario"] == "11222333000181"
     assert dados["valor_total"] == Decimal("890.50")
@@ -127,12 +138,12 @@ def test_sem_inf_nfe(tmp_path):
 
 
 def test_campo_obrigatorio_ausente(tmp_path):
-    xml = _envolver_nfe_autorizada("""<?xml version="1.0" encoding="UTF-8"?>
+    xml = _envolver_nfe_autorizada(f"""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
-      <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
-        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
-        <emit><CNPJ>98765432000198</CNPJ></emit>
-        <dest><CNPJ>12345678000195</CNPJ></dest>
+      <infNFe Id="NFe{CHAVE_ENTRADA}" versao="4.00">
+        <ide><cUF>35</cUF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <emit><CNPJ>{CNPJ_FORNECEDOR}</CNPJ></emit>
+        <dest><CNPJ>{CNPJ_CLIENTE}</CNPJ></dest>
         <total><ICMSTot>
           <vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
         </ICMSTot></total>
@@ -148,8 +159,8 @@ def test_campo_obrigatorio_ausente(tmp_path):
 def _xml_nfe(emit: str, dest: str, valor: str = "10.00") -> str:
     return _envolver_nfe_autorizada(f"""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
-      <infNFe Id="NFe35260712345678000195550010000000021000000022" versao="4.00">
-        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+      <infNFe Id="NFe{CHAVE_SAIDA}" versao="4.00">
+        <ide><cUF>35</cUF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit>{emit}</emit>
         <dest>{dest}</dest>
         <total><ICMSTot>
@@ -294,7 +305,7 @@ def test_chave_com_digito_unicode_rejeitada(tmp_path):
     )
     caminho = tmp_path / "unicode_id.xml"
     caminho.write_text(xml, encoding="utf-8")
-    with pytest.raises(ValueError, match="chave_nfe inválida"):
+    with pytest.raises(ValueError, match="chave de acesso inválida"):
         parsear_nfe(str(caminho))
 
 
@@ -352,3 +363,88 @@ def test_cnpj_valido(cnpj, esperado):
 ])
 def test_cpf_valido_bateria_comum(cpf, esperado):
     assert _cpf_valido(cpf) is esperado
+
+
+# Mesma regra de backend/tests/comum.util.test.js (chaveNfeDvValido).
+@pytest.mark.parametrize("chave,esperado", [
+    (CHAVE_ENTRADA, True),
+    (CHAVE_SAIDA, True),
+    ("35250111222333000181559120000000011202610130", True),
+    (CHAVE_ENTRADA[:-1] + ("0" if CHAVE_ENTRADA[-1] != "0" else "1"), False),
+    ("1" * 44, False),
+    ("1" * 43, False),
+])
+def test_chave_nfe_dv_valida(chave, esperado):
+    assert _chave_nfe_dv_valida(chave) is esperado
+
+
+def test_documento_na_chave_pad_cpf_nao_cnpj():
+    assert _documento_na_chave("11144477735") == "00011144477735"
+    assert _documento_na_chave(CNPJ_FORNECEDOR) == CNPJ_FORNECEDOR
+
+
+def _xml_entrada_variante(tmp_path, nome: str, **trocas: str) -> str:
+    xml = (FIXTURES / "entrada.xml").read_text(encoding="utf-8")
+    for antigo, novo in trocas.items():
+        xml = xml.replace(antigo, novo)
+    return str(gravar_nfe_assinada(tmp_path / nome, xml))
+
+
+def test_chave_dv_errado_recusa_sem_ecoar_chave(tmp_path):
+    dv_errado = CHAVE_ENTRADA[:-1] + ("0" if CHAVE_ENTRADA[-1] != "0" else "1")
+    caminho = _xml_entrada_variante(
+        tmp_path, "dv-errado.xml", **{CHAVE_ENTRADA: dv_errado}
+    )
+    with pytest.raises(ValueError, match="dígito verificador inválido") as exc:
+        parsear_nfe(caminho)
+    assert CHAVE_ENTRADA not in str(exc.value)
+    assert dv_errado not in str(exc.value)
+
+
+def test_chave_cnpj_diferente_do_emitente_recusa(tmp_path):
+    caminho = _xml_entrada_variante(
+        tmp_path,
+        "cnpj-chave.xml",
+        **{f"<CNPJ>{CNPJ_FORNECEDOR}</CNPJ>": "<CNPJ>11222333000181</CNPJ>"},
+    )
+    with pytest.raises(ValueError, match="inconsistente com o emitente") as exc:
+        parsear_nfe(caminho)
+    assert CHAVE_ENTRADA not in str(exc.value)
+
+
+def test_chave_aamm_diferente_da_emissao_recusa(tmp_path):
+    caminho = _xml_entrada_variante(
+        tmp_path,
+        "aamm-chave.xml",
+        **{"2026-07-15T14:30:00-03:00": "2026-01-15T14:30:00-03:00"},
+    )
+    with pytest.raises(ValueError, match="inconsistente com a data de emissão"):
+        parsear_nfe(caminho)
+
+
+def test_chave_uf_diferente_do_cuf_recusa(tmp_path):
+    caminho = _xml_entrada_variante(tmp_path, "uf-chave.xml", **{"<cUF>35</cUF>": "<cUF>31</cUF>"})
+    with pytest.raises(ValueError, match="inconsistente com a UF"):
+        parsear_nfe(caminho)
+
+
+def test_cuf_ausente_recusa(tmp_path):
+    caminho = _xml_entrada_variante(tmp_path, "sem-cuf.xml", **{"<cUF>35</cUF>": ""})
+    with pytest.raises(ValueError, match="ide/cUF"):
+        parsear_nfe(caminho)
+
+
+def test_cancelamento_chNFe_dv_errado_recusa(tmp_path):
+    dv_errado = CHAVE_ENTRADA[:-1] + ("0" if CHAVE_ENTRADA[-1] != "0" else "1")
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <procEventoNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00">
+      <evento><infEvento>
+        <chNFe>{dv_errado}</chNFe><tpEvento>110111</tpEvento>
+      </infEvento></evento>
+      <retEvento><infEvento><cStat>135</cStat></infEvento></retEvento>
+    </procEventoNFe>"""
+    caminho = tmp_path / "canc-dv.xml"
+    caminho.write_text(xml, encoding="utf-8")
+    with pytest.raises(ValueError, match="dígito verificador inválido") as exc:
+        parsear_evento_cancelamento(str(caminho))
+    assert dv_errado not in str(exc.value)

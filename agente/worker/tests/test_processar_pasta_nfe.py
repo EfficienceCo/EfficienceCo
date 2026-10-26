@@ -21,7 +21,9 @@ CLIENTE_ID_EMIT = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 NOME_EMPRESA = "Padaria do João"
 NOME_FILIAL = "Filial Centro"
 NOME_FORNECEDOR = "Mercado Central"
-CHAVE_DOIS_CLIENTES = "35261298765432000198550010000000031000000033"
+CHAVE_ENTRADA = "35260798765432000198550010000000011000000012"
+CHAVE_DOIS_CLIENTES = "35260698765432000198550010000000031000000030"
+CHAVE_SAIDA_CPF = "35260712345678000195550010000000041000000040"
 
 
 @pytest.fixture
@@ -148,7 +150,7 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
     assert mock_ler_xml.call_count == 1
     payload = mock_post.call_args.args[1]
     assert payload["tipo"] == "entrada"
-    assert payload["chave_nfe"] == "35260712345678000190550010000000011000000011"
+    assert payload["chave_nfe"] == CHAVE_ENTRADA
     assert payload["cliente_id"] == CLIENTE_ID
     assert payload["valor_total"] == "1500.00"
     assert payload["data_emissao"] == "2026-07-15"
@@ -167,8 +169,8 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
     return assinar_xml_nfe(f"""<?xml version="1.0" encoding="UTF-8"?>
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
     <NFe>
-      <infNFe Id="NFe35260712345678000195550010000000041000000044" versao="4.00">
-        <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+      <infNFe Id="NFe{CHAVE_SAIDA_CPF}" versao="4.00">
+        <ide><cUF>35</cUF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit><CNPJ>{CNPJ_CLIENTE}</CNPJ></emit>
         <dest><CPF>12345678909</CPF></dest>
         <total><ICMSTot>
@@ -682,6 +684,7 @@ def test_nfe_data_emissao_futura_vai_para_nao_identificado(pasta_nfe):
     inbox, _base = pasta_nfe
     texto = (FIXTURES / "entrada.xml").read_text(encoding="utf-8")
     texto = texto.replace("2026-07-15T14:30:00-03:00", "2099-12-08T14:30:00-03:00")
+    texto = texto.replace(CHAVE_ENTRADA, "35991298765432000198550010000000011000000010")
     gravar_nfe_assinada(inbox / "entrada.xml", texto)
 
     with (
@@ -702,7 +705,7 @@ def test_processar_nfe_sem_seta_unicode_nos_prints():
 
 def test_evento_cancelamento_cancela_e_arquiva(pasta_nfe):
     inbox, _base = pasta_nfe
-    chave = "35260712345678000190550010000000011000000011"
+    chave = CHAVE_ENTRADA
     evento = inbox / "cancelamento.xml"
     evento.write_text(
         f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -739,7 +742,7 @@ def test_evento_cancelamento_cancela_e_arquiva(pasta_nfe):
 
 def test_evento_cancelamento_sem_nota_mantem_para_retentar(pasta_nfe):
     inbox, _base = pasta_nfe
-    chave = "35260712345678000190550010000000011000000011"
+    chave = CHAVE_ENTRADA
     evento = inbox / "cancelamento.xml"
     evento.write_text(
         f"""<procEventoNFe xmlns="http://www.portalfiscal.inf.br/nfe">
