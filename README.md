@@ -221,9 +221,13 @@ Também foram conferidas falhas deliberadas de teste no backend e no agente,
 falha de migration, recusa de URL externa e limpeza após Ctrl+C no Windows.
 O usuário confirmou saída 1 na falha proposital do Python e saída 0 ao repetir
 o comando completo após remover esse arquivo temporário.
+Também foi verificada a recusa da porta 55321 ocupada: saída 1, antes de iniciar
+o Supabase, sem deixar a pasta temporária. Em clone local separado dos commits
+`caaeead` e `f596985`, o usuário informou sucesso seguindo a instalação do README.
+Foram conferidos o status Git limpo, a existência do novo `.venv` e a ausência de
+`.test-runtime`; o log e o tempo dessa rodada não foram apresentados.
 
-Antes de concluir a #678, ainda faltam a execução em clone limpo e no ambiente
-de CI, a confirmação do resultado do experimento de porta ocupada e a recuperação ou
+Antes de concluir a #678, ainda faltam a execução no ambiente de CI e a recuperação ou
 confirmação dos arquivos históricos `apuracoes-ids-invalidos-http.test.js` e
 `apuracoes-fs12-prolabore.test.js`, ausentes neste checkout. O arquivo
 `auth.test.js` existente é um placeholder e não comprova cobertura de autenticação.
