@@ -13,6 +13,15 @@
       <dest>
         <CNPJ>12345678000195</CNPJ>
       </dest>
+      <det nItem="1">
+        <prod>
+          <cProd>1</cProd>
+          <xProd>Item</xProd>
+          <NCM>19059090</NCM>
+          <CFOP>5102</CFOP>
+          <vProd>1500.00</vProd>
+        </prod>
+      </det>
       <total>
         <ICMSTot>
           <vNF>1500.00</vNF>
@@ -26,6 +35,7 @@
   </NFe>
   <protNFe>
     <infProt>
+      <chNFe>35260798765432000198550010000000011000000012</chNFe>
       <cStat>100</cStat>
     </infProt>
   </protNFe>

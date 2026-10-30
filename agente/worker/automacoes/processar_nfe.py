@@ -9,14 +9,19 @@ from __future__ import annotations
 import shutil
 import sys
 import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import comunicacao.api_client as client
 from comunicacao.api_client import ApiError
 from comunicacao.buscar_empresa import buscar_empresa_por_cnpj
-from core.configuracao import obter_pasta_base, obter_pasta_nfe
+from comunicacao.reportar_evento import reportar_evento
+from core.configuracao import (
+    INTERVALO_POLLING_SEGUNDOS,
+    obter_pasta_base,
+    obter_pasta_nfe,
+)
 from core.estrutura_pastas import criar_estrutura_empresa_em, resolver_destino
 from automacoes.nfe_assinatura import validar_assinatura_nfe
 from core.utils import validar_caminho, validar_nome
@@ -25,6 +30,8 @@ NS = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
 _ASCII_DIGITS = "0123456789"
 PASTA_NAO_IDENTIFICADO = "nao_identificado"
 PASTA_EVENTOS_CANCELAMENTO = "eventos_cancelamento"
+# 404 no cancelamento após esgotar a espera pela nota (NFE-4 / #656).
+PASTA_EVENTOS_PENDENTES = "eventos_pendentes"
 # Erro 4xx do POST não some reenviando; fica fora do inbox (polling de 30s).
 PASTA_REJEITADOS = "rejeitados"
 # 409: a NF-e já está no ledger — não gera outra cópia em Notas Fiscais/.
@@ -36,6 +43,10 @@ ENDPOINT_LANCAMENTOS = "/lancamentos-fiscais"
 ENDPOINT_CANCELAMENTO = "/lancamentos-fiscais/cancelar"
 _CSTAT_AUTORIZADOS = {"100", "150"}
 _CSTAT_CANCELAMENTO_AUTORIZADO = {"135", "155"}
+# Pior caso legitimo (QA-E / polling): 1o 404, ciclo seguinte escritura a nota,
+# ciclo seguinte cancela = 2 * INTERVALO. Margem 150% = 3 * INTERVALO (90s se 30s).
+ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS = int(INTERVALO_POLLING_SEGUNDOS * 2 * 1.5)
+_SUFIXO_ESPERA_CANCEL = ".espera-cancel"
 
 
 def _find(pai: ET.Element, path: str) -> ET.Element | None:
@@ -75,19 +86,59 @@ def _ler_xml(caminho_xml: str) -> ET.Element:
         raise ValueError(f"falha ao ler XML: {e}") from e
 
 
-def _validar_protocolo_autorizacao(root: ET.Element) -> str | None:
-    """Valida o protocolo quando o documento é um nfeProc da SEFAZ."""
+def _inf_prot_unico(root: ET.Element) -> ET.Element:
+    """Um nfeProc oficial traz um único protNFe; cStat e chNFe saem desse infProt."""
+    protocolos = root.findall(".//nfe:protNFe", NS)
+    if not protocolos:
+        raise ValueError("nfeProc sem protocolo de autorização da SEFAZ")
+    if len(protocolos) > 1:
+        raise ValueError("nfeProc com mais de um protocolo de autorização")
+    inf_prot = protocolos[0].find("nfe:infProt", NS)
+    if inf_prot is None:
+        inf_prot = protocolos[0].find(".//nfe:infProt", NS)
+    if inf_prot is None:
+        raise ValueError("nfeProc sem infProt no protocolo de autorização")
+    return inf_prot
+
+
+def _validar_protocolo_autorizacao(root: ET.Element) -> tuple[str, ET.Element]:
+    """Exige nfeProc com um protocolo de autorização da própria nota (cStat 100/150).
+
+    Fail-closed: qualquer raiz que não seja nfeProc é recusada. Lote de envio
+    (enviNFe) e envelopes inventados não têm efeito fiscal. cStat e chNFe
+    vêm do mesmo infProt — dois protNFe não se complementam.
+    """
     nome_raiz = _nome_local(root)
     if nome_raiz == "NFe":
         raise ValueError("NF-e sem protocolo de autorização da SEFAZ")
+    if nome_raiz == "enviNFe":
+        raise ValueError(
+            "arquivo de envio à SEFAZ (enviNFe), sem autorização — não escritura"
+        )
     if nome_raiz != "nfeProc":
-        return None
+        raise ValueError(
+            f"XML com raiz '{nome_raiz}' não é NF-e autorizada (nfeProc)"
+        )
 
-    cstat = (_text(root, ".//nfe:protNFe/nfe:infProt/nfe:cStat") or "").strip()
+    inf_prot = _inf_prot_unico(root)
+    cstat = (_text(inf_prot, "nfe:cStat") or "").strip()
     if cstat not in _CSTAT_AUTORIZADOS:
         status = cstat or "ausente"
         raise ValueError(f"NF-e sem autorização fiscal (cStat={status})")
-    return cstat
+    return cstat, inf_prot
+
+
+def _validar_chave_protocolo(inf_prot: ET.Element, chave_nfe: str) -> None:
+    """Garante que o mesmo infProt cita a chave da nota (sem expor as chaves)."""
+    ch_prot = (_text(inf_prot, "nfe:chNFe") or "").strip()
+    if not ch_prot:
+        raise ValueError("nfeProc sem chNFe no protocolo de autorização")
+    # Sem _somente_digitos: letra extra não pode virar match com a chave da nota.
+    if len(ch_prot) != 44 or _somente_digitos(ch_prot) != ch_prot:
+        raise ValueError("nfeProc com chNFe inválido no protocolo de autorização")
+    if ch_prot != chave_nfe:
+        # Chave embute CNPJ do emitente; motivo pode ir a log/evento — não expor.
+        raise ValueError("protocolo de autorização refere outra NF-e")
 
 
 def _somente_digitos(v: str) -> str:
@@ -227,8 +278,58 @@ def _data_emissao(inf: ET.Element) -> date:
         raise ValueError(f"data de emissão inválida: {texto!r}") from e
 
 
+def _tp_nf(inf: ET.Element) -> int:
+    texto = (_text(inf, "nfe:ide/nfe:tpNF") or "").strip()
+    if texto not in {"0", "1"}:
+        raise ValueError(f"ide/tpNF inválido (esperado 0 ou 1): {texto!r}")
+    return int(texto)
+
+
+def _codigo_digitos(valor: str | None, campo: str, tamanho: int) -> str:
+    if not valor or not str(valor).strip():
+        raise ValueError(f"campo obrigatório ausente: {campo}")
+    so = _somente_digitos(valor)
+    if len(so) != tamanho:
+        raise ValueError(f"{campo} inválido (esperado {tamanho} dígitos): {valor!r}")
+    return so
+
+
+def _itens_nfe(inf: ET.Element) -> list[dict]:
+    dets = inf.findall("nfe:det", NS)
+    if not dets:
+        raise ValueError("campo obrigatório ausente: det")
+
+    itens: list[dict] = []
+    vistos: set[int] = set()
+    for det in dets:
+        n_item_bruto = (det.get("nItem") or "").strip()
+        if not n_item_bruto.isdigit() or int(n_item_bruto) < 1:
+            raise ValueError(f"det/@nItem inválido: {n_item_bruto!r}")
+        n_item = int(n_item_bruto)
+        if n_item in vistos:
+            raise ValueError(f"det/@nItem duplicado: {n_item}")
+        vistos.add(n_item)
+        itens.append(
+            {
+                "n_item": n_item,
+                "cfop": _codigo_digitos(
+                    _text(det, "nfe:prod/nfe:CFOP"),
+                    f"det[@nItem={n_item}]/prod/CFOP",
+                    4,
+                ),
+                "ncm": _codigo_digitos(
+                    _text(det, "nfe:prod/nfe:NCM"),
+                    f"det[@nItem={n_item}]/prod/NCM",
+                    8,
+                ),
+            }
+        )
+    itens.sort(key=lambda item: item["n_item"])
+    return itens
+
+
 def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
-    cstat = _validar_protocolo_autorizacao(root)
+    cstat, inf_prot = _validar_protocolo_autorizacao(root)
 
     inf = _inf_nfe(root)
 
@@ -238,6 +339,7 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
         raise ValueError("chave de acesso inválida no atributo Id")
     if not _chave_nfe_dv_valida(chave):
         raise ValueError("chave de acesso com dígito verificador inválido")
+    _validar_chave_protocolo(inf_prot, chave)
 
     cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
     cnpj_dest = _documento_destinatario(inf)
@@ -254,6 +356,8 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
         "ipi": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vIPI"), "total/ICMSTot/vIPI", obrigatorio=False),
         "data_emissao": data_emissao,
         "cstat": cstat,
+        "tp_nf": _tp_nf(inf),
+        "itens": _itens_nfe(inf),
     }
     # Depois dos campos: XML incompleto falha no campo, não na Signature.
     # A conferência usa os bytes originais do arquivo (C14N).
@@ -500,6 +604,8 @@ def _payload_lancamento(
         "data_emissao": dados["data_emissao"].isoformat(),
         "arquivo_xml": caminho_destino,
         "cliente_id": cliente,
+        "tp_nf": dados["tp_nf"],
+        "itens": dados["itens"],
     }
 
 
@@ -559,6 +665,94 @@ def _mover_para_subpasta(
 
 def _mover_nao_identificado(xml_path: Path, pasta_path: Path, motivo: str) -> None:
     _mover_para_subpasta(xml_path, pasta_path, PASTA_NAO_IDENTIFICADO, "não identificado", motivo)
+
+
+def _caminho_espera_cancelamento(xml_path: Path) -> Path:
+    return xml_path.with_name(xml_path.name + _SUFIXO_ESPERA_CANCEL)
+
+
+def _agora_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _limpar_espera_cancelamento(xml_path: Path) -> None:
+    sidecar = _caminho_espera_cancelamento(xml_path)
+    try:
+        if sidecar.is_file():
+            sidecar.unlink()
+    except OSError:
+        pass
+
+
+def _espera_cancelamento_esgotada(xml_path: Path) -> bool:
+    """Registra o 1º 404 e diz se a espera pela nota já estourou (NFE-4).
+
+    Sidecar com timestamp da primeira falha 404 — mede duração da espera, não
+    quantos polls o agente fez. Retorna False na primeira vez (ainda dentro da
+    janela); True quando agora − início ≥ ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS.
+    """
+    agora = _agora_utc()
+    sidecar = _caminho_espera_cancelamento(xml_path)
+    if not sidecar.is_file():
+        try:
+            sidecar.write_text(agora.isoformat(), encoding="utf-8")
+        except OSError as e:
+            print(f"[processar_nfe] falha ao gravar espera de cancelamento: {e}")
+        return False
+
+    try:
+        inicio = datetime.fromisoformat(sidecar.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        try:
+            sidecar.write_text(agora.isoformat(), encoding="utf-8")
+        except OSError:
+            pass
+        return False
+
+    if inicio.tzinfo is None:
+        inicio = inicio.replace(tzinfo=timezone.utc)
+    return (agora - inicio).total_seconds() >= ESPERA_CANCELAMENTO_SEM_NOTA_SEGUNDOS
+
+
+def _tratar_falha_cancelamento(
+    xml_path: Path, pasta_path: Path, erro: BaseException
+) -> None:
+    """404: retenta até esgotar a espera; depois tira do inbox + aviso no painel.
+
+    Sidecar só some depois do XML sair da varredura. Se a pasta falhar,
+    `_tirar_do_inbox` renomeia (padrão #569); se os dois falharem, o timestamp
+    permanece e o aviso já foi enviado.
+
+    Demais erros: só log (permanentes no cancelamento ficam para issue futura —
+    mesma classe do #569 no ramo de lançamento).
+    """
+    nome = xml_path.name
+    if isinstance(erro, ApiError) and erro.status_code == 404:
+        if not _espera_cancelamento_esgotada(xml_path):
+            print(
+                f"[processar_nfe] falha no cancelamento ({nome}): {erro} "
+                f"— aguardando nota no ledger"
+            )
+            return
+
+        # Sem chave de acesso: embute CNPJ; vai a log/evento/notificação (NFE-1).
+        motivo = f"cancelamento sem nota no ledger após espera ({nome})"
+        _tirar_do_inbox(
+            xml_path,
+            pasta_path,
+            PASTA_EVENTOS_PENDENTES,
+            "evento pendente",
+            motivo,
+        )
+        reportar_evento(
+            f"[NF-e] Evento de cancelamento sem nota correspondente: {motivo}",
+            False,
+        )
+        if not xml_path.is_file():
+            _limpar_espera_cancelamento(xml_path)
+        return
+
+    print(f"[processar_nfe] falha no cancelamento ({nome}): {erro}")
 
 
 def _copiar_criados(origem: Path, resultados: list[str], caminhos: list[Path]) -> None:
@@ -629,6 +823,7 @@ def processar_pasta_nfe(pasta: str) -> None:
         if evento is not None:
             try:
                 _postar_cancelamento(evento)
+                _limpar_espera_cancelamento(xml_path)
                 destino = pasta_path / PASTA_EVENTOS_CANCELAMENTO / nome
                 movido = _mover_xml(xml_path, destino)
                 print(
@@ -636,9 +831,8 @@ def processar_pasta_nfe(pasta: str) -> None:
                     f"e evento arquivado -> {movido}"
                 )
             except Exception as e:
-                # Mantém na entrada para retentar, inclusive se o evento chegar
-                # antes da NF-e original ser escriturada.
-                print(f"[processar_nfe] falha no cancelamento ({nome}): {e}")
+                # 404: evento pode ter chegado antes da nota — espera limitada (NFE-4).
+                _tratar_falha_cancelamento(xml_path, pasta_path, e)
             continue
 
         try:

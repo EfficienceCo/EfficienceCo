@@ -192,6 +192,45 @@ function classeBadgeTipo(tipo) {
   return 'bg-zinc-100 text-zinc-700';
 }
 
+function obterItensLancamento(lancamento) {
+  if (Array.isArray(lancamento?.itens)) {
+    return lancamento.itens;
+  }
+  if (Array.isArray(lancamento?.lancamentos_fiscais_itens)) {
+    return lancamento.lancamentos_fiscais_itens;
+  }
+  return [];
+}
+
+function formatarCodigosItem(itens, campo) {
+  const unicos = [...new Set(itens.map((item) => item?.[campo]).filter(Boolean))];
+  return unicos.length ? unicos.join(', ') : '-';
+}
+
+function obterInconsistencias(lancamento) {
+  return Array.isArray(lancamento?.inconsistencias) ? lancamento.inconsistencias : [];
+}
+
+function AlertaInconsistencia({ inconsistencias }) {
+  if (!inconsistencias.length) {
+    return null;
+  }
+
+  const titulo = inconsistencias
+    .map((item) => item?.detalhe)
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <span
+      title={titulo}
+      className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200"
+    >
+      Revisar
+    </span>
+  );
+}
+
 function obterStatusLancamento(status) {
   if (status === 'cancelada') {
     return {
@@ -255,6 +294,9 @@ function CardResumo({ titulo, valor, detalhe, isLoading }) {
 }
 
 function LancamentoCard({ lancamento }) {
+  const itens = obterItensLancamento(lancamento);
+  const inconsistencias = obterInconsistencias(lancamento);
+
   return (
     <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -278,6 +320,7 @@ function LancamentoCard({ lancamento }) {
             {formatarTipo(lancamento?.tipo)}
           </span>
           <StatusLancamentoBadge status={lancamento?.status} />
+          <AlertaInconsistencia inconsistencias={inconsistencias} />
         </div>
       </div>
 
@@ -289,6 +332,14 @@ function LancamentoCard({ lancamento }) {
         <div className="flex items-center justify-between gap-3">
           <dt className="text-zinc-500">CNPJ/CPF destinatário</dt>
           <dd className="text-zinc-700">{formatarDocumentoFiscal(lancamento?.cnpj_destinatario)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-zinc-500">CFOP</dt>
+          <dd className="font-mono text-zinc-700">{formatarCodigosItem(itens, 'cfop')}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-zinc-500">NCM</dt>
+          <dd className="font-mono text-zinc-700">{formatarCodigosItem(itens, 'ncm')}</dd>
         </div>
         <div className="flex items-center justify-between gap-3">
           <dt className="font-semibold text-zinc-500">Valor total</dt>
@@ -663,6 +714,8 @@ export default function FiscalPage() {
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">CNPJ emitente</th>
                   <th className="px-4 py-3">CNPJ/CPF destinatário</th>
+                  <th className="px-4 py-3">CFOP</th>
+                  <th className="px-4 py-3">NCM</th>
                   <th className="px-4 py-3">Valor total</th>
                 </tr>
               </thead>
@@ -689,13 +742,24 @@ export default function FiscalPage() {
                       </span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      <StatusLancamentoBadge status={lancamento?.status} />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <StatusLancamentoBadge status={lancamento?.status} />
+                        <AlertaInconsistencia
+                          inconsistencias={obterInconsistencias(lancamento)}
+                        />
+                      </div>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
                       {formatarDocumentoFiscal(lancamento?.cnpj_emitente)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-zinc-700">
                       {formatarDocumentoFiscal(lancamento?.cnpj_destinatario)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-zinc-700">
+                      {formatarCodigosItem(obterItensLancamento(lancamento), 'cfop')}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-zinc-700">
+                      {formatarCodigosItem(obterItensLancamento(lancamento), 'ncm')}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 font-medium text-zinc-900">
                       {formatarValor(lancamento?.valor_total)}

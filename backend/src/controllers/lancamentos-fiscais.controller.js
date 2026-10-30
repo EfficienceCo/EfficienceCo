@@ -4,7 +4,9 @@ import { PERFIS } from "../config/perfis.js";
 import { aplicarFiltroPeriodo, dataLocalISO, erroPeriodoConsulta } from "../utils/periodo.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
 import {
+  apresentarLancamentoFiscal,
   camposRejeicaoBanco,
+  recomputarInconsistencias,
   validarLancamentoFiscal,
 } from "../utils/lancamento-fiscal.util.js";
 import { arredondar, camposFaltando, chaveNfeDvValido, soDigitos } from "../utils/comum.util.js";
@@ -20,6 +22,8 @@ const CAMPOS_OBRIGATORIOS = [
   "valor_total",
   "data_emissao",
   "cliente_id",
+  "tp_nf",
+  "itens",
 ];
 
 function cnpjEsperadoParaTipo(tipo, cnpj_emitente, cnpj_destinatario) {
@@ -88,6 +92,8 @@ export async function criarLancamentoFiscal(req, res) {
     ipi,
     data_emissao,
     arquivo_xml,
+    tp_nf,
+    itens,
   } = validacao.dados;
 
   if (!TIPOS_VALIDOS.has(tipo)) {
@@ -143,6 +149,8 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(409).json({ erro: "Já existe um lançamento fiscal para esta chave de NFe" });
   }
 
+  const inconsistencias = recomputarInconsistencias(tp_nf, itens);
+
   const { data, error } = await supabase
     .from("lancamentos_fiscais")
     .insert({
@@ -164,6 +172,8 @@ export async function criarLancamentoFiscal(req, res) {
       ipi,
       data_emissao,
       arquivo_xml,
+      tp_nf,
+      inconsistencias,
     })
     .select()
     .single();
@@ -186,7 +196,28 @@ export async function criarLancamentoFiscal(req, res) {
     return res.status(500).json({ erro: "Erro ao registrar lançamento fiscal" });
   }
 
-  return res.status(201).json(data);
+  // O PostgREST não grava a tabela filha no mesmo insert: os itens entram logo
+  // depois e, se falharem, a nota é removida para o agente poder reenviar (sem
+  // isso a chave ficaria ocupada e o reenvio daria 409).
+  const { error: erroItens } = await supabase.from("lancamentos_fiscais_itens").insert(
+    itens.map((item) => ({
+      lancamento_id: data.id,
+      cliente_id,
+      n_item: item.n_item,
+      cfop: item.cfop,
+      ncm: item.ncm,
+    })),
+  );
+  if (erroItens) {
+    console.error("[lancamentos-fiscais.controller] Erro ao registrar itens do lançamento fiscal:", erroItens.message);
+    const { error: erroRemocao } = await supabase.from("lancamentos_fiscais").delete().eq("id", data.id);
+    if (erroRemocao) {
+      console.error("[lancamentos-fiscais.controller] Nota ficou sem itens:", data.id, erroRemocao.message);
+    }
+    return res.status(500).json({ erro: "Erro ao registrar lançamento fiscal" });
+  }
+
+  return res.status(201).json(apresentarLancamentoFiscal({ ...data, itens }));
 }
 
 // POST /lancamentos-fiscais/cancelar — chamado pelo agente ao receber um
@@ -253,7 +284,7 @@ export async function listarLancamentosFiscais(req, res) {
 
   let query = supabase
     .from("lancamentos_fiscais")
-    .select("*")
+    .select("*, lancamentos_fiscais_itens(n_item, cfop, ncm)")
     .eq("cliente_id", clienteId)
     .order("data_emissao", { ascending: false });
 
@@ -266,7 +297,7 @@ export async function listarLancamentosFiscais(req, res) {
     return res.status(500).json({ erro: "Erro ao listar lançamentos fiscais" });
   }
 
-  return res.status(200).json(data);
+  return res.status(200).json((data || []).map(apresentarLancamentoFiscal));
 }
 
 export async function resumoLancamentosFiscais(req, res) {
