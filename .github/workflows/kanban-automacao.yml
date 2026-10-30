@@ -1,0 +1,86 @@
+name: Kanban automação
+
+# Move os cards do board "Esqueleto Efficience" conforme o ciclo de vida do PR.
+#   branch <issue>-... criada      -> In progress
+#   PR aberto (não draft)          -> Teste interno
+#   PR aprovado                    -> Fila de deploy
+#   mudanças solicitadas / draft   -> In progress
+#   PR mergeado                    -> Done
+# Requer o secret PROJECT_TOKEN (PAT com escopo `project`): o GITHUB_TOKEN não alcança Projects de org.
+# Convenção de branch: <numero-da-issue>-descricao (ex.: 695-backend-criado-por).
+
+on:
+  create:
+  pull_request:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: kanban-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'create' || github.ref_type == 'branch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decidir destino e itens
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          status=""; items=""; branch="$REF_NAME"
+          case "$EVENT" in
+            create)
+              status="In progress" ;;
+            pull_request)
+              branch="$PR_BRANCH"; items="$PR_NUMBER"
+              case "$ACTION" in
+                opened|reopened|ready_for_review) [ "$PR_DRAFT" = "true" ] && status="In progress" || status="Teste interno" ;;
+                converted_to_draft) status="In progress" ;;
+                closed) [ "$PR_MERGED" = "true" ] && status="Done" ;;
+              esac ;;
+            pull_request_review)
+              branch="$PR_BRANCH"; items="$PR_NUMBER"
+              case "$(echo "$REVIEW_STATE" | tr '[:upper:]' '[:lower:]')" in
+                approved) status="Fila de deploy" ;;
+                changes_requested) status="In progress" ;;
+              esac ;;
+          esac
+          [ -n "$status" ] || { echo "Evento sem transição, nada a fazer"; echo "status=" >> "$GITHUB_OUTPUT"; exit 0; }
+
+          # Issue do nome da branch (<numero>-...) + issues que o PR fecha.
+          num="${branch%%-*}"
+          [[ "$num" =~ ^[0-9]+$ ]] && items="$items $num"
+          if [ -n "$PR_NUMBER" ]; then
+            closing=$(gh pr view "$PR_NUMBER" -R "$REPO" --json closingIssuesReferences --jq '.closingIssuesReferences[].number' || true)
+            items="$items $closing"
+          fi
+          items=$(echo $items | tr ' ' '\n' | awk 'NF && !s[$0]++' | tr '\n' ' ')
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "items=$items" >> "$GITHUB_OUTPUT"
+          echo "Destino: $status | itens: $items"
+
+      - name: Mover cards
+        if: steps.plan.outputs.status != '' && steps.plan.outputs.items != ''
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/kanban-move.sh "${{ steps.plan.outputs.status }}" ${{ steps.plan.outputs.items }}
