@@ -8,6 +8,8 @@ const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
 const EXTRATO_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const CONCILIACAO_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+const USUARIO_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+const OUTRO_USUARIO_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 
 // ---------------------------------------------------------------------------
 // Mock de supabase
@@ -82,7 +84,7 @@ function criarResposta() {
 
 function reqBase(overrides = {}) {
   return {
-    usuario: { perfil: PERFIS.ADMIN_CLIENTE, cliente_id: CLIENTE_A },
+    usuario: { id: USUARIO_ID, perfil: PERFIS.ADMIN_CLIENTE, cliente_id: CLIENTE_A },
     body: { extrato_id: EXTRATO_ID, mes: 7, ano: 2026 },
     query: {},
     ...overrides,
@@ -142,7 +144,12 @@ describe("POST /conciliacoes", () => {
     queue("pares_conciliacao", "await", { data: [], error: null });
 
     const res = criarResposta();
-    await criarConciliacao(reqBase(), res);
+    await criarConciliacao(
+      reqBase({
+        body: { extrato_id: EXTRATO_ID, mes: 7, ano: 2026, criado_por: OUTRO_USUARIO_ID },
+      }),
+      res,
+    );
     supabase.from = originalFromLocal;
 
     assert.equal(res.statusCode, 201);
@@ -156,6 +163,7 @@ describe("POST /conciliacoes", () => {
     assert.equal(conciliacaoInserida.total_conciliadas, 1);
     assert.equal(conciliacaoInserida.total_pendentes, 2);
     assert.equal(conciliacaoInserida.status, "em_andamento");
+    assert.equal(conciliacaoInserida.criado_por, USUARIO_ID);
 
     assert.equal(paresInseridos.length, 3);
     assert.ok(paresInseridos.every((p) => p.conciliacao_id === CONCILIACAO_ID));

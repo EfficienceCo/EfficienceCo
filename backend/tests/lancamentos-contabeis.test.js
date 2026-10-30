@@ -12,6 +12,8 @@ import {
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
 const LANCAMENTO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const USUARIO_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+const OUTRO_USUARIO_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 
 // ---------------------------------------------------------------------------
 // Mock de supabase
@@ -109,6 +111,21 @@ describe("POST /lancamentos-contabeis", () => {
 
     assert.equal(res.statusCode, 201);
     assert.equal(res.body.id, "novo-id");
+  });
+
+  it("grava criado_por do token e ignora o valor enviado no corpo", async () => {
+    queue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+
+    const res = criarResposta();
+    await criarLancamentoContabil(
+      reqAdmin(payloadValido({ criado_por: OUTRO_USUARIO_ID }), {
+        usuario: { id: USUARIO_ID, perfil: PERFIS.ADMIN_CLIENTE, cliente_id: CLIENTE_A },
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(ultimoPayload.criado_por, USUARIO_ID);
   });
 
   it("400 quando campo obrigatório está faltando", async () => {
@@ -360,7 +377,10 @@ describe("PATCH /lancamentos-contabeis/:id", () => {
 
     const res = criarResposta();
     await atualizarLancamentoContabil(
-      reqAdmin({ descricao: " Nova ", valor: "10.50" }, { params: { id: LANCAMENTO_ID } }),
+      reqAdmin(
+        { descricao: " Nova ", valor: "10.50", criado_por: OUTRO_USUARIO_ID },
+        { params: { id: LANCAMENTO_ID } },
+      ),
       res,
     );
 
