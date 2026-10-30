@@ -16,3 +16,8 @@ CREATE TABLE IF NOT EXISTS funcionarios (
 
 ALTER TABLE funcionarios ENABLE ROW LEVEL SECURITY;
 CREATE POLICY funcionarios_service_role ON funcionarios TO service_role USING (true) WITH CHECK (true);
+
+-- Completa o relacionamento iniciado em 75.sql, agora com as duas tabelas.
+ALTER TABLE eventos_esocial
+  ADD CONSTRAINT eventos_esocial_funcionario_id_fkey
+  FOREIGN KEY (funcionario_id) REFERENCES funcionarios(id);
