@@ -10,6 +10,8 @@ import {
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
 const EXTRATO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const USUARIO_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+const OUTRO_USUARIO_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 
 // ---------------------------------------------------------------------------
 // Mock de supabase
@@ -135,6 +137,45 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(res.body.total_transacoes, 2);
     assert.equal(res.body.banco, "0341");
     assert.equal(res.body.conta, "7890");
+  });
+
+  it("grava criado_por do token no extrato e ignora o valor enviado no corpo", async () => {
+    queue("extratos_bancarios", "single", {
+      data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
+      error: null,
+    });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("extratos_bancarios", "await", { data: null, error: null });
+
+    let extratoInserido = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const builder = originalFromLocal(tabela);
+      if (tabela === "extratos_bancarios") {
+        const insertOriginal = builder.insert.bind(builder);
+        builder.insert = (dados) => {
+          extratoInserido = dados;
+          return insertOriginal(dados);
+        };
+      }
+      return builder;
+    };
+
+    try {
+      const res = criarResposta();
+      await criarConciliacaoExtrato(
+        reqUpload({
+          usuario: { id: USUARIO_ID, perfil: PERFIS.ADMIN_CLIENTE, cliente_id: CLIENTE_A },
+          body: { criado_por: OUTRO_USUARIO_ID },
+        }),
+        res,
+      );
+
+      assert.equal(res.statusCode, 201);
+      assert.equal(extratoInserido.criado_por, USUARIO_ID);
+    } finally {
+      supabase.from = originalFromLocal;
+    }
   });
 
   it("upload do MESMO arquivo OFX 2x retorna 409 sem duplicar extrato ou transações", async () => {

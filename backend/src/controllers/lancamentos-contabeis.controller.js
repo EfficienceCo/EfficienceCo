@@ -125,6 +125,7 @@ export async function criarLancamentoContabil(req, res) {
       tipo,
       descricao,
       categoria: categoria ?? null,
+      criado_por: req.usuario.id,
     })
     .select()
     .single();
