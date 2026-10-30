@@ -261,3 +261,102 @@ test.describe('Fiscal — resumo separa entradas (crédito) de saídas (débito)
     await expect(entradas).toContainText('ICMS (crédito) R$ 0,00');
   });
 });
+
+function mockLancamentosNfe9(page) {
+  return page.route('**/lancamentos-fiscais**', async (route) => {
+    const { pathname } = new URL(route.request().url());
+    if (pathname.endsWith('/resumo')) {
+      await route.fulfill({
+        json: {
+          total_nfe: 2,
+          valor_total: 20,
+          icms: 0,
+          pis: 0,
+          cofins: 0,
+          ipi: 0,
+          entradas: 0,
+          saidas: 2,
+        },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: [
+        {
+          id: 'v10',
+          status: 'ativa',
+          data_emissao: '2025-03-15',
+          chave_nfe: '35250311111111000111559120000000101202610220',
+          tipo: 'saida',
+          cnpj_emitente: '11111111000111',
+          cnpj_destinatario: '12345678000195',
+          valor_total: 10,
+          tp_nf: 1,
+          itens: [{ n_item: 1, cfop: '1102', ncm: '19059090' }],
+          inconsistencias: [
+            {
+              tipo: 'cfop_incompativel_tpnf',
+              n_item: 1,
+              detalhe: 'CFOP 1102 incompatível com tpNF=1',
+            },
+          ],
+        },
+        {
+          id: 'ok',
+          status: 'ativa',
+          data_emissao: '2025-03-18',
+          chave_nfe: '35250311111111000111559120000000111202610221',
+          tipo: 'saida',
+          cnpj_emitente: '11111111000111',
+          cnpj_destinatario: '12345678000195',
+          valor_total: 10,
+          tp_nf: 1,
+          itens: [{ n_item: 1, cfop: '5102', ncm: '19059090' }],
+          inconsistencias: [],
+        },
+      ],
+    });
+  });
+}
+
+test.describe('Fiscal — CFOP/NCM e alerta de inconsistência (NFE-9 #663)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript((token) => localStorage.setItem('token', token), criarTokenTeste());
+    await page.route('**/notificacoes**', (route) => route.fulfill({ json: [] }));
+  });
+
+  test('mostra CFOP/NCM e o badge Revisar só na nota inconsistente', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockLancamentosNfe9(page);
+
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    await expect(page.getByRole('columnheader', { name: 'CFOP' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'NCM' })).toBeVisible();
+    await expect(page.getByText('1102').filter({ visible: true }).first()).toBeVisible();
+    await expect(page.getByText('5102').filter({ visible: true }).first()).toBeVisible();
+    await expect(page.getByText('19059090').filter({ visible: true }).first()).toBeVisible();
+    await expect(page.getByText('Revisar', { exact: true }).filter({ visible: true })).toHaveCount(1);
+  });
+
+  test('nos cards (abaixo de lg) o CFOP/NCM e o Revisar também aparecem', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockLancamentosNfe9(page);
+
+    await page.goto('/dashboard/fiscal/escrituracao');
+
+    await expect(page.getByRole('columnheader', { name: 'CFOP' })).toHaveCount(0);
+    await expect(page.getByText('CFOP').filter({ visible: true }).first()).toBeVisible();
+    await expect(page.getByText('1102').filter({ visible: true }).first()).toBeVisible();
+    await expect(page.getByText('5102').filter({ visible: true }).first()).toBeVisible();
+    await expect(page.getByText('19059090').filter({ visible: true }).first()).toBeVisible();
+    await expect(page.getByText('Revisar', { exact: true }).filter({ visible: true })).toHaveCount(1);
+  });
+
+  test('card Classificação NCM/CFOP continua planejado', async ({ page }) => {
+    await page.goto('/dashboard/fiscal');
+    const card = page.getByRole('heading', { name: 'Classificação NCM/CFOP' }).locator('..');
+    await expect(card.getByText('Planejado')).toBeVisible();
+    await expect(card.getByText('Em breve')).toBeVisible();
+  });
+});

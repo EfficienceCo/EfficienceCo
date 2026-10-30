@@ -1,131 +1,90 @@
--- 101 — SEG-1 (#666): RLS único por cliente_id + perfil, lido do token do usuário.
--- Decisão: vault decisoes/2026-10-26-seg-1-rls-identidade-por-requisicao.md
---
--- O backend passa a falar com o banco com um JWT curto assinado com o segredo do
--- Supabase (claims: role=authenticated, sub, cliente_id, perfil). Estas policies
--- substituem as antigas (dois padrões + várias USING (true)). service_role continua
--- ignorando o RLS (login, jobs e agente local, ver backend/src/config/database.js).
--- Idempotente. APLICAR NO DEV SÓ DEPOIS de conferir o estado real das policies (#664).
+-- #663 / NFE-9 — CFOP e NCM por item + alerta de inconsistência.
+-- Spec: efficience-vault/decisoes/2026-10-24-nfe-9-cfop-ncm.md
+-- Vinícius aplica no Supabase de dev (banco em modo manutenção).
 
-CREATE OR REPLACE FUNCTION public.rls_cliente_id() RETURNS uuid
-LANGUAGE sql STABLE AS $$
-  SELECT NULLIF(auth.jwt() ->> 'cliente_id', '')::uuid
-$$;
+ALTER TABLE public.lancamentos_fiscais
+  ADD COLUMN IF NOT EXISTS tp_nf SMALLINT,
+  ADD COLUMN IF NOT EXISTS inconsistencias JSONB NOT NULL DEFAULT '[]'::jsonb;
 
-CREATE OR REPLACE FUNCTION public.rls_perfil() RETURNS text
-LANGUAGE sql STABLE AS $$
-  SELECT auth.jwt() ->> 'perfil'
-$$;
+ALTER TABLE public.lancamentos_fiscais
+  DROP CONSTRAINT IF EXISTS lancamentos_fiscais_tp_nf_check;
 
-CREATE OR REPLACE FUNCTION public.rls_eh_staff() RETURNS boolean
-LANGUAGE sql STABLE AS $$
-  SELECT public.rls_perfil() = 'admin_efficience'
-$$;
+ALTER TABLE public.lancamentos_fiscais
+  ADD CONSTRAINT lancamentos_fiscais_tp_nf_check
+  CHECK (tp_nf IS NULL OR tp_nf IN (0, 1));
 
--- Só admin_cliente e staff escrevem; 'funcionario' só lê (exceção: notificacoes).
-CREATE OR REPLACE FUNCTION public.rls_pode_escrever() RETURNS boolean
-LANGUAGE sql STABLE AS $$
-  SELECT public.rls_perfil() IN ('admin_cliente', 'admin_efficience')
-$$;
+CREATE TABLE IF NOT EXISTS public.lancamentos_fiscais_itens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lancamento_id UUID NOT NULL REFERENCES public.lancamentos_fiscais(id) ON DELETE CASCADE,
+  cliente_id UUID NOT NULL REFERENCES public.clientes(id) ON DELETE CASCADE,
+  n_item INTEGER NOT NULL,
+  cfop VARCHAR(4) NOT NULL,
+  ncm VARCHAR(8) NOT NULL,
+  CONSTRAINT lancamentos_fiscais_itens_n_item_check CHECK (n_item >= 1),
+  CONSTRAINT lancamentos_fiscais_itens_cfop_check CHECK (cfop ~ '^[0-9]{4}$'),
+  CONSTRAINT lancamentos_fiscais_itens_ncm_check CHECK (ncm ~ '^[0-9]{8}$'),
+  CONSTRAINT lancamentos_fiscais_itens_lancamento_n_item_key UNIQUE (lancamento_id, n_item)
+);
 
--- Tabelas com coluna cliente_id: derruba TODAS as policies atuais e cria o padrão.
-DO $$
-DECLARE
-  t record;
-  p record;
-BEGIN
-  FOR t IN
-    SELECT c.table_name
-    FROM information_schema.columns c
-    JOIN information_schema.tables tb
-      ON tb.table_schema = c.table_schema AND tb.table_name = c.table_name
-    WHERE c.table_schema = 'public' AND c.column_name = 'cliente_id'
-      AND tb.table_type = 'BASE TABLE'
-  LOOP
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.table_name);
-    FOR p IN SELECT policyname FROM pg_policies
-             WHERE schemaname = 'public' AND tablename = t.table_name
-    LOOP
-      EXECUTE format('DROP POLICY %I ON public.%I', p.policyname, t.table_name);
-    END LOOP;
+CREATE INDEX IF NOT EXISTS idx_lancamentos_fiscais_itens_lancamento
+  ON public.lancamentos_fiscais_itens (lancamento_id);
 
-    EXECUTE format(
-      'CREATE POLICY rls_leitura ON public.%I FOR SELECT TO authenticated
-         USING (public.rls_eh_staff() OR cliente_id = public.rls_cliente_id())',
-      t.table_name);
-    EXECUTE format(
-      'CREATE POLICY rls_escrita ON public.%I FOR ALL TO authenticated
-         USING (public.rls_pode_escrever()
-                AND (public.rls_eh_staff() OR cliente_id = public.rls_cliente_id()))
-         WITH CHECK (public.rls_pode_escrever()
-                AND (public.rls_eh_staff() OR cliente_id = public.rls_cliente_id()))',
-      t.table_name);
-  END LOOP;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_lancamentos_fiscais_itens_cliente
+  ON public.lancamentos_fiscais_itens (cliente_id);
 
--- notificacoes: qualquer perfil do escritório marca como lida.
-DROP POLICY IF EXISTS rls_escrita ON public.notificacoes;
-CREATE POLICY rls_escrita ON public.notificacoes FOR ALL TO authenticated
-  USING (public.rls_eh_staff() OR cliente_id = public.rls_cliente_id())
-  WITH CHECK (public.rls_eh_staff() OR cliente_id = public.rls_cliente_id());
+ALTER TABLE public.lancamentos_fiscais_itens ENABLE ROW LEVEL SECURITY;
 
--- clientes: a própria linha é o escritório.
-ALTER TABLE public.clientes ENABLE ROW LEVEL SECURITY;
-DO $$
-DECLARE p record;
-BEGIN
-  FOR p IN SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'clientes'
-  LOOP EXECUTE format('DROP POLICY %I ON public.clientes', p.policyname); END LOOP;
-END $$;
-CREATE POLICY rls_leitura ON public.clientes FOR SELECT TO authenticated
-  USING (public.rls_eh_staff() OR id = public.rls_cliente_id());
-CREATE POLICY rls_escrita ON public.clientes FOR ALL TO authenticated
-  USING (public.rls_pode_escrever() AND (public.rls_eh_staff() OR id = public.rls_cliente_id()))
-  WITH CHECK (public.rls_pode_escrever() AND (public.rls_eh_staff() OR id = public.rls_cliente_id()));
+DROP POLICY IF EXISTS "Leitura de itens fiscais por cliente autenticado"
+  ON public.lancamentos_fiscais_itens;
+CREATE POLICY "Leitura de itens fiscais por cliente autenticado"
+ON public.lancamentos_fiscais_itens
+FOR SELECT
+TO authenticated
+USING (cliente_id = (SELECT cliente_id FROM public.usuarios WHERE id = auth.uid()));
 
--- Tabelas filhas sem cliente_id: herdam do pai.
-DO $$
-DECLARE
-  f record;
-  p record;
-BEGIN
-  FOR f IN SELECT * FROM (VALUES
-    ('etapas',            'processo_id',       'processos'),
-    ('pares_conciliacao', 'conciliacao_id',    'conciliacoes'),
-    ('folha_calculos',    'processamento_id',  'processamentos_folha'),
-    ('folha_relatorios',  'processamento_id',  'processamentos_folha')
-  ) AS v(filha, fk, pai)
-  LOOP
-    IF to_regclass('public.' || f.filha) IS NULL THEN CONTINUE; END IF;
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', f.filha);
-    FOR p IN SELECT policyname FROM pg_policies
-             WHERE schemaname = 'public' AND tablename = f.filha
-    LOOP EXECUTE format('DROP POLICY %I ON public.%I', p.policyname, f.filha); END LOOP;
+DROP POLICY IF EXISTS "Insercao de itens fiscais por cliente autenticado"
+  ON public.lancamentos_fiscais_itens;
+CREATE POLICY "Insercao de itens fiscais por cliente autenticado"
+ON public.lancamentos_fiscais_itens
+FOR INSERT
+TO authenticated
+WITH CHECK (cliente_id = (SELECT cliente_id FROM public.usuarios WHERE id = auth.uid()));
 
-    EXECUTE format(
-      'CREATE POLICY rls_leitura ON public.%I FOR SELECT TO authenticated
-         USING (public.rls_eh_staff() OR EXISTS (
-           SELECT 1 FROM public.%I pai
-           WHERE pai.id = %I.%I AND pai.cliente_id = public.rls_cliente_id()))',
-      f.filha, f.pai, f.filha, f.fk);
-    EXECUTE format(
-      'CREATE POLICY rls_escrita ON public.%I FOR ALL TO authenticated
-         USING (public.rls_pode_escrever() AND (public.rls_eh_staff() OR EXISTS (
-           SELECT 1 FROM public.%I pai
-           WHERE pai.id = %I.%I AND pai.cliente_id = public.rls_cliente_id())))
-         WITH CHECK (public.rls_pode_escrever() AND (public.rls_eh_staff() OR EXISTS (
-           SELECT 1 FROM public.%I pai
-           WHERE pai.id = %I.%I AND pai.cliente_id = public.rls_cliente_id())))',
-      f.filha, f.pai, f.filha, f.fk, f.pai, f.filha, f.fk);
-  END LOOP;
-END $$;
+DROP POLICY IF EXISTS "Atualizacao de itens fiscais por cliente autenticado"
+  ON public.lancamentos_fiscais_itens;
+CREATE POLICY "Atualizacao de itens fiscais por cliente autenticado"
+ON public.lancamentos_fiscais_itens
+FOR UPDATE
+TO authenticated
+USING (cliente_id = (SELECT cliente_id FROM public.usuarios WHERE id = auth.uid()))
+WITH CHECK (cliente_id = (SELECT cliente_id FROM public.usuarios WHERE id = auth.uid()));
 
--- tipos_documento: catálogo global, só leitura.
-ALTER TABLE public.tipos_documento ENABLE ROW LEVEL SECURITY;
-DO $$
-DECLARE p record;
-BEGIN
-  FOR p IN SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'tipos_documento'
-  LOOP EXECUTE format('DROP POLICY %I ON public.tipos_documento', p.policyname); END LOOP;
-END $$;
-CREATE POLICY rls_leitura ON public.tipos_documento FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Exclusao de itens fiscais por cliente autenticado"
+  ON public.lancamentos_fiscais_itens;
+CREATE POLICY "Exclusao de itens fiscais por cliente autenticado"
+ON public.lancamentos_fiscais_itens
+FOR DELETE
+TO authenticated
+USING (cliente_id = (SELECT cliente_id FROM public.usuarios WHERE id = auth.uid()));
+
+DROP POLICY IF EXISTS "Sem leitura direta anon itens fiscais"
+  ON public.lancamentos_fiscais_itens;
+CREATE POLICY "Sem leitura direta anon itens fiscais"
+ON public.lancamentos_fiscais_itens
+FOR SELECT
+TO anon
+USING (false);
+
+DROP POLICY IF EXISTS "Acesso total service_role itens fiscais"
+  ON public.lancamentos_fiscais_itens;
+CREATE POLICY "Acesso total service_role itens fiscais"
+ON public.lancamentos_fiscais_itens
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- Rollback:
+-- DROP TABLE IF EXISTS public.lancamentos_fiscais_itens;
+-- ALTER TABLE public.lancamentos_fiscais DROP CONSTRAINT IF EXISTS lancamentos_fiscais_tp_nf_check;
+-- ALTER TABLE public.lancamentos_fiscais DROP COLUMN IF EXISTS inconsistencias, DROP COLUMN IF EXISTS tp_nf;
