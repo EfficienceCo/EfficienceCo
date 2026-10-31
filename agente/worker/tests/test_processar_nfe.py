@@ -188,9 +188,11 @@ def _xml_nfe(
     *,
     tp_nf: str = "1",
     det: str | None = None,
+    assinar: bool = True,
 ) -> str:
     bloco_det = det if det is not None else _det()
-    return _envolver_nfe_autorizada(f"""<?xml version="1.0" encoding="UTF-8"?>
+    return _envolver_nfe_autorizada(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
       <infNFe Id="NFe{CHAVE_SAIDA}" versao="4.00">
         <ide><cUF>35</cUF><tpNF>{tp_nf}</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
@@ -202,7 +204,9 @@ def _xml_nfe(
         </ICMSTot></total>
       </infNFe>
     </NFe>
-    """)
+    """,
+        assinar=assinar,
+    )
 
 
 def test_parsear_nfe_saida_dest_cpf(tmp_path):
@@ -294,13 +298,84 @@ def test_dest_cpf_dv_errado_com_emitente_valido_recusa_pelo_cpf(tmp_path):
         parsear_nfe(str(caminho))
 
 
-def test_cnpj_cliente_ausente_na_nota():
-    with pytest.raises(ValueError, match="não é emitente nem destinatário"):
+def test_parsear_nfe_entrada_emit_cpf(tmp_path):
+    """Compra de produtor rural: emit/CPF vira cnpj_emitente (11 dígitos) e entrada."""
+    caminho = tmp_path / "produtor.xml"
+    caminho.write_text(
+        _xml_nfe("<CPF>11144477735</CPF>", f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", "300.00"),
+        encoding="utf-8",
+    )
+
+    dados = parsear_nfe(str(caminho))
+
+    assert dados["cnpj_emitente"] == "11144477735"
+    assert len(dados["cnpj_emitente"]) == 11
+    assert dados["cnpj_destinatario"] == CNPJ_CLIENTE
+    assert dados["valor_total"] == Decimal("300.00")
+    assert (
         identificar_tipo_operacao(
-            "98765432000198",
-            "11222333000181",
+            dados["cnpj_emitente"],
+            dados["cnpj_destinatario"],
             CNPJ_CLIENTE,
         )
+        == "entrada"
+    )
+
+
+def test_parsear_nfe_emit_cpf_com_mascara(tmp_path):
+    caminho = tmp_path / "produtor-mascara.xml"
+    caminho.write_text(
+        _xml_nfe("<CPF>111.444.777-35</CPF>", f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>"),
+        encoding="utf-8",
+    )
+
+    dados = parsear_nfe(str(caminho))
+    assert dados["cnpj_emitente"] == "11144477735"
+
+
+def test_emit_sem_cnpj_nem_cpf(tmp_path):
+    caminho = tmp_path / "sem_doc_emit.xml"
+    caminho.write_text(
+        _xml_nfe("<xNome>Produtor</xNome>", f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", assinar=False),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="emit/CNPJ ou emit/CPF"):
+        parsear_nfe(str(caminho))
+
+
+def test_emit_cpf_tamanho_invalido_nao_acusa_cnpj_ausente(tmp_path):
+    caminho = tmp_path / "emit_cpf_curto.xml"
+    caminho.write_text(
+        _xml_nfe("<CPF>1234567890</CPF>", f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", assinar=False),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="emit/CPF") as exc:
+        parsear_nfe(str(caminho))
+    assert "ausente" not in str(exc.value)
+    assert "1234567890" not in str(exc.value)
+
+
+def test_emit_cpf_sem_digito_verificador(tmp_path):
+    caminho = tmp_path / "emit_cpf_invalido.xml"
+    caminho.write_text(
+        _xml_nfe("<CPF>11111111111</CPF>", f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"emit/CPF inválido \(dígito verificador\)") as exc:
+        parsear_nfe(str(caminho))
+    assert "11111111111" not in str(exc.value)
+    assert "ausente" not in str(exc.value)
+
+
+def test_cnpj_cliente_ausente_na_nota():
+    emit = "11144477735"
+    dest = "98765432000198"
+    with pytest.raises(ValueError, match="não é emitente nem destinatário") as exc:
+        identificar_tipo_operacao(emit, dest, CNPJ_CLIENTE)
+    msg = str(exc.value)
+    assert emit not in msg
+    assert dest not in msg
+    assert CNPJ_CLIENTE not in msg
 
 
 def test_cnpj_cliente_vazio():

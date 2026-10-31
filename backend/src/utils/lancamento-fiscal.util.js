@@ -31,7 +31,10 @@ const CAMPOS_POR_CONSTRAINT = {
     chave_nfe: "chave_nfe deve ter exatamente 44 dígitos",
   },
   lancamentos_fiscais_cnpj_emitente_digitos_check: {
-    cnpj_emitente: "cnpj_emitente deve ter exatamente 14 dígitos",
+    cnpj_emitente: "cnpj_emitente deve ter 14 dígitos (CNPJ) ou 11 dígitos (CPF válido)",
+  },
+  lancamentos_fiscais_documento_emitente_check: {
+    cnpj_emitente: "cnpj_emitente deve ter 14 dígitos (CNPJ) ou 11 dígitos (CPF válido)",
   },
   lancamentos_fiscais_documento_destinatario_check: {
     cnpj_destinatario: "cnpj_destinatario deve ter 14 dígitos (CNPJ) ou 11 dígitos (CPF válido)",
@@ -143,9 +146,14 @@ function consistenciaChaveData(chave, dataIso) {
   return null;
 }
 
-function validarCnpjEmitente(valor) {
-  if (typeof valor !== "string" || !/^\d{14}$/.test(valor)) return "cnpj_emitente deve ter exatamente 14 dígitos";
-  return cnpjValido(valor) ? null : "cnpj_emitente não é um CNPJ válido";
+function validarDocumentoEmitente(valor) {
+  if (typeof valor === "string" && /^\d{14}$/.test(valor)) {
+    return cnpjValido(valor) ? null : "cnpj_emitente não é um CNPJ válido";
+  }
+  if (typeof valor === "string" && /^\d{11}$/.test(valor)) {
+    return cpfValido(valor) ? null : "cnpj_emitente não é um CPF válido";
+  }
+  return "cnpj_emitente deve ter 14 dígitos (CNPJ) ou 11 dígitos (CPF válido)";
 }
 
 function validarDocumentoDestinatario(valor) {
@@ -269,7 +277,7 @@ export function validarLancamentoFiscal(body, hojeISO) {
   if (erroChave) erros.chave_nfe = erroChave;
   else dados.chave_nfe = body.chave_nfe;
 
-  const erroEmitente = validarCnpjEmitente(body.cnpj_emitente);
+  const erroEmitente = validarDocumentoEmitente(body.cnpj_emitente);
   if (erroEmitente) erros.cnpj_emitente = erroEmitente;
   else dados.cnpj_emitente = body.cnpj_emitente;
 
