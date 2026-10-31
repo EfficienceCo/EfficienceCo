@@ -52,6 +52,7 @@ supabase.from = function (tabela) {
     gte() { return builder; },
     lte() { return builder; },
     order() { return builder; },
+    range() { return builder; },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     single() { return Promise.resolve(consumir("single", { data: null, error: null })); },
     then(resolve, reject) {
@@ -652,6 +653,10 @@ describe("POST /lancamentos-fiscais", () => {
 describe("POST /lancamentos-fiscais/cancelar", () => {
   it("marca a NF-e da licença como cancelada e preserva a trilha", async () => {
     tokenValido();
+    queue("lancamentos_fiscais", "maybeSingle", {
+      data: { id: "nota-id", status: "ativa", data_emissao: "2026-07-15" },
+      error: null,
+    });
     queue("lancamentos_fiscais", "maybeSingle", {
       data: { id: "nota-id", status: "cancelada" },
       error: null,

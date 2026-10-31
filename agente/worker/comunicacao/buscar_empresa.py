@@ -3,10 +3,15 @@
 import comunicacao.api_client as client
 
 
-def buscar_empresa_por_cnpj(cnpj):
+class EmpresaLookupIndisponivel(RuntimeError):
+    """Cadastro não pôde ser consultado; não significa empresa inexistente."""
+
+
+def buscar_empresa_por_cnpj(cnpj, *, falhar_se_indisponivel=False):
     """
     GET /clientes/por-cnpj. Retorna {"id", "nome"} ou None
-    (não encontrado, CNPJ inválido, sem id, rede/auth).
+    (não encontrado, CNPJ inválido, sem id, rede/auth no modo tolerante).
+    O modo estrito distingue indisponibilidade de ausência de cadastro.
     """
     if not cnpj:
         return None
@@ -23,6 +28,8 @@ def buscar_empresa_por_cnpj(cnpj):
         )
         body = response.json()
         if not isinstance(body, dict):
+            if falhar_se_indisponivel:
+                raise EmpresaLookupIndisponivel("resposta de cadastro inválida")
             return None
         cliente_id = body.get("id")
         nome = body.get("nome")
@@ -33,12 +40,23 @@ def buscar_empresa_por_cnpj(cnpj):
             and nome.strip()
         ):
             return {"id": cliente_id.strip(), "nome": nome.strip()}
+        if falhar_se_indisponivel:
+            raise EmpresaLookupIndisponivel("resposta de cadastro incompleta")
         return None
     except client.ApiError as e:
-        if e.status_code in (400, 404, 401):
+        if e.status_code in (400, 404):
             return None
+        if falhar_se_indisponivel:
+            raise EmpresaLookupIndisponivel("falha na consulta de cadastro") from e
         print(f"[buscar_empresa_por_cnpj] Erro API: {e}")
         return None
     except Exception as e:
+        if falhar_se_indisponivel:
+            raise EmpresaLookupIndisponivel("falha na consulta de cadastro") from e
         print(f"[buscar_empresa_por_cnpj] Falha: {e}")
         return None
+
+
+def buscar_empresa_por_cnpj_estrito(cnpj):
+    """NF-e precisa manter o XML no inbox quando o cadastro está indisponível."""
+    return buscar_empresa_por_cnpj(cnpj, falhar_se_indisponivel=True)

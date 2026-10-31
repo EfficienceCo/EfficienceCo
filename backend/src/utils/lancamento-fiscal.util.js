@@ -208,21 +208,22 @@ export function validarItensNfe(valor) {
 
     const nItemBruto = item.n_item;
     const nItem =
-      typeof nItemBruto === "number" ? nItemBruto : Number.parseInt(String(nItemBruto ?? ""), 10);
-    if (!Number.isInteger(nItem) || nItem < 1) {
-      return { erro: `itens[${i}].n_item deve ser um inteiro positivo` };
+      typeof nItemBruto === "number" ? nItemBruto
+        : typeof nItemBruto === "string" && /^\d+$/.test(nItemBruto.trim()) ? Number(nItemBruto.trim()) : NaN;
+    if (!Number.isInteger(nItem) || nItem < 1 || nItem > 2147483647) {
+      return { erro: `itens[${i}].n_item deve ser um inteiro positivo até 2147483647` };
     }
     if (vistos.has(nItem)) {
       return { erro: `itens n_item duplicado: ${nItem}` };
     }
     vistos.add(nItem);
 
-    const cfop = String(item.cfop ?? "").replace(/\D/g, "");
+    const cfop = String(item.cfop ?? "").trim();
     if (!/^\d{4}$/.test(cfop)) {
       return { erro: `itens[${i}].cfop deve ter exatamente 4 dígitos` };
     }
 
-    const ncm = String(item.ncm ?? "").replace(/\D/g, "");
+    const ncm = String(item.ncm ?? "").trim();
     if (!/^\d{8}$/.test(ncm)) {
       return { erro: `itens[${i}].ncm deve ter exatamente 8 dígitos` };
     }

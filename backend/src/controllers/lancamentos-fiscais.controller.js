@@ -3,6 +3,7 @@ import { validarTokenLicenca } from "../services/licenca.service.js";
 import { PERFIS } from "../config/perfis.js";
 import { aplicarFiltroPeriodo, dataLocalISO, erroPeriodoConsulta } from "../utils/periodo.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
+import { dataIsoValida } from "../utils/data.util.js";
 import {
   apresentarLancamentoFiscal,
   camposRejeicaoBanco,
@@ -50,6 +51,29 @@ function erroConsultaLancamentos(clienteId, mes, ano) {
     return "clienteId deve ser um UUID";
   }
   return erroPeriodoConsulta(mes, ano);
+}
+
+// Preserva a resposta em lista completa, buscando todas as páginas do PostgREST.
+// A contagem também cobre ambientes cujo limite por resposta é menor que 1.000.
+async function consultarLancamentosFiscais(clienteId, mes, ano, campos, apenasAtivas = false) {
+  const linhas = [];
+  const tamanhoPagina = 1000;
+  while (true) {
+    let query = supabase.from("lancamentos_fiscais")
+      .select(campos, { count: "exact" })
+      .eq("cliente_id", clienteId)
+      .order("data_emissao", { ascending: false })
+      .order("id", { ascending: false });
+    if (apenasAtivas) query = query.eq("status", "ativa");
+    query = aplicarFiltroPeriodo(query, "data_emissao", mes, ano);
+    const { data, error, count } = await query.range(linhas.length, linhas.length + tamanhoPagina - 1);
+    if (error) return { data: null, error };
+    const pagina = data || [];
+    linhas.push(...pagina);
+    if (pagina.length === 0 || (count != null ? linhas.length >= count : pagina.length < tamanhoPagina)) {
+      return { data: linhas, error: null };
+    }
+  }
 }
 
 // Agente local envia o payload do XML da NFe já parseado, autenticado via
@@ -237,9 +261,44 @@ export async function cancelarLancamentoFiscal(req, res) {
     return res.status(400).json({ erro: "chave_nfe com dígito verificador inválido" });
   }
 
-  const dataCancelamento = data_evento ? new Date(data_evento) : new Date();
-  if (Number.isNaN(dataCancelamento.getTime())) {
+  if (motivo != null && typeof motivo !== "string") {
+    return res.status(400).json({ erro: "motivo deve ser texto" });
+  }
+  const protocoloInformado = protocolo != null && protocolo !== "";
+  if (protocoloInformado && (
+    !["string", "number"].includes(typeof protocolo) || !/^\d{15}$/.test(String(protocolo))
+  )) {
+    return res.status(400).json({ erro: "protocolo deve conter 15 dígitos" });
+  }
+
+  const dataInformada = data_evento != null && data_evento !== "";
+  const formatoDataEvento = /^\d{4}-\d{2}-\d{2}(?:[T ](?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?)?$/;
+  if (dataInformada && (typeof data_evento !== "string" ||
+    !formatoDataEvento.test(data_evento) || !dataIsoValida(data_evento.slice(0, 10)))) {
     return res.status(400).json({ erro: "data_evento inválida" });
+  }
+  const dataCancelamento = dataInformada ? new Date(data_evento) : new Date();
+  if (Number.isNaN(dataCancelamento.getTime()) || dataCancelamento.getTime() > Date.now() + 5 * 60 * 1000) {
+    return res.status(400).json({ erro: "data_evento inválida" });
+  }
+
+  const consultarNota = () => supabase.from("lancamentos_fiscais").select()
+    .eq("cliente_id", licenca.cliente_id).eq("chave_nfe", chave_nfe).maybeSingle();
+  const { data: existente, error: erroConsulta } = await consultarNota();
+  if (erroConsulta) {
+    console.error("[lancamentos-fiscais.controller] Erro ao consultar cancelamento:", erroConsulta.message);
+    return res.status(500).json({ erro: "Erro ao cancelar lançamento fiscal" });
+  }
+  if (!existente) {
+    return res.status(404).json({ erro: "Lançamento fiscal não encontrado para esta licença" });
+  }
+  const diaEvento = dataInformada ? data_evento.slice(0, 10) : dataLocalISO();
+  if (diaEvento < existente.data_emissao) {
+    return res.status(400).json({ erro: "data_evento não pode ser anterior à emissão da NF-e" });
+  }
+  // O primeiro cancelamento é a trilha fiscal. Reenvios não o reescrevem.
+  if (existente.status === "cancelada") {
+    return res.status(200).json(existente);
   }
 
   const { data, error } = await supabase
@@ -248,10 +307,11 @@ export async function cancelarLancamentoFiscal(req, res) {
       status: "cancelada",
       cancelado_em: dataCancelamento.toISOString(),
       motivo_cancelamento: motivo || null,
-      protocolo_cancelamento: protocolo || null,
+      protocolo_cancelamento: protocoloInformado ? String(protocolo) : null,
     })
     .eq("cliente_id", licenca.cliente_id)
     .eq("chave_nfe", chave_nfe)
+    .eq("status", "ativa")
     .select()
     .maybeSingle();
 
@@ -261,6 +321,12 @@ export async function cancelarLancamentoFiscal(req, res) {
   }
 
   if (!data) {
+    // Outra requisição pode ter cancelado entre a leitura e o UPDATE condicional.
+    const { data: atual, error: erroAtual } = await consultarNota();
+    if (erroAtual) {
+      return res.status(500).json({ erro: "Erro ao cancelar lançamento fiscal" });
+    }
+    if (atual?.status === "cancelada") return res.status(200).json(atual);
     return res.status(404).json({ erro: "Lançamento fiscal não encontrado para esta licença" });
   }
 
@@ -280,15 +346,9 @@ export async function listarLancamentosFiscais(req, res) {
     return res.status(400).json({ erro: erroConsulta });
   }
 
-  let query = supabase
-    .from("lancamentos_fiscais")
-    .select("*, lancamentos_fiscais_itens(n_item, cfop, ncm)")
-    .eq("cliente_id", clienteId)
-    .order("data_emissao", { ascending: false });
-
-  query = aplicarFiltroPeriodo(query, "data_emissao", mes, ano);
-
-  const { data, error } = await query;
+  const { data, error } = await consultarLancamentosFiscais(
+    clienteId, mes, ano, "*, lancamentos_fiscais_itens(n_item, cfop, ncm)",
+  );
 
   if (error) {
     console.error("[lancamentos-fiscais.controller] Erro ao listar lançamentos:", error.message);
@@ -311,15 +371,9 @@ export async function resumoLancamentosFiscais(req, res) {
     return res.status(400).json({ erro: erroConsulta });
   }
 
-  let query = supabase
-    .from("lancamentos_fiscais")
-    .select("tipo, valor_total, icms, pis, cofins, ipi, status")
-    .eq("cliente_id", clienteId)
-    .eq("status", "ativa");
-
-  query = aplicarFiltroPeriodo(query, "data_emissao", mes, ano);
-
-  const { data, error } = await query;
+  const { data, error } = await consultarLancamentosFiscais(
+    clienteId, mes, ano, "tipo, valor_total, icms, pis, cofins, ipi, status", true,
+  );
 
   if (error) {
     console.error("[lancamentos-fiscais.controller] Erro ao calcular resumo:", error.message);

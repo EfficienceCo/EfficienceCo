@@ -15,7 +15,10 @@ from pathlib import Path
 
 import comunicacao.api_client as client
 from comunicacao.api_client import ApiError
-from comunicacao.buscar_empresa import buscar_empresa_por_cnpj
+from comunicacao.buscar_empresa import (
+    EmpresaLookupIndisponivel,
+    buscar_empresa_por_cnpj_estrito as buscar_empresa_por_cnpj,
+)
 from comunicacao.reportar_evento import reportar_evento
 from core.configuracao import (
     INTERVALO_POLLING_SEGUNDOS,
@@ -305,8 +308,8 @@ def _tp_nf(inf: ET.Element) -> int:
 def _codigo_digitos(valor: str | None, campo: str, tamanho: int) -> str:
     if not valor or not str(valor).strip():
         raise ValueError(f"campo obrigatório ausente: {campo}")
-    so = _somente_digitos(valor)
-    if len(so) != tamanho:
+    so = valor.strip()
+    if len(so) != tamanho or _somente_digitos(so) != so:
         raise ValueError(f"{campo} inválido (esperado {tamanho} dígitos): {valor!r}")
     return so
 
@@ -349,6 +352,12 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
     cstat, inf_prot = _validar_protocolo_autorizacao(root)
 
     inf = _inf_nfe(root)
+
+    # Só o leiaute 4.00 é suportado. Não introduz exigência de atributos
+    # ausentes nos envelopes legados, mas recusa versões declaradas diferentes.
+    for elemento in [root, inf, *root.findall(".//nfe:protNFe", NS)]:
+        if elemento.get("versao") is not None and elemento.get("versao") != "4.00":
+            raise ValueError("versão de leiaute da NF-e não suportada (esperado 4.00)")
 
     id_attr = inf.get("Id") or ""
     chave = id_attr[3:] if id_attr.startswith("NFe") else id_attr
@@ -404,11 +413,16 @@ def _parsear_evento_cancelamento_root(root: ET.Element) -> dict | None:
     if cstat not in _CSTAT_CANCELAMENTO_AUTORIZADO:
         raise ValueError(f"cancelamento sem homologação fiscal (cStat={cstat or 'ausente'})")
 
-    chave = _somente_digitos(_text(inf_evento, "nfe:chNFe") or "")
-    if len(chave) != 44:
+    chave = (_text(inf_evento, "nfe:chNFe") or "").strip()
+    if len(chave) != 44 or _somente_digitos(chave) != chave:
         raise ValueError("chNFe inválida no evento de cancelamento")
     if not _chave_nfe_dv_valida(chave):
         raise ValueError("chNFe com dígito verificador inválido no evento de cancelamento")
+
+    # R18 do MOC: quando informado, o retorno deve citar a mesma chave da entrada.
+    chave_retorno = _text(inf_retorno, "nfe:chNFe")
+    if chave_retorno is not None and chave_retorno.strip() != chave:
+        raise ValueError("retorno de cancelamento refere outra NF-e")
 
     return {
         "chave_nfe": chave,
@@ -872,6 +886,9 @@ def processar_pasta_nfe(pasta: str) -> None:
                 dados["cnpj_emitente"],
                 dados["cnpj_destinatario"],
             )
+        except EmpresaLookupIndisponivel:
+            print(f"[processar_nfe] lookup indisponível ({nome}); nova tentativa no próximo ciclo")
+            continue
         except ValueError as e:
             try:
                 _mover_nao_identificado(xml_path, pasta_path, str(e))
