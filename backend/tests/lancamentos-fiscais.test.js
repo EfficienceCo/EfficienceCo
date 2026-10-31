@@ -393,6 +393,47 @@ describe("POST /lancamentos-fiscais", () => {
     assert.match(res.body.campos.cnpj_destinatario, /CPF válido/);
   });
 
+  it("201 quando a entrada tem emitente CPF (11 dígitos) em cnpj_emitente", async () => {
+    const cpf = "11144477735";
+    const corpo = payloadValido({
+      tipo: "entrada",
+      cnpj_emitente: cpf,
+      cnpj_destinatario: CNPJ_EMIT,
+      valor_total: 300,
+    });
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "entrada-cpf", ...corpo }, error: null });
+
+    const req = { headers: { "x-licenca-token": "tok" }, body: corpo };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.cnpj_emitente, cpf);
+    assert.equal(res.body.tipo, "entrada");
+  });
+
+  it("422 quando o CPF do emitente não tem dígito verificador", async () => {
+    tokenValido();
+    const res = criarResposta();
+    await criarLancamentoFiscal(
+      {
+        headers: { "x-licenca-token": "tok" },
+        body: payloadValido({
+          tipo: "entrada",
+          cnpj_emitente: "11111111111",
+          cnpj_destinatario: CNPJ_EMIT,
+        }),
+      },
+      res,
+    );
+
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.campos.cnpj_emitente, /CPF válido/);
+  });
+
   it("403 quando CNPJ do cliente da licença não corresponde ao tipo da nota", async () => {
     tokenValido();
     clienteComCnpj(CNPJ_ALHEIO);
@@ -426,9 +467,10 @@ describe("POST /lancamentos-fiscais", () => {
       ["chave com 44 letras", { chave_nfe: "A".repeat(44) }, "chave_nfe", /44 dígitos/i],
       ["chave com 45 caracteres", { chave_nfe: "1".repeat(45) }, "chave_nfe", /44 dígitos/i],
       ["chave com 10 caracteres", { chave_nfe: "1234567890" }, "chave_nfe", /44 dígitos/i],
-      ["cnpj_emitente com 15 caracteres", { cnpj_emitente: "112223330001811" }, "cnpj_emitente", /14 dígitos/i],
+      ["cnpj_emitente com 15 caracteres", { cnpj_emitente: "112223330001811" }, "cnpj_emitente", /14 dígitos|11 dígitos/i],
       ["cnpj_destinatario com 15 caracteres", { cnpj_destinatario: "112223330001811" }, "cnpj_destinatario", /14 dígitos|11 dígitos/i],
-      ["cpf sem dígito verificador", { cnpj_destinatario: "00000000000" }, "cnpj_destinatario", /CPF válido/i],
+      ["cpf dest sem dígito verificador", { cnpj_destinatario: "00000000000" }, "cnpj_destinatario", /CPF válido/i],
+      ["cpf emit sem dígito verificador", { cnpj_emitente: "00000000000" }, "cnpj_emitente", /CPF válido/i],
       [
         "arquivo_xml absoluto no Windows",
         { arquivo_xml: "C:\\Users\\joao\\x.xml" },
