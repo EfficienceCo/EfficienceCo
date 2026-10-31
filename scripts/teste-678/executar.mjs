@@ -152,6 +152,7 @@ try {
     SUPABASE_SERVICE_KEY: status.SERVICE_ROLE_KEY,
     TEST_SUPABASE_URL: esperado,
     TEST_SUPABASE_SERVICE_KEY: status.SERVICE_ROLE_KEY,
+    TEST_SUPABASE_ANON_KEY: status.ANON_KEY,
     TEST_SUPABASE_PORT: String(portaApi),
     TEST_SUPABASE_PROJECT_ID: projetoId,
     JWT_SECRET: "segredo-ficticio-exclusivo-dos-testes-678",

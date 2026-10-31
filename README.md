@@ -232,6 +232,107 @@ confirmação dos arquivos históricos `apuracoes-ids-invalidos-http.test.js` e
 `apuracoes-fs12-prolabore.test.js`, ausentes neste checkout. O arquivo
 `auth.test.js` existente é um placeholder e não comprova cobertura de autenticação.
 
+### Helpers HTTP e cenários — #679
+
+Os helpers em `backend/tests/helpers/` permitem preparar dados no banco
+descartável e chamar as rotas reais com JWT do usuário criado. Use `npm test`
+na raiz: o executor fornece o destino local e o segredo de teste.
+
+Exemplo copiável para um arquivo `*.test.js` em `backend/tests/infra/`:
+
+```js
+import test, { beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { criarCenarioBanco, resetarBanco } from "../helpers/banco.js";
+import { iniciarApiTeste } from "../helpers/http.js";
+
+beforeEach(resetarBanco);
+afterEach(resetarBanco);
+
+test("funcionário de B só é visível ao cliente permitido", async t => {
+  const cenario = criarCenarioBanco();
+  let api;
+  t.after(() => api?.fechar());
+  const clienteA = await cenario.criarCliente({ nome: "Cliente A sintético" });
+  const clienteB = await cenario.criarCliente({ nome: "Cliente B sintético" });
+  const usuarioA = await cenario.criarUsuario({ clienteId: clienteA.id });
+  const usuarioB = await cenario.criarUsuario({ clienteId: clienteB.id });
+  const funcionarioB = await cenario.criarFuncionario({ clienteId: clienteB.id });
+  api = await iniciarApiTeste();
+  const caminho = `/funcionarios/${funcionarioB.id}`;
+  assert.equal((await api.requisitar(caminho, { usuario: usuarioB })).status, 200);
+  assert.equal((await api.requisitar(caminho, { usuario: usuarioA })).status, 404);
+  assert.equal((await api.requisitar(caminho)).status, 401);
+});
+```
+
+`criarUsuario` aceita `perfil` com os valores de `src/config/perfis.js`;
+o padrão é `admin_cliente`. `criarCenarioBanco` guarda os IDs inseridos e
+`limpar` remove somente esses registros, preservando os seeds das migrations.
+`iniciarApiTeste` abre `app.js` em porta local livre e devolve `requisitar` e
+`fechar`. Cada requisição recebe sua própria autenticação.
+
+O cenário completo, incluindo conteúdo da resposta e confirmação da remoção,
+está em [`helpers-http.test.js`](backend/tests/infra/helpers-http.test.js).
+Para começar cada teste sem dados, use `beforeEach(resetarBanco)` e
+`afterEach(resetarBanco)`. O reset limpa as tabelas da aplicação em `public`,
+inclusive seeds e registros criados pelas rotas, e preserva a estrutura.
+Depois do reset, crie um novo cenário e seus dados. Esse modo exige testes em
+série, como já faz o executor da raiz.
+
+O preparador acrescenta `backend/tests/helpers/resetar-banco.sql` somente ao
+projeto Supabase temporário, após as migrations da aplicação. A função de reset
+é restrita à chave administrativa local; o helper valida o destino antes da
+chamada. O SQL de suporte não faz parte das migrations de desenvolvimento/produção.
+
+As provas em `helpers-isolamento.test.js` conferem limpeza sem afetar outro
+cenário, reset de registros criados por HTTP, autenticação nova, os três perfis,
+recusa de destino indevido e negação do reset com chave anon.
+
+### Modo seguro de serviços externos — #679
+
+`backend/tests/setup-env.js` instala a proteção antes de carregar os testes:
+intercepta `fetch`, HTTP/HTTPS e conexões TCP. Bloqueia destinos externos e SMTP,
+incluindo os transportes SOAP usados pelo eSocial. Caminhos `/storage/v1` são
+barrados também no Supabase local; HTTP local e o REST do banco descartável
+continuam disponíveis. O bloqueio não depende de resolver o domínio externo.
+
+Cada tentativa gera um registro com serviço, transporte, método e destino,
+sem query string, credenciais, corpo ou cabeçalhos. Exemplo copiável de teste
+que verifica intencionalmente uma tentativa bloqueada:
+
+```js
+import test from "node:test";
+import assert from "node:assert/strict";
+import { consumirTentativas } from "../helpers/servicos-externos.js";
+
+test("não transmite ao eSocial", async () => {
+  await assert.rejects(
+    fetch("https://esocial.example.invalid/enviar"),
+    /Serviço externo bloqueado: eSocial/,
+  );
+  const tentativas = consumirTentativas();
+  assert.equal(tentativas.length, 1);
+  assert.equal(tentativas[0].servico, "eSocial");
+});
+```
+
+`lerTentativas()` devolve uma cópia do registro; `consumirTentativas()` devolve
+e remove as tentativas verificadas pelo teste. Uma tentativa não consumida faz
+o `afterEach` falhar, mesmo que o código tenha capturado o erro ou o SDK retorne
+`{ error }`. O registro é limpo também nesse caso para o cenário seguinte.
+
+As provas em `servicos-externos.test.js` usam destinos fictícios, DNS externo
+indisponível e um servidor local que confirma não receber acesso ao storage.
+A proteção descrita atua nos processos Node que carregam `setup-env.js`; os
+processos Python e a CLI têm execução separada. Para executar sem internet,
+instale dependências e baixe imagens Docker previamente.
+
+A exceção de rede para a integração governamental manual exige tanto
+`ESOCIAL_GOV_INTEGRATION=1` quanto o arquivo manual específico. A flag isolada
+não libera rede nos demais testes. Esse arquivo segue fora do executor automático;
+seu funcionamento completo não foi validado nesta etapa.
+
 ---
 
 ## 📋 Fluxo de Trabalho

@@ -51,5 +51,11 @@ export function prepararBanco(raiz, temporario, projetoId) {
     fs.copyFileSync(path.join(origem, nome), path.join(destino, `${timestamp}_original_${nome}`));
   }
   console.log(`[preparo] ${arquivos.length} migrations copiadas em ordem numerica.`);
+  // Suporte de reset somente no projeto temporário, após o histórico da aplicação.
+  fs.copyFileSync(
+    path.join(raiz, "backend", "tests", "helpers", "resetar-banco.sql"),
+    path.join(destino, "20991231235959_infra_testes_reset.sql"),
+  );
+  console.log("[preparo] SQL de reset dos testes adicionado somente ao banco descartavel.");
   return { portaApi: Number(portaApi[1]), portas: [...new Set(portas)] };
 }
