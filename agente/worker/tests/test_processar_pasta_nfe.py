@@ -197,6 +197,29 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
     """)
 
 
+def _xml_entrada_emit_cpf(valor: str = "300.00") -> str:
+    chave = "35260700011144477735550010000000301000000055"
+    return assinar_xml_nfe(f"""<?xml version="1.0" encoding="UTF-8"?>
+    <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+    <NFe>
+      <infNFe Id="NFe{chave}" versao="4.00">
+        <ide><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <emit><CPF>11144477735</CPF></emit>
+        <dest><CNPJ>{CNPJ_CLIENTE}</CNPJ></dest>
+        <det nItem="1"><prod><cProd>1</cProd><xProd>Item</xProd><NCM>19059090</NCM><CFOP>5102</CFOP><vProd>{valor}</vProd></prod></det>
+        <total><ICMSTot>
+          <vNF>{valor}</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS>
+        </ICMSTot></total>
+      </infNFe>
+    </NFe>
+    <protNFe><infProt>
+      <chNFe>{chave}</chNFe>
+      <cStat>100</cStat>
+    </infProt></protNFe>
+    </nfeProc>
+    """)
+
+
 def test_processar_pasta_saida_dest_cpf_posta_e_nao_quarentena(pasta_nfe):
     """NF-e de saída para CPF vira lançamento (não vai para nao_identificado)."""
     inbox, base = pasta_nfe
@@ -220,6 +243,53 @@ def test_processar_pasta_saida_dest_cpf_posta_e_nao_quarentena(pasta_nfe):
     assert not (inbox / "saida-cpf.xml").exists()
     assert not (inbox / "nao_identificado" / "saida-cpf.xml").exists()
     assert _arquivo_nfe(base, NOME_EMPRESA, "saida-cpf.xml").is_file()
+
+
+def test_processar_pasta_entrada_emit_cpf_posta_e_nao_quarentena(pasta_nfe):
+    """NF-e de produtor rural (emit/CPF) vira entrada (não vai para nao_identificado)."""
+    inbox, base = pasta_nfe
+    xml_path = inbox / "entrada-produtor-cpf.xml"
+    xml_path.write_text(_xml_entrada_emit_cpf(), encoding="utf-8")
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", side_effect=_lookup_padaria),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        mock_post.return_value = MagicMock()
+        processar_pasta_nfe(str(inbox))
+
+    assert mock_post.call_count == 1
+    payload = mock_post.call_args.args[1]
+    assert payload["tipo"] == "entrada"
+    assert payload["cnpj_emitente"] == "11144477735"
+    assert payload["cnpj_destinatario"] == CNPJ_CLIENTE
+    assert payload["valor_total"] == "300.00"
+    assert payload["cliente_id"] == CLIENTE_ID
+    assert not (inbox / "entrada-produtor-cpf.xml").exists()
+    assert not (inbox / "nao_identificado" / "entrada-produtor-cpf.xml").exists()
+    assert _arquivo_nfe(base, NOME_EMPRESA, "entrada-produtor-cpf.xml").is_file()
+
+
+def test_pasta_lookup_falha_nao_expoe_cpf_no_log(pasta_nfe, capsys):
+    """Lookup vazio: motivo e stdout sem CPF do emitente (LGPD / NFE-5)."""
+    cpf = "11144477735"
+    inbox, _base = pasta_nfe
+    xml_path = inbox / "entrada-produtor-cpf.xml"
+    xml_path.write_text(_xml_entrada_emit_cpf(), encoding="utf-8")
+
+    with (
+        patch("automacoes.processar_nfe.buscar_empresa_por_cnpj", return_value=None),
+        patch("automacoes.processar_nfe.client.post") as mock_post,
+    ):
+        processar_pasta_nfe(str(inbox))
+
+    mock_post.assert_not_called()
+    saida = capsys.readouterr().out
+    assert "não identificado" in saida
+    assert "nenhuma empresa cadastrada" in saida
+    assert cpf not in saida
+    assert CNPJ_CLIENTE not in saida
+    assert (inbox / "nao_identificado" / "entrada-produtor-cpf.xml").is_file()
 
 
 def test_processar_pasta_saida(pasta_nfe):
