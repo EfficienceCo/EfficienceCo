@@ -40,6 +40,28 @@ function periodoDoBody(body) {
   return null;
 }
 
+// Pares que seguram o lançamento (automático ou provável) em conciliações do cliente com
+// o status dado. `sem_par` não segura: o lançamento ali não casou com nada.
+// Consulta só os ids pedidos, em lotes: a lista vai na URL (centenas de UUIDs estouram o
+// limite) e o PostgREST corta em 1000 linhas sem avisar. Devolve { data } ou { error }.
+const LOTE_CONSULTA_LANCAMENTOS = 100;
+
+async function buscarParesQueSeguramLancamento(clienteId, status, lancamentoIds) {
+  const pares = [];
+  for (let i = 0; i < lancamentoIds.length; i += LOTE_CONSULTA_LANCAMENTOS) {
+    const { data, error } = await supabase
+      .from("pares_conciliacao")
+      .select("lancamento_id, conciliacoes!inner(cliente_id, status, mes, ano)")
+      .eq("conciliacoes.cliente_id", clienteId)
+      .eq("conciliacoes.status", status)
+      .in("confianca", ["automatico", "provavel"])
+      .in("lancamento_id", lancamentoIds.slice(i, i + LOTE_CONSULTA_LANCAMENTOS));
+    if (error) return { error };
+    pares.push(...(data ?? []));
+  }
+  return { data: pares };
+}
+
 export async function criarConciliacaoExtrato(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -393,8 +415,29 @@ export async function criarConciliacao(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar lançamentos contábeis" });
   }
 
+  // `conciliado` só vira true em concluirConciliacao, então um lançamento que já tem par
+  // numa conciliação em andamento (de outro extrato) ainda aparece como livre acima.
+  // Fica fora do matching, senão duas sessões abertas casariam o mesmo lançamento.
+  const { data: paresEmAndamento, error: erroParesEmAndamento } = await buscarParesQueSeguramLancamento(
+    clienteId,
+    "em_andamento",
+    (lancamentos ?? []).map((l) => l.id),
+  );
+
+  if (erroParesEmAndamento) {
+    console.error(
+      "[conciliacoes.controller] Erro ao buscar lançamentos em outras conciliações:",
+      erroParesEmAndamento.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar lançamentos de outras conciliações" });
+  }
+
+  const idsEmOutraConciliacao = new Set((paresEmAndamento ?? []).map((p) => p.lancamento_id).filter(Boolean));
+  const lancamentosLivres = (lancamentos ?? []).filter((l) => !idsEmOutraConciliacao.has(l.id));
+  const lancamentosEmOutraConciliacao = (lancamentos ?? []).length - lancamentosLivres.length;
+
   const transacoesEncontradas = transacoes ?? [];
-  const lancamentosEncontrados = lancamentos ?? [];
+  const lancamentosEncontrados = lancamentosLivres;
   const pares = executarMatching(transacoesEncontradas, lancamentosEncontrados);
 
   const totalAutomaticos = pares.filter((p) => p.confianca === "automatico").length;
@@ -445,6 +488,9 @@ export async function criarConciliacao(req, res) {
     automaticos: totalAutomaticos,
     provaveis: totalProvaveis,
     sem_par: totalSemPar,
+    // Lançamentos do período que já estão numa conciliação em andamento de outro extrato e
+    // por isso não entraram nesta (um lançamento só pode casar com uma linha de extrato).
+    lancamentos_em_outra_conciliacao: lancamentosEmOutraConciliacao,
   });
 }
 
@@ -817,6 +863,34 @@ export async function concluirConciliacao(req, res) {
   );
   const transacaoIds = paresConciliados.map((par) => par.transacao_id).filter(Boolean);
   const lancamentoIds = paresConciliados.map((par) => par.lancamento_id).filter(Boolean);
+
+  // Rede de segurança: duas conciliações criadas ao mesmo tempo não se enxergam no
+  // criarConciliacao, e quem conclui depois não pode conciliar de novo o mesmo lançamento.
+  // shortcut: dois concluir simultâneos ainda passam juntos por esta checagem; fechar com
+  // uma function SQL se isso aparecer (TEST-9).
+  if (lancamentoIds.length > 0) {
+    const { data: jaConciliados, error: erroJaConciliados } = await buscarParesQueSeguramLancamento(
+      clienteId,
+      "concluida",
+      lancamentoIds,
+    );
+
+    if (erroJaConciliados) {
+      console.error("[conciliacoes.controller] Erro ao conferir lançamentos já conciliados:", erroJaConciliados.message);
+      return res.status(500).json({ erro: "Erro ao conferir lançamentos já conciliados" });
+    }
+
+    if (jaConciliados?.length) {
+      const ids = [...new Set(jaConciliados.map((p) => p.lancamento_id))];
+      const periodos = [
+        ...new Set(jaConciliados.map((p) => `${String(p.conciliacoes.mes).padStart(2, "0")}/${p.conciliacoes.ano}`)),
+      ].join(", ");
+      return res.status(409).json({
+        erro: `${ids.length} lançamento(s) desta conciliação já foram conciliados em outra conciliação concluída (${periodos}). Um lançamento só pode corresponder a uma linha de extrato.`,
+        lancamento_ids: ids,
+      });
+    }
+  }
 
   // As flags de conciliado são marcadas antes do status da conciliação: se
   // alguma falhar, a conciliação permanece 'em_andamento' e o POST /concluir
