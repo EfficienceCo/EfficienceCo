@@ -146,6 +146,89 @@ describe("parseOfx", () => {
 
     assert.throws(() => parseOfx(conteudo), OfxParseError);
   });
+
+  // PRB-C-33 / BUG-CONC-17 (#694). O calendário e o NUMERIC(15,2) recusam
+  // antes do INSERT; a mensagem aponta a transação (ou o FITID) e o valor.
+  function assertRecusa(conteudo, trechos) {
+    assert.throws(
+      () => parseOfx(conteudo),
+      (erro) => {
+        assert.ok(erro instanceof OfxParseError);
+        for (const trecho of trechos) {
+          assert.ok(erro.message.includes(trecho), erro.message);
+        }
+        return true;
+      },
+    );
+  }
+
+  it("recusa DTPOSTED 20241345 e aponta a transação e o valor", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20241345
+<TRNAMT>10.00
+<FITID>D13
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["20241345", "transação #1", "FITID D13"]);
+  });
+
+  it("recusa DTPOSTED 20240230 sem devolver a transação anterior", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>10.00
+<FITID>OK
+</STMTTRN>
+<STMTTRN>
+<DTPOSTED>20240230
+<TRNAMT>20.00
+<FITID>FEV
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["20240230", "transação #2", "FITID FEV"]);
+  });
+
+  it("recusa TRNAMT 1e15 fora da faixa", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>1e15
+<FITID>V1
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["1e15", "transação #1", "FITID V1"]);
+  });
+
+  it("recusa TRNAMT negativo cujo absoluto estoura a faixa", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>-1e15
+<FITID>V1N
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["-1e15", "FITID V1N"]);
+  });
+
+  it("recusa TRNAMT 99999999999999.99 fora da faixa", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>99999999999999.99
+<FITID>V2
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["99999999999999.99", "transação #1", "FITID V2"]);
+  });
+
+  it("aceita 29 de fevereiro em ano bissexto e o teto do NUMERIC(15,2)", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240229
+<TRNAMT>-9999999999999.99
+<FITID>TETO
+</STMTTRN>`);
+
+    const { transacoes } = parseOfx(conteudo);
+    assert.equal(transacoes[0].data_lancamento, "2024-02-29");
+    assert.equal(transacoes[0].valor, 9999999999999.99);
+    assert.equal(transacoes[0].tipo, "debito");
+  });
 });
 
 describe("decodificarOfx", () => {
