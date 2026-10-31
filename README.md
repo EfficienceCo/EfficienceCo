@@ -360,7 +360,7 @@ As credenciais são fictícias: e-mails `example.invalid`, senha de teste
 de bases numéricas com dígitos verificadores. Não há cópia de dados do dev.
 
 `backend/tests/fixtures/massa-680-dominio.js` amplia essa base com Conciliação,
-NF-e e Obrigações. São 162 registros em 10 tabelas, incluindo 21 transações
+NF-e e Obrigações. São 166 registros em 10 tabelas, incluindo 21 transações
 na sessão aberta de cada contexto para atravessar uma página de 15 itens.
 
 `backend/tests/helpers/massa-680.js` carrega os dados usando o banco descartável
@@ -391,19 +391,21 @@ Para conferir também carga, snapshots reais e paginação HTTP, com Docker ativ
 npm.cmd test
 ```
 
-Os cinco testes de `massa-680-banco.test.js` comprovam duas recriações iguais,
+Os seis testes de `massa-680-banco.test.js` comprovam duas recriações iguais,
 contagens/estados persistidos, páginas de 15 + 6 sem duplicação ou acesso cruzado,
-recusa de configuração inválida antes do reset e recusa de destino indevido.
+recusa de configuração inválida antes do reset, recusa de destino indevido
+e persistência dos dois emitentes CPF com 11 dígitos, vinculados ao cliente correto.
 
 Os arquivos em `backend/tests/fixtures/massa-680/` são sintéticos e versionados:
 10 XMLs assinados com certificado fictício e dois comprovantes PDF, com SHA-256
 no manifesto. O `.gitattributes` dessa pasta preserva os bytes dos XMLs/PDFs em
-checkouts Windows/Linux. Seis entradas CNPJ têm correspondentes no banco; duas
-entradas sem protocolo são casos de recusa e duas entradas CPF ainda não são
-persistidas nesta versão. O PR #675 foi integrado à main em 31/10, com a migration
-102 e suporte no parser/API; esta branch foi validada antes dessa atualização e
-a cobertura CPF precisa incorporá-la. A carga não executa o importador
-de XML nem envia arquivos ao Storage. O XML de saída cancelada é a nota original
+checkouts Windows/Linux. Oito entradas têm correspondentes no banco: seis CNPJ
+e duas CPF. As duas entradas sem protocolo são casos de recusa. A migration 102
+e o suporte do PR #675 estão incorporados nesta branch; CPF é gravado no campo
+histórico `cnpj_emitente` com 11 dígitos. A carga não executa o importador
+de XML nem envia arquivos ao Storage. Os dez casos passam pelo parser real do
+agente em `agente/worker/tests/test_massa_680_nfe.py`: oito são aceitos e dois sem
+protocolo são recusados. O XML de saída cancelada é a nota original
 autorizada; o cancelamento é representado no lançamento fiscal. Importar um evento
 `procEventoNFe` é outra cobertura. Os certificados/protocolos fictícios não comprovam
 autorização real da SEFAZ, validação XSD completa ou confiança ICP-Brasil.
@@ -415,9 +417,8 @@ esta validação não comprova execução física sem rede, isolamento de Python
 ou execução em CI/Linux.
 
 O esquema atual não modela escritório → vários clientes; esse critério aguarda
-alinhamento com João. Nesta base anterior à migration 102, a CHECK do emitente
-aceita apenas CNPJ de 14 dígitos. A #680 permanece parcial até incorporar e validar
-o suporte CPF e alinhar o requisito de escritórios/clientes.
+alinhamento com João. A #680 permanece parcial enquanto o requisito de
+escritórios/clientes não tiver representação e cobertura correspondentes.
 
 ---
 

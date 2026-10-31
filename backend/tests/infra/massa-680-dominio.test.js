@@ -9,7 +9,7 @@ import { cpfValido, cnpjValido } from "../../src/utils/comum.util.js";
 const esperadas = {
   clientes: 2, usuarios: 6, lancamentos_contabeis: 32, extratos_bancarios: 8,
   transacoes_extrato: 46, conciliacoes: 4, pares_conciliacao: 46,
-  lancamentos_fiscais: 6, lancamentos_fiscais_itens: 6, obrigacoes: 6,
+  lancamentos_fiscais: 8, lancamentos_fiscais_itens: 8, obrigacoes: 6,
 };
 const estados = (linhas, campo = "status") => [...new Set(linhas.map(linha => linha[campo]))].sort();
 
@@ -81,7 +81,10 @@ test("#680: XMLs assinados preservam documentos e protocolos dos casos de entrad
   }
   assert.equal(massa.entradasNfe.filter(item => !item.protocolo).length, 2);
   assert.equal(massa.entradasNfe.filter(item => item.emitente.length === 11).length, 2);
-  assert.ok(massa.entradasNfe.filter(item => item.persistivel).every(item => item.protocolo && item.emitente.length === 14));
+  const persistiveis = massa.entradasNfe.filter(item => item.persistivel);
+  assert.equal(persistiveis.length, 8);
+  assert.ok(persistiveis.every(item => item.protocolo && item.pendencia === null));
+  assert.equal(persistiveis.filter(item => item.emitente.length === 11).length, 2);
 });
 
 test("#680: arquivos sintéticos têm hashes fixos e comprovantes PDF reais", () => {

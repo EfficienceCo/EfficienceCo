@@ -5,6 +5,7 @@ import { resetarBanco } from "../helpers/banco.js";
 import { iniciarApiTeste } from "../helpers/http.js";
 import { lerTentativas } from "../helpers/servicos-externos.js";
 import { CONFIG_MASSA_680 } from "../fixtures/massa-680.js";
+import { cpfValido } from "../../src/utils/comum.util.js";
 
 afterEach(resetarBanco);
 
@@ -14,7 +15,7 @@ test("#680: duas recriações dão o mesmo banco sem duplicar registros", { time
   const esperadas = {
     clientes: 2, usuarios: 6, lancamentos_contabeis: 32, extratos_bancarios: 8,
     transacoes_extrato: 46, conciliacoes: 4, pares_conciliacao: 46,
-    lancamentos_fiscais: 6, lancamentos_fiscais_itens: 6, obrigacoes: 6,
+    lancamentos_fiscais: 8, lancamentos_fiscais_itens: 8, obrigacoes: 6,
   };
   for (const [tabela, quantidade] of Object.entries(esperadas)) assert.equal(primeira[tabela].length, quantidade, tabela);
   assert.ok(primeira.clientes.every(cliente => cliente.total_usuarios === 3));
@@ -34,6 +35,26 @@ test("#680: estados são persistidos em ambos os contextos", { timeout: 30_000 }
     assert.deepEqual(estados(linhas("obrigacoes")), ["atrasada", "concluida", "pendente"]);
     assert.ok(linhas("obrigacoes").find(item => item.status === "concluida").comprovante_path);
     assert.equal(linhas("usuarios").length, 3);
+  }
+});
+
+test("#680: CPF do emitente mantém 11 dígitos no banco em ambos os contextos", { timeout: 30_000 }, async () => {
+  const { massa } = await recriarMassa680();
+  const snapshot = await snapshotMassa680();
+  const notasCpf = snapshot.lancamentos_fiscais.filter(nota => nota.cnpj_emitente.length === 11);
+  assert.equal(notasCpf.length, 2);
+  for (const cliente of snapshot.clientes) {
+    const notas = notasCpf.filter(nota => nota.cliente_id === cliente.id);
+    assert.equal(notas.length, 1);
+    const nota = notas[0];
+    const entrada = massa.entradasNfe.find(item => item.cliente_id === cliente.id && item.caso === "entrada-emitente-cpf");
+    assert.match(nota.cnpj_emitente, /^\d{11}$/);
+    assert.ok(cpfValido(nota.cnpj_emitente));
+    assert.equal(nota.cnpj_emitente, entrada.emitente);
+    assert.equal(nota.chave_nfe, entrada.chave);
+    assert.equal(nota.tipo, "entrada");
+    assert.equal(nota.status, "ativa");
+    assert.equal(snapshot.lancamentos_fiscais_itens.filter(item => item.lancamento_id === nota.id && item.cliente_id === cliente.id).length, 1);
   }
 });
 

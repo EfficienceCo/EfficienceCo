@@ -92,14 +92,15 @@ export function criarMassaDominio680(config = CONFIG_MASSA_680) {
       const destinatario = tipo === "entrada" ? cliente.cnpj : terceiro;
       const chave = chaveNfe(emitente, numero);
       const protocolo = caso.includes("sem-protocolo") ? null : String(168000000000000 + numero);
+      const persistivel = protocolo !== null;
       const arquivo = `massa-680/nfe-${rotulo}-${caso}.xml`;
       entradasNfe.push({
         cliente_id: cliente.id, caso, numero, chave, emitente, destinatario,
         protocolo, dataEmissao: `2026-10-${String(indice + 1).padStart(2, "0")}`,
-        arquivo, persistivel: indice < 3,
-        pendencia: emitenteCpf ? "Suporte a CPF no emitente: PR #675" : protocolo ? null : "Entrada sem autorização, deve ser recusada",
+        arquivo, persistivel,
+        pendencia: protocolo ? null : "Entrada sem autorização, deve ser recusada",
       });
-      if (indice >= 3) continue;
+      if (!persistivel) continue;
       const cancelada = caso.endsWith("cancelada");
       tabelas.lancamentos_fiscais.push({
         id: id(numero), cliente_id: cliente.id, chave_nfe: chave, tipo,
