@@ -335,6 +335,92 @@ seu funcionamento completo não foi validado nesta etapa.
 
 ---
 
+## Massa sintética de testes — #680
+
+`backend/tests/fixtures/massa-680.js` descreve a base determinística da massa:
+dois contextos `cliente_id` e seis usuários, com os três perfis em cada contexto.
+A função é pura: prepara objetos sem ler `.env` ou acessar o banco. IDs, datas e
+hash são fixos ou fornecidos explicitamente pela configuração. A data exige ISO
+UTC canônico com `Z`, evitando resultados diferentes por fuso do computador.
+
+Exemplo para um teste em `backend/tests/infra/`:
+
+```js
+import { CONFIG_MASSA_680, criarMassaBase680 } from "../fixtures/massa-680.js";
+
+const massa = criarMassaBase680();
+const outraReferencia = criarMassaBase680({
+  ...CONFIG_MASSA_680,
+  instante: "2026-11-01T09:30:00.000Z",
+});
+```
+
+As credenciais são fictícias: e-mails `example.invalid`, senha de teste
+`senha-sintetica-680` e hash bcrypt previamente calculado. CPF/CNPJ são gerados
+de bases numéricas com dígitos verificadores. Não há cópia de dados do dev.
+
+`backend/tests/fixtures/massa-680-dominio.js` amplia essa base com Conciliação,
+NF-e e Obrigações. São 162 registros em 10 tabelas, incluindo 21 transações
+na sessão aberta de cada contexto para atravessar uma página de 15 itens.
+
+`backend/tests/helpers/massa-680.js` carrega os dados usando o banco descartável
+da #678 e as travas/reset da #679. Valida destino e configuração antes de limpar,
+insere na ordem das chaves estrangeiras e limpa novamente se uma inserção falhar.
+O reset recria toda a massa do descartável; use os testes em série.
+
+Exemplo dentro de um teste executado pelo comando completo da raiz:
+
+```js
+import { recriarMassa680, snapshotMassa680 } from "../helpers/massa-680.js";
+
+await recriarMassa680();
+const primeira = await snapshotMassa680();
+await recriarMassa680();
+const segunda = await snapshotMassa680(); // os mesmos valores em todas as 10 tabelas
+```
+
+Para conferir os geradores e arquivos, sem Docker (12 testes):
+
+```powershell
+node --test backend/tests/infra/massa-680-base.test.js backend/tests/infra/massa-680-dominio.test.js
+```
+
+Para conferir também carga, snapshots reais e paginação HTTP, com Docker ativo:
+
+```powershell
+npm.cmd test
+```
+
+Os cinco testes de `massa-680-banco.test.js` comprovam duas recriações iguais,
+contagens/estados persistidos, páginas de 15 + 6 sem duplicação ou acesso cruzado,
+recusa de configuração inválida antes do reset e recusa de destino indevido.
+
+Os arquivos em `backend/tests/fixtures/massa-680/` são sintéticos e versionados:
+10 XMLs assinados com certificado fictício e dois comprovantes PDF, com SHA-256
+no manifesto. O `.gitattributes` dessa pasta preserva os bytes dos XMLs/PDFs em
+checkouts Windows/Linux. Seis entradas CNPJ têm correspondentes no banco; duas
+entradas sem protocolo são casos de recusa e duas entradas CPF ainda não são
+persistidas nesta versão. O PR #675 foi integrado à main em 31/10, com a migration
+102 e suporte no parser/API; esta branch foi validada antes dessa atualização e
+a cobertura CPF precisa incorporá-la. A carga não executa o importador
+de XML nem envia arquivos ao Storage. O XML de saída cancelada é a nota original
+autorizada; o cancelamento é representado no lançamento fiscal. Importar um evento
+`procEventoNFe` é outra cobertura. Os certificados/protocolos fictícios não comprovam
+autorização real da SEFAZ, validação XSD completa ou confiança ICP-Brasil.
+
+A referência padrão é 15/10/2026: o teste confere os estados de Obrigações gravados,
+sem usar o relógio atual para filtros de vencimento. Testes desses filtros devem
+controlar a data. Os bloqueios externos continuam no escopo Node descrito na #679;
+esta validação não comprova execução física sem rede, isolamento de Python/CLI
+ou execução em CI/Linux.
+
+O esquema atual não modela escritório → vários clientes; esse critério aguarda
+alinhamento com João. Nesta base anterior à migration 102, a CHECK do emitente
+aceita apenas CNPJ de 14 dígitos. A #680 permanece parcial até incorporar e validar
+o suporte CPF e alinhar o requisito de escritórios/clientes.
+
+---
+
 ## 📋 Fluxo de Trabalho
 
 1. **Mapeamento** — Levantamento de processos com o cliente

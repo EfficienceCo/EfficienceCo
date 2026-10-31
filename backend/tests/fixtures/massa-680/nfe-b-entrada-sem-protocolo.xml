@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe35261068090002000152550010000207031000207033" versao="4.00"><ide><cUF>35</cUF><cNF>00020703</cNF><natOp>Operacao sintetica 680</natOp><mod>55</mod><serie>1</serie><nNF>20703</nNF><dhEmi>2026-10-04T12:00:00+00:00</dhEmi><tpNF>1</tpNF><tpEmis>1</tpEmis><cDV>3</cDV><tpAmb>2</tpAmb></ide><emit><CNPJ>68090002000152</CNPJ><xNome>Emitente sintetico 680</xNome></emit><dest><CNPJ>68000002000114</CNPJ><xNome>Destinatario sintetico 680</xNome></dest><det nItem="1"><prod><cProd>SINTETICO680</cProd><xProd>Produto sintetico 680</xProd><NCM>01012100</NCM><CFOP>5102</CFOP><uCom>UN</uCom><qCom>1.0000</qCom><vUnCom>100.00</vUnCom><vProd>100.00</vProd></prod></det><total><ICMSTot><vNF>100.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vIPI>0.00</vIPI></ICMSTot></total></infNFe><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#NFe35261068090002000152550010000207031000207033"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>ERDpJSZIpuQFoGRlugXyeOkQGUCcsNE+cHwfPUlt5Bc=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>QpgSA1xskYwTripnZvjuyMUPfIdStqKva1n9UsV1U45lIJ5lkJLrrbOjNUQoF9W4jgHnSAOahUZ9wX/uD2Nsz4gubk+nwZQDAYKYErp0xtwjNPg/GHMwr46ew8nOxOB2uczU8++2bhVi4GcFAunmhi3xWJnfOhoECxvsYEGW0gPs5zYNIAst5G4j/D6GH8iqL3VEp5Abbi82NfUEXU+fQOP3mlq3rfk9/ZVMzJI5b54Daw6sQX8po2SWvzNr8Q+cusghFJK1iITBUdp5xRsg7HVH8gh90CnXjfvKFy9H1jJ/Dwd2YKyxsh5rZ9js9OXYLQiTLf7nmGmGmcSphJAx9A==</ds:SignatureValue><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIIDXjCCAkagAwIBAgIUEZam2DpIZ3ZB7GnUjgmsyH3Ku1IwDQYJKoZIhvcNAQEL
+BQAwVDEeMBwGA1UEAwwVQ2VydGlmaWNhZG8gdGVzdGUgSUNQMRcwFQYDVQQFEw42
+ODA5MDAwMjAwMDE1MjEZMBcGBWBMAQMDDA42ODA5MDAwMjAwMDE1MjAeFw0yMDAx
+MDEwMDAwMDBaFw00MDAxMDEwMDAwMDBaMFQxHjAcBgNVBAMMFUNlcnRpZmljYWRv
+IHRlc3RlIElDUDEXMBUGA1UEBRMONjgwOTAwMDIwMDAxNTIxGTAXBgVgTAEDAwwO
+NjgwOTAwMDIwMDAxNTIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC9
+F8jcfYjK24uXau4j+Emc8ZSks5nhLhTJRqJb6MSNLrkr694VJRndzoBrwWyL7ZqO
+c/vNuIaImU4TOozHlMa+A4jT3OpYgKCU1ENpeI1cuFKaTJ8ICfqzQZVDLmLcV9yA
+qkq9yXD0MI0htAnri2GcRi4r03Y2e+sp089lbtsnOH2JUBoxLWwWoWqg4mRstzS+
+tvsvldNNzRFsbCNM/qZXxTDXT7widQ6/HZhoqxXmsQnDaukR1CbqwqDWeQV/jbFS
+JPg4vmDyGrNu1r/QHlcZpBh2atrFEHQSXMXtMPZZLSeMInw3sG6W9uO+UOQBqbpz
+JyhFUdkfpWpNOe0+HREJAgMBAAGjKDAmMCQGA1UdEQQdMBugGQYFYEwBAwOgEBMO
+NjgwOTAwMDIwMDAxNTIwDQYJKoZIhvcNAQELBQADggEBALO3fjgxD+yIwkf6XIMx
+y0c3X66dNiDuD8k5TcourSz02pfMMDcN9OSr09p2S+y6eE0CJdL4JVRK5y+N8s+l
+ena0kbR3G/FMtyaFYkLWNgCsdFWsQmICZNTqq9Py0xfjfHSAmQXw3Uj5n3WRIqYI
+gmM5PdmpFyqnaCUB4+8LSJprG37BLgh4fNmXbbp0C3eRBJixJqBMnFJA2teA9nPj
+l+kSJmkdcavIs7fs9Cb3OiJlrt74vsvxROh85y15G367NcorNopxxlr+gxlXY3YQ
+w7oV7jrsSF0NqhSt1E8S9D19qS8TR4j6YESqJBhI/LDtvWhYztALHX/LJv6FBh1K
+5FI=
+</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature></NFe>
