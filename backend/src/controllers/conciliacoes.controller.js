@@ -692,7 +692,7 @@ export async function confirmarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para confirmação" });
   }
 
-  // Recalcula os totais a partir dos pares (migration 103), em vez de somar +1/-1.
+  // Recalcula os totais a partir dos pares (migration 104), em vez de somar +1/-1.
   const { error: erroUpdateConciliacao } = await supabase.rpc("recalcular_totais_conciliacao", {
     p_conciliacao_id: id,
   });

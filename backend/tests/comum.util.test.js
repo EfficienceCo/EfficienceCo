@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { arredondar, camposFaltando, cnpjValido, cpfValido, extrairTag, sanitizarNomeArquivo, soDigitos } from "../src/utils/comum.util.js";
+import { arredondar, camposFaltando, chaveNfeDvValido, cnpjValido, cpfValido, documentoNaChaveNfe, extrairTag, sanitizarNomeArquivo, soDigitos } from "../src/utils/comum.util.js";
 import { gerarXmlS2299 } from "../src/utils/esocial-xml.util.js";
 
 describe("comum.util (UTIL-1 / #657)", () => {
@@ -61,5 +61,19 @@ describe("comum.util (UTIL-1 / #657)", () => {
     assert.equal(cpfValido("52998224724"), false);
     assert.equal(cpfValido("52998224735"), false);
     assert.equal(cpfValido("11111111111"), false);
+  });
+
+  it("chaveNfeDvValido: QA-E, DV errado, tamanho e repetidos", () => {
+    assert.equal(chaveNfeDvValido("35250111222333000181559120000000011202610130"), true);
+    assert.equal(chaveNfeDvValido("35260712345678000195550010000000011234567894"), true);
+    assert.equal(chaveNfeDvValido("35260712345678000195550010000000011234567895"), false);
+    assert.equal(chaveNfeDvValido("1".repeat(44)), false);
+    assert.equal(chaveNfeDvValido("1".repeat(43)), false);
+  });
+
+  it("documentoNaChaveNfe: CNPJ cru e CPF com zfill(14)", () => {
+    assert.equal(documentoNaChaveNfe("12345678000195"), "12345678000195");
+    assert.equal(documentoNaChaveNfe("11144477735"), "00011144477735");
+    assert.equal(documentoNaChaveNfe("123"), null);
   });
 });

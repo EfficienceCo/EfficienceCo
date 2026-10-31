@@ -109,8 +109,8 @@ export async function criarFuncionarioDeS2200({ clienteId, dadosFormulario }) {
  *
  * @returns {Promise<{ funcionario: object|null, erro: string|null }>}
  */
-export async function desligarFuncionarioDeS2299({ funcionarioId, dadosFormulario }) {
-  if (!funcionarioId) {
+export async function desligarFuncionarioDeS2299({ clienteId, funcionarioId, dadosFormulario }) {
+  if (!funcionarioId || !clienteId) {
     return { funcionario: null, erro: "S-2299 sem funcionarioId — desligamento não aplicado" };
   }
 
@@ -126,6 +126,7 @@ export async function desligarFuncionarioDeS2299({ funcionarioId, dadosFormulari
     .from("funcionarios")
     .update({ data_desligamento: dataDesligamento })
     .eq("id", funcionarioId)
+    .eq("cliente_id", clienteId)
     .select()
     .maybeSingle();
 

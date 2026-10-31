@@ -1,43 +1,143 @@
--- 103 — #690 (BUG-CONC-13): totais da conciliação recalculados a partir dos pares.
+-- 103 — SEG-1 (#666): RLS único por cliente_id + perfil, lido do token do usuário.
+-- Decisão: vault decisoes/2026-10-26-seg-1-rls-identidade-por-requisicao.md
 --
--- Antes, confirmar um par lia total_conciliadas/total_pendentes e gravava +1/-1; duas
--- ações simultâneas perdiam uma contagem. Agora o backend chama esta function depois de
--- cada decisão. O FOR UPDATE serializa quem chama, e o UPDATE seguinte (outro statement,
--- novo snapshot em READ COMMITTED) enxerga todos os pares já gravados, então o último a
--- rodar sempre grava o valor certo.
---
--- Mesma regra de criarConciliacao (conciliacoes.controller.js):
---   conciliadas = automáticos + prováveis confirmados
---   pendentes   = prováveis ainda sem decisão + transações sem par
---   (sem_par só de lançamento, sem transação, fica fora da conta)
--- SECURITY INVOKER: o RLS de quem chama continua valendo. search_path fixo, como na 100.
--- Idempotente.
+-- O backend passa a falar com o banco com um JWT curto assinado com o segredo do
+-- Supabase (claims: role=authenticated, sub, cliente_id, perfil). Estas policies
+-- substituem as antigas (dois padrões + várias USING (true)). service_role continua
+-- ignorando o RLS (login, jobs e agente local, ver backend/src/config/database.js).
+-- Idempotente. APLICAR NO DEV SÓ DEPOIS de conferir o estado real das policies (#664).
 
-CREATE OR REPLACE FUNCTION public.recalcular_totais_conciliacao(p_conciliacao_id uuid)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY INVOKER
-SET search_path = public, pg_temp
-AS $$
-BEGIN
-  PERFORM 1 FROM public.conciliacoes WHERE id = p_conciliacao_id FOR UPDATE;
+BEGIN;
 
-  UPDATE public.conciliacoes c
-  SET total_conciliadas = (
-        SELECT count(*) FROM public.pares_conciliacao p
-        WHERE p.conciliacao_id = c.id
-          AND (p.confianca = 'automatico'
-               OR (p.confianca = 'provavel' AND p.confirmado_em IS NOT NULL))
-      ),
-      total_pendentes = (
-        SELECT count(*) FROM public.pares_conciliacao p
-        WHERE p.conciliacao_id = c.id
-          AND ((p.confianca = 'provavel' AND p.confirmado_em IS NULL)
-               OR (p.confianca = 'sem_par' AND p.transacao_id IS NOT NULL))
-      )
-  WHERE c.id = p_conciliacao_id;
-END;
+CREATE OR REPLACE FUNCTION public.rls_cliente_id() RETURNS uuid
+LANGUAGE sql STABLE AS $$
+  SELECT NULLIF(auth.jwt() ->> 'cliente_id', '')::uuid
 $$;
 
--- Rollback: DROP FUNCTION public.recalcular_totais_conciliacao(uuid);
--- (o backend da #690 passa a depender dela; reverter junto com o código).
+CREATE OR REPLACE FUNCTION public.rls_perfil() RETURNS text
+LANGUAGE sql STABLE AS $$
+  SELECT auth.jwt() ->> 'perfil'
+$$;
+
+CREATE OR REPLACE FUNCTION public.rls_eh_staff() RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT public.rls_perfil() = 'admin_efficience'
+$$;
+
+-- Escritas administrativas ficam com admins; funcionario mantém os módulos
+-- operacionais já permitidos pelas rotas (sempre no próprio cliente).
+CREATE OR REPLACE FUNCTION public.rls_pode_escrever(tabela text) RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT public.rls_perfil() IN ('admin_cliente', 'admin_efficience')
+    OR (public.rls_perfil() = 'funcionario' AND tabela IN (
+      'lancamentos_contabeis', 'extratos_bancarios', 'transacoes_extrato',
+      'conciliacoes', 'pares_conciliacao', 'processamentos_folha',
+      'folha_calculos', 'folha_relatorios', 'processos', 'etapas'
+    ))
+$$;
+
+-- Tabelas com coluna cliente_id: derruba TODAS as policies atuais e cria o padrão.
+DO $$
+DECLARE
+  t record;
+  p record;
+BEGIN
+  FOR t IN
+    SELECT c.table_name
+    FROM information_schema.columns c
+    JOIN information_schema.tables tb
+      ON tb.table_schema = c.table_schema AND tb.table_name = c.table_name
+    WHERE c.table_schema = 'public' AND c.column_name = 'cliente_id'
+      AND tb.table_type = 'BASE TABLE'
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.table_name);
+    FOR p IN SELECT policyname FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = t.table_name
+    LOOP
+      EXECUTE format('DROP POLICY %I ON public.%I', p.policyname, t.table_name);
+    END LOOP;
+
+    EXECUTE format(
+      'CREATE POLICY rls_leitura ON public.%I FOR SELECT TO authenticated
+         USING (public.rls_eh_staff() OR cliente_id = public.rls_cliente_id())',
+      t.table_name);
+    EXECUTE format(
+      'CREATE POLICY rls_escrita ON public.%I FOR ALL TO authenticated
+         USING (public.rls_pode_escrever(%L)
+                AND (public.rls_eh_staff() OR cliente_id = public.rls_cliente_id()))
+         WITH CHECK (public.rls_pode_escrever(%L)
+                AND (public.rls_eh_staff() OR cliente_id = public.rls_cliente_id()))',
+      t.table_name, t.table_name, t.table_name);
+  END LOOP;
+END $$;
+
+-- notificacoes: qualquer perfil do escritório marca como lida.
+CREATE POLICY rls_notificacao_lida ON public.notificacoes FOR UPDATE TO authenticated
+  USING (public.rls_perfil() = 'funcionario' AND cliente_id = public.rls_cliente_id())
+  WITH CHECK (public.rls_perfil() = 'funcionario' AND cliente_id = public.rls_cliente_id());
+
+-- clientes: a própria linha é o escritório.
+ALTER TABLE public.clientes ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE p record;
+BEGIN
+  FOR p IN SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'clientes'
+  LOOP EXECUTE format('DROP POLICY %I ON public.clientes', p.policyname); END LOOP;
+END $$;
+CREATE POLICY rls_leitura ON public.clientes FOR SELECT TO authenticated
+  USING (public.rls_eh_staff() OR id = public.rls_cliente_id());
+CREATE POLICY rls_escrita ON public.clientes FOR ALL TO authenticated
+  USING (public.rls_pode_escrever('clientes') AND (public.rls_eh_staff() OR id = public.rls_cliente_id()))
+  WITH CHECK (public.rls_pode_escrever('clientes') AND (public.rls_eh_staff() OR id = public.rls_cliente_id()));
+
+-- Tabelas filhas sem cliente_id: herdam do pai.
+DO $$
+DECLARE
+  f record;
+  p record;
+BEGIN
+  FOR f IN SELECT * FROM (VALUES
+    ('etapas',            'processo_id',       'processos'),
+    ('pares_conciliacao', 'conciliacao_id',    'conciliacoes'),
+    ('folha_calculos',    'processamento_id',  'processamentos_folha'),
+    ('folha_relatorios',  'processamento_id',  'processamentos_folha')
+  ) AS v(filha, fk, pai)
+  LOOP
+    IF to_regclass('public.' || f.filha) IS NULL THEN CONTINUE; END IF;
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', f.filha);
+    FOR p IN SELECT policyname FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = f.filha
+    LOOP EXECUTE format('DROP POLICY %I ON public.%I', p.policyname, f.filha); END LOOP;
+
+    EXECUTE format(
+      'CREATE POLICY rls_leitura ON public.%I FOR SELECT TO authenticated
+         USING (public.rls_eh_staff() OR EXISTS (
+           SELECT 1 FROM public.%I pai
+           WHERE pai.id = %I.%I AND pai.cliente_id = public.rls_cliente_id()))',
+      f.filha, f.pai, f.filha, f.fk);
+    EXECUTE format(
+      'CREATE POLICY rls_escrita ON public.%I FOR ALL TO authenticated
+         USING (public.rls_pode_escrever(%L) AND (public.rls_eh_staff() OR EXISTS (
+           SELECT 1 FROM public.%I pai
+           WHERE pai.id = %I.%I AND pai.cliente_id = public.rls_cliente_id())))
+         WITH CHECK (public.rls_pode_escrever(%L) AND (public.rls_eh_staff() OR EXISTS (
+           SELECT 1 FROM public.%I pai
+           WHERE pai.id = %I.%I AND pai.cliente_id = public.rls_cliente_id())))',
+      f.filha, f.filha, f.pai, f.filha, f.fk, f.filha, f.pai, f.filha, f.fk);
+  END LOOP;
+END $$;
+
+-- tipos_documento: catálogo global, só leitura.
+ALTER TABLE public.tipos_documento ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE p record;
+BEGIN
+  FOR p IN SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'tipos_documento'
+  LOOP EXECUTE format('DROP POLICY %I ON public.tipos_documento', p.policyname); END LOOP;
+END $$;
+CREATE POLICY rls_leitura ON public.tipos_documento FOR SELECT TO authenticated USING (true);
+
+COMMIT;
+
+-- Rollback: restaurar as definições de pg_policies anteriores à 103 a partir
+-- do backup do ambiente, antes de reverter a identidade do backend.
