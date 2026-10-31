@@ -249,6 +249,27 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(res.body.ano, 2026);
   });
 
+  // BUG (#693): o período informado (ou inferido) não é conferido com as datas do arquivo:
+  // OFX de junho enviado como abril dá 201 e fica preso no mês errado; mes=13 e ano=1800
+  // também dão 201. Origem: QA-C 2026-10-12 #2 (OFX de junho em Abril/2024; mes=13; ano=1800).
+  // Esperado: erro 4xx quando as datas do OFX não pertencem ao mês/ano informado ou a faixa é inválida.
+  it.skip("4xx quando o mês/ano informado não bate com as datas do OFX ou está fora da faixa (PRB-C-25, #693)", async () => {
+    const casos = [
+      { mes: "4", ano: "2024" }, // OFX é de julho/2026 (datas 05/07 e 10/07)
+      { mes: "13", ano: "2026" },
+      { mes: "7", ano: "1800" },
+    ];
+    for (const body of casos) {
+      queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+      queue("transacoes_extrato", "await", { data: [], error: null });
+      queue("extratos_bancarios", "await", { data: null, error: null });
+
+      const res = criarResposta();
+      await criarConciliacaoExtrato(reqUpload({ body }), res);
+      assert.ok(res.statusCode >= 400 && res.statusCode < 500, `body ${JSON.stringify(body)} deu ${res.statusCode}`);
+    }
+  });
+
   it("422 e status='erro' quando o OFX está malformado", async () => {
     queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
 

@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { describe, it, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { parseOfx, decodificarOfx, OfxParseError, inferirMesAno } from "../src/utils/ofx-parser.util.js";
 
@@ -274,5 +274,164 @@ ${RODAPE_PADRAO}`);
 
     const { conta } = parseOfx(conteudo);
     assert.ok(conta.replace(/\D/g, "").endsWith("7654"), `conta: ${conta}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST-8 (#685): bordas do OFX. Origem de cada regra: background da task TEST-8
+// ("OFX de banco brasileiro vem em Windows-1252, usa o sinal do valor para
+// crédito/débito (o TRNTYPE pode divergir) e a DTPOSTED pode trazer fuso
+// [-3:BRT]") e a conferência do QA-C 2026-10-12 (problemas/conciliacao-qa-c-2026-10-12).
+// ---------------------------------------------------------------------------
+
+function transacaoOfx({ trntype = "DEBIT", dtposted, trnamt, fitid = "F1", memo = "MEMO" }) {
+  return `<STMTTRN>
+<TRNTYPE>${trntype}
+<DTPOSTED>${dtposted}
+<TRNAMT>${trnamt}
+<FITID>${fitid}
+<MEMO>${memo}
+</STMTTRN>`;
+}
+
+describe("parseOfx — bordas (TEST-8)", () => {
+  it("Windows-1252 com acento: bytes latin1 viram MEMO legível (QA-C T4 'AÇÃO')", () => {
+    // Origem: QA-C 2026-10-12, qac.ofx com CHARSET 1252 e memo com "AÇÃO" importado certo.
+    const texto = `OFXHEADER:100
+DATA:OFXSGML
+VERSION:102
+CHARSET:1252
+
+<OFX>
+${CABECALHO_PADRAO}
+${transacaoOfx({ trntype: "CREDIT", dtposted: "20240618", trnamt: "890.15", memo: "QA-C T4 AÇÃO CONDOMÍNIO À VISTA" })}
+${RODAPE_PADRAO}
+</OFX>`;
+    const buffer = Buffer.from(texto, "latin1");
+    // Premissa: lido como UTF-8, o mesmo arquivo corrompe o acento (por isso o parser decodifica à parte).
+    assert.ok(buffer.toString("utf-8").includes("�"));
+
+    const { transacoes } = parseOfx(decodificarOfx(buffer));
+    assert.equal(transacoes[0].descricao, "QA-C T4 AÇÃO CONDOMÍNIO À VISTA");
+  });
+
+  it("valor com vírgula decimal: crédito '890,15' e débito '-42,90'", () => {
+    // Origem: QA-C 2026-10-12, "vírgula decimal no OFX (-1234,56) lida certo" (PRB-C-36).
+    const { transacoes } = parseOfx(extratoComTransacoes([
+      transacaoOfx({ trntype: "CREDIT", dtposted: "20240618", trnamt: "890,15", fitid: "A" }),
+      transacaoOfx({ trntype: "DEBIT", dtposted: "20240617", trnamt: "-42,90", fitid: "B" }),
+    ].join("\n")));
+    assert.deepEqual(transacoes.map((t) => [t.tipo, t.valor]), [["credito", 890.15], ["debito", 42.9]]);
+  });
+
+  it("fuso no DTPOSTED não desloca o dia: 00:00 com [-3:BRT] continua no mesmo dia", () => {
+    // Origem: QA-C 2026-10-12, T4 com DTPOSTED '20240618000000[-3:BRT]' ("fuso não desloca a data").
+    // Converter para UTC ou para o fuso 0 mudaria o dia (00:00 BRT = 03:00 UTC; 23:59 BRT = 02:59 do dia seguinte).
+    const { transacoes } = parseOfx(extratoComTransacoes([
+      transacaoOfx({ dtposted: "20240618000000[-3:BRT]", trnamt: "-10.00", fitid: "A" }),
+      transacaoOfx({ dtposted: "20240618235959[-3:BRT]", trnamt: "-10.00", fitid: "B" }),
+      transacaoOfx({ dtposted: "20240618120000[+9:JST]", trnamt: "-10.00", fitid: "C" }),
+    ].join("\n")));
+    assert.deepEqual(transacoes.map((t) => t.data_lancamento), ["2024-06-18", "2024-06-18", "2024-06-18"]);
+  });
+
+  describe("TRNTYPE contra o sinal: o sinal do TRNAMT manda", () => {
+    // Origem: background da TEST-8 ("usa o sinal do valor para crédito/débito; o TRNTYPE pode divergir").
+    let avisos;
+    beforeEach(() => {
+      avisos = mock.method(console, "warn", () => {});
+    });
+    afterEach(() => avisos.mock.restore());
+
+    it("TRNTYPE=CREDIT com valor negativo vira débito", () => {
+      const { transacoes } = parseOfx(extratoComTransacoes(
+        transacaoOfx({ trntype: "CREDIT", dtposted: "20240618", trnamt: "-50.00" })));
+      assert.equal(transacoes[0].tipo, "debito");
+      assert.equal(transacoes[0].valor, 50);
+      assert.equal(avisos.mock.callCount(), 1, "a divergência é avisada no log");
+    });
+
+    it("TRNTYPE=DEBIT com valor positivo vira crédito", () => {
+      const { transacoes } = parseOfx(extratoComTransacoes(
+        transacaoOfx({ trntype: "DEBIT", dtposted: "20240618", trnamt: "50.00" })));
+      assert.equal(transacoes[0].tipo, "credito");
+      assert.equal(transacoes[0].valor, 50);
+    });
+
+    it("TRNTYPE coerente com o sinal não gera aviso e os dois lados coerentes mantêm o tipo", () => {
+      const { transacoes } = parseOfx(extratoComTransacoes([
+        transacaoOfx({ trntype: "DEBIT", dtposted: "20240618", trnamt: "-1.00", fitid: "A" }),
+        transacaoOfx({ trntype: "CREDIT", dtposted: "20240618", trnamt: "1.00", fitid: "B" }),
+      ].join("\n")));
+      assert.deepEqual(transacoes.map((t) => t.tipo), ["debito", "credito"]);
+      assert.equal(avisos.mock.callCount(), 0);
+    });
+  });
+
+  it("valor sempre sai positivo e o sinal vai para o tipo (-1000.00 → débito de 1000)", () => {
+    const { transacoes } = parseOfx(extratoComTransacoes(
+      transacaoOfx({ dtposted: "20240605", trnamt: "-1000.00" })));
+    assert.equal(transacoes[0].valor, 1000);
+    assert.equal(transacoes[0].tipo, "debito");
+  });
+
+  it("TRNAMT que não é número ('abc') lança OfxParseError citando a transação", () => {
+    assert.throws(
+      () => parseOfx(extratoComTransacoes(transacaoOfx({ dtposted: "20240605", trnamt: "abc" }))),
+      (erro) => erro instanceof OfxParseError && /transação #1/.test(erro.message),
+    );
+  });
+
+  // Período do OFX incoerente (QA-C 2026-10-12 #2): a parte pura é a inferência do período
+  // pelas datas; o aceite de mês/ano informado que não bate com o arquivo é do controller
+  // (teste em conciliacoes.test.js, PRB-C-25, #693).
+  describe("inferirMesAno — bordas", () => {
+    it("QA-C 2026-10-12: as 10 transações de junho/2024 inferem 6/2024", () => {
+      const dias = ["05", "10", "12", "18", "17", "23", "05", "15", "28", "05"];
+      const resultado = inferirMesAno(dias.map((d) => ({ data_lancamento: `2024-06-${d}` })));
+      assert.deepEqual(resultado, { mes: 6, ano: 2024 });
+    });
+
+    it("mês de dezembro e janeiro do ano seguinte: vence o mais frequente, com o ano do próprio mês", () => {
+      const resultado = inferirMesAno([
+        { data_lancamento: "2023-12-29" },
+        { data_lancamento: "2024-01-02" },
+        { data_lancamento: "2024-01-03" },
+      ]);
+      assert.deepEqual(resultado, { mes: 1, ano: 2024 });
+    });
+  });
+
+  // BUG (#694): DTPOSTED impossível passa no parser (só confere 8 dígitos) e estoura no
+  // banco, virando 500 genérico. O certo é 422 com o motivo, ou seja, OfxParseError.
+  // Origem: QA-C 2026-10-12 #3 (DTPOSTED=20241345 e 20240230).
+  it.skip("DTPOSTED impossível (20241345, 20240230) é recusado com OfxParseError (PRB-C-33, #694)", () => {
+    for (const dtposted of ["20241345", "20240230", "20240631", "20240001"]) {
+      assert.throws(
+        () => parseOfx(extratoComTransacoes(transacaoOfx({ dtposted, trnamt: "-10.00" }))),
+        OfxParseError,
+        `DTPOSTED ${dtposted} deveria ser recusado`,
+      );
+    }
+  });
+
+  // BUG (#694): TRNAMT fora da faixa de NUMERIC(15,2) passa no parser e o banco recusa (500).
+  // Origem: QA-C 2026-10-12 #3 (TRNAMT=1e15 e 99999999999999.99); a faixa é a da coluna
+  // transacoes_extrato.valor NUMERIC(15,2) (migration 67), máximo 9.999.999.999.999,99.
+  it.skip("TRNAMT fora da faixa (1e15, 99999999999999.99) é recusado com OfxParseError (PRB-C-33, #694)", () => {
+    for (const trnamt of ["1e15", "99999999999999.99", "-99999999999999.99"]) {
+      assert.throws(
+        () => parseOfx(extratoComTransacoes(transacaoOfx({ dtposted: "20240605", trnamt }))),
+        OfxParseError,
+        `TRNAMT ${trnamt} deveria ser recusado`,
+      );
+    }
+  });
+
+  it("TRNAMT no limite da faixa (9999999999999.99) ainda é aceito", () => {
+    // Máximo de NUMERIC(15,2): 13 dígitos inteiros + 2 decimais.
+    const { transacoes } = parseOfx(extratoComTransacoes(
+      transacaoOfx({ dtposted: "20240605", trnamt: "-9999999999999.99" })));
+    assert.equal(transacoes[0].valor, 9999999999999.99);
   });
 });
