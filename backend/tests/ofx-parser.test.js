@@ -182,3 +182,97 @@ describe("inferirMesAno", () => {
     assert.deepEqual(resultado, { mes: 8, ano: 2026 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// ---------------------------------------------------------------------------
+
+describe("parseOfx — problemas já achados", () => {
+  // PRB-C-36 (baseline do QA-C 10-12): banco BR exporta TRNAMT com vírgula decimal.
+  it("aceita TRNAMT com vírgula decimal (-1234,56)", () => {
+    const resultado = parseOfx(extratoComTransacoes(`<STMTTRN>
+<TRNTYPE>DEBIT
+<DTPOSTED>20260705
+<TRNAMT>-1234,56
+<FITID>V1
+<MEMO>TARIFA
+</STMTTRN>`));
+
+    assert.equal(resultado.transacoes[0].valor, 1234.56);
+    assert.equal(resultado.transacoes[0].tipo, "debito");
+  });
+
+  // BUG (#692): o mesmo FITID duas vezes no arquivo vira duas transações. O
+  // comportamento certo ainda não foi escolhido (recusar o arquivo ou manter
+  // uma só); qualquer um dos dois passa aqui, duplicar não.
+  it.skip("FITID repetido no mesmo arquivo não gera duas transações (PRB-C-12, #692)", () => {
+    const conteudo = extratoComTransacoes(["100.00", "100.00"].map((valor) => `<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260705
+<TRNAMT>${valor}
+<FITID>REPETIDO
+<MEMO>PIX
+</STMTTRN>`).join("\n"));
+
+    let resultado;
+    try {
+      resultado = parseOfx(conteudo);
+    } catch (erro) {
+      assert.ok(erro instanceof OfxParseError);
+      return;
+    }
+    const ids = resultado.transacoes.map((t) => t.id_banco);
+    assert.equal(new Set(ids).size, ids.length);
+  });
+
+  // BUG (#692): transação de R$ 0,00 é aceita e entra no matching.
+  it.skip("transação de R$ 0,00 não entra como transação (PRB-C-12, #692)", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260705
+<TRNAMT>0.00
+<FITID>Z1
+<MEMO>ESTORNO ZERADO
+</STMTTRN>
+<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260706
+<TRNAMT>10.00
+<FITID>Z2
+<MEMO>PIX
+</STMTTRN>`);
+
+    let resultado;
+    try {
+      resultado = parseOfx(conteudo);
+    } catch (erro) {
+      assert.ok(erro instanceof OfxParseError);
+      return;
+    }
+    assert.ok(resultado.transacoes.every((t) => t.valor > 0));
+  });
+
+  // BUG (#700): ACCTID "98765-4" vira "65-4" (slice(-4) conta o hífen). A conta
+  // mascarada tem que manter os 4 últimos dígitos.
+  it.skip("conta mascarada mantém os 4 últimos dígitos (98765-4 → …7654) (PRB-C-35, #700)", () => {
+    const conteudo = ofx(`<BANKMSGSRSV1>
+<STMTTRNRS>
+<STMTRS>
+<CURDEF>BRL
+<BANKACCTFROM>
+<BANKID>0237
+<ACCTID>98765-4
+</BANKACCTFROM>
+<BANKTRANLIST>
+<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260705
+<TRNAMT>10.00
+<FITID>C1
+</STMTTRN>
+${RODAPE_PADRAO}`);
+
+    const { conta } = parseOfx(conteudo);
+    assert.ok(conta.replace(/\D/g, "").endsWith("7654"), `conta: ${conta}`);
+  });
+});

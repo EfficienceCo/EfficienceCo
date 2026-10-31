@@ -460,4 +460,22 @@ describe("GET /conciliacoes/extrato/:id/transacoes", () => {
     assert.equal(res.statusCode, 404);
     assert.deepEqual(res.body, { erro: "Extrato bancário não encontrado" });
   });
+
+  // BUG (#696): limit=-1 passa direto (parseInt("-1") || 20 = -1) e vira
+  // .range(0, -2), que o PostgREST recusa com 500. Esperado: 400 ou o padrão.
+  it.skip("limit negativo dá 400 ou usa o padrão, nunca range negativo (PRB-C-09, #696)", async () => {
+    queue("extratos_bancarios", "maybeSingle", {
+      data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
+      error: null,
+    });
+    queue("transacoes_extrato", "await", { data: [], error: null, count: 0 });
+
+    const res = criarResposta();
+    await listarTransacoesExtrato(reqBase({ query: { limit: "-1" } }), res);
+
+    if (res.statusCode !== 400) {
+      assert.equal(res.statusCode, 200);
+      assert.ok(res.body.limit >= 1, `limit devolvido: ${res.body.limit}`);
+    }
+  });
 });

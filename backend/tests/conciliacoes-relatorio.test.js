@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { gerarRelatorioConciliacao } from "../src/controllers/conciliacoes.controller.js";
-import { formatarMoeda, montarConteudoRelatorio } from "../src/services/conciliacao-relatorio.service.js";
+import PDFDocument from "pdfkit";
+import {
+  formatarMoeda,
+  gerarRelatorioConciliacaoPDF,
+  montarConteudoRelatorio,
+} from "../src/services/conciliacao-relatorio.service.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -321,5 +326,73 @@ describe("montarConteudoRelatorio", () => {
       {},
     );
     assert.deepEqual(semPar.map((i) => i.descricao), ["Débito 05", "Sem data"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// ---------------------------------------------------------------------------
+
+// Grava cada doc.text(texto, x, y, opções) com a altura que o texto ocupa na
+// largura da célula, para conferir o desenho sem abrir o PDF.
+async function desenharRelatorio(dados) {
+  const chamadas = [];
+  const textOriginal = PDFDocument.prototype.text;
+  PDFDocument.prototype.text = function (texto, x, y, opcoes) {
+    if (typeof y === "number") {
+      const altura = this.heightOfString(String(texto), { width: opcoes?.width });
+      chamadas.push({ texto: String(texto), x, y, altura, pagina: this.page });
+    }
+    return textOriginal.call(this, texto, x, y, opcoes);
+  };
+  try {
+    await gerarRelatorioConciliacaoPDF({
+      cliente: "Padaria Central",
+      banco: "0237",
+      conta: "7654",
+      mes: 7,
+      ano: 2026,
+      geradoEm: new Date(2026, 6, 31, 10, 0),
+      totais: { totalTransacoes: 0, totalConciliadas: 0, totalTransacoesPendentes: 0, totalLancamentosSemPar: 0, valorTotalConciliado: 0 },
+      matches: [],
+      semPar: [],
+      ...dados,
+    });
+  } finally {
+    PDFDocument.prototype.text = textOriginal;
+  }
+  return chamadas;
+}
+
+describe("gerarRelatorioConciliacaoPDF — problemas já achados", () => {
+  // BUG (#699): a linha da tabela tem altura fixa (14 pt); descrição longa quebra
+  // em várias linhas e invade a linha seguinte.
+  it.skip("descrição de 60 e de 200 caracteres não invade a linha seguinte (PRB-C-32, #699)", async () => {
+    const descricao = (n) => "PAGAMENTO FORNECEDOR ".repeat(20).slice(0, n);
+    const matches = [
+      { data: "2026-07-01", descricaoBanco: descricao(200), descricaoLancamento: "curta", valor: 10 },
+      { data: "2026-07-02", descricaoBanco: descricao(60), descricaoLancamento: "curta", valor: 20 },
+      { data: "2026-07-03", descricaoBanco: "curta", descricaoLancamento: "curta", valor: 30 },
+    ];
+
+    const chamadas = await desenharRelatorio({ matches });
+
+    for (let i = 0; i < 2; i += 1) {
+      const celula = chamadas.find((c) => c.texto === matches[i].descricaoBanco);
+      const proximaLinha = chamadas.find((c) => c.texto === `0${i + 2}/07/2026`);
+      assert.ok(celula && proximaLinha, "linhas da tabela não encontradas");
+      if (proximaLinha.pagina !== celula.pagina) continue;
+      assert.ok(
+        proximaLinha.y >= celula.y + celula.altura,
+        `linha ${i + 2} em y=${proximaLinha.y}, mas a descrição da linha ${i + 1} vai até y=${celula.y + celula.altura}`,
+      );
+    }
+  });
+
+  // BUG (#700): o cabeçalho mostra o código do banco (0237) em vez do nome.
+  it.skip("cabeçalho mostra o nome do banco quando o código é conhecido (0237 → Bradesco) (PRB-C-35, #700)", async () => {
+    const chamadas = await desenharRelatorio({});
+    const cabecalho = chamadas.find((c) => c.texto.startsWith("Banco:"));
+    assert.match(cabecalho.texto, /Bradesco/i);
   });
 });

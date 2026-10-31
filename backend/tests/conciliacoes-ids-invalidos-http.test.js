@@ -91,3 +91,23 @@ describe("Conciliações — IDs inválidos", () => {
     });
   }
 });
+
+// Problema já achado (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10).
+describe("Conciliações — upload acima do limite", () => {
+  // BUG (#698): o erro do multer vai direto para a resposta — 400 "File too large", em inglês.
+  it.skip("413 em português citando 10 MB para OFX de 10 MB + 1 byte, sem consultar o banco (PRB-C-27, #698)", async () => {
+    const form = new FormData();
+    form.append("arquivo", new Blob([Buffer.alloc(10 * 1024 * 1024 + 1, "A")]), "grande.ofx");
+
+    const resposta = await fetch(`${baseUrl}/conciliacoes/extrato`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenValido()}` },
+      body: form,
+    });
+    const body = await resposta.json();
+
+    assert.equal(resposta.status, 413);
+    assert.match(body.erro, /10 ?MB/i);
+    assert.doesNotMatch(body.erro, /too large/i);
+  });
+});
