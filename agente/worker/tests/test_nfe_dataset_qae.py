@@ -193,7 +193,7 @@ def test_dataset_n07_n08_o_parser_aceita_e_a_recusa_vem_do_vinculo_com_o_cliente
 
 def test_dataset_n11_data_futura_o_parser_le_a_data():
     """O parser só lê a data (a regra de futuro é do pipeline). O motivo da quarentena de n11 é afirmado em
-    test_pipeline_pasta_do_qae_posta_so_as_11_validas_com_o_tipo_certo."""
+    test_pipeline_pasta_do_qae_posta_as_12_aceitas_com_o_tipo_certo."""
     dados = parsear_nfe(_caminho("n11-data-futura"))
     assert dados["data_emissao"] == date(2026, 12, 1)  # dhEmi do XML; a regra de futuro é do pipeline
 
@@ -418,14 +418,6 @@ def test_emitente_ausente_recusa(tmp_path):
         parsear_nfe(caminho)
 
 
-_BUG_659 = (
-    "BUG (#659, NFE-5): emitente pessoa física (emit/CPF, produtor rural) é recusado nesta base; o "
-    "PR #675 está mergeado na main (b5f435a) e esta branch ainda não o tem. Tirar o skip ao "
-    "integrar a main."
-)
-
-
-@pytest.mark.skip(reason=_BUG_659)
 def test_emitente_cpf_de_11_digitos_entra_sem_padar():
     """n10: emit/CPF 111.444.777-35, destinatário = Cliente Dev, valor 300,00.
 
@@ -447,7 +439,6 @@ def test_emitente_cpf_de_11_digitos_entra_sem_padar():
     assert dados["cnpj_destinatario"] == DEV
 
 
-@pytest.mark.skip(reason=_BUG_659)
 def test_emitente_cpf_com_dv_errado_recusa(tmp_path):
     caminho = _variante(
         tmp_path, "n10-emitente-produtor-cpf",
@@ -458,7 +449,6 @@ def test_emitente_cpf_com_dv_errado_recusa(tmp_path):
         parsear_nfe(caminho)
 
 
-@pytest.mark.skip(reason=_BUG_659)
 def test_emitente_cpf_com_tamanho_errado_recusa(tmp_path):
     caminho = _variante(
         tmp_path, "n10-emitente-produtor-cpf",
@@ -629,12 +619,12 @@ class _Hoje(date):
         return cls(2026, 10, 31)
 
 
-def test_pipeline_pasta_do_qae_posta_so_as_11_validas_com_o_tipo_certo(pasta_qae, monkeypatch, capsys):
+def test_pipeline_pasta_do_qae_posta_as_12_aceitas_com_o_tipo_certo(pasta_qae, monkeypatch, capsys):
     inbox, _base = pasta_qae
     monkeypatch.setattr("automacoes.processar_nfe.date", _Hoje)
-    fora = {"n10-emitente-produtor-cpf", "n12-vnf-negativo"}  # n10: skip BUG #659; n12: recusa é do backend
+    fora = {"n12-vnf-negativo"}  # recusa do vNF negativo é do backend, não do agente
     nomes = [p.stem for p in QAE.glob("*.xml") if not p.stem.startswith("ev") and p.stem not in fora]
-    assert len(nomes) == 29 - 2
+    assert len(nomes) == 29 - 1
     for nome in nomes:
         (inbox / f"{nome}.xml").write_bytes((QAE / f"{nome}.xml").read_bytes())
 
@@ -646,11 +636,12 @@ def test_pipeline_pasta_do_qae_posta_so_as_11_validas_com_o_tipo_certo(pasta_qae
         processar_pasta_nfe(str(inbox))
 
     postados = {c.args[1]["chave_nfe"]: c.args[1] for c in mock_post.call_args_list}
-    assert len(mock_post.call_args_list) == 11 and len(postados) == 11
+    assert len(mock_post.call_args_list) == 12 and len(postados) == 12
     esperado = {
         "v01": "entrada", "v02": "entrada", "v03": "saida", "v04": "saida", "v05": "entrada",
         "v06": "saida", "v07": "entrada", "v08": "entrada", "v09": "entrada", "v10": "saida",
         "v11": "entrada",
+        "n10": "entrada",  # emitente CPF (produtor rural), destinatário = Cliente Dev: compra, NFE-5
     }
     assert {k: postados[CHAVE[k]]["tipo"] for k in esperado} == esperado
     assert all(p["cliente_id"] == CLIENTE_ID_DEV for p in postados.values())

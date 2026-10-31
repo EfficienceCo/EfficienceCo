@@ -202,9 +202,8 @@ describe("TEST-10 — emitente: CNPJ, CPF e documento inválido", () => {
     }
   });
 
-  // n10: emit/CPF 111.444.777-35 (produtor rural). O PR #675 (NFE-5) está mergeado na main
-  // (b5f435a) e esta branch ainda não o tem: hoje o backend exige 14 dígitos no emitente.
-  it.skip("n10-emitente-produtor-cpf: CPF de 11 dígitos, sem padar, entra — BUG (#659, NFE-5; corrigido no PR #675, mergeado na main, ausente nesta branch)", () => {
+  // n10: emit/CPF 111.444.777-35 (produtor rural), aceito desde o NFE-5 (#659, PR #675).
+  it("n10-emitente-produtor-cpf: CPF de 11 dígitos, sem padar, entra", () => {
     // CPF 111.444.777-35: DV1 = 162*10 mod 11 = 3; DV2 = 204*10 mod 11 = 5.
     const r = validarLancamentoFiscal(
       payload(v01, { chave_nfe: CHAVE.n10, cnpj_emitente: CPF_PRODUTOR, cnpj_destinatario: DEV, valor_total: "300.00",
@@ -215,7 +214,7 @@ describe("TEST-10 — emitente: CNPJ, CPF e documento inválido", () => {
     assert.equal(r.dados.cnpj_emitente, CPF_PRODUTOR);
   });
 
-  it.skip("emitente CPF com DV errado (11144477736) vira erro em cnpj_emitente — BUG (#659, NFE-5; corrigido no PR #675, ausente nesta branch)", () => {
+  it("emitente CPF com DV errado (11144477736) vira erro em cnpj_emitente", () => {
     const r = validarLancamentoFiscal(payload(v01, { cnpj_emitente: "11144477736" }), HOJE);
     assert.equal(r.erros.cnpj_emitente, "cnpj_emitente não é um CPF válido");
   });
