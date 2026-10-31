@@ -1,0 +1,2 @@
+# Hooks rodam no sh do Git: CRLF quebra o shebang e os scripts.
+.githooks/** text eol=lf
