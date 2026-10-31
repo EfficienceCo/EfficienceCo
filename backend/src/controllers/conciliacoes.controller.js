@@ -644,6 +644,18 @@ async function buscarParDaConciliacao(pareId, conciliacaoId) {
   return { par };
 }
 
+// UPDATE condicionado ao par ainda estar pendente de decisão: de dois pedidos simultâneos
+// o banco deixa um passar e o outro volta com 0 linhas em `data` (o chamador responde 409).
+function atualizarParSePendente(pareId, campos) {
+  return supabase
+    .from("pares_conciliacao")
+    .update(campos)
+    .eq("id", pareId)
+    .eq("confianca", "provavel")
+    .is("confirmado_em", null)
+    .select("id");
+}
+
 export async function confirmarPar(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -666,35 +678,24 @@ export async function confirmarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para confirmação" });
   }
 
-  const { error: erroUpdatePar } = await supabase
-    .from("pares_conciliacao")
-    .update({ confirmado_por: req.usuario.id, confirmado_em: new Date().toISOString() })
-    .eq("id", pareId);
+  const { data: confirmados, error: erroUpdatePar } = await atualizarParSePendente(pareId, {
+    confirmado_por: req.usuario.id,
+    confirmado_em: new Date().toISOString(),
+  });
 
   if (erroUpdatePar) {
     console.error("[conciliacoes.controller] Erro ao confirmar par:", erroUpdatePar.message);
     return res.status(500).json({ erro: "Erro ao confirmar par de conciliação" });
   }
 
-  // Re-busca os totais o mais perto possível do update para reduzir a janela
-  // de corrida do incremento (não há suporte a update atômico/transação neste client).
-  const { data: conciliacaoAtual, error: erroConciliacaoAtual } = await supabase
-    .from("conciliacoes")
-    .select("total_conciliadas, total_pendentes")
-    .eq("id", id)
-    .maybeSingle();
+  if (!confirmados?.length) {
+    return res.status(409).json({ erro: "Par não está disponível para confirmação" });
+  }
 
-  const erroUpdateConciliacao =
-    erroConciliacaoAtual ??
-    (
-      await supabase
-        .from("conciliacoes")
-        .update({
-          total_conciliadas: conciliacaoAtual.total_conciliadas + 1,
-          total_pendentes: conciliacaoAtual.total_pendentes - 1,
-        })
-        .eq("id", id)
-    ).error;
+  // Recalcula os totais a partir dos pares (migration 103), em vez de somar +1/-1.
+  const { error: erroUpdateConciliacao } = await supabase.rpc("recalcular_totais_conciliacao", {
+    p_conciliacao_id: id,
+  });
 
   if (erroUpdateConciliacao) {
     console.error(
@@ -742,6 +743,12 @@ export async function rejeitarPar(req, res) {
   // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e
   // outro só com o lançamento — no mesmo formato que o matching gera para sobras.
   // Assim o lançamento continua visível em "Lançamentos sem transação" e no PDF.
+  //
+  // O par do lançamento entra primeiro: se o processo cair no meio, o lançamento aparece
+  // duplicado (visível), nunca some. Depois o UPDATE do par original, condicionado ao
+  // estado pendente, decide a corrida: de dois pedidos simultâneos (confirmar × rejeitar,
+  // ou rejeitar × rejeitar) o banco deixa um passar e o outro volta com 0 linhas (409) e
+  // apaga o par do lançamento que acabou de inserir.
   const { data: parLancamento, error: erroInsertPar } = await supabase
     .from("pares_conciliacao")
     .insert({ conciliacao_id: id, transacao_id: null, lancamento_id: par.lancamento_id, confianca: "sem_par" })
@@ -755,15 +762,20 @@ export async function rejeitarPar(req, res) {
 
   const desfazerInsert = () => supabase.from("pares_conciliacao").delete().eq("id", parLancamento.id);
 
-  const { error: erroUpdatePar } = await supabase
-    .from("pares_conciliacao")
-    .update({ lancamento_id: null, confianca: "sem_par" })
-    .eq("id", pareId);
+  const { data: rejeitados, error: erroUpdatePar } = await atualizarParSePendente(pareId, {
+    lancamento_id: null,
+    confianca: "sem_par",
+  });
 
   if (erroUpdatePar) {
     console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroUpdatePar.message);
     await desfazerInsert();
     return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
+  }
+
+  if (!rejeitados?.length) {
+    await desfazerInsert();
+    return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
   // total_pendentes não muda: conta só transações (conciliadas + pendentes = total_transacoes,
