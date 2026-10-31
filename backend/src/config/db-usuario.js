@@ -25,7 +25,6 @@ export const servicoDb = createClient(SUPABASE_URL, supabaseKey, opcoes);
 
 const TTL_TOKEN_SEGUNDOS = 300;
 export const contextoDb = new AsyncLocalStorage();
-let avisouSemSegredo = false;
 
 export function emitirTokenSupabase(usuario) {
   return jwt.sign(
@@ -42,17 +41,10 @@ export function emitirTokenSupabase(usuario) {
 }
 
 // Cria o client que age com a identidade do usuário (token aceito pelo Supabase).
-// Sem SUPABASE_JWT_SECRET/SUPABASE_KEY cai no client de serviço, com aviso: o
-// RLS NÃO protege nesse modo (só enquanto o segredo não é configurado no ambiente).
+// Configuração incompleta nunca pode promover uma requisição à service key.
 export function criarDbDoUsuario(usuario) {
   if (!SUPABASE_JWT_SECRET || !SUPABASE_KEY) {
-    if (!avisouSemSegredo) {
-      avisouSemSegredo = true;
-      console.warn(
-        "[database] SUPABASE_JWT_SECRET/SUPABASE_KEY ausentes: usando a service key, RLS desligado.",
-      );
-    }
-    return servicoDb;
+    throw new Error("Configure SUPABASE_JWT_SECRET e SUPABASE_KEY para o acesso com RLS");
   }
 
   const token = emitirTokenSupabase(usuario);

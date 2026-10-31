@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import jwt from "jsonwebtoken";
+import { spawnSync } from "node:child_process";
 
 process.env.SUPABASE_KEY = "anon-key-de-teste";
 process.env.SUPABASE_JWT_SECRET = "segredo-supabase-de-teste";
@@ -39,4 +40,25 @@ describe("identidade do usuário no banco (SEG-1 #666)", () => {
     const [a, b] = await Promise.all([pegar(usuario), pegar({ ...usuario, cliente_id: "c2" })]);
     assert.notEqual(a, b);
   });
+
+  it("mantém o storage de serviço enquanto as policies de bucket não forem migradas", () => {
+    executarComDbDoUsuario(usuario, () => {
+      assert.equal(supabase.storage, servicoDb.storage);
+      assert.notEqual(supabase.rest, servicoDb.rest);
+    });
+  });
+
+  for (const variavel of ["SUPABASE_KEY", "SUPABASE_JWT_SECRET"]) {
+    it(`recusa o acesso autenticado sem ${variavel}, sem usar a service key`, () => {
+      const env = { ...process.env };
+      delete env[variavel];
+      const modulo = new URL("../src/config/db-usuario.js", import.meta.url).href;
+      const resultado = spawnSync(process.execPath, ["--input-type=module", "-e", `
+        import assert from 'node:assert/strict';
+        const { criarDbDoUsuario } = await import(${JSON.stringify(modulo)});
+        assert.throws(() => criarDbDoUsuario(${JSON.stringify(usuario)}), /Configure SUPABASE_JWT_SECRET e SUPABASE_KEY/);
+      `], { env, encoding: "utf8" });
+      assert.equal(resultado.status, 0, resultado.stderr);
+    });
+  }
 });
