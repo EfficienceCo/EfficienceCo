@@ -4,6 +4,7 @@
 // Se invalido ou ausente, retorna 401.
 
 import jwt from "jsonwebtoken";
+import { executarComDbDoUsuario } from "../config/db-usuario.js";
 
 function decodificarTokenBearer(authHeader) {
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -42,7 +43,7 @@ export function autenticar(req, res, next) {
     // Anexa os dados decodificados do token em req.usuario
     // para que as rotas seguintes saibam quem esta acessando.
     req.usuario = decoded;
-    return next();
+    return executarComDbDoUsuario(decoded, next);
   } catch (err) {
     console.log("[auth.middleware] Token invalido ou expirado:", err.message);
     return res.status(401).json({ erro: "Token invalido" });
@@ -64,7 +65,7 @@ export function autenticarOpcional(req, res, next) {
   try {
     const decoded = decodificarTokenBearer(authHeader);
     req.usuario = decoded;
-    return next();
+    return executarComDbDoUsuario(decoded, next);
   } catch (err) {
     console.log(
       "[auth.middleware] Token invalido em autenticarOpcional:",

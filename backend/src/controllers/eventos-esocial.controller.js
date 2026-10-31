@@ -70,6 +70,21 @@ export async function criarRascunho(req, res) {
     return res.status(400).json({ erro: `${tipoEvento} (${CATALOGO_ESOCIAL[tipoEvento].nome}) exige funcionarioId` });
   }
 
+  if (funcionarioId) {
+    // 404 idêntico ao de id inexistente: não revela funcionário de outro escritório.
+    const { data: func, error: erroFunc } = await supabase
+      .from("funcionarios")
+      .select("id")
+      .eq("id", funcionarioId)
+      .eq("cliente_id", clienteId)
+      .maybeSingle();
+    if (erroFunc) {
+      console.error("[eventos-esocial.controller] Erro ao verificar funcionário:", erroFunc.message);
+      return res.status(500).json({ erro: "Erro ao verificar o funcionário" });
+    }
+    if (!func) return res.status(404).json({ erro: "Funcionário não encontrado" });
+  }
+
   // --- Pré-requisito de cliente novo (Decisão 6 da reunião) --------------
   const { data: cliente, error: erroCliente } = await supabase
     .from("clientes")
@@ -270,6 +285,7 @@ export async function aprovarEvento(req, res) {
 
   if (evento.tipo_evento === "S-2299") {
     const { funcionario, erro: erroDeslig } = await desligarFuncionarioDeS2299({
+      clienteId: evento.cliente_id,
       funcionarioId: evento.funcionario_id,
       dadosFormulario: evento.dados_formulario,
     });
