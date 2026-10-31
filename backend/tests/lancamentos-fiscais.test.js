@@ -896,3 +896,28 @@ describe("GET /lancamentos-fiscais/resumo", () => {
     assert.match(res.body.erro, /ano/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// ---------------------------------------------------------------------------
+
+describe("POST /lancamentos-fiscais — problemas já achados", () => {
+  // PRB-E-23 (#447 / #467): a unicidade da NF-e é por tenant. A mesma chave
+  // escriturada por outro cliente (nota entre dois clientes do escritório) não
+  // pode bloquear a deste — a checagem de duplicata tem que filtrar pelo cliente.
+  it("checagem de duplicata filtra por cliente_id e chave_nfe; chave de outro tenant não bloqueia (PRB-E-23)", async () => {
+    tokenValido();
+    clienteComCnpj(CNPJ_EMIT);
+    queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
+    queue("lancamentos_fiscais", "single", { data: { id: "novo-id", ...payloadValido() }, error: null });
+
+    const req = { headers: { "x-licenca-token": "tok" }, body: payloadValido() };
+    const res = criarResposta();
+    await criarLancamentoFiscal(req, res);
+
+    assert.equal(res.statusCode, 201);
+    const filtrosDaChecagem = filtros.filter(([tabela]) => tabela === "lancamentos_fiscais");
+    assert.ok(filtrosDaChecagem.some(([, campo, valor]) => campo === "cliente_id" && valor === CLIENTE_ID));
+    assert.ok(filtrosDaChecagem.some(([, campo, valor]) => campo === "chave_nfe" && valor === payloadValido().chave_nfe));
+  });
+});

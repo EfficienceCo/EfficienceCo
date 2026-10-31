@@ -603,3 +603,39 @@ def test_cnpj_valido(cnpj, esperado):
 ])
 def test_cpf_valido_bateria_comum(cpf, esperado):
     assert _cpf_valido(cpf) is esperado
+
+
+# Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10).
+# PRB-E-21: o QA-E 10-12 conferiu que XXE e "billion laughs" são barrados. O
+# parser é o xml.etree (expat); estes casos pegam a troca por um parser que
+# resolva entidade externa ou não limite a expansão.
+
+def _nota_com_doctype(tmp_path, doctype: str, referencia: str) -> str:
+    xml = _envolver_nfe_autorizada((FIXTURES / "entrada.xml").read_text(encoding="utf-8"))
+    corpo = xml.split("?>", 1)[1] if xml.lstrip().startswith("<?xml") else xml
+    corpo = corpo.replace("<cStat>100</cStat>", f"<cStat>100</cStat><xMotivo>{referencia}</xMotivo>", 1)
+    caminho = tmp_path / "nota-doctype.xml"
+    caminho.write_text('<?xml version="1.0" encoding="UTF-8"?>' + doctype + corpo, encoding="utf-8")
+    return str(caminho)
+
+
+def test_xxe_entidade_externa_nao_le_arquivo_local(tmp_path):
+    segredo = tmp_path / "segredo.txt"
+    segredo.write_text("SEGREDO-DO-PC-DO-ESCRITORIO", encoding="utf-8")
+    caminho = _nota_com_doctype(
+        tmp_path, f'<!DOCTYPE nfeProc [<!ENTITY xxe SYSTEM "{segredo.resolve().as_uri()}">]>', "&xxe;"
+    )
+
+    with pytest.raises(ValueError, match="XML malformado") as erro:
+        parsear_nfe(caminho)
+    assert "SEGREDO" not in str(erro.value)
+
+
+def test_billion_laughs_recusado_sem_expandir(tmp_path):
+    entidades = '<!ENTITY a "aaaaaaaaaa">' + "".join(
+        f'<!ENTITY {chr(98 + i)} "{("&" + chr(97 + i) + ";") * 10}">' for i in range(8)
+    )
+    caminho = _nota_com_doctype(tmp_path, f"<!DOCTYPE nfeProc [{entidades}]>", "&i;")
+
+    with pytest.raises(ValueError, match="XML malformado"):
+        parsear_nfe(caminho)

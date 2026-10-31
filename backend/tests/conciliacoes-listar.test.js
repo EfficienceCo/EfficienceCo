@@ -353,3 +353,18 @@ describe("GET /conciliacoes/:id", () => {
     assert.equal(res.statusCode, 500);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// ---------------------------------------------------------------------------
+
+describe("GET /conciliacoes — problemas já achados", () => {
+  // BUG (#696): mes fora de 1–12 é ignorado em silêncio e a lista volta sem filtro.
+  for (const mes of ["0", "13", "abc"]) {
+    it.skip(`400 quando mes=${mes} (PRB-C-09, #696)`, async () => {
+      const res = criarResposta();
+      await listarConciliacoes(reqBase({ query: { mes, ano: "2026" } }), res);
+      assert.equal(res.statusCode, 400);
+    });
+  }
+});

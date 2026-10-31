@@ -450,3 +450,218 @@ describe("POST /conciliacoes/:id/concluir", () => {
     assert.equal(res.body.total_conciliadas, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// ---------------------------------------------------------------------------
+
+describe("Pares e conclusão — problemas já achados", () => {
+  // PRB-C-18 (#327): rejeitarPar não olhava confirmado_em e "desconfirmava" um
+  // provável já confirmado, voltando a transação para pendente.
+  it("rejeitar: 409 quando o par já foi confirmado, sem escrever nada (PRB-C-18)", async () => {
+    queueConciliacaoValida();
+    queueParValido({ confirmado_em: "2026-08-01T00:00:00.000Z" });
+
+    const escritas = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      for (const metodo of ["insert", "update", "delete"]) {
+        const original = b[metodo].bind(b);
+        b[metodo] = (campos) => { escritas.push({ tabela, metodo }); return original(campos); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await rejeitarPar(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 409);
+    assert.deepEqual(escritas, []);
+  });
+
+  // PRB-C-16 (#327): a conciliação virava 'concluida' antes de marcar
+  // conciliado=true; se a marcação falhava, não havia como tentar de novo.
+  for (const tabelaQueFalha of ["transacoes_extrato", "lancamentos_contabeis"]) {
+    it(`concluir: 500 sem mudar o status quando falha a marcação em ${tabelaQueFalha} (PRB-C-16)`, async () => {
+      queueConciliacaoValida();
+      queue("pares_conciliacao", "await", {
+        data: [{ transacao_id: "t1", lancamento_id: "l1", confianca: "automatico", confirmado_em: null }],
+        error: null,
+      });
+      queue(tabelaQueFalha, "await", { data: null, error: { message: "falha" } });
+
+      let statusGravado = null;
+      const originalFromLocal = supabase.from;
+      supabase.from = function (tabela) {
+        const b = originalFromLocal(tabela);
+        if (tabela === "conciliacoes") {
+          const updateOriginal = b.update.bind(b);
+          b.update = (campos) => { statusGravado = campos.status; return updateOriginal(campos); };
+        }
+        return b;
+      };
+
+      const res = criarResposta();
+      await concluirConciliacao(reqBase(), res);
+      supabase.from = originalFromLocal;
+
+      assert.equal(res.statusCode, 500);
+      assert.equal(statusGravado, null, "a conciliação tem que continuar em_andamento para o retry");
+    });
+  }
+});
+
+// Banco em memória com estado, só para os casos de concorrência: cada consulta
+// cede a vez (setImmediate) como uma ida ao banco de verdade, então dois pedidos
+// em Promise.all intercalam leitura e escrita. Filtros de update (.eq/.is/.in)
+// valem de verdade: um UPDATE condicional (ex.: .is("confirmado_em", null))
+// só atinge as linhas que ainda casam. Não cobre supabase.rpc — se a correção do
+// #690 for uma função no banco, estes casos migram para o teste com banco real (TEST-9).
+function bancoEmMemoria(tabelas) {
+  return function from(tabela) {
+    const linhas = tabelas[tabela] ?? (tabelas[tabela] = []);
+    let operacao = "select";
+    let payload = null;
+    let devolverLinhas = false;
+    const filtros = [];
+    const casa = (linha) => filtros.every((filtro) => filtro(linha));
+
+    async function executar() {
+      await new Promise((resolve) => setImmediate(resolve));
+      if (operacao === "select") {
+        return { data: linhas.filter(casa).map((l) => ({ ...l })), error: null };
+      }
+      if (operacao === "update") {
+        const alvo = linhas.filter(casa);
+        alvo.forEach((linha) => Object.assign(linha, payload));
+        return { data: devolverLinhas ? alvo.map((l) => ({ ...l })) : null, error: null, count: alvo.length };
+      }
+      if (operacao === "insert") {
+        const novas = [].concat(payload).map((l, i) => ({ id: `novo-${linhas.length + i}`, confirmado_em: null, ...l }));
+        linhas.push(...novas);
+        return { data: devolverLinhas ? novas.map((l) => ({ ...l })) : null, error: null };
+      }
+      const restantes = linhas.filter((l) => !casa(l));
+      linhas.splice(0, linhas.length, ...restantes);
+      return { data: null, error: null };
+    }
+
+    const umaLinha = async () => {
+      const r = await executar();
+      return { ...r, data: Array.isArray(r.data) ? r.data[0] ?? null : r.data };
+    };
+
+    const b = {
+      select() { if (operacao !== "select") devolverLinhas = true; return b; },
+      insert(p) { operacao = "insert"; payload = p; return b; },
+      update(p) { operacao = "update"; payload = p; return b; },
+      delete() { operacao = "delete"; return b; },
+      eq(coluna, valor) { filtros.push((l) => l[coluna] === valor); return b; },
+      is(coluna, valor) { filtros.push((l) => (l[coluna] ?? null) === valor); return b; },
+      in(coluna, valores) { filtros.push((l) => valores.includes(l[coluna])); return b; },
+      maybeSingle: umaLinha,
+      single: umaLinha,
+      then(resolve, reject) { return executar().then(resolve, reject); },
+    };
+    return b;
+  };
+}
+
+describe("Pares em paralelo (#690)", () => {
+  const PAR_2 = "cccccccc-cccc-cccc-cccc-ccccccccccc2";
+  const PAR_3 = "cccccccc-cccc-cccc-cccc-ccccccccccc3";
+  let tabelas;
+  let originalFromLocal;
+
+  beforeEach(() => {
+    tabelas = {
+      conciliacoes: [{
+        id: CONCILIACAO_ID, cliente_id: CLIENTE_A, extrato_id: null, mes: 7, ano: 2026,
+        status: "em_andamento", total_transacoes: 3, total_conciliadas: 0, total_pendentes: 3,
+      }],
+      pares_conciliacao: [PAR_ID, PAR_2, PAR_3].map((id, i) => ({
+        id, conciliacao_id: CONCILIACAO_ID, transacao_id: `t${i}`, lancamento_id: `l${i}`,
+        confianca: "provavel", confirmado_por: null, confirmado_em: null,
+      })),
+    };
+    originalFromLocal = supabase.from;
+    supabase.from = bancoEmMemoria(tabelas);
+  });
+
+  const restaurar = () => { supabase.from = originalFromLocal; };
+  const chamar = async (acao, pareId = PAR_ID) => {
+    const res = criarResposta();
+    await acao(reqBase({ params: { id: CONCILIACAO_ID, pareId } }), res);
+    return res.statusCode;
+  };
+  const conciliacao = () => tabelas.conciliacoes[0];
+  const paresDoLancamento = (lancamentoId) =>
+    tabelas.pares_conciliacao.filter((p) => p.lancamento_id === lancamentoId);
+
+  // Prova que o banco em memória reproduz o comportamento sequencial que já
+  // funciona — senão os casos em skip abaixo não provariam nada.
+  it("sequencial: confirmar e depois rejeitar o mesmo par dá 200 e 409, totais 1/2", async () => {
+    try {
+      assert.equal(await chamar(confirmarPar), 200);
+      assert.equal(await chamar(rejeitarPar), 409);
+      assert.equal(conciliacao().total_conciliadas, 1);
+      assert.equal(conciliacao().total_pendentes, 2);
+      assert.equal(paresDoLancamento("l0").length, 1);
+    } finally {
+      restaurar();
+    }
+  });
+
+  // BUG (#690): leitura de confirmado_em e UPDATE sem guarda de estado — os
+  // dois pedidos leem "pendente" e os dois gravam.
+  it.skip("confirmar + rejeitar o mesmo par em paralelo: um 200 e um 409 (PRB-C-13, #690)", async () => {
+    try {
+      const status = await Promise.all([chamar(confirmarPar), chamar(rejeitarPar)]);
+      assert.deepEqual(status.sort(), [200, 409]);
+      const par = tabelas.pares_conciliacao.find((p) => p.id === PAR_ID);
+      const confirmado = par.confianca === "provavel" && par.confirmado_em !== null;
+      const rejeitado = par.confianca === "sem_par" && par.lancamento_id === null;
+      assert.ok(confirmado !== rejeitado, "o par termina num único estado");
+    } finally {
+      restaurar();
+    }
+  });
+
+  // BUG (#690)
+  it.skip("3× confirmar o mesmo par em paralelo: um 200 e dois 409, totais 1/2 (PRB-C-13, #690)", async () => {
+    try {
+      const status = await Promise.all([chamar(confirmarPar), chamar(confirmarPar), chamar(confirmarPar)]);
+      assert.deepEqual(status.sort(), [200, 409, 409]);
+      assert.equal(conciliacao().total_conciliadas, 1);
+      assert.equal(conciliacao().total_pendentes, 2);
+    } finally {
+      restaurar();
+    }
+  });
+
+  // BUG (#690): rejeitar em duas abas insere dois pares sem_par para o mesmo lançamento.
+  it.skip("rejeitar o mesmo par em duas abas: um 200, um 409 e um só par do lançamento (PRB-C-14, #690)", async () => {
+    try {
+      const status = await Promise.all([chamar(rejeitarPar), chamar(rejeitarPar)]);
+      assert.deepEqual(status.sort(), [200, 409]);
+      assert.equal(paresDoLancamento("l0").length, 1);
+    } finally {
+      restaurar();
+    }
+  });
+
+  // BUG (#690): os totais são lidos e depois gravados (+1/−1), sem operação
+  // atômica; confirmações paralelas de pares diferentes perdem incrementos.
+  it.skip("confirmar 3 pares diferentes em paralelo: totais 3/0 (PRB-C-15, #690)", async () => {
+    try {
+      const status = await Promise.all([PAR_ID, PAR_2, PAR_3].map((id) => chamar(confirmarPar, id)));
+      assert.deepEqual(status, [200, 200, 200]);
+      assert.equal(conciliacao().total_conciliadas, 3);
+      assert.equal(conciliacao().total_pendentes, 0);
+    } finally {
+      restaurar();
+    }
+  });
+});

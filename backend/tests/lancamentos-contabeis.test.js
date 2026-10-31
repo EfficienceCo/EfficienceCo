@@ -463,3 +463,40 @@ describe("DELETE /lancamentos-contabeis/:id", () => {
     assert.equal(res.statusCode, 500);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// ---------------------------------------------------------------------------
+
+describe("Lançamentos contábeis — problemas já achados", () => {
+  const TEXTO_LONGO = "x".repeat(10_000);
+
+  // BUG (#697): descrição e categoria sem limite de tamanho (10.000 caracteres → 201)
+  // e categoria sem validação de tipo.
+  for (const [nome, overrides, campo] of [
+    ["descrição com 10.000 caracteres", { descricao: TEXTO_LONGO }, "descricao"],
+    ["categoria com 10.000 caracteres", { categoria: TEXTO_LONGO }, "categoria"],
+    ["categoria não-texto", { categoria: 123 }, "categoria"],
+  ]) {
+    it.skip(`POST: 400 com mensagem do campo quando ${nome} (PRB-C-07, #697)`, async () => {
+      queue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+      const res = criarResposta();
+      await criarLancamentoContabil(reqAdmin(payloadValido(overrides)), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.ok(res.body.campos?.[campo], `esperava mensagem para ${campo}`);
+      assert.equal(ultimoPayload, null, "não deveria chegar ao insert");
+    });
+  }
+
+  // BUG (#697)
+  it.skip("PATCH: 400 quando a categoria tem 10.000 caracteres (PRB-C-07, #697)", async () => {
+    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+    const res = criarResposta();
+    await atualizarLancamentoContabil(reqAdmin({ categoria: TEXTO_LONGO }, { params: { id: LANCAMENTO_ID } }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.body.campos?.categoria);
+    assert.equal(ultimoPayload, null, "não deveria chegar ao update");
+  });
+});

@@ -417,3 +417,83 @@ describe("POST /conciliacoes", () => {
     assert.equal(res.body.sem_par, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// ---------------------------------------------------------------------------
+
+describe("POST /conciliacoes — problemas já achados", () => {
+  // PRB-C-20 (#326): ano=0 passava na validação e o filtro de período abria o
+  // histórico inteiro de lançamentos do cliente para o matching.
+  it("400 quando ano=0, sem consultar extrato nem lançamentos (PRB-C-20)", async () => {
+    const res = criarResposta();
+    await criarConciliacao(reqBase({ body: { extrato_id: EXTRATO_ID, mes: 7, ano: 0 } }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(chamadasEq.size, 0, "não deveria chegar ao banco");
+  });
+
+  // BUG (PRB-C-21, sem issue): o 409 de "já existe conciliação para o
+  // extrato" é uma leitura antes do insert. Dois cliques simultâneos passam os
+  // dois pela leitura; não há UNIQUE em conciliacoes.extrato_id (nenhuma
+  // migration cria) e o insert repetido, quando o banco recusar, cai no 500.
+  // Esperado: o banco recusa a segunda (unique_violation) e a API devolve 409.
+  // O critério real é "duplo clique nunca cria duas conciliações"; se a correção
+  // for por RPC ou lock, ajustar este caso ao desenho escolhido (TEST-9).
+  it.skip("409 quando o insert da conciliação colide por unique_violation (duplo clique, PRB-C-21)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("lancamentos_contabeis", "await", { data: [], error: null });
+    queue("conciliacoes", "single", {
+      data: null,
+      error: { code: "23505", message: "duplicate key value violates unique constraint" },
+    });
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+
+    assert.equal(res.statusCode, 409);
+  });
+
+  // BUG (#691): o matching só exclui lançamento com conciliado=true, que só é
+  // marcado ao CONCLUIR. Um lançamento casado numa conciliação em_andamento de
+  // outro extrato do mesmo período é casado de novo aqui. O mock presume a
+  // barreira no casamento; se a correção barrar na conclusão, ajustar ao desenho
+  // escolhido — o critério real é o teste com banco real (TEST-9).
+  it.skip("lançamento casado em conciliação em_andamento de outro extrato não é casado de novo (PRB-C-04, #691)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", {
+      data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: false }],
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: false }],
+      error: null,
+    });
+    // l1 já está num par automático de outra conciliação em_andamento
+    queue("pares_conciliacao", "await", {
+      data: [{ conciliacao_id: "outra-conciliacao", transacao_id: "t-outro-extrato", lancamento_id: "l1", confianca: "automatico" }],
+      error: null,
+    });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+
+    let paresInseridos = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "pares_conciliacao") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { paresInseridos = linhas; return insertOriginal(linhas); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.ok(
+      paresInseridos.every((p) => p.lancamento_id !== "l1" || p.confianca === "sem_par"),
+      "l1 não pode ser casado em duas conciliações",
+    );
+  });
+});
