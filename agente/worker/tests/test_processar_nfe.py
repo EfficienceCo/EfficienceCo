@@ -23,6 +23,7 @@ CNPJ_CLIENTE = "12345678000195"
 CNPJ_FORNECEDOR = "98765432000198"
 CHAVE_ENTRADA = "35260798765432000198550010000000011000000012"
 CHAVE_SAIDA = "35260712345678000195550010000000021000000020"
+CHAVE_EMITENTE_CPF = "35260700011144477735550010000000021000000024"
 _RE_CHAVE_ID = re.compile(r'Id="NFe(\d{44})"')
 
 
@@ -189,12 +190,13 @@ def _xml_nfe(
     tp_nf: str = "1",
     det: str | None = None,
     assinar: bool = True,
+    chave: str = CHAVE_SAIDA,
 ) -> str:
     bloco_det = det if det is not None else _det()
     return _envolver_nfe_autorizada(
         f"""<?xml version="1.0" encoding="UTF-8"?>
     <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
-      <infNFe Id="NFe{CHAVE_SAIDA}" versao="4.00">
+      <infNFe Id="NFe{chave}" versao="4.00">
         <ide><cUF>35</cUF><tpNF>{tp_nf}</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit>{emit}</emit>
         <dest>{dest}</dest>
@@ -302,7 +304,7 @@ def test_parsear_nfe_entrada_emit_cpf(tmp_path):
     """Compra de produtor rural: emit/CPF vira cnpj_emitente (11 dígitos) e entrada."""
     caminho = tmp_path / "produtor.xml"
     caminho.write_text(
-        _xml_nfe("<CPF>11144477735</CPF>", f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", "300.00"),
+        _xml_nfe("<CPF>11144477735</CPF>", f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", "300.00", chave=CHAVE_EMITENTE_CPF),
         encoding="utf-8",
     )
 
@@ -325,7 +327,7 @@ def test_parsear_nfe_entrada_emit_cpf(tmp_path):
 def test_parsear_nfe_emit_cpf_com_mascara(tmp_path):
     caminho = tmp_path / "produtor-mascara.xml"
     caminho.write_text(
-        _xml_nfe("<CPF>111.444.777-35</CPF>", f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>"),
+        _xml_nfe("<CPF>111.444.777-35</CPF>", f"<CNPJ>{CNPJ_CLIENTE}</CNPJ>", chave=CHAVE_EMITENTE_CPF),
         encoding="utf-8",
     )
 

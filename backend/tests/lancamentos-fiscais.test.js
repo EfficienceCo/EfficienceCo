@@ -396,6 +396,7 @@ describe("POST /lancamentos-fiscais", () => {
   it("201 quando a entrada tem emitente CPF (11 dígitos) em cnpj_emitente", async () => {
     const cpf = "11144477735";
     const corpo = payloadValido({
+      chave_nfe: "35260700011144477735550010000000021000000024",
       tipo: "entrada",
       cnpj_emitente: cpf,
       cnpj_destinatario: CNPJ_EMIT,

@@ -200,12 +200,12 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
 
 
 def _xml_entrada_emit_cpf(valor: str = "300.00") -> str:
-    chave = "35260700011144477735550010000000301000000055"
+    chave = "35260700011144477735550010000000021000000024"
     return assinar_xml_nfe(f"""<?xml version="1.0" encoding="UTF-8"?>
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
     <NFe>
       <infNFe Id="NFe{chave}" versao="4.00">
-        <ide><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <ide><cUF>35</cUF><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit><CPF>11144477735</CPF></emit>
         <dest><CNPJ>{CNPJ_CLIENTE}</CNPJ></dest>
         <det nItem="1"><prod><cProd>1</cProd><xProd>Item</xProd><NCM>19059090</NCM><CFOP>5102</CFOP><vProd>{valor}</vProd></prod></det>
