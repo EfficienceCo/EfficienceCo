@@ -45,6 +45,7 @@ supabase.from = function (tabela) {
       return builder;
     },
     gte() { return builder; },
+    in() { return builder; },
     lte() { return builder; },
     order() { return builder; },
     range() { return builder; },
@@ -352,6 +353,93 @@ describe("POST /conciliacoes", () => {
   it("500 quando falha a busca de transações do extrato", async () => {
     queueExtratoValido();
     queue("transacoes_extrato", "await", { data: null, error: { message: "falha" } });
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    assert.equal(res.statusCode, 500);
+  });
+
+  it("lançamento que já tem par numa conciliação em andamento de outro extrato fica fora do matching (#691)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", {
+      data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    // l1 já está casado na conciliação em andamento do outro extrato
+    queue("pares_conciliacao", "await", { data: [{ lancamento_id: "l1" }], error: null });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+
+    let paresInseridos = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "pares_conciliacao") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { paresInseridos = linhas; return insertOriginal(linhas); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.automaticos, 0);
+    assert.equal(res.body.lancamentos_em_outra_conciliacao, 1);
+    // t1 vira sem_par: l1 não pode ser casado de novo
+    assert.deepEqual(
+      paresInseridos.map((p) => [p.transacao_id, p.lancamento_id, p.confianca]),
+      [["t1", null, "sem_par"]],
+    );
+  });
+
+  it("consulta os lançamentos em outras conciliações em lotes de até 100 ids (#691)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    const lancamentos = Array.from({ length: 250 }, (_, i) => ({
+      id: `l${i}`, tipo: "credito", valor: 10, data_lancamento: "2026-07-01",
+    }));
+    queue("lancamentos_contabeis", "await", { data: lancamentos, error: null });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("pares_conciliacao", "await", { data: [{ lancamento_id: "l150" }], error: null }); // 2º lote
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+
+    const tamanhosDosLotes = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "pares_conciliacao") {
+        const inOriginal = b.in.bind(b);
+        b.in = (coluna, valores) => {
+          if (coluna === "lancamento_id") tamanhosDosLotes.push(valores.length);
+          return inOriginal(coluna, valores);
+        };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(tamanhosDosLotes, [100, 100, 50]);
+    assert.equal(res.body.lancamentos_em_outra_conciliacao, 1); // o do 2º lote também conta
+  });
+
+  it("500 quando falha a busca de lançamentos em outras conciliações", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    queue("pares_conciliacao", "await", { data: null, error: { message: "falha" } });
     const res = criarResposta();
     await criarConciliacao(reqBase(), res);
     assert.equal(res.statusCode, 500);

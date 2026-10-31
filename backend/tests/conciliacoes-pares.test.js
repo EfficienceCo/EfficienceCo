@@ -344,6 +344,81 @@ describe("PATCH /conciliacoes/:id/pares/:pareId/rejeitar", () => {
 // ---------------------------------------------------------------------------
 
 describe("POST /conciliacoes/:id/concluir", () => {
+  it("409 quando um lançamento já foi conciliado em outra conciliação concluída (#691)", async () => {
+    queueConciliacaoValida();
+    queue("pares_conciliacao", "await", {
+      data: [{ transacao_id: "t1", lancamento_id: "l1", confianca: "automatico", confirmado_em: null }],
+      error: null,
+    });
+    queue("pares_conciliacao", "await", {
+      data: [{ lancamento_id: "l1", conciliacoes: { mes: 7, ano: 2026 } }],
+      error: null,
+    });
+
+    const escritas = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      const updateOriginal = b.update.bind(b);
+      b.update = (campos) => { escritas.push(tabela); return updateOriginal(campos); };
+      return b;
+    };
+
+    const res = criarResposta();
+    await concluirConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 409);
+    assert.match(res.body.erro, /já foram conciliados em outra conciliação concluída \(07\/2026\)/);
+    assert.deepEqual(res.body.lancamento_ids, ["l1"]);
+    assert.deepEqual(escritas, []); // nada foi marcado como conciliado nem concluído
+  });
+
+  it("confere os lançamentos já conciliados em lotes de até 100 ids (#691)", async () => {
+    queueConciliacaoValida();
+    queue("pares_conciliacao", "await", {
+      data: Array.from({ length: 150 }, (_, i) => ({
+        transacao_id: `t${i}`, lancamento_id: `l${i}`, confianca: "automatico", confirmado_em: null,
+      })),
+      error: null,
+    });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+
+    const tamanhosDosLotes = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "pares_conciliacao") {
+        const inOriginal = b.in.bind(b);
+        b.in = (coluna, valores) => {
+          if (coluna === "lancamento_id") tamanhosDosLotes.push(valores.length);
+          return inOriginal(coluna, valores);
+        };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await concluirConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(tamanhosDosLotes, [100, 50]);
+  });
+
+  it("500 quando falha a conferência de lançamentos já conciliados", async () => {
+    queueConciliacaoValida();
+    queue("pares_conciliacao", "await", {
+      data: [{ transacao_id: "t1", lancamento_id: "l1", confianca: "automatico", confirmado_em: null }],
+      error: null,
+    });
+    queue("pares_conciliacao", "await", { data: null, error: { message: "falha" } });
+    const res = criarResposta();
+    await concluirConciliacao(reqBase(), res);
+    assert.equal(res.statusCode, 500);
+  });
+
   it("200: conclui a conciliação e marca transações/lançamentos como conciliados", async () => {
     queueConciliacaoValida();
     queue("pares_conciliacao", "await", {
