@@ -396,3 +396,61 @@ describe("gerarRelatorioConciliacaoPDF — problemas já achados", () => {
     assert.match(cabecalho.texto, /Bradesco/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TEST-8 (#685): bordas de moeda e de totais do relatório. O dataset completo do
+// QA-C (10 / 5 / 5 / 4 / R$ 4.489,55) está em conciliacao-dataset-qac.test.js.
+// ---------------------------------------------------------------------------
+
+describe("relatório — bordas de moeda e totais (TEST-8)", () => {
+  it("formatarMoeda: centavos, milhar e milhão no padrão pt-BR (R$ 4.489,55 do QA-C 2026-10-12)", () => {
+    assert.equal(formatarMoeda(4489.55), "R$ 4.489,55"); // total do PDF conferido à mão no QA-C 10-12
+    assert.equal(formatarMoeda(0.01), "R$ 0,01");
+    assert.equal(formatarMoeda(1000), "R$ 1.000,00"); // QA-C 09-20 #9: PDF mostrava 1000 sem R$ nem milhar
+    assert.equal(formatarMoeda(1234567.8), "R$ 1.234.567,80");
+    assert.equal(formatarMoeda(0), "R$ 0,00");
+  });
+
+  it("soma em centavos inteiros: 1,15 + 4,35 + 8,20 = 13,70 (em float cru dá 13.699999999999998)", () => {
+    // Conta feita à mão: 1,15 + 4,35 = 5,50; + 8,20 = 13,70. 1.15*100, 4.35*100 e 8.2*100 não são
+    // inteiros em ponto flutuante, então somar sem arredondar cada parcela erra o último dígito.
+    const valores = { a: 1.15, b: 4.35, c: 8.2 };
+    const pares = Object.keys(valores).map((id) => (
+      { transacao_id: id, lancamento_id: null, confianca: "automatico", confirmado_em: null }));
+    const transacoes = Object.fromEntries(Object.entries(valores).map(
+      ([id, valor]) => [id, { id, valor, data_lancamento: "2024-06-01" }]));
+    const { totais } = montarConteudoRelatorio(pares, transacoes, {});
+    assert.equal(totais.valorTotalConciliado, 13.7);
+  });
+
+  it("par provável SEM confirmação não conta como conciliado (vai para 'sem par' do relatório)", () => {
+    // Regra do serviço (parConciliado): automático ou provável confirmado. Um provável pendente
+    // no PDF é pendência de transação, não conciliada.
+    const { totais, matches } = montarConteudoRelatorio(
+      [{ transacao_id: "a", lancamento_id: "x", confianca: "provavel", confirmado_em: null }],
+      { a: { id: "a", valor: 10, data_lancamento: "2024-06-18", descricao: "A" } },
+      { x: { id: "x", valor: 10, data_lancamento: "2024-06-16", descricao: "X" } },
+    );
+    assert.equal(matches.length, 0);
+    assert.equal(totais.totalConciliadas, 0);
+    assert.equal(totais.valorTotalConciliado, 0);
+  });
+
+  it("o total de transações é derivado dos pares, e não de total_pendentes gravado na sessão", () => {
+    // PRB-C-30 (#559): sessões antigas gravaram 'pendentes' somando transações e lançamentos.
+    // Aqui são 1 conciliada + 1 transação pendente + 2 lançamentos sem par = 2 transações.
+    const { totais } = montarConteudoRelatorio(
+      [
+        { transacao_id: "a", lancamento_id: "x", confianca: "automatico", confirmado_em: null },
+        { transacao_id: "b", lancamento_id: null, confianca: "sem_par", confirmado_em: null },
+        { transacao_id: null, lancamento_id: "y", confianca: "sem_par", confirmado_em: null },
+        { transacao_id: null, lancamento_id: "z", confianca: "sem_par", confirmado_em: null },
+      ],
+      { a: { id: "a", valor: 1, data_lancamento: "2024-06-01" }, b: { id: "b", valor: 2, data_lancamento: "2024-06-02" } },
+      { x: { id: "x", valor: 1 }, y: { id: "y", valor: 3, data_lancamento: "2024-06-03" }, z: { id: "z", valor: 4, data_lancamento: "2024-06-04" } },
+    );
+    assert.equal(totais.totalTransacoes, 2);
+    assert.equal(totais.totalTransacoesPendentes, 1);
+    assert.equal(totais.totalLancamentosSemPar, 2);
+  });
+});

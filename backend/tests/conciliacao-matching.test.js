@@ -223,3 +223,195 @@ describe("executarMatching — dataset misto de 20+ transações", () => {
     assert.equal(pares.filter((p) => p.confianca === "sem_par").length, 7);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TEST-8 (#685): bordas do matching, uma por vez, cada uma com a origem do número.
+// Regras de onde saem os limites: ficha da Conciliação (automacoes/) e background
+// da task TEST-8 — tolerância de valor de R$ 0,01 e janela de 3 dias (compensação
+// D+1 a D+3) são prática de escritório (a ficha marca "confirmar com contador");
+// mesmo tipo (crédito/débito); cada lado entra em no máximo um par.
+// Conferência à mão do QA-C 2026-10-12 (problemas/conciliacao-qa-c-2026-10-12):
+// "tolerância R$ 0,01, janela 3 dias, tipo oposto, Δ4 dias, duplicata" corretos.
+// ---------------------------------------------------------------------------
+
+describe("executarMatching — bordas (TEST-8)", () => {
+  const confiancaDoPar = (pares, transacaoId) =>
+    pares.find((p) => p.transacao_id === transacaoId).confianca;
+
+  describe("tolerância de valor (R$ 0,01 — prática de escritório)", () => {
+    it("R$ 0,01 de diferença casa, com o lançamento maior ou menor que a transação", () => {
+      // 100,00 × 100,01 e 100,01 × 100,00: a direção da subtração não pode importar.
+      assert.equal(confiancaDoPar(executarMatching(
+        [t("t1", "credito", 100.0, "2024-06-10")], [l("l1", "credito", 100.01, "2024-06-10")]), "t1"), "automatico");
+      assert.equal(confiancaDoPar(executarMatching(
+        [t("t1", "credito", 100.01, "2024-06-10")], [l("l1", "credito", 100.0, "2024-06-10")]), "t1"), "automatico");
+    });
+
+    it("R$ 0,02 de diferença não casa, nem no Pass 2 (data dentro da janela)", () => {
+      const pares = executarMatching(
+        [t("t1", "credito", 100.0, "2024-06-10")],
+        [l("l1", "credito", 100.02, "2024-06-11")],
+      );
+      assert.equal(pares.length, 2);
+      assert.ok(pares.every((p) => p.confianca === "sem_par"));
+    });
+
+    it("ponto flutuante: 106,00 × 106,01 (QA-C AUTO3 × T3) casa nas duas direções", () => {
+      // Origem: QA-C 2026-10-12, AUTO3 lançamento 106,01 × T3 extrato 106,00 = automático.
+      // Em float, 106.01 - 106.00 = 0.010000000000047748 e passaria de 0.01 sem o arredondamento.
+      assert.ok(Math.abs(106.01 - 106.0) > 0.01, "premissa: a subtração crua estoura a tolerância");
+      assert.equal(confiancaDoPar(executarMatching(
+        [t("t1", "debito", 106.0, "2024-06-12")], [l("l1", "debito", 106.01, "2024-06-12")]), "t1"), "automatico");
+      assert.equal(confiancaDoPar(executarMatching(
+        [t("t1", "debito", 106.01, "2024-06-12")], [l("l1", "debito", 106.0, "2024-06-12")]), "t1"), "automatico");
+    });
+
+    it("valor vindo como string do banco (NUMERIC) é comparado como número", () => {
+      const pares = executarMatching(
+        [t("t1", "debito", "250.50", "2024-06-12")],
+        [l("l1", "debito", "250.51", "2024-06-12")],
+      );
+      assert.equal(pares[0].confianca, "automatico");
+    });
+  });
+
+  describe("janela de datas (3 dias — compensação D+1 a D+3)", () => {
+    it("3 dias casa como provável, com o lançamento antes ou depois da transação", () => {
+      assert.equal(confiancaDoPar(executarMatching(
+        [t("t1", "debito", 42.9, "2024-06-17")], [l("l1", "debito", 42.9, "2024-06-20")]), "t1"), "provavel");
+      assert.equal(confiancaDoPar(executarMatching(
+        [t("t1", "debito", 42.9, "2024-06-20")], [l("l1", "debito", 42.9, "2024-06-17")]), "t1"), "provavel");
+    });
+
+    it("4 dias não casa, com o lançamento antes ou depois (QA-C SEMPAR-4DIAS × T7)", () => {
+      // Origem: QA-C 2026-10-12, T7 −300,00 em 05/06 × SEMPAR-4DIAS 300,00 em 01/06 = sem par.
+      for (const [dataT, dataL] of [["2024-06-05", "2024-06-01"], ["2024-06-01", "2024-06-05"]]) {
+        const pares = executarMatching(
+          [t("t7", "debito", 300, dataT)], [l("l1", "debito", 300, dataL)]);
+        assert.equal(pares.length, 2);
+        assert.ok(pares.every((p) => p.confianca === "sem_par"));
+      }
+    });
+
+    it("a janela atravessa a virada de mês e de ano (31/12 × 02/01 = 2 dias)", () => {
+      const pares = executarMatching(
+        [t("t1", "credito", 10, "2023-12-31")], [l("l1", "credito", 10, "2024-01-02")]);
+      assert.equal(pares[0].confianca, "provavel");
+    });
+
+    it("ano bissexto: 28/02 × 02/03 de 2024 são 3 dias (casa); 28/02 × 03/03 são 4 (não casa)", () => {
+      assert.equal(executarMatching(
+        [t("t1", "credito", 10, "2024-02-28")], [l("l1", "credito", 10, "2024-03-02")])[0].confianca, "provavel");
+      assert.equal(executarMatching(
+        [t("t1", "credito", 10, "2024-02-28")], [l("l1", "credito", 10, "2024-03-03")]).length, 2);
+    });
+  });
+
+  describe("tipo (crédito/débito)", () => {
+    it("tipo oposto não casa nem como provável (QA-C SEMPAR-TIPO × T8)", () => {
+      // Origem: QA-C 2026-10-12, T8 −75,00 em 15/06 × SEMPAR-TIPO crédito 75,00 em 15/06 = sem par.
+      const pares = executarMatching(
+        [t("t8", "debito", 75, "2024-06-15")], [l("l1", "credito", 75, "2024-06-16")]);
+      assert.equal(pares.length, 2);
+      assert.ok(pares.every((p) => p.confianca === "sem_par"));
+    });
+  });
+
+  describe("duplicata e uso único", () => {
+    it("duas transações iguais e um só lançamento: um par, e a outra transação fica sem par (QA-C T1 × T10)", () => {
+      // Origem: QA-C 2026-10-12, T10 é duplicata de T1 (−1000,00 em 05/06); só existe AUTO1.
+      // Qual das duas casa é a pergunta em aberto abaixo: aqui só vale o invariante.
+      const pares = executarMatching(
+        [t("T1", "debito", 1000, "2024-06-05"), t("T10", "debito", 1000, "2024-06-05")],
+        [l("AUTO1", "debito", 1000, "2024-06-05")],
+      );
+      assert.equal(pares.length, 2);
+      assert.equal(pares.filter((p) => p.confianca === "automatico").length, 1);
+      const casada = pares.find((p) => p.confianca === "automatico");
+      assert.equal(casada.lancamento_id, "AUTO1");
+      const sobra = pares.find((p) => p.confianca === "sem_par");
+      assert.equal(sobra.lancamento_id, null);
+      assert.ok(["T1", "T10"].includes(sobra.transacao_id));
+      assert.notEqual(sobra.transacao_id, casada.transacao_id);
+    });
+
+    it("um lançamento e duas transações iguais em dias diferentes: o lançamento casa uma só vez", () => {
+      const pares = executarMatching(
+        [t("t1", "credito", 10, "2024-06-10"), t("t2", "credito", 10, "2024-06-11")],
+        [l("l1", "credito", 10, "2024-06-10")],
+      );
+      assert.equal(pares.filter((p) => p.lancamento_id === "l1").length, 1);
+      assert.equal(pares.length, 2);
+    });
+
+    it("dois lançamentos e duas transações idênticos: cada um entra em no máximo um par e são 2 pares", () => {
+      const pares = executarMatching(
+        [t("t1", "debito", 80, "2024-06-10"), t("t2", "debito", 80, "2024-06-10")],
+        [l("l1", "debito", 80, "2024-06-10"), l("l2", "debito", 80, "2024-06-10")],
+      );
+      assert.equal(pares.length, 2);
+      assert.ok(pares.every((p) => p.confianca === "automatico"));
+      assert.equal(new Set(pares.map((p) => p.transacao_id)).size, 2);
+      assert.equal(new Set(pares.map((p) => p.lancamento_id)).size, 2);
+    });
+
+    // Pergunta em aberto da TEST-8 (decisão do João pendente): com itens idênticos, qual
+    // transação casa com qual lançamento é arbitrário (sem regra por FITID). É aceito ou bug?
+    // Enquanto não decidir, nenhum teste afirma um lado.
+    it.todo("dois lançamentos e duas transações idênticos: definir qual casa com qual (pergunta em aberto, PRB-C-34)");
+  });
+
+  describe("desempate: menor diferença de dias, depois de valor", () => {
+    it("entre dois lançamentos válidos, casa o de menor diferença de dias mesmo que o valor esteja mais longe", () => {
+      // l-perto: Δ1 dia e R$ 0,01 de diferença; l-longe: Δ3 dias e R$ 0,00. Dias manda.
+      const pares = executarMatching(
+        [t("t1", "credito", 100.0, "2024-06-10")],
+        [l("l-longe", "credito", 100.0, "2024-06-13"), l("l-perto", "credito", 100.01, "2024-06-11")],
+      );
+      const casado = pares.find((p) => p.transacao_id === "t1");
+      assert.equal(casado.lancamento_id, "l-perto");
+      assert.equal(casado.confianca, "provavel");
+    });
+
+    it("com os mesmos dias de diferença, casa o de menor diferença de valor", () => {
+      // Mesma data (Pass 1): l-exato (R$ 0,00) vence l-1c (R$ 0,01), seja qual for a ordem de entrada.
+      for (const lancamentos of [
+        [l("l-1c", "credito", 100.01, "2024-06-10"), l("l-exato", "credito", 100.0, "2024-06-10")],
+        [l("l-exato", "credito", 100.0, "2024-06-10"), l("l-1c", "credito", 100.01, "2024-06-10")],
+      ]) {
+        const pares = executarMatching([t("t1", "credito", 100.0, "2024-06-10")], lancamentos);
+        assert.equal(pares.find((p) => p.transacao_id === "t1").lancamento_id, "l-exato");
+      }
+    });
+
+    it("com os mesmos dias (Δ2, um antes e um depois), casa o de menor diferença de valor", () => {
+      const pares = executarMatching(
+        [t("t1", "debito", 50.0, "2024-06-10")],
+        [l("l-depois", "debito", 50.01, "2024-06-12"), l("l-antes", "debito", 50.0, "2024-06-08")],
+      );
+      assert.equal(pares.find((p) => p.transacao_id === "t1").lancamento_id, "l-antes");
+    });
+
+    it("o lançamento que sobra sem par é o mais distante", () => {
+      const pares = executarMatching(
+        [t("t1", "credito", 100, "2024-06-10")],
+        [l("l-perto", "credito", 100, "2024-06-11"), l("l-longe", "credito", 100, "2024-06-13")],
+      );
+      const sobra = pares.find((p) => p.confianca === "sem_par");
+      assert.equal(sobra.lancamento_id, "l-longe");
+    });
+  });
+
+  describe("entradas vazias", () => {
+    it("sem transações e sem lançamentos não gera par", () => {
+      assert.deepEqual(executarMatching([], []), []);
+    });
+
+    it("só transações: todas viram sem par com lançamento nulo; só lançamentos: o inverso", () => {
+      assert.deepEqual(executarMatching([t("t1", "credito", 1, "2024-06-01")], []),
+        [{ transacao_id: "t1", lancamento_id: null, confianca: "sem_par" }]);
+      assert.deepEqual(executarMatching([], [l("l1", "credito", 1, "2024-06-01")]),
+        [{ transacao_id: null, lancamento_id: "l1", confianca: "sem_par" }]);
+    });
+  });
+});
