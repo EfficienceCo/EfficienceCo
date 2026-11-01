@@ -1,0 +1,5 @@
+# Preservar os bytes assinados/hashes entre Windows e Linux.
+# CRLF faz parte dos XMLs assinados; permitir CR no fim da linha sem converter bytes.
+*.xml -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+*.pdf binary
+manifesto.json text eol=lf
