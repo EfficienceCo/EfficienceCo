@@ -1,5 +1,5 @@
 import { dataIsoValida } from "./data.util.js";
-import { cnpjValido, cpfValido } from "./comum.util.js";
+import { chaveNfeDvValido, cnpjValido, cpfValido, documentoNaChaveNfe } from "./comum.util.js";
 import { ncmExiste } from "./ncm.util.js";
 
 // Faixa de negócio do valor fiscal: no máximo 12 dígitos inteiros e 2 casas
@@ -119,8 +119,31 @@ export function validarArquivoXml(valor) {
 }
 
 function validarChaveNfe(valor) {
-  if (typeof valor === "string" && /^\d{44}$/.test(valor)) return null;
-  return "chave_nfe deve ter exatamente 44 dígitos";
+  if (typeof valor !== "string" || !/^\d{44}$/.test(valor)) {
+    return "chave_nfe deve ter exatamente 44 dígitos";
+  }
+  if (!chaveNfeDvValido(valor)) {
+    return "chave_nfe com dígito verificador inválido";
+  }
+  return null;
+}
+
+function consistenciaChaveEmitente(chave, emitente) {
+  const slot = documentoNaChaveNfe(emitente);
+  if (!slot) return null;
+  if (chave.slice(6, 20) !== slot) {
+    return "chave_nfe inconsistente com o emitente";
+  }
+  return null;
+}
+
+function consistenciaChaveData(chave, dataIso) {
+  if (typeof dataIso !== "string" || dataIso.length < 7) return null;
+  const aamm = dataIso.slice(2, 4) + dataIso.slice(5, 7);
+  if (chave.slice(2, 6) !== aamm) {
+    return "chave_nfe inconsistente com a data de emissão";
+  }
+  return null;
 }
 
 function validarDocumentoEmitente(valor) {
@@ -283,6 +306,15 @@ export function validarLancamentoFiscal(body, hojeISO) {
   const arquivo = validarArquivoXml(body.arquivo_xml);
   if (arquivo.erro) erros.arquivo_xml = arquivo.erro;
   else dados.arquivo_xml = arquivo.valor;
+
+  if (!erros.chave_nfe && !erros.cnpj_emitente) {
+    const erroEmitenteNaChave = consistenciaChaveEmitente(dados.chave_nfe, dados.cnpj_emitente);
+    if (erroEmitenteNaChave) erros.chave_nfe = erroEmitenteNaChave;
+  }
+  if (!erros.chave_nfe && !erros.data_emissao) {
+    const erroDataNaChave = consistenciaChaveData(dados.chave_nfe, dados.data_emissao);
+    if (erroDataNaChave) erros.chave_nfe = erroDataNaChave;
+  }
 
   const tpNf = validarTpNf(body.tp_nf);
   if (tpNf.erro) erros.tp_nf = tpNf.erro;
