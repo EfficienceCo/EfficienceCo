@@ -146,17 +146,6 @@ def _somente_digitos(v: str) -> str:
     return "".join(c for c in v if c in _ASCII_DIGITS)
 
 
-def _digitos(valor: str | None, campo: str) -> str:
-    if not valor:
-        raise ValueError(f"campo obrigatório ausente: {campo}")
-    so = _somente_digitos(valor)
-    if len(so) != 14:
-        raise ValueError(f"{campo} inválido (esperado 14 dígitos): {valor!r}")
-    if not _cnpj_valido(so):
-        raise ValueError(f"{campo} inválido (dígito verificador): {valor!r}")
-    return so
-
-
 def _cnpj_valido(cnpj: str) -> bool:
     """Mesma regra de cnpjValido em backend/src/utils/comum.util.js."""
     if len(cnpj) != 14 or not cnpj.isascii() or not cnpj.isdigit() or cnpj == cnpj[0] * 14:
@@ -187,6 +176,49 @@ def _cpf_valido(cpf: str) -> bool:
     return digito(9) == int(cpf[9]) and digito(10) == int(cpf[10])
 
 
+def _dv_chave_nfe(base43: str) -> int:
+    """Módulo 11 da chave NF-e. Mesma regra de chaveNfeDvValido no backend."""
+    pesos = (2, 3, 4, 5, 6, 7, 8, 9)
+    soma = 0
+    for i, d in enumerate(reversed(base43)):
+        soma += int(d) * pesos[i % 8]
+    resto = soma % 11
+    return 0 if resto < 2 else 11 - resto
+
+
+def _chave_nfe_dv_valida(chave: str) -> bool:
+    """Mesma regra de chaveNfeDvValido em backend/src/utils/comum.util.js."""
+    if len(chave) != 44 or _somente_digitos(chave) != chave:
+        return False
+    return int(chave[43]) == _dv_chave_nfe(chave[:43])
+
+
+def _documento_na_chave(doc: str) -> str:
+    """Slot 7–20 da chave SEFAZ: CNPJ ou CPF com zfill(14). NFE-5 / NFE-7."""
+    if len(doc) == 11:
+        return doc.zfill(14)
+    return doc
+
+
+def _validar_consistencia_chave(
+    chave: str, inf: ET.Element, cnpj_emit: str, data_emissao: date
+) -> None:
+    """Confere UF, AAMM e documento do emitente contra a chave. Sem ecoar a chave."""
+    cuf_bruto = _text(inf, "nfe:ide/nfe:cUF")
+    if cuf_bruto is None or not str(cuf_bruto).strip():
+        raise ValueError("campo obrigatório ausente: ide/cUF")
+    cuf = _somente_digitos(cuf_bruto)
+    if len(cuf) != 2:
+        raise ValueError("ide/cUF inválido (esperado 2 dígitos)")
+    if chave[0:2] != cuf:
+        raise ValueError("chave de acesso inconsistente com a UF do emitente")
+    aamm = f"{data_emissao.year % 100:02d}{data_emissao.month:02d}"
+    if chave[2:6] != aamm:
+        raise ValueError("chave de acesso inconsistente com a data de emissão")
+    if chave[6:20] != _documento_na_chave(cnpj_emit):
+        raise ValueError("chave de acesso inconsistente com o emitente")
+
+
 def _documento_destinatario(inf: ET.Element) -> str:
     """CNPJ (14) ou CPF (11) do destinatário.
 
@@ -212,6 +244,34 @@ def _documento_destinatario(inf: ET.Element) -> str:
     if cpf_bruto is not None:
         raise ValueError(f"dest/CPF inválido (esperado 11 dígitos): {cpf_bruto!r}")
     raise ValueError("campo obrigatório ausente: dest/CNPJ ou dest/CPF")
+
+
+def _documento_emitente(inf: ET.Element) -> str:
+    """CNPJ (14) ou CPF (11) do emitente.
+
+    Produtor rural pessoa física emite NF-e com CPF. O CPF entra em
+    cnpj_emitente: a coluna é VARCHAR(14), então 11 dígitos cabem sem
+    padar. Só dígitos, no mesmo formato do destinatário (#566 / #659).
+    Mensagens sem o número — a chave/CPF não vai para log (NFE-1 / LGPD).
+    """
+    cnpj_bruto = _text(inf, "nfe:emit/nfe:CNPJ")
+    cpf_bruto = _text(inf, "nfe:emit/nfe:CPF")
+    cnpj = _somente_digitos(cnpj_bruto) if cnpj_bruto else ""
+    cpf = _somente_digitos(cpf_bruto) if cpf_bruto else ""
+
+    if len(cnpj) == 14:
+        if not _cnpj_valido(cnpj):
+            raise ValueError("emit/CNPJ inválido (dígito verificador)")
+        return cnpj
+    if len(cpf) == 11:
+        if not _cpf_valido(cpf):
+            raise ValueError("emit/CPF inválido (dígito verificador)")
+        return cpf
+    if cnpj_bruto:
+        raise ValueError("emit/CNPJ inválido (esperado 14 dígitos)")
+    if cpf_bruto is not None:
+        raise ValueError("emit/CPF inválido (esperado 11 dígitos)")
+    raise ValueError("campo obrigatório ausente: emit/CNPJ ou emit/CPF")
 
 
 def _dec(texto: str | None, campo: str, obrigatorio: bool = True) -> Decimal:
@@ -293,11 +353,15 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
     id_attr = inf.get("Id") or ""
     chave = id_attr[3:] if id_attr.startswith("NFe") else id_attr
     if len(chave) != 44 or _somente_digitos(chave) != chave:
-        raise ValueError(f"chave_nfe inválida no atributo Id: {id_attr!r}")
+        raise ValueError("chave de acesso inválida no atributo Id")
+    if not _chave_nfe_dv_valida(chave):
+        raise ValueError("chave de acesso com dígito verificador inválido")
     _validar_chave_protocolo(inf_prot, chave)
 
-    cnpj_emit = _digitos(_text(inf, "nfe:emit/nfe:CNPJ"), "emit/CNPJ")
+    cnpj_emit = _documento_emitente(inf)
     cnpj_dest = _documento_destinatario(inf)
+    data_emissao = _data_emissao(inf)
+    _validar_consistencia_chave(chave, inf, cnpj_emit, data_emissao)
     dados = {
         "chave_nfe": chave,
         "cnpj_emitente": cnpj_emit,
@@ -307,7 +371,7 @@ def _parsear_nfe_root(root: ET.Element, caminho_xml: str) -> dict:
         "pis": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vPIS"), "total/ICMSTot/vPIS"),
         "cofins": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vCOFINS"), "total/ICMSTot/vCOFINS"),
         "ipi": _dec(_text(inf, "nfe:total/nfe:ICMSTot/nfe:vIPI"), "total/ICMSTot/vIPI", obrigatorio=False),
-        "data_emissao": _data_emissao(inf),
+        "data_emissao": data_emissao,
         "cstat": cstat,
         "tp_nf": _tp_nf(inf),
         "itens": _itens_nfe(inf),
@@ -343,6 +407,8 @@ def _parsear_evento_cancelamento_root(root: ET.Element) -> dict | None:
     chave = _somente_digitos(_text(inf_evento, "nfe:chNFe") or "")
     if len(chave) != 44:
         raise ValueError("chNFe inválida no evento de cancelamento")
+    if not _chave_nfe_dv_valida(chave):
+        raise ValueError("chNFe com dígito verificador inválido no evento de cancelamento")
 
     return {
         "chave_nfe": chave,
@@ -382,10 +448,7 @@ def identificar_tipo_operacao(
         return "entrada"
     if emit == cli:
         return "saida"
-    raise ValueError(
-        f"CNPJ do cliente ({cli}) não é emitente nem destinatário "
-        f"(emit={emit}, dest={dest})"
-    )
+    raise ValueError("documento do cliente não é emitente nem destinatário")
 
 
 def resolver_empresas_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> list[dict]:
@@ -436,10 +499,7 @@ def resolver_empresas_nfe(cnpj_emitente: str, cnpj_destinatario: str) -> list[di
             )
 
     if not empresas:
-        raise ValueError(
-            f"nenhuma empresa cadastrada é emitente nem destinatário "
-            f"(emit={emit}, dest={dest})"
-        )
+        raise ValueError("nenhuma empresa cadastrada é emitente nem destinatário")
     return empresas
 
 

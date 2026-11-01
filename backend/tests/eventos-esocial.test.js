@@ -178,8 +178,22 @@ describe("criarRascunho", () => {
     assert.equal(res.statusCode, 201);
   });
 
+  it("404 quando o funcionarioId é de outro escritório (nada é gravado)", async () => {
+    // funcionarios:maybeSingle sem fila → null, como o filtro por cliente_id devolve para id alheio
+
+    const req = {
+      usuario: usuarioCliente,
+      body: { tipoEvento: "S-2299", funcionarioId: FUNC_ID, dadosFormulario: {} },
+    };
+    const res = criarResposta();
+    await criarRascunho(req, res);
+
+    assert.equal(res.statusCode, 404);
+  });
+
   it("422 EVENTO_NAO_SUPORTADO para um código catalogado sem gerador (S-2230)", async () => {
     queue("clientes", "maybeSingle", { data: { esocial_configurado: true }, error: null });
+    queue("funcionarios", "maybeSingle", { data: { id: FUNC_ID }, error: null });
 
     const req = {
       usuario: usuarioCliente,

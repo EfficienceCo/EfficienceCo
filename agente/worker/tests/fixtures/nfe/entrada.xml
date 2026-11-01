@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
   <NFe>
-    <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+    <infNFe Id="NFe35260798765432000198550010000000011000000012" versao="4.00">
       <ide>
+        <cUF>35</cUF>
         <tpNF>1</tpNF>
         <dhEmi>2026-07-15T14:30:00-03:00</dhEmi>
       </ide>
@@ -34,7 +35,7 @@
   </NFe>
   <protNFe>
     <infProt>
-      <chNFe>35260712345678000190550010000000011000000011</chNFe>
+      <chNFe>35260798765432000198550010000000011000000012</chNFe>
       <cStat>100</cStat>
     </infProt>
   </protNFe>
