@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { nomeBanco } from "../utils/banco-conta.util.js";
 
 // Mesmo formato da UI (Intl pt-BR/BRL): "R$ 6.562,01". O Intl separa "R$" do número
 // com NBSP; troca por espaço comum para o texto extraído do PDF bater com a tela.
@@ -222,7 +223,7 @@ export function gerarRelatorioConciliacaoPDF({ cliente, banco, conta, mes, ano, 
     y += 24;
 
     doc.font("Helvetica").fontSize(9)
-      .text(`Banco: ${banco || "-"}   Conta: ${conta || "-"}   Período: ${String(mes).padStart(2, "0")}/${ano}`, x0 + 6, y);
+      .text(`Banco: ${nomeBanco(banco) || "-"}   Conta: ${conta || "-"}   Período: ${String(mes).padStart(2, "0")}/${ano}`, x0 + 6, y);
     y += 20;
     doc.lineWidth(0.5).moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 

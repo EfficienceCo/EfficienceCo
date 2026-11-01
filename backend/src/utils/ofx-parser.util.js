@@ -3,6 +3,7 @@
 // Extração por regex em vez de lib externa: mais tolerante a essas variações
 // e evita depender de um parser XML estrito que rejeitaria o arquivo.
 
+import { mascararConta } from "./banco-conta.util.js";
 import { dataIsoValida } from "./data.util.js";
 
 export class OfxParseError extends Error {}
@@ -119,7 +120,7 @@ export function parseOfx(conteudo) {
 
   return {
     banco: bankId,
-    conta: acctId ? acctId.slice(-4) : null,
+    conta: mascararConta(acctId),
     transacoes,
   };
 }

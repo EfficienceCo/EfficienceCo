@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mascararConta, nomeBanco } from "../src/utils/banco-conta.util.js";
 import { parseOfx, decodificarOfx, OfxParseError, inferirMesAno } from "../src/utils/ofx-parser.util.js";
 
 function ofx(corpo) {
@@ -228,6 +229,56 @@ describe("parseOfx", () => {
     assert.equal(transacoes[0].data_lancamento, "2024-02-29");
     assert.equal(transacoes[0].valor, 9999999999999.99);
     assert.equal(transacoes[0].tipo, "debito");
+  });
+
+  // PRB-C-35 / BUG-CONC-23 (#700). slice(-4) contava o hífen e "98765-4" virava "65-4".
+  it("conta mascarada mantém os 4 últimos dígitos (98765-4 → …7654) (PRB-C-35, #700)", () => {
+    const conteudo = ofx(`<BANKMSGSRSV1>
+<STMTTRNRS>
+<STMTRS>
+<CURDEF>BRL
+<BANKACCTFROM>
+<BANKID>0237
+<ACCTID>98765-4
+</BANKACCTFROM>
+<BANKTRANLIST>
+<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260705
+<TRNAMT>10.00
+<FITID>C1
+</STMTTRN>
+${RODAPE_PADRAO}`);
+
+    const { banco, conta } = parseOfx(conteudo);
+    assert.equal(banco, "0237");
+    assert.equal(conta, "7654");
+    assert.ok(conta.replace(/\D/g, "").endsWith("7654"), `conta: ${conta}`);
+  });
+});
+
+describe("mascararConta e nomeBanco", () => {
+  it("não descarta dígito quando a conta tem hífen ou menos de 4 dígitos", () => {
+    assert.equal(mascararConta("98765-4"), "7654");
+    assert.equal(mascararConta("12.345-6"), "3456");
+    assert.equal(mascararConta("1234567890"), "7890");
+    assert.equal(mascararConta("555"), "555");
+    assert.equal(mascararConta("12-3"), "123");
+    assert.equal(mascararConta("ABCD"), "ABCD");
+    assert.equal(mascararConta("  "), null);
+    assert.equal(mascararConta(null), null);
+  });
+
+  it("mostra o nome quando o código COMPE é conhecido e o código quando não é", () => {
+    assert.equal(nomeBanco("0237"), "Bradesco");
+    assert.equal(nomeBanco("237"), "Bradesco");
+    assert.equal(nomeBanco("0341"), "Itaú");
+    assert.equal(nomeBanco("999"), "999");
+    assert.equal(nomeBanco("0999"), "0999");
+    assert.equal(nomeBanco("1234"), "1234");
+    assert.equal(nomeBanco("Itaú"), "Itaú");
+    assert.equal(nomeBanco(""), "");
+    assert.equal(nomeBanco(null), "");
   });
 });
 
