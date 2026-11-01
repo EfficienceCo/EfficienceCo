@@ -1,6 +1,7 @@
 import supabase from "../config/database.js";
 import { PERFIS } from "../config/perfis.js";
 import { aplicarFiltroPeriodo, erroPeriodoConsulta } from "../utils/periodo.util.js";
+import { buscarTodasAsLinhas } from "../utils/paginacao.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
 import { dataIsoValida } from "../utils/data.util.js";
 import { camposFaltando } from "../utils/comum.util.js";
@@ -153,15 +154,19 @@ export async function listarLancamentosContabeis(req, res) {
     return res.status(400).json({ erro: erroPeriodo });
   }
 
-  let query = supabase
-    .from("lancamentos_contabeis")
-    .select("*")
-    .eq("cliente_id", clienteId)
-    .order("data_lancamento", { ascending: false });
-
-  query = aplicarFiltroPeriodo(query, "data_lancamento", mes, ano);
-
-  const { data, error } = await query;
+  const { data, error } = await buscarTodasAsLinhas(() =>
+    aplicarFiltroPeriodo(
+      supabase
+        .from("lancamentos_contabeis")
+        .select("*")
+        .eq("cliente_id", clienteId)
+        .order("data_lancamento", { ascending: false })
+        .order("id", { ascending: true }),
+      "data_lancamento",
+      mes,
+      ano,
+    ),
+  );
 
   if (error) {
     console.error("[lancamentos-contabeis.controller] Erro ao listar lançamentos:", error.message);

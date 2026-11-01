@@ -47,14 +47,23 @@ function valorInformado(valor) {
 // "" conta como ausente. Quem chama aplicarFiltroPeriodo na borda HTTP deve
 // recusar antes; o filtro em si continua tolerante para não derrubar queries
 // internas já validadas.
+// null = mês ausente. { numero } = mês válido. { erro } = valor presente fora de 1–12.
+// A lista de conciliações filtra a coluna mes direto e pode receber só o mês;
+// lançamentos usam o contrato completo de erroPeriodoConsulta (mês exige ano).
+export function lerMesConsulta(mes) {
+  if (!valorInformado(mes)) return null;
+  const numero = paraInteiroValido(mes, 1, 12);
+  if (numero === null) return { erro: "mes deve ser um inteiro entre 1 e 12" };
+  return { numero };
+}
+
 export function erroPeriodoConsulta(mes, ano) {
   const mesInformado = valorInformado(mes);
   const anoInformado = valorInformado(ano);
   if (!mesInformado && !anoInformado) return null;
 
-  if (mesInformado && paraInteiroValido(mes, 1, 12) === null) {
-    return "mes deve ser um inteiro entre 1 e 12";
-  }
+  const mesLido = lerMesConsulta(mes);
+  if (mesLido?.erro) return mesLido.erro;
   if (anoInformado && paraInteiroValido(ano, 1000, 9999) === null) {
     return "ano deve ser um inteiro entre 1000 e 9999";
   }

@@ -15,6 +15,7 @@ const USUARIO_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 
 const originalFrom = supabase.from;
 const filas = new Map();
+const filtrosEq = [];
 function chave(t, m) { return `${t}:${m}`; }
 function queue(tabela, metodo, resultado) {
   const k = chave(tabela, metodo);
@@ -34,7 +35,7 @@ supabase.from = function (tabela) {
     insert() { return builder; },
     update() { return builder; },
     delete() { return builder; },
-    eq() { return builder; },
+    eq(coluna, valor) { filtrosEq.push([coluna, valor]); return builder; },
     gte() { return builder; },
     lte() { return builder; },
     in() { return builder; },
@@ -54,7 +55,10 @@ after(() => {
   supabase.from = originalFrom;
 });
 
-beforeEach(() => filas.clear());
+beforeEach(() => {
+  filas.clear();
+  filtrosEq.length = 0;
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -152,6 +156,54 @@ describe("GET /conciliacoes", () => {
     const res = criarResposta();
     await listarConciliacoes(reqBase(), res);
     assert.equal(res.statusCode, 500);
+  });
+
+  for (const mes of ["0", "13", "abc"]) {
+    it(`400 quando mes=${mes} (PRB-C-09, #696)`, async () => {
+      const res = criarResposta();
+      await listarConciliacoes(reqBase({ query: { mes, ano: "2026" } }), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body.erro, /mes deve ser um inteiro entre 1 e 12/);
+      assert.equal(filtrosEq.length, 0);
+    });
+  }
+
+  for (const ano of ["0", "abc", "-1"]) {
+    it(`400 quando ano=${ano} (PRB-C-09, #696)`, async () => {
+      const res = criarResposta();
+      await listarConciliacoes(reqBase({ query: { ano } }), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body.erro, /ano deve ser um inteiro positivo/);
+      assert.equal(filtrosEq.length, 0);
+    });
+  }
+
+  it("200 quando mes e ano são válidos e aplica os dois filtros", async () => {
+    queue("conciliacoes", "await", {
+      data: [{ id: CONCILIACAO_ID, mes: 8, ano: 2026, extrato_id: null }],
+      error: null,
+    });
+
+    const res = criarResposta();
+    await listarConciliacoes(reqBase({ query: { mes: "8", ano: "2026" } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.length, 1);
+    assert.ok(filtrosEq.some(([coluna, valor]) => coluna === "mes" && valor === 8));
+    assert.ok(filtrosEq.some(([coluna, valor]) => coluna === "ano" && valor === 2026));
+  });
+
+  it("200 quando só o mês vem informado", async () => {
+    queue("conciliacoes", "await", { data: [], error: null });
+
+    const res = criarResposta();
+    await listarConciliacoes(reqBase({ query: { mes: "8" } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.ok(filtrosEq.some(([coluna, valor]) => coluna === "mes" && valor === 8));
+    assert.equal(filtrosEq.some(([coluna]) => coluna === "ano"), false);
   });
 
   it("500 quando falha a busca dos extratos", async () => {

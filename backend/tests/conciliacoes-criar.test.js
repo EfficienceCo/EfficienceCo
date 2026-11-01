@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { criarConciliacao } from "../src/controllers/conciliacoes.controller.js";
+import { TAMANHO_PAGINA_POSTGREST } from "../src/utils/paginacao.util.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -415,5 +416,26 @@ describe("POST /conciliacoes", () => {
     assert.equal(res.body.automaticos, 0);
     assert.equal(res.body.provaveis, 0);
     assert.equal(res.body.sem_par, 0);
+  });
+
+  it("matching enxerga lançamento além do teto de 1000 do PostgREST (PRB-C-09, #696)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("lancamentos_contabeis", "await", {
+      data: Array.from({ length: TAMANHO_PAGINA_POSTGREST }, (_, i) => ({ id: `l${i}` })),
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l-alem-do-teto" }],
+      error: null,
+    });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.sem_par, TAMANHO_PAGINA_POSTGREST + 1);
   });
 });
