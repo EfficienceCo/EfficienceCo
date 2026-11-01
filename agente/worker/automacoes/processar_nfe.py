@@ -424,6 +424,22 @@ def _parsear_evento_cancelamento_root(root: ET.Element) -> dict | None:
     if chave_retorno is not None and chave_retorno.strip() != chave:
         raise ValueError("retorno de cancelamento refere outra NF-e")
 
+    # R19/R21 são opcionais; quando declarados, devem identificar o mesmo evento.
+    tipo_retorno = _find(inf_retorno, "nfe:tpEvento")
+    if tipo_retorno is not None and (tipo_retorno.text or "").strip() != tipo_evento:
+        raise ValueError("retorno de cancelamento refere outro tipo de evento")
+
+    sequencia_retorno = _find(inf_retorno, "nfe:nSeqEvento")
+    if sequencia_retorno is not None:
+        try:
+            mesma_sequencia = int(sequencia_retorno.text or "") == int(
+                _text(inf_evento, "nfe:nSeqEvento") or ""
+            )
+        except ValueError:
+            mesma_sequencia = False
+        if not mesma_sequencia:
+            raise ValueError("retorno de cancelamento refere outra sequência de evento")
+
     return {
         "chave_nfe": chave,
         "motivo": (_text(inf_evento, "nfe:detEvento/nfe:xJust") or "").strip() or None,

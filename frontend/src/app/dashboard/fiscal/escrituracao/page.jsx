@@ -564,9 +564,9 @@ export default function FiscalPage() {
         // Entrada é crédito e saída é débito de imposto: nunca somados num card só.
         <section className="grid gap-4 lg:grid-cols-3">
           <CardResumo
-            titulo="Total de NFes processadas"
+            titulo="Total de NFes ativas"
             valor={resumo?.total_nfe ?? 0}
-            detalhe={`${resumo?.entradas?.quantidade ?? 0} entradas · ${resumo?.saidas?.quantidade ?? 0} saídas`}
+            detalhe={`${resumo?.entradas?.quantidade ?? 0} entradas · ${resumo?.saidas?.quantidade ?? 0} saídas · Canceladas fora dos totais`}
             isLoading={isLoadingResumo}
           />
           <CardResumo
