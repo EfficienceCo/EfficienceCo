@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { gerarRelatorioConciliacao } from "../src/controllers/conciliacoes.controller.js";
-import { formatarMoeda, montarConteudoRelatorio } from "../src/services/conciliacao-relatorio.service.js";
+import PDFDocument from "pdfkit";
+import {
+  formatarMoeda,
+  montarConteudoRelatorio,
+  gerarRelatorioConciliacaoPDF,
+} from "../src/services/conciliacao-relatorio.service.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -321,5 +326,96 @@ describe("montarConteudoRelatorio", () => {
       {},
     );
     assert.deepEqual(semPar.map((i) => i.descricao), ["Débito 05", "Sem data"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Posição das linhas da tabela (#699): descrição longa quebra em mais linhas e a
+// linha seguinte não pode ser desenhada por cima da continuação.
+// ---------------------------------------------------------------------------
+
+describe("gerarRelatorioConciliacaoPDF: linhas de altura variável (#699)", () => {
+  const TOTAIS = {
+    totalTransacoes: 0, totalConciliadas: 0, totalTransacoesPendentes: 0,
+    totalLancamentosSemPar: 0, valorTotalConciliado: 0,
+  };
+  const LARGURA_UTIL = 595.28 - 100; // A4 com margem 50
+  const LARGURA_TEXTO_BANCO = LARGURA_UTIL * 0.34 - 6;
+
+  // Registra cada texto desenhado (texto, y, página) sem alterar o PDF gerado.
+  function gerarEspiando(matches) {
+    const desenhos = [];
+    let pagina = 0;
+    const textOriginal = PDFDocument.prototype.text;
+    const addPageOriginal = PDFDocument.prototype.addPage;
+    PDFDocument.prototype.text = function (texto, x, y, opcoes) {
+      if (typeof y === "number") desenhos.push({ texto: String(texto), y, pagina });
+      return textOriginal.call(this, texto, x, y, opcoes);
+    };
+    PDFDocument.prototype.addPage = function (...args) {
+      pagina += 1;
+      return addPageOriginal.apply(this, args);
+    };
+    return gerarRelatorioConciliacaoPDF({
+      cliente: "Cliente", banco: "0341", conta: "7890", mes: 8, ano: 2026, geradoEm: new Date(),
+      totais: TOTAIS, matches, semPar: [],
+    }).finally(() => {
+      PDFDocument.prototype.text = textOriginal;
+      PDFDocument.prototype.addPage = addPageOriginal;
+    }).then(() => desenhos);
+  }
+
+  function match(i, descricaoBanco) {
+    return { data: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`, descricaoBanco, descricaoLancamento: "Lançamento", valor: 10 };
+  }
+
+  // Altura que o texto ocupa na coluna "descrição banco", medida pelo próprio pdfkit.
+  function alturaMedida(texto) {
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    doc.font("Helvetica").fontSize(8);
+    return doc.heightOfString(texto, { width: LARGURA_TEXTO_BANCO });
+  }
+
+  for (const tamanho of [60, 200]) {
+    it(`descrição de ${tamanho} caracteres não sobrepõe a linha seguinte`, async () => {
+      const longa = ("RECEBIMENTO PIX " .repeat(20)).slice(0, tamanho);
+      const desenhos = await gerarEspiando([match(0, longa), match(1, "CURTA")]);
+
+      const yLonga = desenhos.find((d) => d.texto === longa).y;
+      const yProxima = desenhos.find((d) => d.texto === "CURTA").y;
+
+      assert.ok(alturaMedida(longa) > alturaMedida("CURTA"), "a descrição precisa quebrar em mais de uma linha");
+      // a linha seguinte começa depois de todo o texto da anterior
+      assert.ok(yProxima >= yLonga + alturaMedida(longa), `próxima linha em ${yProxima}, texto vai até ${yLonga + alturaMedida(longa)}`);
+    });
+  }
+
+  it("linha de uma linha só mantém a altura de antes (14 pt)", async () => {
+    const desenhos = await gerarEspiando([match(0, "CURTA A"), match(1, "CURTA B")]);
+    const y = (t) => desenhos.find((d) => d.texto === t).y;
+    assert.equal(y("CURTA B") - y("CURTA A"), 14);
+  });
+
+  it("paginação: nenhuma linha passa do limite inferior com alturas variáveis", async () => {
+    const longa = "DESCRICAO MUITO LONGA DE BANCO ".repeat(8).trim(); // ~250 caracteres
+    const matches = Array.from({ length: 60 }, (_, i) => match(i, i % 3 === 0 ? longa : `CURTA ${i}`));
+    const desenhos = await gerarEspiando(matches);
+
+    const limiteInferior = 841.89 - 50;
+    const linhas = desenhos.filter((d) => d.texto === longa || /^CURTA \d+$/.test(d.texto));
+    assert.equal(linhas.length, 60);
+    assert.ok(Math.max(...linhas.map((l) => l.pagina)) >= 1, "o relatório precisa passar de uma página");
+    for (const l of linhas) {
+      assert.ok(l.y + alturaMedida(l.texto) <= limiteInferior, `linha "${l.texto.slice(0, 20)}" termina em ${l.y + alturaMedida(l.texto)}`);
+    }
+  });
+
+  it("descrição acima de 300 caracteres é cortada com reticências e ainda cabe na página", async () => {
+    const gigante = "X".repeat(1000);
+    const desenhos = await gerarEspiando([match(0, gigante), match(1, "DEPOIS")]);
+    const cortada = desenhos.find((d) => d.texto.startsWith("XXX") && d.texto.endsWith("…"));
+    assert.ok(cortada, "texto cortado com reticências");
+    assert.equal(cortada.texto.length, 300);
+    assert.ok(desenhos.some((d) => d.texto === "DEPOIS"));
   });
 });

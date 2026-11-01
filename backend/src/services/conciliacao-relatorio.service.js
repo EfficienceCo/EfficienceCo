@@ -70,11 +70,36 @@ function desenharHeaderTabela(doc, x, y, colunas) {
   });
 }
 
+const ALTURA_LINHA_MINIMA = 14;
+// shortcut: descrição acima disso é cortada com "…", para a linha caber numa página; o MEMO do
+// OFX raramente passa de 60 caracteres. Subir o limite se algum banco mandar texto maior.
+const MAX_CARACTERES_CELULA = 300;
+
+function textoDaCelula(linha, coluna) {
+  const texto = String(linha[coluna.chave] ?? "");
+  return texto.length > MAX_CARACTERES_CELULA ? `${texto.slice(0, MAX_CARACTERES_CELULA - 1)}…` : texto;
+}
+
+// O texto que não cabe na largura da coluna quebra em mais linhas: a altura da linha é a da
+// célula mais alta, senão a linha seguinte é desenhada por cima da continuação.
+function alturaDaLinha(doc, colunas, linha) {
+  doc.font("Helvetica").fontSize(8);
+  const alturaTexto = Math.max(
+    ...colunas.map((coluna) =>
+      doc.heightOfString(textoDaCelula(linha, coluna), {
+        width: coluna.largura - 6,
+        align: coluna.alinhamento || "left",
+      }),
+    ),
+  );
+  return Math.max(ALTURA_LINHA_MINIMA, alturaTexto + 4);
+}
+
 function desenharLinhaTabela(doc, x, y, colunas, linha) {
   let cursorX = x;
   colunas.forEach((coluna) => {
     doc.font("Helvetica").fontSize(8).fillColor("black")
-      .text(linha[coluna.chave] ?? "", cursorX + 3, y + 3, { width: coluna.largura - 6, align: coluna.alinhamento || "left" });
+      .text(textoDaCelula(linha, coluna), cursorX + 3, y + 3, { width: coluna.largura - 6, align: coluna.alinhamento || "left" });
     cursorX += coluna.largura;
   });
 }
@@ -97,13 +122,13 @@ function desenharTabela(doc, { x0, larguraUtil, limiteInferior }, y, titulo, col
   y += 16;
 
   const alturaHeader = 16;
-  const alturaLinha = 14;
 
   let yTopo = y;
   desenharHeaderTabela(doc, x0, y, colunas);
   y += alturaHeader;
 
   linhas.forEach((linha) => {
+    const alturaLinha = alturaDaLinha(doc, colunas, linha);
     if (y + alturaLinha > limiteInferior) {
       fecharSegmentoTabela(doc, x0, yTopo, y, colunas);
       doc.addPage();
