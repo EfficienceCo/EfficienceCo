@@ -328,6 +328,55 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(inseriuTransacoes, false);
   });
 
+  it("422 e não grava transações quando o MEMO do OFX passa do teto", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+
+    let inseriuTransacoes = false;
+    let statusAtualizado = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const builder = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const insertOriginal = builder.insert.bind(builder);
+        builder.insert = (linhas) => {
+          inseriuTransacoes = true;
+          return insertOriginal(linhas);
+        };
+      }
+      if (tabela === "extratos_bancarios") {
+        const updateOriginal = builder.update.bind(builder);
+        builder.update = (campos) => {
+          if (campos.status) statusAtualizado = campos.status;
+          return updateOriginal(campos);
+        };
+      }
+      return builder;
+    };
+    queue("extratos_bancarios", "await", { data: null, error: null });
+
+    const arquivo = ofxValido({
+      transacoes: [
+        { fitid: "OK", dtposted: "20240201", trnamt: "10.00", memo: "OK", trntype: "CREDIT" },
+        { fitid: "LONGO", dtposted: "20240202", trnamt: "20.00", memo: "x".repeat(5_000), trntype: "CREDIT" },
+      ],
+    });
+    const res = criarResposta();
+    await criarConciliacaoExtrato(
+      reqUpload({ file: { originalname: "extrato.ofx", buffer: Buffer.from(arquivo) } }),
+      res,
+    );
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "Arquivo OFX inválido ou malformado");
+    assert.match(res.body.detalhe, /MEMO/);
+    assert.match(res.body.detalhe, /5000/);
+    assert.match(res.body.detalhe, /FITID LONGO/);
+    assert.match(res.body.detalhe, /transação #2/);
+    assert.equal(statusAtualizado, "erro");
+    assert.equal(inseriuTransacoes, false);
+  });
+
   it("400 quando nenhum arquivo é enviado", async () => {
     const res = criarResposta();
     await criarConciliacaoExtrato(reqUpload({ file: undefined }), res);
