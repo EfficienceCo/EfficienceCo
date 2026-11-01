@@ -4,6 +4,7 @@ import { aplicarFiltroPeriodo, erroPeriodoConsulta } from "../utils/periodo.util
 import { ehUuid } from "../utils/uuid.util.js";
 import { dataIsoValida } from "../utils/data.util.js";
 import { camposFaltando } from "../utils/comum.util.js";
+import { CATEGORIA_MAXIMO, DESCRICAO_MAXIMO } from "../utils/texto-conciliacao.util.js";
 
 const TIPOS_VALIDOS = new Set(["credito", "debito"]);
 
@@ -54,13 +55,34 @@ function validarDescricao(descricao) {
   if (typeof descricao !== "string" || descricao.trim() === "") {
     return { erro: "descricao não pode ser vazia" };
   }
-  return { valor: descricao.trim() };
+  const valor = descricao.trim();
+  if (valor.length > DESCRICAO_MAXIMO) {
+    return { erro: `descricao deve ter no máximo ${DESCRICAO_MAXIMO} caracteres` };
+  }
+  return { valor };
+}
+
+// Opcional. null, ausência e texto vazio viram null. Outro tipo (número,
+// objeto) e texto acima do teto são 400: antes o POST gravava categoria ?? null
+// sem olhar o tipo, e o PATCH atribuía o valor cru.
+function validarCategoria(categoria) {
+  if (categoria === null) return { valor: null };
+  if (typeof categoria !== "string") {
+    return { erro: "categoria deve ser um texto" };
+  }
+  const valor = categoria.trim();
+  if (valor === "") return { valor: null };
+  if (valor.length > CATEGORIA_MAXIMO) {
+    return { erro: `categoria deve ter no máximo ${CATEGORIA_MAXIMO} caracteres` };
+  }
+  return { valor };
 }
 
 const VALIDADORES = {
   data_lancamento: validarDataLancamento,
   valor: validarValor,
   descricao: validarDescricao,
+  categoria: validarCategoria,
 };
 
 // Valida só os campos presentes em body (PATCH é parcial; no POST os
@@ -99,7 +121,7 @@ export async function criarLancamentoContabil(req, res) {
     return res.status(400).json({ erro: "Campos obrigatórios faltando", faltando });
   }
 
-  const { cliente_id, tipo, categoria } = req.body;
+  const { cliente_id, tipo } = req.body;
 
   if (!TIPOS_VALIDOS.has(tipo)) {
     return res.status(400).json({ erro: "tipo deve ser 'credito' ou 'debito'" });
@@ -124,7 +146,7 @@ export async function criarLancamentoContabil(req, res) {
       valor,
       tipo,
       descricao,
-      categoria: categoria ?? null,
+      categoria: valores.categoria ?? null,
     })
     .select()
     .single();
@@ -194,7 +216,7 @@ export async function atualizarLancamentoContabil(req, res) {
     return res.status(409).json({ erro: "Lançamento já conciliado não pode ser alterado" });
   }
 
-  const { tipo, categoria } = req.body;
+  const { tipo } = req.body;
 
   if (tipo !== undefined && !TIPOS_VALIDOS.has(tipo)) {
     return res.status(400).json({ erro: "tipo deve ser 'credito' ou 'debito'" });
@@ -207,7 +229,6 @@ export async function atualizarLancamentoContabil(req, res) {
 
   const updates = { ...valores };
   if (tipo !== undefined) updates.tipo = tipo;
-  if (categoria !== undefined) updates.categoria = categoria;
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ erro: "Nenhum campo para atualizar" });

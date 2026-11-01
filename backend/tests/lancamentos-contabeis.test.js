@@ -8,6 +8,7 @@ import {
   atualizarLancamentoContabil,
   deletarLancamentoContabil,
 } from "../src/controllers/lancamentos-contabeis.controller.js";
+import { CATEGORIA_MAXIMO, DESCRICAO_MAXIMO } from "../src/utils/texto-conciliacao.util.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -461,5 +462,123 @@ describe("DELETE /lancamentos-contabeis/:id", () => {
     await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
 
     assert.equal(res.statusCode, 500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PRB-C-07 / BUG-CONC-20 (#697). Mesmos títulos do skip da TEST-7.
+// ---------------------------------------------------------------------------
+
+describe("Lançamentos contábeis — descrição e categoria com teto", () => {
+  const TEXTO_LONGO = "x".repeat(10_000);
+
+  for (const [nome, overrides, campo] of [
+    ["descrição com 10.000 caracteres", { descricao: TEXTO_LONGO }, "descricao"],
+    ["categoria com 10.000 caracteres", { categoria: TEXTO_LONGO }, "categoria"],
+    ["categoria não-texto", { categoria: 123 }, "categoria"],
+  ]) {
+    it(`POST: 400 com mensagem do campo quando ${nome} (PRB-C-07, #697)`, async () => {
+      queue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+      const res = criarResposta();
+      await criarLancamentoContabil(reqAdmin(payloadValido(overrides)), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.ok(res.body.campos?.[campo], `esperava mensagem para ${campo}`);
+      assert.ok(res.body.erro.includes(res.body.campos[campo]));
+      assert.equal(ultimoPayload, null, "não deveria chegar ao insert");
+    });
+  }
+
+  it("PATCH: 400 quando a categoria tem 10.000 caracteres (PRB-C-07, #697)", async () => {
+    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+    const res = criarResposta();
+    await atualizarLancamentoContabil(
+      reqAdmin({ categoria: TEXTO_LONGO }, { params: { id: LANCAMENTO_ID } }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.body.campos?.categoria);
+    assert.equal(ultimoPayload, null, "não deveria chegar ao update");
+  });
+
+  it("PATCH: 400 quando a descrição tem 10.000 caracteres e quando a categoria não é texto", async () => {
+    for (const body of [{ descricao: TEXTO_LONGO }, { categoria: { nome: "x" } }]) {
+      ultimoPayload = null;
+      queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+      const res = criarResposta();
+      await atualizarLancamentoContabil(reqAdmin(body, { params: { id: LANCAMENTO_ID } }), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.equal(ultimoPayload, null);
+    }
+  });
+
+  it("aceita descrição e categoria no teto e grava sem espaços nas pontas", async () => {
+    queue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+    const res = criarResposta();
+    await criarLancamentoContabil(
+      reqAdmin(payloadValido({
+        descricao: `  ${"a".repeat(DESCRICAO_MAXIMO)}  `,
+        categoria: `  ${"b".repeat(CATEGORIA_MAXIMO)}  `,
+      })),
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(ultimoPayload.descricao, "a".repeat(DESCRICAO_MAXIMO));
+    assert.equal(ultimoPayload.categoria, "b".repeat(CATEGORIA_MAXIMO));
+  });
+
+  it("400 quando descrição ou categoria passam uma unidade do teto", async () => {
+    for (const [overrides, campo] of [
+      [{ descricao: "a".repeat(DESCRICAO_MAXIMO + 1) }, "descricao"],
+      [{ categoria: "b".repeat(CATEGORIA_MAXIMO + 1) }, "categoria"],
+    ]) {
+      ultimoPayload = null;
+      const res = criarResposta();
+      await criarLancamentoContabil(reqAdmin(payloadValido(overrides)), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body.campos[campo], /máximo/);
+      assert.equal(ultimoPayload, null);
+    }
+  });
+
+  it("grava categoria vazia ou null como null", async () => {
+    for (const categoria of ["   ", null]) {
+      ultimoPayload = null;
+      queue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+      const res = criarResposta();
+      await criarLancamentoContabil(reqAdmin(payloadValido({ categoria })), res);
+
+      assert.equal(res.statusCode, 201);
+      assert.equal(ultimoPayload.categoria, null);
+    }
+  });
+
+  it("PATCH grava a categoria no teto e limpa categoria vazia", async () => {
+    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID }, error: null });
+    const res = criarResposta();
+    await atualizarLancamentoContabil(
+      reqAdmin({ categoria: `  ${"c".repeat(CATEGORIA_MAXIMO)}  ` }, { params: { id: LANCAMENTO_ID } }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(ultimoPayload, { categoria: "c".repeat(CATEGORIA_MAXIMO) });
+
+    ultimoPayload = null;
+    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID }, error: null });
+    const limpa = criarResposta();
+    await atualizarLancamentoContabil(
+      reqAdmin({ categoria: "" }, { params: { id: LANCAMENTO_ID } }),
+      limpa,
+    );
+
+    assert.equal(limpa.statusCode, 200);
+    assert.deepEqual(ultimoPayload, { categoria: null });
   });
 });

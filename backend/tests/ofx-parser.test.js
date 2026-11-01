@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { parseOfx, decodificarOfx, OfxParseError, inferirMesAno } from "../src/utils/ofx-parser.util.js";
+import { DESCRICAO_MAXIMO } from "../src/utils/texto-conciliacao.util.js";
 
 function ofx(corpo) {
   return `OFXHEADER:100
@@ -228,6 +229,49 @@ describe("parseOfx", () => {
     assert.equal(transacoes[0].data_lancamento, "2024-02-29");
     assert.equal(transacoes[0].valor, 9999999999999.99);
     assert.equal(transacoes[0].tipo, "debito");
+  });
+
+  // PRB-C-07 / BUG-CONC-20 (#697). MEMO vira a descrição da transação.
+  it("recusa MEMO de 5.000 caracteres e aponta a transação", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>10.00
+<FITID>OK
+<MEMO>OK
+</STMTTRN>
+<STMTTRN>
+<DTPOSTED>20240202
+<TRNAMT>20.00
+<FITID>LONGO
+<MEMO>${"x".repeat(5_000)}
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["MEMO", "5000", "transação #2", "FITID LONGO", String(DESCRICAO_MAXIMO)]);
+  });
+
+  it("aceita MEMO no teto e ignora NAME longo quando o MEMO cabe", () => {
+    const memo = "m".repeat(DESCRICAO_MAXIMO);
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>10.00
+<FITID>TETO
+<NAME>${"n".repeat(5_000)}
+<MEMO>${memo}
+</STMTTRN>`);
+
+    const { transacoes } = parseOfx(conteudo);
+    assert.equal(transacoes[0].descricao, memo);
+  });
+
+  it("recusa NAME acima do teto quando o MEMO está ausente", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>-10.00
+<FITID>NOME
+<NAME>${"n".repeat(DESCRICAO_MAXIMO + 1)}
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["NAME", "transação #1", "FITID NOME"]);
   });
 });
 
