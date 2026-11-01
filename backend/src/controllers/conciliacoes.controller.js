@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
-import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
+import { aplicarFiltroPeriodo, lerMesConsulta } from "../utils/periodo.util.js";
+import { buscarTodasAsLinhas } from "../utils/paginacao.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
 import { gerarRelatorioConciliacaoPDF, montarConteudoRelatorio } from "../services/conciliacao-relatorio.service.js";
@@ -15,6 +16,50 @@ const STATUS_EXTRATO = {
 };
 
 const CONSTRAINT_HASH_ARQUIVO = "uq_extratos_bancarios_cliente_arquivo_hash";
+const LIMITE_PADRAO_TRANSACOES = 20;
+const LIMITE_MAXIMO_TRANSACOES = 100;
+
+function valorDeQueryInformado(valor) {
+  return valor !== undefined && valor !== null && String(valor).trim() !== "";
+}
+
+// Ausente usa o padrão. Presente e inválido (negativo, zero no limit, texto)
+// responde 400: parseInt("-1") || 20 deixa o -1 passar e o .range fica negativo,
+// e o PostgREST responde 500.
+function lerPaginacaoTransacoes(query) {
+  let limit = LIMITE_PADRAO_TRANSACOES;
+  if (valorDeQueryInformado(query.limit)) {
+    const numero = Number(query.limit);
+    if (!Number.isSafeInteger(numero) || numero < 1) {
+      return { erro: "limit deve ser um inteiro maior que zero" };
+    }
+    limit = Math.min(numero, LIMITE_MAXIMO_TRANSACOES);
+  }
+
+  let offset = 0;
+  if (valorDeQueryInformado(query.offset)) {
+    const numero = Number(query.offset);
+    if (!Number.isSafeInteger(numero) || numero < 0) {
+      return { erro: "offset deve ser um inteiro maior ou igual a zero" };
+    }
+    offset = numero;
+  }
+
+  if (!Number.isSafeInteger(offset + limit - 1)) {
+    return { erro: "offset excede o máximo que a listagem aceita" };
+  }
+
+  return { limit, offset };
+}
+
+function lerAnoConsulta(ano) {
+  if (!valorDeQueryInformado(ano)) return null;
+  const numero = Number(ano);
+  if (!Number.isSafeInteger(numero) || numero <= 0) {
+    return { erro: "ano deve ser um inteiro positivo" };
+  }
+  return { numero };
+}
 
 function erroDeArquivoDuplicado(erro) {
   if (erro?.code !== "23505") {
@@ -162,6 +207,12 @@ export async function listarTransacoesExtrato(req, res) {
     return res.status(400).json({ erro: "cliente_id é obrigatório" });
   }
 
+  const paginacao = lerPaginacaoTransacoes(req.query);
+  if (paginacao.erro) {
+    return res.status(400).json({ erro: paginacao.erro });
+  }
+  const { limit, offset } = paginacao;
+
   const { id } = req.params;
 
   const { data: extrato, error: erroBusca } = await supabase
@@ -180,9 +231,6 @@ export async function listarTransacoesExtrato(req, res) {
     return res.status(404).json({ erro: "Extrato bancário não encontrado" });
   }
 
-  const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
-
   const { data, error, count } = await supabase
     .from("transacoes_extrato")
     .select("*", { count: "exact" })
@@ -191,6 +239,9 @@ export async function listarTransacoesExtrato(req, res) {
     .range(offset, offset + limit - 1);
 
   if (error) {
+    if (error.message === "Requested range not satisfiable") {
+      return res.status(200).json({ data: [], total: count ?? 0, limit, offset });
+    }
     console.error("[conciliacoes.controller] Erro ao listar transações:", error.message);
     return res.status(500).json({ erro: "Erro ao listar transações do extrato" });
   }
@@ -366,26 +417,32 @@ export async function criarConciliacao(req, res) {
 
   // Itens já conciliados (conciliado=true, marcados em concluirConciliacao)
   // ficam fora do matching — senão seriam casados de novo em outra conciliação.
-  const { data: transacoes, error: erroTransacoes } = await supabase
-    .from("transacoes_extrato")
-    .select("*")
-    .eq("extrato_id", extratoId)
-    .eq("conciliado", false);
+  const { data: transacoes, error: erroTransacoes } = await buscarTodasAsLinhas(() =>
+    supabase
+      .from("transacoes_extrato")
+      .select("*")
+      .eq("extrato_id", extratoId)
+      .eq("conciliado", false)
+      .order("id", { ascending: true }),
+  );
 
   if (erroTransacoes) {
     console.error("[conciliacoes.controller] Erro ao buscar transações do extrato:", erroTransacoes.message);
     return res.status(500).json({ erro: "Erro ao buscar transações do extrato" });
   }
 
-  const { data: lancamentos, error: erroLancamentos } = await aplicarFiltroPeriodo(
-    supabase
-      .from("lancamentos_contabeis")
-      .select("*")
-      .eq("cliente_id", clienteId)
-      .eq("conciliado", false),
-    "data_lancamento",
-    mes,
-    ano,
+  const { data: lancamentos, error: erroLancamentos } = await buscarTodasAsLinhas(() =>
+    aplicarFiltroPeriodo(
+      supabase
+        .from("lancamentos_contabeis")
+        .select("*")
+        .eq("cliente_id", clienteId)
+        .eq("conciliado", false)
+        .order("id", { ascending: true }),
+      "data_lancamento",
+      mes,
+      ano,
+    ),
   );
 
   if (erroLancamentos) {
@@ -454,18 +511,27 @@ export async function listarConciliacoes(req, res) {
     return res.status(400).json({ erro: "cliente_id é obrigatório" });
   }
 
-  let query = supabase
-    .from("conciliacoes")
-    .select("id, mes, ano, status, total_transacoes, total_conciliadas, total_pendentes, criado_em, extrato_id")
-    .eq("cliente_id", clienteId)
-    .order("criado_em", { ascending: false });
+  const mesLido = lerMesConsulta(req.query.mes);
+  if (mesLido?.erro) {
+    return res.status(400).json({ erro: mesLido.erro });
+  }
+  const anoLido = lerAnoConsulta(req.query.ano);
+  if (anoLido?.erro) {
+    return res.status(400).json({ erro: anoLido.erro });
+  }
 
-  const mes = Number(req.query.mes);
-  const ano = Number(req.query.ano);
-  if (Number.isInteger(mes) && mes >= 1 && mes <= 12) query = query.eq("mes", mes);
-  if (Number.isInteger(ano) && ano > 0) query = query.eq("ano", ano);
+  const { data: conciliacoes, error } = await buscarTodasAsLinhas(() => {
+    let query = supabase
+      .from("conciliacoes")
+      .select("id, mes, ano, status, total_transacoes, total_conciliadas, total_pendentes, criado_em, extrato_id")
+      .eq("cliente_id", clienteId)
+      .order("criado_em", { ascending: false })
+      .order("id", { ascending: true });
 
-  const { data: conciliacoes, error } = await query;
+    if (mesLido?.numero) query = query.eq("mes", mesLido.numero);
+    if (anoLido?.numero) query = query.eq("ano", anoLido.numero);
+    return query;
+  });
 
   if (error) {
     console.error("[conciliacoes.controller] Erro ao listar conciliações:", error.message);
