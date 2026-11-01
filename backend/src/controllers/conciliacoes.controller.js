@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
-import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
+import { parseOfx, decodificarOfx, periodosDoExtrato } from "../utils/ofx-parser.util.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
@@ -31,6 +31,8 @@ function periodoAtual() {
   return { mes: agora.getMonth() + 1, ano: agora.getFullYear() };
 }
 
+// criarConciliacao continua com ano > 0. O piso 2020 vale só no upload do OFX.
+// Unificar as duas réguas fica de fora desta issue.
 function periodoDoBody(body) {
   const mes = Number(body?.mes);
   const ano = Number(body?.ano);
@@ -40,7 +42,7 @@ function periodoDoBody(body) {
   return null;
 }
 
-// Piso decidido para o upload (BUG-CONC-16): ano anterior a 2020 é fora de faixa.
+// Piso do upload, decidido em 2026-10-30: ano anterior a 2020 é fora de faixa.
 // O teto é o mesmo de erroPeriodoConsulta — o DTPOSTED do OFX também tem 4 dígitos.
 const ANO_MINIMO_EXTRATO = 2020;
 const ANO_MAXIMO_EXTRATO = 9999;
@@ -90,6 +92,19 @@ function validarPeriodoExtrato(body) {
 
 function responderCamposInvalidos(res, campos) {
   return res.status(400).json({ erro: Object.values(campos).join("; "), campos });
+}
+
+function mensagemPeriodoRecusado(resumo) {
+  const periodo = `${resumo.mes}/${resumo.ano}`;
+  if (resumo.meses.length === 1) {
+    return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo})`;
+  }
+
+  const lista = resumo.meses.map((item) => `${item.mes}/${item.ano} (${item.quantidade})`).join(", ");
+  const criterio = resumo.empate
+    ? "o primeiro mês do arquivo entre os que empatam"
+    : "o mês com mais transações";
+  return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo}, ${criterio}; o arquivo cobre mais de um mês: ${lista})`;
 }
 
 export async function criarConciliacaoExtrato(req, res) {
@@ -152,7 +167,7 @@ export async function criarConciliacaoExtrato(req, res) {
     });
   }
 
-  const periodoArquivo = inferirMesAno(parsed.transacoes);
+  const periodoArquivo = periodosDoExtrato(parsed.transacoes);
   if (
     periodoInformado &&
     (periodoInformado.mes !== periodoArquivo.mes || periodoInformado.ano !== periodoArquivo.ano)
@@ -170,9 +185,8 @@ export async function criarConciliacaoExtrato(req, res) {
       return res.status(500).json({ erro: "Erro ao registrar recusa do período do extrato" });
     }
 
-    const periodo = `${periodoArquivo.mes}/${periodoArquivo.ano}`;
     return res.status(400).json({
-      erro: `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo})`,
+      erro: mensagemPeriodoRecusado(periodoArquivo),
       campos: {
         mes: "não corresponde às datas do extrato",
         ano: "não corresponde às datas do extrato",

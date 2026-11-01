@@ -124,25 +124,47 @@ export function parseOfx(conteudo) {
   };
 }
 
-// Infere mes/ano do extrato pela combinação mês+ano mais frequente entre as
-// transações, tolerando algumas transações "vazadas" de outro mês perto da virada.
-export function inferirMesAno(transacoes) {
+function contagemPorMes(transacoes) {
   const contagem = new Map();
   for (const t of transacoes) {
     const [ano, mes] = t.data_lancamento.split("-");
     const chave = `${ano}-${mes}`;
     contagem.set(chave, (contagem.get(chave) || 0) + 1);
   }
+  return contagem;
+}
 
-  let chaveMaisFrequente = null;
+// Mês da maioria, na ordem em que os meses aparecem no arquivo. Empate não
+// troca o primeiro: a comparação é estrita, então o segundo mês com a mesma
+// quantidade não substitui o que já chegou na contagem máxima.
+export function periodosDoExtrato(transacoes) {
+  const contagem = contagemPorMes(transacoes);
   let maiorContagem = -1;
-  for (const [chave, contagemAtual] of contagem) {
-    if (contagemAtual > maiorContagem) {
-      maiorContagem = contagemAtual;
-      chaveMaisFrequente = chave;
-    }
+  for (const quantidade of contagem.values()) {
+    if (quantidade > maiorContagem) maiorContagem = quantidade;
   }
 
-  const [ano, mes] = chaveMaisFrequente.split("-");
-  return { mes: Number(mes), ano: Number(ano) };
+  const meses = [];
+  let escolhido = null;
+  for (const [chave, quantidade] of contagem) {
+    const [ano, mes] = chave.split("-");
+    const item = { mes: Number(mes), ano: Number(ano), quantidade };
+    meses.push(item);
+    if (!escolhido && quantidade === maiorContagem) escolhido = item;
+  }
+
+  const empatados = meses.filter((item) => item.quantidade === maiorContagem).length;
+  return {
+    mes: escolhido.mes,
+    ano: escolhido.ano,
+    empate: empatados > 1,
+    meses,
+  };
+}
+
+// Infere mes/ano do extrato pela combinação mês+ano mais frequente entre as
+// transações, tolerando algumas transações "vazadas" de outro mês perto da virada.
+export function inferirMesAno(transacoes) {
+  const { mes, ano } = periodosDoExtrato(transacoes);
+  return { mes, ano };
 }

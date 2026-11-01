@@ -325,6 +325,8 @@ describe("POST /conciliacoes/extrato", () => {
       { body: { mes: "6", ano: "2019" }, campo: "ano", trecho: /2020 e 9999/ },
       { body: { mes: "13", ano: "1800" }, campo: "mes", trecho: /1 e 12/ },
       { body: { mes: "6" }, campo: "ano", trecho: /obrigatório/ },
+      { body: { mes: "0", ano: "2026" }, campo: "mes", trecho: /1 e 12/ },
+      { body: { mes: 0, ano: 2026 }, campo: "mes", trecho: /1 e 12/ },
     ];
 
     try {
@@ -399,6 +401,89 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(statusAtualizado, "erro");
     assert.equal(hashAtualizado, null);
     assert.equal(inseriuTransacoes, false);
+  });
+
+  it("400 nomeia os outros meses quando o arquivo cobre mais de um e março não é a maioria", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("extratos_bancarios", "await", { data: null, error: null });
+
+    const transacoes = [
+      ...Array.from({ length: 4 }, (_, i) => ({
+        fitid: `J${i}`, dtposted: "20260110", trnamt: "-10.00", memo: "JAN", trntype: "DEBIT",
+      })),
+      ...Array.from({ length: 3 }, (_, i) => ({
+        fitid: `F${i}`, dtposted: "20260210", trnamt: "-10.00", memo: "FEV", trntype: "DEBIT",
+      })),
+      ...Array.from({ length: 2 }, (_, i) => ({
+        fitid: `M${i}`, dtposted: "20260310", trnamt: "-10.00", memo: "MAR", trntype: "DEBIT",
+      })),
+    ];
+    const res = criarResposta();
+    await criarConciliacaoExtrato(
+      reqUpload({
+        body: { mes: "3", ano: "2026" },
+        file: { originalname: "trimestre.ofx", buffer: Buffer.from(ofxValido({ transacoes })) },
+      }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /1\/2026, o mês com mais transações/);
+    assert.match(res.body.erro, /o arquivo cobre mais de um mês: 1\/2026 \(4\), 2\/2026 \(3\), 3\/2026 \(2\)/);
+  });
+
+  it("em empate o período é o primeiro mês do arquivo e o outro é recusado dizendo isso", async () => {
+    const transacoes = [
+      { fitid: "J1", dtposted: "20260105", trnamt: "-10.00", memo: "JAN", trntype: "DEBIT" },
+      { fitid: "F1", dtposted: "20260205", trnamt: "-10.00", memo: "FEV", trntype: "DEBIT" },
+      { fitid: "J2", dtposted: "20260120", trnamt: "-10.00", memo: "JAN", trntype: "DEBIT" },
+      { fitid: "F2", dtposted: "20260220", trnamt: "-10.00", memo: "FEV", trntype: "DEBIT" },
+    ];
+    const arquivo = {
+      originalname: "empate.ofx",
+      buffer: Buffer.from(ofxValido({ transacoes })),
+    };
+
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("extratos_bancarios", "await", { data: null, error: null });
+    const aceito = criarResposta();
+    await criarConciliacaoExtrato(reqUpload({ body: { mes: "1", ano: "2026" }, file: arquivo }), aceito);
+    assert.equal(aceito.statusCode, 201);
+    assert.equal(aceito.body.mes, 1);
+
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("extratos_bancarios", "await", { data: null, error: null });
+    const recusado = criarResposta();
+    await criarConciliacaoExtrato(reqUpload({ body: { mes: "2", ano: "2026" }, file: arquivo }), recusado);
+    assert.equal(recusado.statusCode, 400);
+    assert.match(recusado.body.erro, /1\/2026, o primeiro mês do arquivo entre os que empatam/);
+    assert.match(recusado.body.erro, /o arquivo cobre mais de um mês: 1\/2026 \(2\), 2\/2026 \(2\)/);
+  });
+
+  it("aceita mes com espaço, zero à esquerda e decimal .0 quando o período bate", async () => {
+    const arquivo = {
+      originalname: "maio.ofx",
+      buffer: Buffer.from(
+        ofxValido({
+          transacoes: [
+            { fitid: "M1", dtposted: "20260505", trnamt: "-10.00", memo: "MAIO", trntype: "DEBIT" },
+          ],
+        }),
+      ),
+    };
+
+    for (const mes of [" 5", "05", "5.0"]) {
+      queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+      queue("transacoes_extrato", "await", { data: [], error: null });
+      queue("extratos_bancarios", "await", { data: null, error: null });
+
+      const res = criarResposta();
+      await criarConciliacaoExtrato(reqUpload({ body: { mes, ano: "2026" }, file: arquivo }), res);
+      assert.equal(res.statusCode, 201, JSON.stringify(mes));
+      assert.equal(res.body.mes, 5);
+      assert.equal(res.body.ano, 2026);
+    }
   });
 
   it("500 quando a recusa do período não consegue limpar o hash", async () => {
