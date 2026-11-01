@@ -6,8 +6,10 @@ não via env. Inbox: {PASTA_BASE}/NFe.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -598,16 +600,58 @@ def _caminho_xml_relativo(caminho_real: Path, pasta_base: Path) -> str:
             return caminho_real.name
 
 
+def _mesma_nfe(origem: Path, destino: Path) -> bool:
+    if not destino.is_file():
+        return False
+    if destino.read_bytes() == origem.read_bytes():
+        return True
+    try:
+        # Reutiliza o contrato de autorização/assinatura, sem exigir a mesma
+        # serialização ou codificação dos bytes de uma NF-e válida.
+        return parsear_nfe(str(destino)) == parsear_nfe(str(origem))
+    except ValueError:
+        return False
+
+
 def _copiar_xml(origem: Path, destino: Path) -> Path:
+    """Copia para o caminho já registrado, sem escolher outro nome nem sobrescrever."""
     validar_caminho(str(origem))
     validar_caminho(str(destino))
     destino.parent.mkdir(parents=True, exist_ok=True)
-    final = _caminho_livre(destino)
-    shutil.copy2(str(origem), str(final))
-    return final
+    temporario = None
+    try:
+        with origem.open("rb") as fonte, tempfile.NamedTemporaryFile(
+            dir=destino.parent, prefix=".nfe-", suffix=".tmp", delete=False
+        ) as arquivo:
+            temporario = Path(arquivo.name)
+            shutil.copyfileobj(fonte, arquivo)
+            arquivo.flush()
+            os.fsync(arquivo.fileno())
+        shutil.copystat(origem, temporario)
+        # No mesmo filesystem, publica só a cópia completa e falha se o nome
+        # já existir. Uma interrupção durante a escrita deixa apenas o .tmp.
+        if os.name == "nt":
+            os.rename(temporario, destino)  # Windows recusa destino existente.
+        else:
+            os.link(temporario, destino)  # rename POSIX poderia sobrescrever.
+    except FileExistsError:
+        # Uma cópia anterior pode ter terminado antes de outro destino falhar.
+        if not _mesma_nfe(origem, destino):
+            raise
+    finally:
+        if temporario is not None:
+            try:
+                temporario.unlink()
+            except OSError:
+                pass
+    return destino
 
 
-def _mover_xml(origem: Path, destino: Path) -> Path:
+def _mover_xml(origem: Path, destino: Path, *, exato: bool = False) -> Path:
+    if exato:
+        final = _copiar_xml(origem, destino)
+        origem.unlink()
+        return final
     validar_caminho(str(origem))
     validar_caminho(str(destino))
     destino.parent.mkdir(parents=True, exist_ok=True)
@@ -621,7 +665,7 @@ def _arquivar_nas_empresas(origem: Path, destinos: list[Path]) -> list[Path]:
     arquivados: list[Path] = []
     for destino in destinos[:-1]:
         arquivados.append(_copiar_xml(origem, destino))
-    arquivados.append(_mover_xml(origem, destinos[-1]))
+    arquivados.append(_mover_xml(origem, destinos[-1], exato=True))
     return arquivados
 
 
@@ -650,8 +694,8 @@ def _payload_lancamento(
     }
 
 
-def _postar_lancamento(payload: dict) -> str:
-    """POST na API. Retorna 'criado' | 'duplicata'. Outros erros propagam."""
+def _postar_lancamento(payload: dict) -> tuple[str, str | None]:
+    """POST na API e caminho persistido da duplicata, para recuperar o arquivo."""
     try:
         client.post(
             ENDPOINT_LANCAMENTOS,
@@ -659,10 +703,10 @@ def _postar_lancamento(payload: dict) -> str:
             timeout=30,
             addToHeaders={"x-licenca-token": client.LICENSE_TOKEN},
         )
-        return "criado"
+        return "criado", None
     except ApiError as e:
         if e.status_code == 409:
-            return "duplicata"
+            return "duplicata", e.body.get("arquivo_xml")
         raise
 
 
@@ -796,16 +840,19 @@ def _tratar_falha_cancelamento(
     print(f"[processar_nfe] falha no cancelamento ({nome}): {erro}")
 
 
-def _copiar_criados(origem: Path, resultados: list[str], caminhos: list[Path]) -> None:
+def _copiar_criados(origem: Path, resultados: list[str], caminhos: list[Path]) -> bool:
     """Copia o XML para cada empresa cujo POST criou o lançamento. Não remove a origem."""
+    completo = True
     for resultado, destino in zip(resultados, caminhos):
-        if resultado != "criado":
+        if resultado not in {"criado", "recuperar"}:
             continue
         try:
             copiado = _copiar_xml(origem, destino)
             print(f"[processar_nfe] arquivado -> {copiado}")
         except Exception as e:
+            completo = False
             print(f"[processar_nfe] POST criado, mas falha ao copiar {origem.name}: {e}")
+    return completo
 
 
 def _tirar_do_inbox(
@@ -948,10 +995,10 @@ def processar_pasta_nfe(pasta: str) -> None:
         # no banco aponta para onde o arquivo vai parar de fato.
         caminhos_reais = [_caminho_livre(d) for _, d in alvos]
 
-        # criado | duplicata | permanente | transitorio
+        # criado | recuperar | duplicata | permanente | transitorio
         resultados: list[str] = []
         pasta_base_path = Path(pasta_base)
-        for (empresa, _destino), caminho_real in zip(alvos, caminhos_reais):
+        for indice, ((empresa, _destino), caminho_real) in enumerate(zip(alvos, caminhos_reais)):
             relativo = _caminho_xml_relativo(Path(caminho_real), pasta_base_path)
             try:
                 payload = _payload_lancamento(
@@ -960,7 +1007,16 @@ def processar_pasta_nfe(pasta: str) -> None:
                     relativo,
                     empresa["cliente_id"],
                 )
-                resultado = _postar_lancamento(payload)
+                resultado, arquivo_persistido = _postar_lancamento(payload)
+                if resultado == "duplicata" and arquivo_persistido:
+                    relativo_persistido = Path(arquivo_persistido.replace("\\", "/"))
+                    if relativo_persistido.is_absolute() or relativo_persistido.drive or ".." in relativo_persistido.parts:
+                        raise ValueError("arquivo_xml persistido deve ser relativo à PASTA_BASE")
+                    caminho_persistido = (pasta_base_path / relativo_persistido).resolve()
+                    caminho_persistido.relative_to(pasta_base_path.resolve())
+                    if not _mesma_nfe(xml_path, caminho_persistido):
+                        caminhos_reais[indice] = caminho_persistido
+                        resultado = "recuperar"
                 print(
                     f"[processar_nfe] {resultado} {empresa['tipo']} "
                     f"{empresa['nome']} {dados['chave_nfe']}"
@@ -977,7 +1033,8 @@ def processar_pasta_nfe(pasta: str) -> None:
             continue
 
         if "permanente" in resultados:
-            _copiar_criados(xml_path, resultados, caminhos_reais)
+            if not _copiar_criados(xml_path, resultados, caminhos_reais):
+                continue
             _tirar_do_inbox(
                 xml_path,
                 pasta_path,
@@ -987,7 +1044,7 @@ def processar_pasta_nfe(pasta: str) -> None:
             )
             continue
 
-        criados = [c for r, c in zip(resultados, caminhos_reais) if r == "criado"]
+        criados = [c for r, c in zip(resultados, caminhos_reais) if r in {"criado", "recuperar"}]
         if criados:
             try:
                 arquivados = _arquivar_nas_empresas(xml_path, criados)

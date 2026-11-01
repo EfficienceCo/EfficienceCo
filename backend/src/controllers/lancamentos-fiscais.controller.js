@@ -154,12 +154,12 @@ export async function criarLancamentoFiscal(req, res) {
     });
   }
 
-  const { data: existente, error: erroExistente } = await supabase
-    .from("lancamentos_fiscais")
-    .select("id")
+  const consultarExistente = () => supabase.from("lancamentos_fiscais")
+    .select("id, arquivo_xml")
     .eq("cliente_id", cliente_id)
     .eq("chave_nfe", chave_nfe)
     .maybeSingle();
+  const { data: existente, error: erroExistente } = await consultarExistente();
 
   if (erroExistente) {
     console.error(
@@ -170,7 +170,10 @@ export async function criarLancamentoFiscal(req, res) {
   }
 
   if (existente) {
-    return res.status(409).json({ erro: "Já existe um lançamento fiscal para esta chave de NFe" });
+    return res.status(409).json({
+      erro: "Já existe um lançamento fiscal para esta chave de NFe",
+      arquivo_xml: existente.arquivo_xml ?? null,
+    });
   }
 
   const inconsistencias = recomputarInconsistencias(tp_nf, itens);
@@ -204,7 +207,14 @@ export async function criarLancamentoFiscal(req, res) {
     // unique_violation — corrida entre duas chamadas concorrentes pra mesmo
     // (cliente_id, chave_nfe) depois da checagem acima já ter passado.
     if (error.code === "23505") {
-      return res.status(409).json({ erro: "Já existe um lançamento fiscal para esta chave de NFe" });
+      const { data: concorrente, error: erroConcorrente } = await consultarExistente();
+      if (erroConcorrente || !concorrente) {
+        return res.status(500).json({ erro: "Erro ao verificar lançamento fiscal" });
+      }
+      return res.status(409).json({
+        erro: "Já existe um lançamento fiscal para esta chave de NFe",
+        arquivo_xml: concorrente.arquivo_xml ?? null,
+      });
     }
     const campos = camposRejeicaoBanco(error);
     if (campos) {

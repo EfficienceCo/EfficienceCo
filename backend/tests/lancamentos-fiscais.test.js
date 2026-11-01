@@ -316,6 +316,7 @@ describe("POST /lancamentos-fiscais", () => {
       data: null,
       error: { code: "23505", message: "duplicate key value violates unique constraint" },
     });
+    queue("lancamentos_fiscais", "maybeSingle", { data: { id: "concorrente", arquivo_xml: null }, error: null });
 
     const req = { headers: { "x-licenca-token": "tok" }, body: payloadValido() };
     const res = criarResposta();
