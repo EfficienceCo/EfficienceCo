@@ -21,9 +21,11 @@ const todos = exigirPerfil("admin_efficience", "admin_cliente", "funcionario");
 const validarId = validarUuidParams("id");
 const validarIdEParId = validarUuidParams("id", "pareId");
 
+const LIMITE_OFX_MB = 10;
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: LIMITE_OFX_MB * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (/\.ofx$/i.test(file.originalname)) {
       cb(null, true);
@@ -33,9 +35,17 @@ const upload = multer({
   },
 });
 
+const MENSAGENS_ERRO_MULTER = {
+  LIMIT_FILE_SIZE: `O arquivo excede o tamanho máximo permitido (${LIMITE_OFX_MB} MB).`,
+};
+
 function uploadExtrato(req, res, next) {
   upload.single("arquivo")(req, res, (err) => {
-    if (err) return res.status(400).json({ erro: err.message });
+    if (err) {
+      const mensagem = MENSAGENS_ERRO_MULTER[err.code] || err.message;
+      const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      return res.status(status).json({ erro: mensagem });
+    }
     next();
   });
 }
