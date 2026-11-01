@@ -31,17 +31,22 @@ supabase.from = function (tabela) {
     if (!fila || fila.length === 0) return fallback;
     return fila.shift();
   };
+  // A busca de FITIDs já importados termina em .in(): usa fila própria ("await_in"), para não
+  // consumir o resultado enfileirado para o insert de transacoes_extrato.
+  let consultaIn = false;
   const builder = {
     select() { return builder; },
     insert() { return builder; },
     update() { return builder; },
     eq() { return builder; },
+    is() { return builder; },
+    in() { consultaIn = true; return builder; },
     order() { return builder; },
     range() { return builder; },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     single() { return Promise.resolve(consumir("single", { data: null, error: null })); },
     then(resolve, reject) {
-      return Promise.resolve(consumir("await", { data: [], error: null })).then(resolve, reject);
+      return Promise.resolve(consumir(consultaIn ? "await_in" : "await", { data: [], error: null })).then(resolve, reject);
     },
   };
   return builder;
@@ -137,6 +142,164 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(res.body.conta, "7890");
     assert.equal(res.body.mes, 7);
     assert.equal(res.body.ano, 2026);
+  });
+
+  it("só importa as transações cujo FITID ainda não existe (extratos sobrepostos) e informa as ignoradas (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await_in", { data: [{ id_banco: "T1" }], error: null }); // T1 já existe
+    queue("transacoes_extrato", "await", { data: [], error: null }); // insert
+    queue("extratos_bancarios", "await", { data: null, error: null }); // update final
+
+    let inseridas = null;
+    const filtrosEq = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { inseridas = linhas; return insertOriginal(linhas); };
+        const eqOriginal = b.eq.bind(b);
+        b.eq = (coluna, valor) => { filtrosEq.push([coluna, valor]); return eqOriginal(coluna, valor); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.total_transacoes, 1);
+    assert.deepEqual(res.body.ignoradas, { ja_importadas: 1, valor_zero: 0 });
+    assert.deepEqual(inseridas.map((t) => t.id_banco), ["T2"]);
+    // o FITID só é único dentro da conta: a busca é por cliente, banco e conta
+    assert.deepEqual(
+      filtrosEq.filter(([c]) => c.startsWith("extratos_bancarios.") || c === "cliente_id"),
+      [
+        ["cliente_id", CLIENTE_A],
+        ["extratos_bancarios.banco", "0341"],
+        ["extratos_bancarios.status", "processado"],
+        ["extratos_bancarios.conta", "7890"],
+      ],
+    );
+  });
+
+  it("409 e marca o extrato como erro quando todos os FITIDs do arquivo já foram importados (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await_in", { data: [{ id_banco: "T1" }, { id_banco: "T2" }], error: null });
+
+    let extratoAtualizado = null;
+    const insertsTransacoes = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "extratos_bancarios") {
+        const updateOriginal = b.update.bind(b);
+        b.update = (campos) => { extratoAtualizado = campos; return updateOriginal(campos); };
+      }
+      if (tabela === "transacoes_extrato") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { insertsTransacoes.push(linhas); return insertOriginal(linhas); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 409);
+    assert.deepEqual(res.body.ignoradas, { ja_importadas: 2, valor_zero: 0 });
+    assert.equal(insertsTransacoes.length, 0);
+    assert.equal(extratoAtualizado.status, "erro");
+    assert.equal(extratoAtualizado.arquivo_hash, null); // libera reenviar o arquivo
+  });
+
+  it("422 e não grava transações quando o OFX repete um FITID (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    const ofx = ofxValido({
+      transacoes: [
+        { fitid: "DUP1", dtposted: "20260705", trnamt: "-10.00", memo: "A", trntype: "DEBIT" },
+        { fitid: "DUP1", dtposted: "20260706", trnamt: "-20.00", memo: "B", trntype: "DEBIT" },
+      ],
+    });
+
+    const insertsTransacoes = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { insertsTransacoes.push(linhas); return insertOriginal(linhas); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload({ file: { originalname: "dup.ofx", buffer: Buffer.from(ofx) } }), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.detalhe, /FITID repetido no arquivo: "DUP1"/);
+    assert.equal(insertsTransacoes.length, 0);
+  });
+
+  it("informa quantas linhas de valor 0 foram ignoradas (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("extratos_bancarios", "await", { data: null, error: null });
+    const ofx = ofxValido({
+      transacoes: [
+        { fitid: "Z1", dtposted: "20260705", trnamt: "0.00", memo: "INFORMATIVO", trntype: "CREDIT" },
+        { fitid: "T2", dtposted: "20260710", trnamt: "1500.00", memo: "DEPOSITO", trntype: "CREDIT" },
+      ],
+    });
+
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload({ file: { originalname: "z.ofx", buffer: Buffer.from(ofx) } }), res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.total_transacoes, 1);
+    assert.deepEqual(res.body.ignoradas, { ja_importadas: 0, valor_zero: 1 });
+  });
+
+  it("500 quando falha a busca de FITIDs já importados (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await_in", { data: null, error: { message: "falha" } });
+
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload(), res);
+
+    assert.equal(res.statusCode, 500);
+  });
+
+  it("consulta os FITIDs já importados em lotes de até 100 (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("extratos_bancarios", "await", { data: null, error: null });
+    const ofx = ofxValido({
+      transacoes: Array.from({ length: 250 }, (_, i) => ({
+        fitid: `F${i}`, dtposted: "20260705", trnamt: "10.00", memo: "M", trntype: "CREDIT",
+      })),
+    });
+
+    const lotes = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const inOriginal = b.in.bind(b);
+        b.in = (coluna, valores) => { lotes.push(valores.length); return inOriginal(coluna, valores); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload({ file: { originalname: "g.ofx", buffer: Buffer.from(ofx) } }), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(lotes, [100, 100, 50]);
   });
 
   it("upload do MESMO arquivo OFX 2x retorna 409 sem duplicar extrato ou transações", async () => {

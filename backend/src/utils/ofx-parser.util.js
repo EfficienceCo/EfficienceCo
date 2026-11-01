@@ -87,6 +87,7 @@ export function parseOfx(conteudo) {
   }
   const acctId = extrairCampoOfx(conteudo, "ACCTID");
 
+  let ignoradasValorZero = 0;
   const transacoes = blocosTransacao.map((bloco, indice) => {
     const dtposted = extrairCampoOfx(bloco, "DTPOSTED");
     const trnamt = extrairCampoOfx(bloco, "TRNAMT");
@@ -97,7 +98,12 @@ export function parseOfx(conteudo) {
     const contexto = contextoTransacao(indice, fitid);
 
     const valorNumerico = parseValor(trnamt, contexto);
-    const tipo = valorNumerico >= 0 ? "credito" : "debito";
+    // Linha informativa do banco: não é movimentação, não há o que conciliar.
+    if (valorNumerico === 0) {
+      ignoradasValorZero += 1;
+      return null;
+    }
+    const tipo = valorNumerico > 0 ? "credito" : "debito";
 
     if (trntype) {
       const esperado = tipo === "credito" ? "CREDIT" : "DEBIT";
@@ -117,10 +123,27 @@ export function parseOfx(conteudo) {
     };
   });
 
+  const validas = transacoes.filter(Boolean);
+  if (validas.length === 0) {
+    throw new OfxParseError("Todas as transações do arquivo têm valor zero (TRNAMT = 0)");
+  }
+
+  // O banco não repete FITID na mesma conta: repetido no arquivo é arquivo inconsistente
+  // (ou editado à mão), e não dá para saber qual das linhas vale. FITID vazio não conta.
+  const vistos = new Set();
+  for (const { id_banco } of validas) {
+    if (!id_banco) continue;
+    if (vistos.has(id_banco)) {
+      throw new OfxParseError(`FITID repetido no arquivo: "${id_banco}"`);
+    }
+    vistos.add(id_banco);
+  }
+
   return {
     banco: bankId,
     conta: acctId ? acctId.slice(-4) : null,
-    transacoes,
+    transacoes: validas,
+    ignoradas_valor_zero: ignoradasValorZero,
   };
 }
 

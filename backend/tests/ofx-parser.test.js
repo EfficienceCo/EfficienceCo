@@ -284,3 +284,43 @@ describe("inferirMesAno", () => {
     ]), { mes: 3, ano: 2026 });
   });
 });
+
+describe("parseOfx: FITID e valor zero (#692)", () => {
+  const trn = (fitid, valor) => `<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260705
+<TRNAMT>${valor}
+${fitid === null ? "" : `<FITID>${fitid}\n`}<MEMO>M
+</STMTTRN>`;
+
+  it("ignora transação de valor 0 e conta quantas ignorou", () => {
+    const r = parseOfx(extratoComTransacoes([trn("A", "10.00"), trn("B", "0.00"), trn("C", "-0")].join("\n")));
+    assert.deepEqual(r.transacoes.map((t) => t.id_banco), ["A"]);
+    assert.equal(r.ignoradas_valor_zero, 2);
+  });
+
+  it("recusa o arquivo quando todas as transações têm valor 0", () => {
+    assert.throws(
+      () => parseOfx(extratoComTransacoes([trn("A", "0.00"), trn("B", "0")].join("\n"))),
+      (e) => e instanceof OfxParseError && /valor zero/.test(e.message),
+    );
+  });
+
+  it("recusa FITID repetido no mesmo arquivo, citando o FITID", () => {
+    assert.throws(
+      () => parseOfx(extratoComTransacoes([trn("DUP1", "10.00"), trn("OK", "20.00"), trn("DUP1", "30.00")].join("\n"))),
+      (e) => e instanceof OfxParseError && /FITID repetido no arquivo: "DUP1"/.test(e.message),
+    );
+  });
+
+  it("não trata FITID ausente como repetido", () => {
+    const r = parseOfx(extratoComTransacoes([trn(null, "10.00"), trn(null, "20.00")].join("\n")));
+    assert.equal(r.transacoes.length, 2);
+    assert.equal(r.transacoes[0].id_banco, null);
+  });
+
+  it("FITID repetido só entre linha de valor 0 e linha válida não derruba o arquivo", () => {
+    const r = parseOfx(extratoComTransacoes([trn("X", "0.00"), trn("X", "15.00")].join("\n")));
+    assert.deepEqual(r.transacoes.map((t) => t.valor), [15]);
+  });
+});
