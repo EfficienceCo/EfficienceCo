@@ -223,13 +223,13 @@ describe("TEST-9: /lancamentos-contabeis", { timeout: 600_000 }, () => {
       });
     }
 
-    it("escritório com mais de 1000 lançamentos recebe todos, sem corte silencioso do PostgREST (PRB-C-09, #696)",
-      conhecido("BUG #696 (PRB-C-09): a lista corta em 1000 sem aviso; corrigido no PR #715, ainda aberto"), async () => {
-        const lote = Array.from({ length: 1001 }, (_, i) => ({ data: "2026-12-01", valor: i + 1, tipo: "credito", descricao: `lote ${i}` }));
-        for (let inicio = 0; inicio < lote.length; inicio += 500) await criarLancamentos(banco, A.cliente.id, lote.slice(inicio, inicio + 500));
-        const resposta = await listar(ator(A, PERFIL.CLIENTE), "?mes=12&ano=2026");
-        assert.equal(resposta.corpo.length, 1001);
-      });
+    it("escritório com mais de 1000 lançamentos recebe todos, sem corte silencioso do PostgREST (PRB-C-09, #696)", async () => {
+      const lote = Array.from({ length: 1001 }, (_, i) => ({ data: "2026-12-01", valor: i + 1, tipo: "credito", descricao: `lote ${i}` }));
+      for (let inicio = 0; inicio < lote.length; inicio += 500) await criarLancamentos(banco, A.cliente.id, lote.slice(inicio, inicio + 500));
+      const resposta = await listar(ator(A, PERFIL.CLIENTE), "?mes=12&ano=2026");
+      assert.equal(resposta.status, 200);
+      assert.equal(resposta.corpo.length, 1001);
+    });
   });
 
   describe("PATCH", () => {

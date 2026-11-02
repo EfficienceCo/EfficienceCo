@@ -122,7 +122,7 @@ describe("GET /conciliacoes", () => {
     });
   }
 
-  for (const ano of ["0", "abc", "-1"]) {
+  for (const ano of ["0", "abc", "-1", "2147483648"]) {
     it(`400 quando ano=${ano} (PRB-C-09, #696)`, async () => {
       const res = criarResposta();
       await listarConciliacoes(reqBase({ query: { ano } }), res);

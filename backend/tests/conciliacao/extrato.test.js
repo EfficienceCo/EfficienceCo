@@ -512,11 +512,10 @@ describe("TEST-9: GET /conciliacoes/extrato/:id/transacoes", { timeout: 300_000 
   });
 
   for (const consulta of ["?limit=-1", "?limit=abc", "?offset=-1"]) {
-    it(`${consulta}: 400 em vez de 500 ou de ignorar o valor (PRB-C-09, #696)`,
-      conhecido("BUG #696 (PRB-C-09): limit negativo vira range negativo e dá 500; valores inválidos são ignorados; corrigido no PR #715, ainda aberto"), async () => {
-        const resposta = await listar(ator(A, PERFIL.CLIENTE), A.extrato.processado, consulta);
-        assert.equal(resposta.status, 400, JSON.stringify(resposta.corpo));
-      });
+    it(`${consulta}: 400 em vez de 500 ou de ignorar o valor (PRB-C-09, #696)`, async () => {
+      const resposta = await listar(ator(A, PERFIL.CLIENTE), A.extrato.processado, consulta);
+      assert.equal(resposta.status, 400, JSON.stringify(resposta.corpo));
+    });
   }
 
   it("UUID inexistente puro não vaza nada além do 404 (corpo idêntico ao do outro escritório)", async () => {

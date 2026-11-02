@@ -35,6 +35,8 @@ supabase.from = function (tabela) {
     select() { return builder; },
     eq() { return builder; },
     in() { return builder; },
+    order() { return builder; },
+    range() { return builder; },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     then(resolve, reject) {
       return Promise.resolve(consumir("await", { data: [], error: null })).then(resolve, reject);

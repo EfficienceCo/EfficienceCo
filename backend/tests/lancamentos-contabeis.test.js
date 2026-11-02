@@ -10,7 +10,6 @@ import {
 import { TAMANHO_PAGINA_POSTGREST } from "../src/utils/paginacao.util.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
-const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
 const LANCAMENTO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 // ---------------------------------------------------------------------------
