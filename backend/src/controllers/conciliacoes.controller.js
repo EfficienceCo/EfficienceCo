@@ -107,6 +107,31 @@ function mensagemPeriodoRecusado(resumo) {
   return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo}, ${criterio}; o arquivo cobre mais de um mês: ${lista})`;
 }
 
+// FITIDs do arquivo que já existem em extratos processados do mesmo cliente, banco e conta
+// (o FITID só é único dentro da conta). Em lotes: a lista vai na URL.
+// shortcut: sem índice único no banco, dois uploads simultâneos ainda passam juntos por
+// esta checagem; fechar com índice (cliente, banco, conta, FITID) depois de limpar as duplicatas.
+const LOTE_CONSULTA_FITID = 100;
+
+async function buscarFitidsJaImportados(clienteId, banco, conta, fitids) {
+  const existentes = new Set();
+  for (let i = 0; i < fitids.length; i += LOTE_CONSULTA_FITID) {
+    let query = supabase
+      .from("transacoes_extrato")
+      .select("id_banco, extratos_bancarios!inner(banco, conta, status)")
+      .eq("cliente_id", clienteId)
+      .eq("extratos_bancarios.banco", banco)
+      .eq("extratos_bancarios.status", STATUS_EXTRATO.PROCESSADO)
+      .in("id_banco", fitids.slice(i, i + LOTE_CONSULTA_FITID));
+    query = conta == null ? query.is("extratos_bancarios.conta", null) : query.eq("extratos_bancarios.conta", conta);
+
+    const { data, error } = await query;
+    if (error) return { error };
+    for (const linha of data ?? []) existentes.add(linha.id_banco);
+  }
+  return { existentes };
+}
+
 export async function criarConciliacaoExtrato(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -196,7 +221,39 @@ export async function criarConciliacaoExtrato(req, res) {
 
   const { mes, ano } = periodoInformado ?? periodoArquivo;
 
-  const transacoesParaInserir = parsed.transacoes.map((transacao) => ({
+  // Extratos com períodos que se sobrepõem repetem linhas: só entram as que ainda não existem.
+  const fitidsDoArquivo = parsed.transacoes.map((t) => t.id_banco).filter(Boolean);
+  const { existentes: fitidsJaImportados, error: erroFitids } = await buscarFitidsJaImportados(
+    clienteId,
+    parsed.banco,
+    parsed.conta,
+    fitidsDoArquivo,
+  );
+
+  if (erroFitids) {
+    console.error("[conciliacoes.controller] Erro ao verificar FITIDs já importados:", erroFitids.message);
+    await supabase
+      .from("extratos_bancarios")
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
+      .eq("id", extrato.id);
+    return res.status(500).json({ erro: "Erro ao verificar transações já importadas" });
+  }
+
+  const transacoesNovas = parsed.transacoes.filter((t) => !t.id_banco || !fitidsJaImportados.has(t.id_banco));
+  const ignoradasJaImportadas = parsed.transacoes.length - transacoesNovas.length;
+
+  if (transacoesNovas.length === 0) {
+    await supabase
+      .from("extratos_bancarios")
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
+      .eq("id", extrato.id);
+    return res.status(409).json({
+      erro: "Todas as transações deste arquivo já foram importadas em outro extrato (mesmo FITID, banco e conta)",
+      ignoradas: { ja_importadas: ignoradasJaImportadas, valor_zero: parsed.ignoradas_valor_zero },
+    });
+  }
+
+  const transacoesParaInserir = transacoesNovas.map((transacao) => ({
     extrato_id: extrato.id,
     cliente_id: clienteId,
     ...transacao,
@@ -247,6 +304,8 @@ export async function criarConciliacaoExtrato(req, res) {
   return res.status(201).json({
     extrato_id: extrato.id,
     total_transacoes: transacoesParaInserir.length,
+    // Linhas do arquivo que não entraram: já existiam em outro extrato (mesmo FITID) ou têm valor 0.
+    ignoradas: { ja_importadas: ignoradasJaImportadas, valor_zero: parsed.ignoradas_valor_zero },
     banco: parsed.banco,
     conta: parsed.conta,
     mes,
