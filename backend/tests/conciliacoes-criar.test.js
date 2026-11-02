@@ -489,6 +489,41 @@ describe("POST /conciliacoes", () => {
     assert.equal(idDeletado, CONCILIACAO_ID);
   });
 
+  it("409 e remove a conciliação quando outra grava o mesmo lançamento ao mesmo tempo (índice único)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", {
+      data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", { data: [], error: null });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+    queue("pares_conciliacao", "await", { data: null, error: { code: "23505", message: "duplicate key" } });
+
+    let idDeletado = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "conciliacoes") {
+        const deleteOriginal = b.delete.bind(b);
+        b.delete = () => {
+          const deletado = deleteOriginal();
+          const eqOriginal = deletado.eq.bind(deletado);
+          deletado.eq = (campo, valor) => { if (campo === "id") idDeletado = valor; return eqOriginal(campo, valor); };
+          return deletado;
+        };
+      }
+      return b;
+    };
+    queue("conciliacoes", "await", { data: null, error: null }); // delete
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(idDeletado, CONCILIACAO_ID);
+  });
+
   it("sem transações e sem lançamentos → 201 com todos os totais zerados e nenhum par inserido", async () => {
     queueExtratoValido();
     queue("transacoes_extrato", "await", { data: [], error: null });
