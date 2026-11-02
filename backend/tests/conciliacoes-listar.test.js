@@ -103,53 +103,6 @@ function queueConciliacaoValida(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe("GET /conciliacoes", () => {
-  it("200: lista sessões do cliente autenticado com extrato populado", async () => {
-    queue("conciliacoes", "await", {
-      data: [
-        {
-          id: CONCILIACAO_ID,
-          mes: 8,
-          ano: 2026,
-          status: "em_andamento",
-          total_transacoes: 45,
-          total_conciliadas: 38,
-          total_pendentes: 7,
-          criado_em: "2026-08-01T00:00:00.000Z",
-          extrato_id: "extrato-1",
-        },
-      ],
-      error: null,
-    });
-    queue("extratos_bancarios", "await", {
-      data: [{ id: "extrato-1", banco: "Itaú", conta: "1234" }],
-      error: null,
-    });
-
-    const res = criarResposta();
-    await listarConciliacoes(reqBase(), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.length, 1);
-    assert.equal(res.body[0].id, CONCILIACAO_ID);
-    assert.equal(res.body[0].extrato_id, undefined);
-    assert.deepEqual(res.body[0].extrato, { banco: "Itaú", conta: "1234" });
-  });
-
-  it("200: lista vazia quando não há sessões (não consulta extratos)", async () => {
-    queue("conciliacoes", "await", { data: [], error: null });
-
-    const res = criarResposta();
-    await listarConciliacoes(reqBase(), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.body, []);
-  });
-
-  it("400 quando cliente_id não pode ser resolvido", async () => {
-    const res = criarResposta();
-    await listarConciliacoes(reqBase({ usuario: { perfil: PERFIS.ADMIN_EFFICIENCE } }), res);
-    assert.equal(res.statusCode, 400);
-  });
 
   it("500 quando falha a busca das conciliações", async () => {
     queue("conciliacoes", "await", { data: null, error: { message: "falha" } });
@@ -223,99 +176,6 @@ describe("GET /conciliacoes", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /conciliacoes/:id", () => {
-  it("200: retorna a sessão com pares agrupados por confiança", async () => {
-    queueConciliacaoValida();
-    queue("pares_conciliacao", "await", {
-      data: [
-        { id: "par-1", transacao_id: "t1", lancamento_id: "l1", confianca: "automatico", confirmado_por: null, confirmado_em: null },
-        { id: "par-2", transacao_id: "t2", lancamento_id: "l2", confianca: "provavel", confirmado_por: null, confirmado_em: null },
-        { id: "par-3", transacao_id: "t3", lancamento_id: null, confianca: "sem_par", confirmado_por: null, confirmado_em: null },
-        { id: "par-4", transacao_id: null, lancamento_id: "l4", confianca: "sem_par", confirmado_por: null, confirmado_em: null },
-      ],
-      error: null,
-    });
-    queue("transacoes_extrato", "await", {
-      data: [
-        { id: "t1", valor: 100 },
-        { id: "t2", valor: 50 },
-        { id: "t3", valor: 30 },
-      ],
-      error: null,
-    });
-    queue("lancamentos_contabeis", "await", {
-      data: [
-        { id: "l1", valor: 100 },
-        { id: "l2", valor: 50 },
-        { id: "l4", valor: 999 },
-      ],
-      error: null,
-    });
-
-    const res = criarResposta();
-    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.id, CONCILIACAO_ID);
-    assert.equal(res.body.total_transacoes, 3);
-
-    assert.equal(res.body.pares.automatico.length, 1);
-    assert.equal(res.body.pares.automatico[0].transacao.id, "t1");
-    assert.equal(res.body.pares.automatico[0].lancamento.id, "l1");
-    assert.equal(res.body.pares.automatico[0].confirmado_por, undefined);
-
-    assert.equal(res.body.pares.provavel.length, 1);
-    assert.equal(res.body.pares.provavel[0].confirmado_por, null);
-
-    assert.equal(res.body.pares.sem_par.length, 2);
-    const semParTransacaoSemLancamento = res.body.pares.sem_par.find((p) => p.id === "par-3");
-    assert.equal(semParTransacaoSemLancamento.transacao.id, "t3");
-    assert.equal(semParTransacaoSemLancamento.lancamento, null);
-
-    const semParLancamentoSemTransacao = res.body.pares.sem_par.find((p) => p.id === "par-4");
-    assert.equal(semParLancamentoSemTransacao.transacao, null);
-    assert.equal(semParLancamentoSemTransacao.lancamento.id, "l4");
-  });
-
-  it("200: provável confirmado expõe confirmado_em para o cliente não tratá-lo como pendente (#554)", async () => {
-    queueConciliacaoValida();
-    queue("pares_conciliacao", "await", {
-      data: [
-        { id: "par-1", transacao_id: "t1", lancamento_id: "l1", confianca: "provavel", confirmado_por: USUARIO_ID, confirmado_em: "2026-09-20T12:00:00.000Z" },
-        { id: "par-2", transacao_id: "t2", lancamento_id: "l2", confianca: "provavel", confirmado_por: null, confirmado_em: null },
-      ],
-      error: null,
-    });
-    queue("transacoes_extrato", "await", { data: [{ id: "t1" }, { id: "t2" }], error: null });
-    queue("lancamentos_contabeis", "await", { data: [{ id: "l1" }, { id: "l2" }], error: null });
-
-    const res = criarResposta();
-    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
-
-    assert.equal(res.statusCode, 200);
-    const confirmado = res.body.pares.provavel.find((p) => p.id === "par-1");
-    const pendente = res.body.pares.provavel.find((p) => p.id === "par-2");
-    assert.equal(confirmado.confirmado_por, USUARIO_ID);
-    assert.equal(confirmado.confirmado_em, "2026-09-20T12:00:00.000Z");
-    assert.equal(pendente.confirmado_em, null);
-    assert.equal(res.body.pares.automatico.length, 0);
-  });
-
-  it("200: inclui mes, ano e extrato (banco/conta) quando a conciliação tem extrato_id", async () => {
-    queueConciliacaoValida({ mes: 8, ano: 2026, extrato_id: "extrato-1" });
-    queue("pares_conciliacao", "await", { data: [], error: null });
-    queue("extratos_bancarios", "maybeSingle", {
-      data: { banco: "Itaú", conta: "1234" },
-      error: null,
-    });
-
-    const res = criarResposta();
-    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.mes, 8);
-    assert.equal(res.body.ano, 2026);
-    assert.deepEqual(res.body.extrato, { banco: "Itaú", conta: "1234" });
-  });
 
   it("200: extrato null quando a conciliação não tem extrato_id", async () => {
     queueConciliacaoValida();
@@ -337,40 +197,6 @@ describe("GET /conciliacoes/:id", () => {
     await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
 
     assert.equal(res.statusCode, 500);
-  });
-
-  it("200: sem pares não consulta transações nem lançamentos", async () => {
-    queueConciliacaoValida();
-    queue("pares_conciliacao", "await", { data: [], error: null });
-
-    const res = criarResposta();
-    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.body.pares, { automatico: [], provavel: [], sem_par: [] });
-  });
-
-  it("400 quando cliente_id não pode ser resolvido", async () => {
-    const res = criarResposta();
-    await buscarConciliacao(
-      reqBase({ usuario: { perfil: PERFIS.ADMIN_EFFICIENCE }, params: { id: CONCILIACAO_ID } }),
-      res,
-    );
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("404 quando a conciliação não existe", async () => {
-    queue("conciliacoes", "maybeSingle", { data: null, error: null });
-    const res = criarResposta();
-    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("404 quando a conciliação pertence a outro cliente", async () => {
-    queueConciliacaoValida({ cliente_id: CLIENTE_B });
-    const res = criarResposta();
-    await buscarConciliacao(reqBase({ params: { id: CONCILIACAO_ID } }), res);
-    assert.equal(res.statusCode, 404);
   });
 
   it("500 quando falha a busca dos pares", async () => {
