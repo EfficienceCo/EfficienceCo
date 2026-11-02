@@ -65,7 +65,17 @@ function parseValor(trnamt, contexto) {
   if (!Number.isSafeInteger(centavos) || centavos / 100 > VALOR_MAXIMO) {
     throw new OfxParseError(`TRNAMT fora da faixa ${contexto}: "${trnamt}"`);
   }
-  return valor;
+  // A coluna é NUMERIC(15,2): decide pelo valor já em centavos, senão 0.004 passaria por
+  // "diferente de zero" e seria gravado como 0.00.
+  return Math.sign(valor) * (centavos / 100);
+}
+
+// Identidade do banco e da conta para detectar o mesmo FITID em extratos diferentes:
+// maiúsculas, sem separadores e sem zeros à esquerda (BANKID 0237 = 237; ACCTID 123456-7 =
+// 1234567). A coluna `conta` guarda só os 4 últimos dígitos, que repetem entre contas distintas.
+function normalizarIdentidade(valor) {
+  const normalizado = (valor || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^0+/, "");
+  return normalizado || null;
 }
 
 // Parseia o conteúdo bruto de um arquivo OFX e retorna banco/conta do
@@ -142,6 +152,8 @@ export function parseOfx(conteudo) {
   return {
     banco: bankId,
     conta: acctId ? acctId.slice(-4) : null,
+    banco_chave: normalizarIdentidade(bankId),
+    conta_chave: normalizarIdentidade(acctId),
     transacoes: validas,
     ignoradas_valor_zero: ignoradasValorZero,
   };

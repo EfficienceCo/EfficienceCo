@@ -38,6 +38,7 @@ supabase.from = function (tabela) {
     select() { return builder; },
     insert() { return builder; },
     update() { return builder; },
+    delete() { return builder; },
     eq() { return builder; },
     is() { return builder; },
     in() { consultaIn = true; return builder; },
@@ -71,7 +72,7 @@ function criarResposta() {
   };
 }
 
-function ofxValido({ transacoes } = {}) {
+function ofxValido({ transacoes, bankid = "0341", acctid = "1234567890" } = {}) {
   const linhasTransacoes = (transacoes ?? [
     { fitid: "T1", dtposted: "20260705", trnamt: "-150.00", memo: "PAGAMENTO BOLETO", trntype: "DEBIT" },
     { fitid: "T2", dtposted: "20260710", trnamt: "1500.00", memo: "DEPOSITO", trntype: "CREDIT" },
@@ -97,8 +98,8 @@ VERSION:102
 <STMTRS>
 <CURDEF>BRL
 <BANKACCTFROM>
-<BANKID>0341
-<ACCTID>1234567890
+<BANKID>${bankid}
+<ACCTID>${acctid}
 </BANKACCTFROM>
 <BANKTRANLIST>
 ${linhasTransacoes}
@@ -172,16 +173,17 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(res.body.total_transacoes, 1);
     assert.deepEqual(res.body.ignoradas, { ja_importadas: 1, valor_zero: 0 });
     assert.deepEqual(inseridas.map((t) => t.id_banco), ["T2"]);
-    // o FITID só é único dentro da conta: a busca é por cliente, banco e conta
+    // o FITID só é único dentro da conta: a busca é por cliente e pela identidade normalizada
+    // de banco (0341 -> 341) e conta (ACCTID inteiro), não pela máscara de 4 dígitos
     assert.deepEqual(
-      filtrosEq.filter(([c]) => c.startsWith("extratos_bancarios.") || c === "cliente_id"),
+      filtrosEq.filter(([c]) => ["cliente_id", "banco_chave", "conta_chave"].includes(c)),
       [
         ["cliente_id", CLIENTE_A],
-        ["extratos_bancarios.banco", "0341"],
-        ["extratos_bancarios.status", "processado"],
-        ["extratos_bancarios.conta", "7890"],
+        ["banco_chave", "341"],
+        ["conta_chave", "1234567890"],
       ],
     );
+    assert.ok(inseridas.every((t) => t.banco_chave === "341" && t.conta_chave === "1234567890"));
   });
 
   it("409 e marca o extrato como erro quando todos os FITIDs do arquivo já foram importados (#692)", async () => {
@@ -300,6 +302,118 @@ describe("POST /conciliacoes/extrato", () => {
 
     assert.equal(res.statusCode, 201);
     assert.deepEqual(lotes, [100, 100, 50]);
+  });
+
+  // Espia os filtros .eq e o insert de transacoes_extrato de um upload.
+  async function subirEspiando(ofx) {
+    const filtros = [];
+    let inseridas = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const eqOriginal = b.eq.bind(b);
+        b.eq = (coluna, valor) => { filtros.push([coluna, valor]); return eqOriginal(coluna, valor); };
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { inseridas = linhas; return insertOriginal(linhas); };
+      }
+      return b;
+    };
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload({ file: { originalname: "x.ofx", buffer: Buffer.from(ofx) } }), res);
+    supabase.from = originalFromLocal;
+    return { res, filtros, inseridas };
+  }
+
+  function enfileirarUploadSemDuplicatas() {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("extratos_bancarios", "await", { data: null, error: null });
+  }
+
+  it("contas diferentes com os mesmos 4 últimos dígitos são buscadas por identidades diferentes (#692)", async () => {
+    const chaveConta = async (acctid) => {
+      enfileirarUploadSemDuplicatas();
+      const { res, filtros } = await subirEspiando(ofxValido({ acctid }));
+      assert.equal(res.statusCode, 201);
+      assert.equal(res.body.conta, "7890"); // a máscara exibida é a mesma nas duas
+      return filtros.find(([c]) => c === "conta_chave")[1];
+    };
+    const a = await chaveConta("11117890");
+    const b = await chaveConta("22227890");
+    assert.notEqual(a, b);
+  });
+
+  it("BANKID 0237 e 237, e ACCTID com separador e zeros, viram a mesma identidade (#692)", async () => {
+    const chaves = async (bankid, acctid) => {
+      enfileirarUploadSemDuplicatas();
+      const { res, inseridas } = await subirEspiando(ofxValido({ bankid, acctid }));
+      assert.equal(res.statusCode, 201);
+      return [inseridas[0].banco_chave, inseridas[0].conta_chave];
+    };
+    assert.deepEqual(await chaves("0237", "0012345-6"), ["237", "123456"]);
+    assert.deepEqual(await chaves("237", "123456"), ["237", "123456"]);
+  });
+
+  it("TRNAMT que arredonda para 0.00 é ignorado como valor zero, e o valor gravado é o arredondado (#692)", async () => {
+    enfileirarUploadSemDuplicatas();
+    const ofx = ofxValido({
+      transacoes: [
+        { fitid: "Z1", dtposted: "20260705", trnamt: "0.004", memo: "MICRO", trntype: "CREDIT" },
+        { fitid: "T2", dtposted: "20260710", trnamt: "10.126", memo: "DEPOSITO", trntype: "CREDIT" },
+      ],
+    });
+    const { res, inseridas } = await subirEspiando(ofx);
+
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(res.body.ignoradas, { ja_importadas: 0, valor_zero: 1 });
+    assert.deepEqual(inseridas.map((t) => [t.id_banco, t.valor]), [["T2", 10.13]]);
+  });
+
+  it("409 e extrato em erro quando outro upload grava o mesmo FITID no meio (violação do índice único) (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await", { data: null, error: { code: "23505", message: "duplicate key" } });
+
+    let extratoAtualizado = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "extratos_bancarios") {
+        const updateOriginal = b.update.bind(b);
+        b.update = (campos) => { extratoAtualizado = campos; return updateOriginal(campos); };
+      }
+      return b;
+    };
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(extratoAtualizado.status, "erro");
+    assert.equal(extratoAtualizado.arquivo_hash, null);
+  });
+
+  it("apaga as transações do extrato quando falha o update final, para liberar o reenvio (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("extratos_bancarios", "await", { data: null, error: { message: "timeout" } });
+
+    const apagadas = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const deleteOriginal = b.delete.bind(b);
+        b.delete = () => { apagadas.push(tabela); return deleteOriginal(); };
+      }
+      return b;
+    };
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(apagadas, ["transacoes_extrato"]);
   });
 
   it("upload do MESMO arquivo OFX 2x retorna 409 sem duplicar extrato ou transações", async () => {
@@ -795,7 +909,7 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(hashAtualizado, null);
   });
 
-  it("500 e status='erro' quando falha o update final (transações já salvas ficam órfãs sem isso)", async () => {
+  it("500 e status='erro' quando falha o update final", async () => {
     queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
     queue("transacoes_extrato", "await", { data: [], error: null });
 
