@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseOfx, decodificarOfx, OfxParseError, inferirMesAno } from "../src/utils/ofx-parser.util.js";
+import { parseOfx, decodificarOfx, OfxParseError, inferirMesAno, periodosDoExtrato } from "../src/utils/ofx-parser.util.js";
 import { DESCRICAO_MAXIMO } from "../src/utils/texto-conciliacao.util.js";
 
 function ofx(corpo) {
@@ -307,5 +307,24 @@ describe("inferirMesAno", () => {
     ]);
 
     assert.deepEqual(resultado, { mes: 8, ano: 2026 });
+  });
+
+  it("em empate fica com o primeiro mês que aparece no arquivo", () => {
+    const resultado = periodosDoExtrato([
+      { data_lancamento: "2026-03-10" },
+      { data_lancamento: "2026-01-05" },
+      { data_lancamento: "2026-01-20" },
+      { data_lancamento: "2026-03-15" },
+    ]);
+
+    assert.equal(resultado.empate, true);
+    assert.equal(resultado.mes, 3);
+    assert.equal(resultado.ano, 2026);
+    assert.deepEqual(inferirMesAno([
+      { data_lancamento: "2026-03-10" },
+      { data_lancamento: "2026-01-05" },
+      { data_lancamento: "2026-01-20" },
+      { data_lancamento: "2026-03-15" },
+    ]), { mes: 3, ano: 2026 });
   });
 });

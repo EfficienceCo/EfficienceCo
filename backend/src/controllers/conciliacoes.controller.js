@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
-import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
+import { parseOfx, decodificarOfx, periodosDoExtrato } from "../utils/ofx-parser.util.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
@@ -31,6 +31,8 @@ function periodoAtual() {
   return { mes: agora.getMonth() + 1, ano: agora.getFullYear() };
 }
 
+// criarConciliacao continua com ano > 0. O piso 2020 vale só no upload do OFX.
+// Unificar as duas réguas fica de fora desta issue.
 function periodoDoBody(body) {
   const mes = Number(body?.mes);
   const ano = Number(body?.ano);
@@ -38,6 +40,71 @@ function periodoDoBody(body) {
     return { mes, ano };
   }
   return null;
+}
+
+// Piso do upload, decidido em 2026-10-30: ano anterior a 2020 é fora de faixa.
+// O teto é o mesmo de erroPeriodoConsulta — o DTPOSTED do OFX também tem 4 dígitos.
+const ANO_MINIMO_EXTRATO = 2020;
+const ANO_MAXIMO_EXTRATO = 9999;
+
+function valorInformado(valor) {
+  return valor !== undefined && valor !== null && String(valor).trim() !== "";
+}
+
+function inteiroNaFaixa(valor, minimo, maximo) {
+  const numero = Number(valor);
+  return Number.isInteger(numero) && numero >= minimo && numero <= maximo ? numero : null;
+}
+
+// Sem mes e sem ano o período sai de inferirMesAno (mês+ano com mais transações).
+// Com qualquer um dos dois, os dois são obrigatórios e válidos. Fora de faixa
+// devolve 400 por campo e não cai na inferência.
+function validarPeriodoExtrato(body) {
+  const mesInformado = valorInformado(body?.mes);
+  const anoInformado = valorInformado(body?.ano);
+  if (!mesInformado && !anoInformado) {
+    return { periodo: null };
+  }
+
+  const campos = {};
+  let mes = null;
+  let ano = null;
+
+  if (!mesInformado) {
+    campos.mes = "mes é obrigatório quando ano é informado";
+  } else {
+    mes = inteiroNaFaixa(body.mes, 1, 12);
+    if (mes === null) campos.mes = "mes deve ser um inteiro entre 1 e 12";
+  }
+
+  if (!anoInformado) {
+    campos.ano = "ano é obrigatório quando mes é informado";
+  } else {
+    ano = inteiroNaFaixa(body.ano, ANO_MINIMO_EXTRATO, ANO_MAXIMO_EXTRATO);
+    if (ano === null) campos.ano = "ano deve ser um inteiro entre 2020 e 9999";
+  }
+
+  if (Object.keys(campos).length > 0) {
+    return { campos };
+  }
+  return { periodo: { mes, ano } };
+}
+
+function responderCamposInvalidos(res, campos) {
+  return res.status(400).json({ erro: Object.values(campos).join("; "), campos });
+}
+
+function mensagemPeriodoRecusado(resumo) {
+  const periodo = `${resumo.mes}/${resumo.ano}`;
+  if (resumo.meses.length === 1) {
+    return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo})`;
+  }
+
+  const lista = resumo.meses.map((item) => `${item.mes}/${item.ano} (${item.quantidade})`).join(", ");
+  const criterio = resumo.empate
+    ? "o primeiro mês do arquivo entre os que empatam"
+    : "o mês com mais transações";
+  return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo}, ${criterio}; o arquivo cobre mais de um mês: ${lista})`;
 }
 
 export async function criarConciliacaoExtrato(req, res) {
@@ -50,9 +117,13 @@ export async function criarConciliacaoExtrato(req, res) {
     return res.status(400).json({ erro: "Arquivo OFX é obrigatório (campo 'arquivo')" });
   }
 
-  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
+  const periodoValidado = validarPeriodoExtrato(req.body);
+  if (periodoValidado.campos) {
+    return responderCamposInvalidos(res, periodoValidado.campos);
+  }
+  const periodoInformado = periodoValidado.periodo;
 
-  const periodoInformado = periodoDoBody(req.body);
+  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
 
   // Registro criado antes do parsing para que uma falha de parsing tenha
   // onde ser marcada (status='erro'). banco/mes/ano são placeholders aqui —
@@ -96,7 +167,34 @@ export async function criarConciliacaoExtrato(req, res) {
     });
   }
 
-  const { mes, ano } = periodoInformado ?? inferirMesAno(parsed.transacoes);
+  const periodoArquivo = periodosDoExtrato(parsed.transacoes);
+  if (
+    periodoInformado &&
+    (periodoInformado.mes !== periodoArquivo.mes || periodoInformado.ano !== periodoArquivo.ano)
+  ) {
+    const { error: erroRecusa } = await supabase
+      .from("extratos_bancarios")
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
+      .eq("id", extrato.id);
+
+    if (erroRecusa) {
+      console.error(
+        "[conciliacoes.controller] Erro ao marcar extrato recusado por período:",
+        erroRecusa.message,
+      );
+      return res.status(500).json({ erro: "Erro ao registrar recusa do período do extrato" });
+    }
+
+    return res.status(400).json({
+      erro: mensagemPeriodoRecusado(periodoArquivo),
+      campos: {
+        mes: "não corresponde às datas do extrato",
+        ano: "não corresponde às datas do extrato",
+      },
+    });
+  }
+
+  const { mes, ano } = periodoInformado ?? periodoArquivo;
 
   const transacoesParaInserir = parsed.transacoes.map((transacao) => ({
     extrato_id: extrato.id,
