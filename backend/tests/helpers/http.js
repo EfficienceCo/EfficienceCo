@@ -20,7 +20,8 @@ export async function iniciarApiTeste() {
   return {
     baseUrl,
 
-    async requisitar(caminho, { usuario = null, metodo = "GET", corpo } = {}) {
+    // `formulario` (FormData) serve ao upload multipart do OFX; não combina com `corpo`.
+    async requisitar(caminho, { usuario = null, metodo = "GET", corpo, formulario } = {}) {
       const url = new URL(caminho, baseUrl);
       if (typeof caminho !== "string" || !caminho.startsWith("/") || url.origin !== baseUrl) {
         throw new Error("Use um caminho da API local de teste, como /funcionarios/ID.");
@@ -34,19 +35,21 @@ export async function iniciarApiTeste() {
           { id, email, perfil, cliente_id }, segredo, { expiresIn: "5m" },
         )}`;
       }
+      if (corpo !== undefined && formulario !== undefined) throw new Error("Use corpo ou formulario, não os dois.");
       if (corpo !== undefined) headers["Content-Type"] = "application/json";
       const resposta = await fetch(url, {
         method: metodo,
         headers,
-        body: corpo === undefined ? undefined : JSON.stringify(corpo),
+        body: formulario ?? (corpo === undefined ? undefined : JSON.stringify(corpo)),
         redirect: "error",
         signal: AbortSignal.timeout(10_000),
       });
-      const json = resposta.headers.get("content-type")?.includes("application/json");
-      return {
-        status: resposta.status,
-        corpo: json ? await resposta.json() : await resposta.text(),
-      };
+      const tipo = resposta.headers.get("content-type") ?? "";
+      // PDF volta como Buffer (como texto os bytes se corromperiam); o resto, JSON ou texto.
+      const corpoLido = tipo.includes("application/json") ? await resposta.json()
+        : tipo.includes("application/pdf") ? Buffer.from(await resposta.arrayBuffer())
+          : await resposta.text();
+      return { status: resposta.status, headers: resposta.headers, corpo: corpoLido };
     },
 
     async fechar() {

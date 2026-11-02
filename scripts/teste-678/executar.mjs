@@ -9,6 +9,9 @@ import { prepararBanco } from "./preparar.mjs";
 
 const raiz = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 const somenteSmoke = process.argv.includes("--smoke");
+// Filtro opcional (npm test -- conciliacao): roda so os arquivos cujo caminho contem o trecho e
+// pula o pytest do agente. Sem argumento a suite inteira roda, como sempre.
+const filtros = process.argv.slice(2).filter((argumento) => !argumento.startsWith("--"));
 const id = randomUUID();
 // A CLI limita o identificador do projeto; manter curto alinha start e stop.
 const projetoId = `efficience-testes-678-${id.replaceAll("-", "").slice(0, 12)}`;
@@ -144,6 +147,10 @@ try {
     throw new Error("A URL devolvida pela CLI nao pertence ao destino local esperado.");
   }
   if (!status.SERVICE_ROLE_KEY) throw new Error("A CLI nao devolveu a chave service_role local. Confira a versao instalada.");
+  // SEG-1 (#666): as rotas autenticadas falam com o banco com o token do usuario, assinado
+  // com o segredo JWT do proprio Supabase local e enviado junto da chave anon. Sem os dois
+  // as rotas HTTP dao 500 e o RLS nao seria exercitado.
+  if (!status.ANON_KEY || !status.JWT_SECRET) throw new Error("A CLI nao devolveu ANON_KEY e JWT_SECRET locais. Confira a versao instalada.");
 
   const ambienteTeste = {
     ...ambienteCli,
@@ -152,18 +159,20 @@ try {
     SUPABASE_SERVICE_KEY: status.SERVICE_ROLE_KEY,
     TEST_SUPABASE_URL: esperado,
     TEST_SUPABASE_SERVICE_KEY: status.SERVICE_ROLE_KEY,
+    SUPABASE_KEY: status.ANON_KEY,
+    SUPABASE_JWT_SECRET: status.JWT_SECRET,
     TEST_SUPABASE_ANON_KEY: status.ANON_KEY,
     TEST_SUPABASE_PORT: String(portaApi),
     TEST_SUPABASE_PROJECT_ID: projetoId,
     JWT_SECRET: "segredo-ficticio-exclusivo-dos-testes-678",
     DOTENV_CONFIG_PATH: path.join(temporario, "nenhum-env-local"),
   };
-  delete ambienteTeste.SUPABASE_KEY;
   delete ambienteTeste.ESOCIAL_GOV_INTEGRATION;
 
   const smoke = path.join(raiz, "backend", "tests", "infra", "banco-real.test.js");
   if (!fs.existsSync(smoke)) throw new Error("Copie o exemplo banco-real.test.js para backend/tests/infra/.");
-  const testes = somenteSmoke ? [smoke] : descobrirTestes(path.join(raiz, "backend", "tests"));
+  let testes = somenteSmoke ? [smoke] : descobrirTestes(path.join(raiz, "backend", "tests"));
+  if (filtros.length) testes = testes.filter((arquivo) => filtros.some((trecho) => arquivo.replaceAll("\\", "/").includes(trecho)));
   if (!testes.length) throw new Error("Nenhum arquivo de teste automatico encontrado.");
   console.log(`[3/6] Rodando ${testes.length} arquivo(s) do backend.`);
   await executar(process.execPath, [
@@ -171,7 +180,7 @@ try {
     "--experimental-test-module-mocks", "--test", "--test-concurrency=1", ...testes,
   ], { cwd: path.join(raiz, "backend"), env: ambienteTeste });
 
-  if (!somenteSmoke) {
+  if (!somenteSmoke && !filtros.length) {
     console.log("[4/6] Rodando pytest do agente.");
     const python = path.join(raiz, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
     if (!fs.existsSync(python)) throw new Error("Crie o .venv na raiz e instale as dependencias do agente conforme o roteiro.");
@@ -182,7 +191,7 @@ try {
       cwd: path.join(raiz, "agente", "worker"), env: ambienteTeste,
     });
   } else {
-    console.log("[4/6] Modo inicial: somente o teste de escrita/leitura real.");
+    console.log("[4/6] Pytest do agente nao roda neste modo (smoke ou filtro de arquivos).");
   }
 } catch (erro) {
   codigoFinal = interrompido ? 130 : 1;
