@@ -9,8 +9,9 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   iniciarBateria, fotografar, chamar, ator, atoresDe, buscarLinha, buscarLinhas, provarOutroEscritorio404,
-  conhecido, UUID_INEXISTENTE, PERFIL, paraEpoch,
+  UUID_INEXISTENTE, PERFIL, paraEpoch,
 } from "../helpers/conciliacao-http.js";
+import { conhecido } from "../helpers/bug-conhecido.js";
 
 describe("TEST-9: PATCH /conciliacoes/:id/pares/:pareId/confirmar e /rejeitar", { timeout: 600_000 }, () => {
   let bateria; let api; let banco; let A; let B;

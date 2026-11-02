@@ -21,14 +21,15 @@ export async function iniciarApiTeste() {
     baseUrl,
 
     // `formulario` (FormData) serve ao upload multipart do OFX; não combina com `corpo`.
-    async requisitar(caminho, { usuario = null, metodo = "GET", corpo, formulario } = {}) {
+    // `cabecalhos` leva o que não é JWT de usuário, como o x-licenca-token das rotas do agente (TEST-11).
+    async requisitar(caminho, { usuario = null, metodo = "GET", corpo, formulario, cabecalhos = {} } = {}) {
       const url = new URL(caminho, baseUrl);
       if (typeof caminho !== "string" || !caminho.startsWith("/") || url.origin !== baseUrl) {
         throw new Error("Use um caminho da API local de teste, como /funcionarios/ID.");
       }
       if (!servidor.listening) throw new Error("API de teste encerrada.");
       // Cabeçalhos novos a cada chamada: usuário de uma requisição não fica na próxima.
-      const headers = {};
+      const headers = { ...cabecalhos };
       if (usuario) {
         const { id, email, perfil, cliente_id } = usuario;
         headers.Authorization = `Bearer ${jwt.sign(

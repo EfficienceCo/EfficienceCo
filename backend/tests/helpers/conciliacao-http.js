@@ -23,13 +23,6 @@ const TABELAS_FOTOGRAFADAS = [
   "extratos_bancarios", "transacoes_extrato", "lancamentos_contabeis", "conciliacoes", "pares_conciliacao",
 ];
 
-// Testes de bug conhecido: ficam com `skip` e a issue no motivo. Com RODAR_BUGS_CONHECIDOS=1 eles
-// rodam de verdade (é como se prova que o `skip` ainda é necessário e que o teste falha pelo
-// motivo certo). Quando a issue for corrigida, trocar `conhecido(...)` por `{}`.
-export function conhecido(motivo) {
-  return process.env.RODAR_BUGS_CONHECIDOS === "1" ? {} : { skip: motivo };
-}
-
 // Descrição dos dois escritórios da massa #680. Os números seguem criarMassaDominio680:
 // cada escritório tem 4 extratos (aguardando e erro sem conciliação; dois processados), uma
 // sessão em andamento de 21 pares (7 automáticos, 7 prováveis com 1 confirmado, 7 sem par) e uma

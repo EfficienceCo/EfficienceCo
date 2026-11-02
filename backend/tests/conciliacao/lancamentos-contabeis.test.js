@@ -13,8 +13,9 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   iniciarBateria, fotografar, chamar, ator, atoresDe, buscarLinha, buscarLinhas, criarLancamentos,
-  provarOutroEscritorio404, conhecido, UUID_INEXISTENTE, PERFIL,
+  provarOutroEscritorio404, UUID_INEXISTENTE, PERFIL,
 } from "../helpers/conciliacao-http.js";
+import { conhecido } from "../helpers/bug-conhecido.js";
 
 const ESCRITORIO = [PERFIL.CLIENTE, PERFIL.FUNCIONARIO];
 
