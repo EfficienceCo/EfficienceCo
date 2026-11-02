@@ -229,8 +229,9 @@ Foram conferidos o status Git limpo, a existência do novo `.venv` e a ausência
 
 Antes de concluir a #678, ainda faltam a execução no ambiente de CI e a recuperação ou
 confirmação dos arquivos históricos `apuracoes-ids-invalidos-http.test.js` e
-`apuracoes-fs12-prolabore.test.js`, ausentes neste checkout. O arquivo
-`auth.test.js` existente é um placeholder e não comprova cobertura de autenticação.
+`apuracoes-fs12-prolabore.test.js`, ausentes neste checkout. A autenticação e o controle de
+acesso das rotas são cobertos na #683 (TEST-6) em `backend/tests/auth.test.js`,
+`backend/tests/*.middleware.test.js` e `backend/tests/rotas-acesso.test.js`.
 
 ### Helpers HTTP e cenários — #679
 
