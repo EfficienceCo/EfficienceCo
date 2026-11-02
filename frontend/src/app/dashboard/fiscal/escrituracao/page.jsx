@@ -326,7 +326,7 @@ function LancamentoCard({ lancamento }) {
 
       <dl className="mt-3 space-y-2 border-t border-zinc-100 pt-3 text-sm">
         <div className="flex items-center justify-between gap-3">
-          <dt className="text-zinc-500">CNPJ emitente</dt>
+          <dt className="text-zinc-500">CNPJ/CPF emitente</dt>
           <dd className="text-zinc-700">{formatarDocumentoFiscal(lancamento?.cnpj_emitente)}</dd>
         </div>
         <div className="flex items-center justify-between gap-3">
@@ -712,7 +712,7 @@ export default function FiscalPage() {
                   <th className="px-4 py-3">Chave NFe</th>
                   <th className="px-4 py-3">Tipo</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">CNPJ emitente</th>
+                  <th className="px-4 py-3">CNPJ/CPF emitente</th>
                   <th className="px-4 py-3">CNPJ/CPF destinatário</th>
                   <th className="px-4 py-3">CFOP</th>
                   <th className="px-4 py-3">NCM</th>

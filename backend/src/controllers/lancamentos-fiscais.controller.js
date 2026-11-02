@@ -9,7 +9,7 @@ import {
   recomputarInconsistencias,
   validarLancamentoFiscal,
 } from "../utils/lancamento-fiscal.util.js";
-import { arredondar, camposFaltando, soDigitos } from "../utils/comum.util.js";
+import { arredondar, camposFaltando, chaveNfeDvValido, soDigitos } from "../utils/comum.util.js";
 
 const TIPOS_VALIDOS = new Set(["entrada", "saida"]);
 const CHAVE_NFE_REGEX = /^\d{44}$/;
@@ -157,13 +157,11 @@ export async function criarLancamentoFiscal(req, res) {
       cliente_id,
       chave_nfe,
       tipo,
+      // CNPJ (14) ou CPF (11) em emitente e destinatário. VARCHAR(14) cabe os
+      // 11 dígitos sem padar. Dest = venda a PF (#566); emit = produtor rural
+      // PF (#659). Já passaram por cpfValido/cnpjValido em
+      // validarLancamentoFiscal.
       cnpj_emitente,
-      // CNPJ (14) ou CPF (11). A coluna é VARCHAR(14); CPF de 11 dígitos cabe
-      // e a venda para pessoa física segue escriturada (#566) — esse era o
-      // parser do agente, que exigia 14 dígitos; este insert nunca travou o
-      // tamanho. CPF de 11 dígitos já passou por cpfValido em
-      // validarLancamentoFiscal/validarDocumentoDestinatario, antes de chegar
-      // aqui.
       cnpj_destinatario,
       valor_total,
       icms,
@@ -234,6 +232,9 @@ export async function cancelarLancamentoFiscal(req, res) {
   const { chave_nfe, motivo, protocolo, data_evento } = req.body || {};
   if (!CHAVE_NFE_REGEX.test(String(chave_nfe || ""))) {
     return res.status(400).json({ erro: "chave_nfe deve conter 44 dígitos" });
+  }
+  if (!chaveNfeDvValido(chave_nfe)) {
+    return res.status(400).json({ erro: "chave_nfe com dígito verificador inválido" });
   }
 
   const dataCancelamento = data_evento ? new Date(data_evento) : new Date();
