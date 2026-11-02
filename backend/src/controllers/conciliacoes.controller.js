@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
-import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
+import { parseOfx, decodificarOfx, periodosDoExtrato } from "../utils/ofx-parser.util.js";
 import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
@@ -31,6 +31,8 @@ function periodoAtual() {
   return { mes: agora.getMonth() + 1, ano: agora.getFullYear() };
 }
 
+// criarConciliacao continua com ano > 0. O piso 2020 vale só no upload do OFX.
+// Unificar as duas réguas fica de fora desta issue.
 function periodoDoBody(body) {
   const mes = Number(body?.mes);
   const ano = Number(body?.ano);
@@ -38,6 +40,71 @@ function periodoDoBody(body) {
     return { mes, ano };
   }
   return null;
+}
+
+// Piso do upload, decidido em 2026-10-30: ano anterior a 2020 é fora de faixa.
+// O teto é o mesmo de erroPeriodoConsulta — o DTPOSTED do OFX também tem 4 dígitos.
+const ANO_MINIMO_EXTRATO = 2020;
+const ANO_MAXIMO_EXTRATO = 9999;
+
+function valorInformado(valor) {
+  return valor !== undefined && valor !== null && String(valor).trim() !== "";
+}
+
+function inteiroNaFaixa(valor, minimo, maximo) {
+  const numero = Number(valor);
+  return Number.isInteger(numero) && numero >= minimo && numero <= maximo ? numero : null;
+}
+
+// Sem mes e sem ano o período sai de inferirMesAno (mês+ano com mais transações).
+// Com qualquer um dos dois, os dois são obrigatórios e válidos. Fora de faixa
+// devolve 400 por campo e não cai na inferência.
+function validarPeriodoExtrato(body) {
+  const mesInformado = valorInformado(body?.mes);
+  const anoInformado = valorInformado(body?.ano);
+  if (!mesInformado && !anoInformado) {
+    return { periodo: null };
+  }
+
+  const campos = {};
+  let mes = null;
+  let ano = null;
+
+  if (!mesInformado) {
+    campos.mes = "mes é obrigatório quando ano é informado";
+  } else {
+    mes = inteiroNaFaixa(body.mes, 1, 12);
+    if (mes === null) campos.mes = "mes deve ser um inteiro entre 1 e 12";
+  }
+
+  if (!anoInformado) {
+    campos.ano = "ano é obrigatório quando mes é informado";
+  } else {
+    ano = inteiroNaFaixa(body.ano, ANO_MINIMO_EXTRATO, ANO_MAXIMO_EXTRATO);
+    if (ano === null) campos.ano = "ano deve ser um inteiro entre 2020 e 9999";
+  }
+
+  if (Object.keys(campos).length > 0) {
+    return { campos };
+  }
+  return { periodo: { mes, ano } };
+}
+
+function responderCamposInvalidos(res, campos) {
+  return res.status(400).json({ erro: Object.values(campos).join("; "), campos });
+}
+
+function mensagemPeriodoRecusado(resumo) {
+  const periodo = `${resumo.mes}/${resumo.ano}`;
+  if (resumo.meses.length === 1) {
+    return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo})`;
+  }
+
+  const lista = resumo.meses.map((item) => `${item.mes}/${item.ano} (${item.quantidade})`).join(", ");
+  const criterio = resumo.empate
+    ? "o primeiro mês do arquivo entre os que empatam"
+    : "o mês com mais transações";
+  return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo}, ${criterio}; o arquivo cobre mais de um mês: ${lista})`;
 }
 
 export async function criarConciliacaoExtrato(req, res) {
@@ -50,9 +117,13 @@ export async function criarConciliacaoExtrato(req, res) {
     return res.status(400).json({ erro: "Arquivo OFX é obrigatório (campo 'arquivo')" });
   }
 
-  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
+  const periodoValidado = validarPeriodoExtrato(req.body);
+  if (periodoValidado.campos) {
+    return responderCamposInvalidos(res, periodoValidado.campos);
+  }
+  const periodoInformado = periodoValidado.periodo;
 
-  const periodoInformado = periodoDoBody(req.body);
+  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
 
   // Registro criado antes do parsing para que uma falha de parsing tenha
   // onde ser marcada (status='erro'). banco/mes/ano são placeholders aqui —
@@ -96,7 +167,34 @@ export async function criarConciliacaoExtrato(req, res) {
     });
   }
 
-  const { mes, ano } = periodoInformado ?? inferirMesAno(parsed.transacoes);
+  const periodoArquivo = periodosDoExtrato(parsed.transacoes);
+  if (
+    periodoInformado &&
+    (periodoInformado.mes !== periodoArquivo.mes || periodoInformado.ano !== periodoArquivo.ano)
+  ) {
+    const { error: erroRecusa } = await supabase
+      .from("extratos_bancarios")
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
+      .eq("id", extrato.id);
+
+    if (erroRecusa) {
+      console.error(
+        "[conciliacoes.controller] Erro ao marcar extrato recusado por período:",
+        erroRecusa.message,
+      );
+      return res.status(500).json({ erro: "Erro ao registrar recusa do período do extrato" });
+    }
+
+    return res.status(400).json({
+      erro: mensagemPeriodoRecusado(periodoArquivo),
+      campos: {
+        mes: "não corresponde às datas do extrato",
+        ano: "não corresponde às datas do extrato",
+      },
+    });
+  }
+
+  const { mes, ano } = periodoInformado ?? periodoArquivo;
 
   const transacoesParaInserir = parsed.transacoes.map((transacao) => ({
     extrato_id: extrato.id,
@@ -644,18 +742,6 @@ async function buscarParDaConciliacao(pareId, conciliacaoId) {
   return { par };
 }
 
-// UPDATE condicionado ao par ainda estar pendente de decisão: de dois pedidos simultâneos
-// o banco deixa um passar e o outro volta com 0 linhas em `data` (o chamador responde 409).
-function atualizarParSePendente(pareId, campos) {
-  return supabase
-    .from("pares_conciliacao")
-    .update(campos)
-    .eq("id", pareId)
-    .eq("confianca", "provavel")
-    .is("confirmado_em", null)
-    .select("id");
-}
-
 export async function confirmarPar(req, res) {
   const clienteId = resolverClienteId(req);
   if (!clienteId) {
@@ -678,37 +764,21 @@ export async function confirmarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para confirmação" });
   }
 
-  const { data: confirmados, error: erroUpdatePar } = await atualizarParSePendente(pareId, {
-    confirmado_por: req.usuario.id,
-    confirmado_em: new Date().toISOString(),
+  // Decisão + recálculo dos totais numa transação só (migration 105): de dois pedidos
+  // simultâneos sobre o mesmo par o banco deixa um passar e o outro volta `false` (409).
+  const { data: confirmou, error: erroConfirmar } = await supabase.rpc("confirmar_par_conciliacao", {
+    p_conciliacao_id: id,
+    p_par_id: pareId,
+    p_usuario_id: req.usuario.id,
   });
 
-  if (erroUpdatePar) {
-    console.error("[conciliacoes.controller] Erro ao confirmar par:", erroUpdatePar.message);
+  if (erroConfirmar) {
+    console.error("[conciliacoes.controller] Erro ao confirmar par:", erroConfirmar.message);
     return res.status(500).json({ erro: "Erro ao confirmar par de conciliação" });
   }
 
-  if (!confirmados?.length) {
+  if (!confirmou) {
     return res.status(409).json({ erro: "Par não está disponível para confirmação" });
-  }
-
-  // Recalcula os totais a partir dos pares (migration 104), em vez de somar +1/-1.
-  const { error: erroUpdateConciliacao } = await supabase.rpc("recalcular_totais_conciliacao", {
-    p_conciliacao_id: id,
-  });
-
-  if (erroUpdateConciliacao) {
-    console.error(
-      "[conciliacoes.controller] Erro ao atualizar totais da conciliação:",
-      erroUpdateConciliacao.message,
-    );
-    // Desfaz a confirmação do par para permitir uma nova tentativa consistente
-    // (senão o par ficaria marcado como confirmado sem os totais refletirem isso).
-    await supabase
-      .from("pares_conciliacao")
-      .update({ confirmado_por: null, confirmado_em: null })
-      .eq("id", pareId);
-    return res.status(500).json({ erro: "Erro ao atualizar totais da conciliação" });
   }
 
   return res.status(200).json({
@@ -740,41 +810,22 @@ export async function rejeitarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
-  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e
-  // outro só com o lançamento — no mesmo formato que o matching gera para sobras.
-  // Assim o lançamento continua visível em "Lançamentos sem transação" e no PDF.
-  //
-  // O par do lançamento entra primeiro: se o processo cair no meio, o lançamento aparece
-  // duplicado (visível), nunca some. Depois o UPDATE do par original, condicionado ao
-  // estado pendente, decide a corrida: de dois pedidos simultâneos (confirmar × rejeitar,
-  // ou rejeitar × rejeitar) o banco deixa um passar e o outro volta com 0 linhas (409) e
-  // apaga o par do lançamento que acabou de inserir.
-  const { data: parLancamento, error: erroInsertPar } = await supabase
-    .from("pares_conciliacao")
-    .insert({ conciliacao_id: id, transacao_id: null, lancamento_id: par.lancamento_id, confianca: "sem_par" })
-    .select("id")
-    .single();
-
-  if (erroInsertPar) {
-    console.error("[conciliacoes.controller] Erro ao separar lançamento do par rejeitado:", erroInsertPar.message);
-    return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
-  }
-
-  const desfazerInsert = () => supabase.from("pares_conciliacao").delete().eq("id", parLancamento.id);
-
-  const { data: rejeitados, error: erroUpdatePar } = await atualizarParSePendente(pareId, {
-    lancamento_id: null,
-    confianca: "sem_par",
+  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e outro só com
+  // o lançamento — no mesmo formato que o matching gera para sobras. Assim o lançamento continua
+  // visível em "Lançamentos sem transação" e no PDF. Tudo numa transação só (migration 105): de
+  // dois pedidos simultâneos (confirmar × rejeitar, ou rejeitar × rejeitar) um passa e o outro
+  // volta NULL (409).
+  const { data: parLancamentoId, error: erroRejeitar } = await supabase.rpc("rejeitar_par_conciliacao", {
+    p_conciliacao_id: id,
+    p_par_id: pareId,
   });
 
-  if (erroUpdatePar) {
-    console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroUpdatePar.message);
-    await desfazerInsert();
+  if (erroRejeitar) {
+    console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroRejeitar.message);
     return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
   }
 
-  if (!rejeitados?.length) {
-    await desfazerInsert();
+  if (!parLancamentoId) {
     return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
@@ -784,7 +835,7 @@ export async function rejeitarPar(req, res) {
   return res.status(200).json({
     id: pareId,
     confianca: "sem_par",
-    par_lancamento: { id: parLancamento.id, lancamento_id: par.lancamento_id, confianca: "sem_par" },
+    par_lancamento: { id: parLancamentoId, lancamento_id: par.lancamento_id, confianca: "sem_par" },
   });
 }
 

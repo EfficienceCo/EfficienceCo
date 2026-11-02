@@ -4,9 +4,11 @@ import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { confirmarPar, rejeitarPar } from "../src/controllers/conciliacoes.controller.js";
 
-// #690 (BUG-CONC-13). Banco em memória que imita o que importa do Postgres aqui: o UPDATE
-// condicional é atômico (confere o filtro e grava sem ceder a vez), então de dois pedidos
-// sobre o mesmo par só um casa. Não prova o comportamento do banco real (isso é a TEST-9).
+// #690 (BUG-CONC-13). Banco em memória: as functions confirmar_par_conciliacao e
+// rejeitar_par_conciliacao (migration 105) são imitadas em JS e executam sem ceder a vez, como
+// a transação do Postgres. Prova que o controller traduz o resultado delas em 200/409 e que
+// ele não escreve nada fora da function; NÃO prova o SQL nem o lock do banco (isso é teste
+// com banco real, TEST-9/#686).
 
 const CLIENTE = "11111111-1111-1111-1111-111111111111";
 const CONCILIACAO_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -40,45 +42,36 @@ function recalcular() {
 const originalFrom = supabase.from;
 const originalRpc = supabase.rpc;
 
-supabase.rpc = async (nome) => {
-  assert.equal(nome, "recalcular_totais_conciliacao");
-  recalcular();
-  return { data: null, error: null };
+supabase.rpc = async (nome, args) => {
+  const par = pares.find((p) => p.id === args.p_par_id);
+  const disponivel = par && par.confianca === "provavel" && !par.confirmado_em;
+  if (nome === "confirmar_par_conciliacao") {
+    if (!disponivel) return { data: false, error: null };
+    par.confirmado_em = "agora";
+    par.confirmado_por = args.p_usuario_id;
+    recalcular();
+    return { data: true, error: null };
+  }
+  assert.equal(nome, "rejeitar_par_conciliacao");
+  if (!disponivel) return { data: null, error: null };
+  const lancamentoId = par.lancamento_id;
+  Object.assign(par, { lancamento_id: null, confianca: "sem_par" });
+  const novo = { id: `novo${pares.length}`, conciliacao_id: CONCILIACAO_ID, transacao_id: null, lancamento_id: lancamentoId, confianca: "sem_par" };
+  pares.push(novo);
+  return { data: novo.id, error: null };
 };
 
 supabase.from = function (tabela) {
   const filtros = [];
-  let operacao = "select";
-  let campos = null;
-  const casa = (linha) => filtros.every((f) => (f.nulo ? linha[f.col] == null : linha[f.col] === f.val));
+  const casa = (linha) => filtros.every((f) => linha[f.col] === f.val);
   const builder = {
     select() { return builder; },
-    insert(c) { operacao = "insert"; campos = c; return builder; },
-    update(c) { operacao = "update"; campos = c; return builder; },
-    delete() { operacao = "delete"; return builder; },
     eq(col, val) { filtros.push({ col, val }); return builder; },
-    is(col) { filtros.push({ col, nulo: true }); return builder; },
     async maybeSingle() {
       await Promise.resolve(); // cede a vez: os dois pedidos leem antes de qualquer escrita
       const fonte = tabela === "conciliacoes" ? [conciliacao] : pares;
       const achada = fonte.find(casa);
       return { data: achada ? { ...achada } : null, error: null };
-    },
-    async single() {
-      const novo = { id: `novo${pares.length}`, ...campos };
-      pares.push(novo);
-      return { data: { id: novo.id }, error: null };
-    },
-    then(resolve, reject) {
-      let linhas = [];
-      if (tabela === "pares_conciliacao" && operacao === "update") {
-        linhas = pares.filter(casa);
-        linhas.forEach((l) => Object.assign(l, campos));
-      }
-      if (tabela === "pares_conciliacao" && operacao === "delete") {
-        pares = pares.filter((p) => !casa(p));
-      }
-      return Promise.resolve({ data: linhas.map((l) => ({ id: l.id })), error: null }).then(resolve, reject);
     },
   };
   return builder;
