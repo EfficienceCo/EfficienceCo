@@ -1,0 +1,14 @@
+{
+  "massa-680/nfe-a-entrada-autorizada.xml": "c8e9c7521b1ed58306654af4e5d6ae801b94d31a129bba40f678278879105507",
+  "massa-680/nfe-a-saida-autorizada.xml": "31a3332d97bd67405cabf41319a90e9df84f0befc5bf241aebb180c66918d86c",
+  "massa-680/nfe-a-saida-cancelada.xml": "bd978c163e7dd51b4ac04d854549cd4d4032abbc3e50d8d72dab565f1dde2f1e",
+  "massa-680/nfe-a-entrada-sem-protocolo.xml": "ec0147f0a9ad8b4bf2793021f52408e1cf8aca74011456a88a04e39341414d95",
+  "massa-680/nfe-a-entrada-emitente-cpf.xml": "25682f23af98df410b4988bcc7d1af4b1456dfdc3c44f443b21aa9a4b9d84a67",
+  "massa-680/nfe-b-entrada-autorizada.xml": "ae55fe456a641721e3eae138c692881a8d9a728c0b183beebf9dba4a59fcac37",
+  "massa-680/nfe-b-saida-autorizada.xml": "9dd254c3b5294758200333e4cd6cce41284e72702ae09e96336fa3d1ad1de901",
+  "massa-680/nfe-b-saida-cancelada.xml": "3036ab51a88713d4457898242235cb101c9a1001066f4eaf1397707e354767fd",
+  "massa-680/nfe-b-entrada-sem-protocolo.xml": "13fba6ba11f0ef03d9b435b11375f1ade9a38507fcffed56818e168762037da5",
+  "massa-680/nfe-b-entrada-emitente-cpf.xml": "b0a1d155bbf88d8fbf9af86d9a0c7ac95f08913426bc7f409339f8fc56ee3e82",
+  "massa-680/comprovante-a.pdf": "ed3580e812e6a1e270d650585617a7afdd385d7f8fa260bf58b194021e579edd",
+  "massa-680/comprovante-b.pdf": "c06ba77a8f20907d09f5cf4b467c34da1e302150d26ed6232b21c2fc311a467e"
+}
