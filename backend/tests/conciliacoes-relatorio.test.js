@@ -365,8 +365,8 @@ describe("gerarRelatorioConciliacaoPDF: linhas de altura variável (#699)", () =
     }).then(() => desenhos);
   }
 
-  function match(i, descricaoBanco) {
-    return { data: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`, descricaoBanco, descricaoLancamento: "Lançamento", valor: 10 };
+  function match(i, descricaoBanco, descricaoLancamento = "Lançamento") {
+    return { data: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`, descricaoBanco, descricaoLancamento, valor: 10 };
   }
 
   // Altura que o texto ocupa na coluna "descrição banco", medida pelo próprio pdfkit.
@@ -378,7 +378,7 @@ describe("gerarRelatorioConciliacaoPDF: linhas de altura variável (#699)", () =
 
   for (const tamanho of [60, 200]) {
     it(`descrição de ${tamanho} caracteres não sobrepõe a linha seguinte`, async () => {
-      const longa = ("RECEBIMENTO PIX " .repeat(20)).slice(0, tamanho);
+      const longa = ("RECEBIMENTO PIX ".repeat(20)).slice(0, tamanho).trim();
       const desenhos = await gerarEspiando([match(0, longa), match(1, "CURTA")]);
 
       const yLonga = desenhos.find((d) => d.texto === longa).y;
@@ -410,12 +410,23 @@ describe("gerarRelatorioConciliacaoPDF: linhas de altura variável (#699)", () =
     }
   });
 
-  it("descrição acima de 300 caracteres é cortada com reticências e ainda cabe na página", async () => {
-    const gigante = "X".repeat(1000);
+  it("descrição enorme ocupa no máximo 120 pt e a linha seguinte continua na mesma página", async () => {
+    const gigante = "PALAVRA ".repeat(400).trim();
     const desenhos = await gerarEspiando([match(0, gigante), match(1, "DEPOIS")]);
-    const cortada = desenhos.find((d) => d.texto.startsWith("XXX") && d.texto.endsWith("…"));
-    assert.ok(cortada, "texto cortado com reticências");
-    assert.equal(cortada.texto.length, 300);
-    assert.ok(desenhos.some((d) => d.texto === "DEPOIS"));
+    const yGigante = desenhos.find((d) => d.texto === gigante).y;
+    const depois = desenhos.find((d) => d.texto === "DEPOIS");
+    assert.equal(depois.y - yGigante, 120);
+    assert.equal(depois.pagina, desenhos.find((d) => d.texto === gigante).pagina);
+  });
+
+  it("descrição de 199 caracteres com muitas quebras de linha mantém todas as colunas da linha na mesma página", async () => {
+    const comQuebras = "x\n".repeat(99) + "x"; // 199 caracteres, ~100 linhas se as quebras forem respeitadas
+    assert.equal(comQuebras.length, 199);
+    const desenhos = await gerarEspiando([match(0, "ANTES"), match(1, comQuebras, "LANC-QUEBRAS"), match(2, "DEPOIS")]);
+
+    // "Lançamento" é a outra coluna de texto da mesma linha; os dois têm de cair na mesma página
+    const linha = desenhos.filter((d) => d.texto === "LANC-QUEBRAS" || d.texto.startsWith("x"));
+    assert.equal(linha.length, 2);
+    assert.equal(new Set(linha.map((d) => d.pagina)).size, 1, `páginas: ${linha.map((d) => d.pagina)}`);
   });
 });

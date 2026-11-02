@@ -71,13 +71,20 @@ function desenharHeaderTabela(doc, x, y, colunas) {
 }
 
 const ALTURA_LINHA_MINIMA = 14;
-// shortcut: descrição acima disso é cortada com "…", para a linha caber numa página; o MEMO do
-// OFX raramente passa de 60 caracteres. Subir o limite se algum banco mandar texto maior.
-const MAX_CARACTERES_CELULA = 300;
+// Uma linha nunca passa disso (cabe folgada numa página A4): o texto que sobra é cortado com "…".
+// Sem teto, uma descrição com muitas quebras viraria uma linha mais alta que a página e o pdfkit
+// empurraria cada coluna para uma página diferente.
+const ALTURA_LINHA_MAXIMA = 120;
+const PADDING_VERTICAL_LINHA = 4;
 
+// Quebras de linha e espaços repetidos viram um espaço só: um MEMO com muitas quebras
+// resultaria numa célula alta e quase vazia.
 function textoDaCelula(linha, coluna) {
-  const texto = String(linha[coluna.chave] ?? "");
-  return texto.length > MAX_CARACTERES_CELULA ? `${texto.slice(0, MAX_CARACTERES_CELULA - 1)}…` : texto;
+  return String(linha[coluna.chave] ?? "").replace(/\s+/g, " ").trim();
+}
+
+function opcoesDaCelula(coluna) {
+  return { width: coluna.largura - 6, align: coluna.alinhamento || "left" };
 }
 
 // O texto que não cabe na largura da coluna quebra em mais linhas: a altura da linha é a da
@@ -85,21 +92,20 @@ function textoDaCelula(linha, coluna) {
 function alturaDaLinha(doc, colunas, linha) {
   doc.font("Helvetica").fontSize(8);
   const alturaTexto = Math.max(
-    ...colunas.map((coluna) =>
-      doc.heightOfString(textoDaCelula(linha, coluna), {
-        width: coluna.largura - 6,
-        align: coluna.alinhamento || "left",
-      }),
-    ),
+    ...colunas.map((coluna) => doc.heightOfString(textoDaCelula(linha, coluna), opcoesDaCelula(coluna))),
   );
-  return Math.max(ALTURA_LINHA_MINIMA, alturaTexto + 4);
+  return Math.min(ALTURA_LINHA_MAXIMA, Math.max(ALTURA_LINHA_MINIMA, alturaTexto + PADDING_VERTICAL_LINHA));
 }
 
-function desenharLinhaTabela(doc, x, y, colunas, linha) {
+function desenharLinhaTabela(doc, x, y, colunas, linha, alturaLinha) {
   let cursorX = x;
   colunas.forEach((coluna) => {
     doc.font("Helvetica").fontSize(8).fillColor("black")
-      .text(textoDaCelula(linha, coluna), cursorX + 3, y + 3, { width: coluna.largura - 6, align: coluna.alinhamento || "left" });
+      .text(textoDaCelula(linha, coluna), cursorX + 3, y + 3, {
+        ...opcoesDaCelula(coluna),
+        height: alturaLinha - PADDING_VERTICAL_LINHA,
+        ellipsis: true,
+      });
     cursorX += coluna.largura;
   });
 }
@@ -137,7 +143,7 @@ function desenharTabela(doc, { x0, larguraUtil, limiteInferior }, y, titulo, col
       desenharHeaderTabela(doc, x0, y, colunas);
       y += alturaHeader;
     }
-    desenharLinhaTabela(doc, x0, y, colunas, linha);
+    desenharLinhaTabela(doc, x0, y, colunas, linha, alturaLinha);
     y += alturaLinha;
   });
   fecharSegmentoTabela(doc, x0, yTopo, y, colunas);
