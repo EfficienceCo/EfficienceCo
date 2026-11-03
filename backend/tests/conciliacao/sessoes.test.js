@@ -37,7 +37,7 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
         assert.equal(resposta.status, 201, JSON.stringify(resposta.corpo));
         // Os 4 pares sem par são T3, T4 (transações) e L3, L4 (lançamentos).
         assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, {
-          conciliacao_id: undefined, total_transacoes: 4, automaticos: 1, provaveis: 1, sem_par: 4,
+          conciliacao_id: undefined, total_transacoes: 4, automaticos: 1, provaveis: 1, sem_par: 4, lancamentos_em_outra_conciliacao: 0,
         });
         const sessao = await buscarLinha(banco, "conciliacoes", resposta.corpo.conciliacao_id);
         // Totais: conciliadas = 1 automático; pendentes = 1 provável + 2 transações sem par = 3; 1 + 3 = 4 transações.
@@ -71,7 +71,7 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
       const { extrato } = await criarExtratoProcessado(banco, A.cliente.id, { mes: 12, ano: 2026 });
       const resposta = await criar(ator(A, PERFIL.CLIENTE), { extrato_id: extrato.id, mes: 12, ano: 2026 });
       assert.equal(resposta.status, 201);
-      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 0, automaticos: 0, provaveis: 0, sem_par: 0 });
+      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 0, automaticos: 0, provaveis: 0, sem_par: 0, lancamentos_em_outra_conciliacao: 0 });
       assert.deepEqual(await buscarLinhas(banco, "pares_conciliacao", { conciliacao_id: resposta.corpo.conciliacao_id }), []);
     });
 
@@ -114,7 +114,7 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
       const resposta = await criar(ator(A, PERFIL.CLIENTE), { extrato_id: extrato.id, mes: 11, ano: 2026 });
 
       assert.equal(resposta.status, 201, JSON.stringify(resposta.corpo));
-      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 1, automaticos: 1, provaveis: 0, sem_par: 1 });
+      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 1, automaticos: 1, provaveis: 0, sem_par: 1, lancamentos_em_outra_conciliacao: 0 });
       const sessao = await buscarLinha(banco, "conciliacoes", resposta.corpo.conciliacao_id);
       assert.deepEqual([sessao.total_transacoes, sessao.total_conciliadas, sessao.total_pendentes], [1, 1, 0]);
       const pares = await buscarLinhas(banco, "pares_conciliacao", { conciliacao_id: sessao.id });
@@ -199,7 +199,40 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
     });
   });
 
-  describe("bugs conhecidos: o teste do comportamento certo fica com skip até a correção", () => {
+  it("dois extratos criados em paralelo não casam o mesmo lançamento (#691)", async () => {
+    const [lancamento] = await criarLancamentos(banco, A.cliente.id, [
+      { data: "2026-12-03", valor: 170.13, tipo: "credito" },
+    ]);
+    const extratos = [];
+    for (const nome of ["dezembro-a.ofx", "dezembro-b.ofx"]) {
+      extratos.push(await criarExtratoProcessado(banco, A.cliente.id, {
+        mes: 12, ano: 2026, nome,
+        transacoes: [{ data: "2026-12-03", valor: 170.13, tipo: "credito" }],
+      }));
+    }
+    const quem = ator(A, PERFIL.CLIENTE);
+    const respostas = await Promise.all(extratos.map(({ extrato }) => criar(quem, {
+      extrato_id: extrato.id, mes: 12, ano: 2026,
+    })));
+    assert.ok(respostas.some(r => r.status === 201), JSON.stringify(respostas));
+    assert.ok(respostas.every(r => r.status === 201 || r.status === 409), JSON.stringify(respostas));
+    const pares = await buscarLinhas(banco, "pares_conciliacao", { lancamento_id: lancamento.id });
+    assert.equal(pares.filter(p => ["automatico", "provavel"].includes(p.confianca)).length, 1,
+      "o mesmo lançamento deve ter um único par ativo");
+    const sessoes = (await buscarLinhas(banco, "conciliacoes", { cliente_id: A.cliente.id }))
+      .filter(s => extratos.some(({ extrato }) => extrato.id === s.extrato_id));
+    assert.deepEqual(sessoes.map(s => s.id).sort(),
+      respostas.filter(r => r.status === 201).map(r => r.corpo.conciliacao_id).sort(),
+      "uma tentativa recusada não pode deixar conciliação órfã");
+    for (const sessao of sessoes) {
+      const resposta = await chamar(api, quem, { metodo: "POST", caminho: `/conciliacoes/${sessao.id}/concluir` });
+      assert.equal(resposta.status, 200, JSON.stringify(resposta.corpo));
+    }
+    const paresConcluidos = await buscarLinhas(banco, "pares_conciliacao", { lancamento_id: lancamento.id });
+    assert.equal(paresConcluidos.filter(p => ["automatico", "provavel"].includes(p.confianca)).length, 1);
+  });
+
+  describe("regressões conhecidas (skip apenas enquanto a correção estiver pendente)", () => {
     it("duplo clique: dois POST em paralelo para o mesmo extrato dão um 201 e um 409, e uma só sessão (PRB-C-21)",
       conhecido("BUG PRB-C-21 (sem issue; precisa de issue `bug`): checagem é leitura seguida de insert e conciliacoes.extrato_id não tem UNIQUE; os dois pedidos criam sessão"), async () => {
         const cenario = await montarCenarioNovembro(banco, A.cliente.id);
@@ -210,7 +243,7 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
       });
 
     it("lançamento que está numa sessão em andamento de outro extrato não é casado de novo (PRB-C-04, #691)",
-      conhecido("BUG #691 (PRB-C-04): o matching só exclui conciliado=true; lançamento de sessão em_andamento de outro extrato entra de novo"), async () => {
+      async () => {
         // Lançamento I+300 (10/2026, 10, crédito) está num par automático da sessão aberta do A.
         // Um segundo extrato de outubro com a mesma transação não pode pegá-lo.
         const { extrato } = await criarExtratoProcessado(banco, A.cliente.id, {

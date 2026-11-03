@@ -178,7 +178,7 @@ describe("TEST-9: fluxo completo pela API (upload, lançamentos, sessão, decis�
     const sessao = await chamar(api, quem, { metodo: "POST", caminho: "/conciliacoes", corpo: { extrato_id: upload.corpo.extrato_id, mes: 11, ano: 2026 } });
     assert.equal(sessao.status, 201, JSON.stringify(sessao.corpo));
     // 2 transações: 1 automático, 1 provável, 1 sem par (L3) -> conciliadas 1, pendentes 1.
-    assert.deepEqual({ ...sessao.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 2, automaticos: 1, provaveis: 1, sem_par: 1 });
+    assert.deepEqual({ ...sessao.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 2, automaticos: 1, provaveis: 1, sem_par: 1, lancamentos_em_outra_conciliacao: 0 });
     const detalhe = await chamar(api, quem, { caminho: `/conciliacoes/${sessao.corpo.conciliacao_id}` });
     return { extratoId: upload.corpo.extrato_id, sessaoId: sessao.corpo.conciliacao_id, L: lancamentos, detalhe: detalhe.corpo };
   }
