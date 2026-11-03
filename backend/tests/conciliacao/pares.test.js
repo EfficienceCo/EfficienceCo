@@ -9,7 +9,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   iniciarBateria, fotografar, chamar, ator, atoresDe, buscarLinha, buscarLinhas, provarOutroEscritorio404,
-  conhecido, UUID_INEXISTENTE, PERFIL, paraEpoch,
+  UUID_INEXISTENTE, PERFIL, paraEpoch,
 } from "../helpers/conciliacao-http.js";
 
 describe("TEST-9: PATCH /conciliacoes/:id/pares/:pareId/confirmar e /rejeitar", { timeout: 600_000 }, () => {
@@ -203,12 +203,9 @@ describe("TEST-9: PATCH /conciliacoes/:id/pares/:pareId/confirmar e /rejeitar", 
     });
   });
 
-  // Pedidos de verdade ao mesmo tempo contra o banco real. Hoje a leitura do estado e o UPDATE são
-  // duas operações, então os dois passam. O teste do comportamento certo fica com skip (#690).
+  // Pedidos simultâneos contra o banco real: as functions da #690 decidem atomicamente.
   describe("concorrência (PRB-C-13, 14 e 15)", () => {
-    const MOTIVO = "BUG #690 (PRB-C-13/14/15): UPDATE não condiciona em confirmado_em IS NULL / estado lido e os totais são lidos e gravados em duas operações; aberto, PR #711";
-
-    it("confirmar + rejeitar o mesmo par ao mesmo tempo: um 200 e um 409, e o par termina coerente", conhecido(MOTIVO), async () => {
+    it("confirmar + rejeitar o mesmo par ao mesmo tempo: um 200 e um 409, e o par termina coerente", async () => {
       const quem = ator(A, PERFIL.CLIENTE);
       const respostas = await Promise.all([confirmar(quem, A.sessaoAberta, A.parAberto(4)), rejeitar(quem, A.sessaoAberta, A.parAberto(4))]);
       assert.deepEqual(respostas.map(r => r.status).sort(), [200, 409]);
@@ -221,7 +218,7 @@ describe("TEST-9: PATCH /conciliacoes/:id/pares/:pareId/confirmar e /rejeitar", 
       assert.ok(doLancamento.length <= 1, "o lançamento aparece em mais de um par");
     });
 
-    it("confirmar o mesmo par 3 vezes ao mesmo tempo: um 200 e dois 409", conhecido(MOTIVO), async () => {
+    it("confirmar o mesmo par 3 vezes ao mesmo tempo: um 200 e dois 409", async () => {
       const quem = ator(A, PERFIL.CLIENTE);
       const respostas = await Promise.all([1, 2, 3].map(() => confirmar(quem, A.sessaoAberta, A.parAberto(4))));
       assert.deepEqual(respostas.map(r => r.status).sort(), [200, 409, 409]);
@@ -229,7 +226,7 @@ describe("TEST-9: PATCH /conciliacoes/:id/pares/:pareId/confirmar e /rejeitar", 
       assert.deepEqual([sessao.total_conciliadas, sessao.total_pendentes], [9, 12], "contou uma confirmação só");
     });
 
-    it("rejeitar o mesmo par em duas abas: um 200, um 409 e um único par novo para o lançamento", conhecido(MOTIVO), async () => {
+    it("rejeitar o mesmo par em duas abas: um 200, um 409 e um único par novo para o lançamento", async () => {
       const quem = ator(A, PERFIL.CLIENTE);
       const respostas = await Promise.all([1, 2].map(() => rejeitar(quem, A.sessaoAberta, A.parAberto(4))));
       assert.deepEqual(respostas.map(r => r.status).sort(), [200, 409]);
@@ -237,7 +234,7 @@ describe("TEST-9: PATCH /conciliacoes/:id/pares/:pareId/confirmar e /rejeitar", 
       assert.equal(doLancamento.length, 1, "o lançamento rejeitado aparece em um par só");
     });
 
-    it("confirmar 3 pares diferentes ao mesmo tempo: os totais fecham em 11 conciliadas e 10 pendentes", conhecido(MOTIVO), async () => {
+    it("confirmar 3 pares diferentes ao mesmo tempo: os totais fecham em 11 conciliadas e 10 pendentes", async () => {
       const quem = ator(A, PERFIL.CLIENTE);
       // 8 + 3 = 11 conciliadas; 13 - 3 = 10 pendentes (conta à mão sobre a massa).
       const respostas = await Promise.all([4, 7, 10].map(i => confirmar(quem, A.sessaoAberta, A.parAberto(i))));

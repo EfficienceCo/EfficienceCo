@@ -825,48 +825,21 @@ export async function confirmarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para confirmação" });
   }
 
-  const { error: erroUpdatePar } = await supabase
-    .from("pares_conciliacao")
-    .update({ confirmado_por: req.usuario.id, confirmado_em: new Date().toISOString() })
-    .eq("id", pareId);
+  // Decisão + recálculo dos totais numa transação só (migration 105): de dois pedidos
+  // simultâneos sobre o mesmo par o banco deixa um passar e o outro volta `false` (409).
+  const { data: confirmou, error: erroConfirmar } = await supabase.rpc("confirmar_par_conciliacao", {
+    p_conciliacao_id: id,
+    p_par_id: pareId,
+    p_usuario_id: req.usuario.id,
+  });
 
-  if (erroUpdatePar) {
-    console.error("[conciliacoes.controller] Erro ao confirmar par:", erroUpdatePar.message);
+  if (erroConfirmar) {
+    console.error("[conciliacoes.controller] Erro ao confirmar par:", erroConfirmar.message);
     return res.status(500).json({ erro: "Erro ao confirmar par de conciliação" });
   }
 
-  // Re-busca os totais o mais perto possível do update para reduzir a janela
-  // de corrida do incremento (não há suporte a update atômico/transação neste client).
-  const { data: conciliacaoAtual, error: erroConciliacaoAtual } = await supabase
-    .from("conciliacoes")
-    .select("total_conciliadas, total_pendentes")
-    .eq("id", id)
-    .maybeSingle();
-
-  const erroUpdateConciliacao =
-    erroConciliacaoAtual ??
-    (
-      await supabase
-        .from("conciliacoes")
-        .update({
-          total_conciliadas: conciliacaoAtual.total_conciliadas + 1,
-          total_pendentes: conciliacaoAtual.total_pendentes - 1,
-        })
-        .eq("id", id)
-    ).error;
-
-  if (erroUpdateConciliacao) {
-    console.error(
-      "[conciliacoes.controller] Erro ao atualizar totais da conciliação:",
-      erroUpdateConciliacao.message,
-    );
-    // Desfaz a confirmação do par para permitir uma nova tentativa consistente
-    // (senão o par ficaria marcado como confirmado sem os totais refletirem isso).
-    await supabase
-      .from("pares_conciliacao")
-      .update({ confirmado_por: null, confirmado_em: null })
-      .eq("id", pareId);
-    return res.status(500).json({ erro: "Erro ao atualizar totais da conciliação" });
+  if (!confirmou) {
+    return res.status(409).json({ erro: "Par não está disponível para confirmação" });
   }
 
   return res.status(200).json({
@@ -898,31 +871,23 @@ export async function rejeitarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
-  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e
-  // outro só com o lançamento — no mesmo formato que o matching gera para sobras.
-  // Assim o lançamento continua visível em "Lançamentos sem transação" e no PDF.
-  const { data: parLancamento, error: erroInsertPar } = await supabase
-    .from("pares_conciliacao")
-    .insert({ conciliacao_id: id, transacao_id: null, lancamento_id: par.lancamento_id, confianca: "sem_par" })
-    .select("id")
-    .single();
+  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e outro só com
+  // o lançamento — no mesmo formato que o matching gera para sobras. Assim o lançamento continua
+  // visível em "Lançamentos sem transação" e no PDF. Tudo numa transação só (migration 105): de
+  // dois pedidos simultâneos (confirmar × rejeitar, ou rejeitar × rejeitar) um passa e o outro
+  // volta NULL (409).
+  const { data: parLancamentoId, error: erroRejeitar } = await supabase.rpc("rejeitar_par_conciliacao", {
+    p_conciliacao_id: id,
+    p_par_id: pareId,
+  });
 
-  if (erroInsertPar) {
-    console.error("[conciliacoes.controller] Erro ao separar lançamento do par rejeitado:", erroInsertPar.message);
+  if (erroRejeitar) {
+    console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroRejeitar.message);
     return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
   }
 
-  const desfazerInsert = () => supabase.from("pares_conciliacao").delete().eq("id", parLancamento.id);
-
-  const { error: erroUpdatePar } = await supabase
-    .from("pares_conciliacao")
-    .update({ lancamento_id: null, confianca: "sem_par" })
-    .eq("id", pareId);
-
-  if (erroUpdatePar) {
-    console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroUpdatePar.message);
-    await desfazerInsert();
-    return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
+  if (!parLancamentoId) {
+    return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
   // total_pendentes não muda: conta só transações (conciliadas + pendentes = total_transacoes,
@@ -931,7 +896,7 @@ export async function rejeitarPar(req, res) {
   return res.status(200).json({
     id: pareId,
     confianca: "sem_par",
-    par_lancamento: { id: parLancamento.id, lancamento_id: par.lancamento_id, confianca: "sem_par" },
+    par_lancamento: { id: parLancamentoId, lancamento_id: par.lancamento_id, confianca: "sem_par" },
   });
 }
 
