@@ -8,7 +8,6 @@ import {
 } from "../src/controllers/conciliacoes.controller.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
-const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
 const EXTRATO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 // ---------------------------------------------------------------------------
@@ -223,6 +222,75 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(res.statusCode, 500);
     assert.equal(statusAtualizado, "erro");
     assert.equal(hashAtualizado, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /conciliacoes/extrato/:id/transacoes — bordas da paginação (HTTP está em
+// backend/tests/conciliacao/extrato.test.js; aqui ficam o teto 100 e o offset
+// além do fim, que o PostgREST responde com 416).
+// ---------------------------------------------------------------------------
+
+describe("GET /conciliacoes/extrato/:id/transacoes", () => {
+  function reqBase(overrides = {}) {
+    return {
+      usuario: { perfil: PERFIS.ADMIN_CLIENTE, cliente_id: CLIENTE_A },
+      params: { id: EXTRATO_ID },
+      query: {},
+      ...overrides,
+    };
+  }
+
+  it("limit negativo dá 400 ou usa o padrão, nunca range negativo (PRB-C-09, #696)", async () => {
+    const res = criarResposta();
+    await listarTransacoesExtrato(reqBase({ query: { limit: "-1" } }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /limit/);
+  });
+
+  for (const [campo, valor] of [["limit", "abc"], ["limit", "0"], ["offset", "-1"], ["offset", "abc"]]) {
+    it(`400 quando ${campo}=${valor} (PRB-C-09, #696)`, async () => {
+      const res = criarResposta();
+      await listarTransacoesExtrato(reqBase({ query: { [campo]: valor } }), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body.erro, new RegExp(campo));
+    });
+  }
+
+  it("limit acima de 100 fica em 100", async () => {
+    queue("extratos_bancarios", "maybeSingle", {
+      data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
+      error: null,
+    });
+    queue("transacoes_extrato", "await", { data: [], error: null, count: 0 });
+
+    const res = criarResposta();
+    await listarTransacoesExtrato(reqBase({ query: { limit: "150" } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.limit, 100);
+  });
+
+  it("200 com lista vazia quando o offset passa do fim", async () => {
+    queue("extratos_bancarios", "maybeSingle", {
+      data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
+      error: null,
+    });
+    queue("transacoes_extrato", "await", {
+      data: null,
+      error: { message: "Requested range not satisfiable" },
+      count: 4,
+    });
+
+    const res = criarResposta();
+    await listarTransacoesExtrato(reqBase({ query: { offset: "50" } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.data, []);
+    assert.equal(res.body.total, 4);
+    assert.equal(res.body.offset, 50);
   });
 });
 

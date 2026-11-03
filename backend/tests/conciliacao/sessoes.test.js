@@ -10,7 +10,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   iniciarBateria, fotografar, chamar, ator, atoresDe, buscarLinha, buscarLinhas, criarExtratoProcessado,
-  criarLancamentos, montarCenarioNovembro, provarOutroEscritorio404, conhecido, UUID_INEXISTENTE, PERFIL, paraEpoch,
+  criarLancamentos, montarCenarioNovembro, montarSessaoComMuitosPares, provarOutroEscritorio404, conhecido, UUID_INEXISTENTE, PERFIL, paraEpoch,
 } from "../helpers/conciliacao-http.js";
 
 const porId = (a, b) => String(a.id).localeCompare(String(b.id));
@@ -334,12 +334,11 @@ describe("TEST-9: GET /conciliacoes (lista de sessões)", { timeout: 300_000 }, 
     assert.deepEqual(resposta.corpo, { erro: "cliente_id é obrigatório" });
   });
 
-  for (const consulta of ["?mes=0", "?mes=13", "?mes=abc", "?ano=0", "?ano=abc"]) {
-    it(`${consulta}: 400 em vez de devolver a lista inteira (PRB-C-09, #696)`,
-      conhecido("BUG #696 (PRB-C-09): mes/ano inválidos são ignorados e a lista inteira volta com 200; corrigido no PR #715, ainda aberto"), async () => {
-        const resposta = await listar(ator(A, PERFIL.CLIENTE), consulta);
-        assert.equal(resposta.status, 400, `devolveu ${resposta.status} com ${Array.isArray(resposta.corpo) ? resposta.corpo.length : "?"} sessões`);
-      });
+  for (const consulta of ["?mes=0", "?mes=13", "?mes=abc", "?ano=0", "?ano=abc", "?ano=2147483648"]) {
+    it(`${consulta}: 400 em vez de devolver a lista inteira (PRB-C-09, #696)`, async () => {
+      const resposta = await listar(ator(A, PERFIL.CLIENTE), consulta);
+      assert.equal(resposta.status, 400, `devolveu ${resposta.status} com ${Array.isArray(resposta.corpo) ? resposta.corpo.length : "?"} sessões`);
+    });
   }
 });
 
@@ -418,5 +417,14 @@ describe("TEST-9: GET /conciliacoes/:id (detalhe da sessão)", { timeout: 300_00
     const resposta = await api.requisitar(`/conciliacoes/${A.sessaoAberta}`, { usuario: A.usuario(PERFIL.EFFICIENCE) });
     assert.equal(resposta.status, 400);
     assert.deepEqual(resposta.corpo, { erro: "cliente_id é obrigatório" });
+  });
+
+  it("sessão com 1001 pares: detalhe devolve todos, sem 500 por .in grande (PRB-C-09, #696)", async () => {
+    const { sessao } = await montarSessaoComMuitosPares(banco, A.cliente.id, { automaticos: 1001 });
+    const resposta = await abrir(ator(A, PERFIL.CLIENTE), sessao.id);
+    assert.equal(resposta.status, 200, JSON.stringify(resposta.corpo)?.slice(0, 200));
+    const totalPares = Object.values(resposta.corpo.pares).flat().length;
+    assert.equal(totalPares, 1001);
+    assert.equal(resposta.corpo.pares.automatico.length, 1001);
   });
 });
