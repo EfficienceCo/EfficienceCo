@@ -363,6 +363,51 @@ describe("TEST-9: POST /conciliacoes/extrato (upload do OFX)", { timeout: 300_00
     });
   });
 
+  describe("identidade e concorrência do FITID (#692)", () => {
+    const transacao = (memo = "identidade") => [{ data: "20261105", valor: "10.00", fitid: "IDENTIDADE", memo }];
+
+    it("contas distintas com o mesmo final importam o mesmo FITID sem conflito", async () => {
+      const quem = ator(A, PERFIL.CLIENTE);
+      for (const conta of ["111117890", "222227890"]) {
+        const resposta = await enviar(quem, montarOfx({ banco: "0237", conta, transacoes: transacao() }));
+        assert.equal(resposta.status, 201, JSON.stringify(resposta.corpo));
+      }
+      const linhas = await buscarLinhas(banco, "transacoes_extrato", { cliente_id: A.cliente.id, id_banco: "IDENTIDADE" });
+      assert.deepEqual(linhas.map(t => t.conta_chave).sort(), ["111117890", "222227890"]);
+      assert.ok(linhas.every(t => t.banco_chave === "237"));
+    });
+
+    it("BANKID 0237/237 e ACCTID com separadores identificam a mesma movimentação", async () => {
+      const quem = ator(A, PERFIL.CLIENTE);
+      const primeira = await enviar(quem, montarOfx({ banco: "0237", conta: "00123-456", transacoes: transacao("primeiro") }));
+      assert.equal(primeira.status, 201, JSON.stringify(primeira.corpo));
+      const segunda = await enviar(quem, montarOfx({ banco: "237", conta: "123456", transacoes: transacao("segundo") }));
+      assert.equal(segunda.status, 409, JSON.stringify(segunda.corpo));
+      assert.match(segunda.corpo.erro, /mesmo FITID, banco e conta/);
+      assert.equal((await buscarLinhas(banco, "transacoes_extrato", { cliente_id: A.cliente.id, id_banco: "IDENTIDADE" })).length, 1);
+    });
+
+    it("uploads paralelos de arquivos distintos não duplicam o FITID no banco", async () => {
+      const quem = ator(A, PERFIL.CLIENTE);
+      const respostas = await Promise.all(["arquivo A", "arquivo B"].map(memo =>
+        enviar(quem, montarOfx({ banco: "0237", conta: "123456", transacoes: transacao(memo) }))));
+      assert.deepEqual(respostas.map(r => r.status).sort(), [201, 409], JSON.stringify(respostas));
+      assert.equal((await buscarLinhas(banco, "transacoes_extrato", { cliente_id: A.cliente.id, id_banco: "IDENTIDADE" })).length, 1);
+    });
+
+    it("valores que arredondam para zero são ignorados antes da gravação", async () => {
+      const resposta = await enviar(ator(A, PERFIL.CLIENTE), montarOfx({ transacoes: [
+        { data: "20261105", valor: "0.004", fitid: "SUBCENTAVO-POSITIVO" },
+        { data: "20261105", valor: "-0.004", fitid: "SUBCENTAVO-NEGATIVO" },
+        { data: "20261105", valor: "10.126", fitid: "ARREDONDADO" },
+      ] }));
+      assert.equal(resposta.status, 201, JSON.stringify(resposta.corpo));
+      assert.equal(resposta.corpo.ignoradas.valor_zero, 2);
+      const linhas = await buscarLinhas(banco, "transacoes_extrato", { extrato_id: resposta.corpo.extrato_id });
+      assert.deepEqual(linhas.map(t => [t.id_banco, Number(t.valor)]), [["ARREDONDADO", 10.13]]);
+    });
+  });
+
   describe("auditoria: criado_por (PRB-C-24, #695)", () => {
     it("o extrato guarda quem o enviou: criado_por = id do token", async () => {
       const quem = ator(A, PERFIL.CLIENTE);
@@ -482,6 +527,7 @@ describe("TEST-9: GET /conciliacoes/extrato/:id/transacoes", { timeout: 300_000 
         {
           id: A.transacaoAberta(20), extrato_id: A.extrato.processado, cliente_id: A.cliente.id, data_lancamento: "2026-10-21",
           valor: 210, tipo: "credito", descricao: "Transação sintética a-0-20", id_banco: "680-a-0-20", conciliado: false, criado_em: undefined,
+          banco_chave: null, conta_chave: null,
         }, quem.perfil,
       );
       assert.deepEqual([segunda.id, segunda.valor, segunda.tipo], [A.transacaoAberta(19), 200, "debito"], quem.perfil);

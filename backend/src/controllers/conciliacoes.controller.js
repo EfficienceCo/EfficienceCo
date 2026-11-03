@@ -181,23 +181,23 @@ function mensagemPeriodoRecusado(resumo) {
   return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo}, ${criterio}; o arquivo cobre mais de um mês: ${lista})`;
 }
 
-// FITIDs do arquivo que já existem em extratos processados do mesmo cliente, banco e conta
-// (o FITID só é único dentro da conta). Em lotes: a lista vai na URL.
-// shortcut: sem índice único no banco, dois uploads simultâneos ainda passam juntos por
-// esta checagem; fechar com índice (cliente, banco, conta, FITID) depois de limpar as duplicatas.
+// FITIDs do arquivo que já existem para o mesmo cliente, banco e conta (o FITID só é único
+// dentro da conta; banco e conta vão normalizados, ver ofx-parser.util.js). Em lotes: a lista
+// vai na URL. É a checagem que gera a resposta amigável; quem garante a unicidade com uploads
+// simultâneos é o índice único da migration 106 (tratado no insert).
+// shortcut: extrato sem ACCTID não entra no índice, só nesta checagem.
 const LOTE_CONSULTA_FITID = 100;
 
-async function buscarFitidsJaImportados(clienteId, banco, conta, fitids) {
+async function buscarFitidsJaImportados(clienteId, bancoChave, contaChave, fitids) {
   const existentes = new Set();
   for (let i = 0; i < fitids.length; i += LOTE_CONSULTA_FITID) {
     let query = supabase
       .from("transacoes_extrato")
-      .select("id_banco, extratos_bancarios!inner(banco, conta, status)")
+      .select("id_banco")
       .eq("cliente_id", clienteId)
-      .eq("extratos_bancarios.banco", banco)
-      .eq("extratos_bancarios.status", STATUS_EXTRATO.PROCESSADO)
+      .eq("banco_chave", bancoChave)
       .in("id_banco", fitids.slice(i, i + LOTE_CONSULTA_FITID));
-    query = conta == null ? query.is("extratos_bancarios.conta", null) : query.eq("extratos_bancarios.conta", conta);
+    query = contaChave == null ? query.is("conta_chave", null) : query.eq("conta_chave", contaChave);
 
     const { data, error } = await query;
     if (error) return { error };
@@ -300,8 +300,8 @@ export async function criarConciliacaoExtrato(req, res) {
   const fitidsDoArquivo = parsed.transacoes.map((t) => t.id_banco).filter(Boolean);
   const { existentes: fitidsJaImportados, error: erroFitids } = await buscarFitidsJaImportados(
     clienteId,
-    parsed.banco,
-    parsed.conta,
+    parsed.banco_chave,
+    parsed.conta_chave,
     fitidsDoArquivo,
   );
 
@@ -331,6 +331,8 @@ export async function criarConciliacaoExtrato(req, res) {
   const transacoesParaInserir = transacoesNovas.map((transacao) => ({
     extrato_id: extrato.id,
     cliente_id: clienteId,
+    banco_chave: parsed.banco_chave,
+    conta_chave: parsed.conta_chave,
     ...transacao,
   }));
 
@@ -344,6 +346,13 @@ export async function criarConciliacaoExtrato(req, res) {
       .from("extratos_bancarios")
       .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
+    // 23505 = violação do índice único (migration 106): outro upload gravou o mesmo FITID
+    // entre a checagem acima e este insert. O insert é um comando só, então nada foi gravado.
+    if (erroTransacoes.code === "23505") {
+      return res.status(409).json({
+        erro: "Transações deste arquivo já foram importadas em outro extrato (mesmo FITID, banco e conta)",
+      });
+    }
     return res.status(500).json({ erro: "Erro ao salvar transações do extrato" });
   }
 
@@ -364,16 +373,14 @@ export async function criarConciliacaoExtrato(req, res) {
       "[conciliacoes.controller] Erro ao atualizar extrato como processado:",
       erroAtualizacao.message,
     );
-    // As transações já foram persistidas — marca como erro em vez de deixar
-    // o extrato preso em 'aguardando' com dados órfãos e sem sinalização.
+    // Marca como erro em vez de deixar o extrato preso em 'aguardando'. As transações são
+    // apagadas junto: com o índice único (migration 106) elas bloqueariam o reenvio do arquivo.
+    await supabase.from("transacoes_extrato").delete().eq("extrato_id", extrato.id);
     await supabase
       .from("extratos_bancarios")
       .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
-    return res.status(500).json({
-      erro: "Erro ao finalizar processamento do extrato",
-      detalhe: "As transações foram salvas, mas o status do extrato não pôde ser atualizado",
-    });
+    return res.status(500).json({ erro: "Erro ao finalizar processamento do extrato" });
   }
 
   return res.status(201).json({

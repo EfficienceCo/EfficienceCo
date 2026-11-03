@@ -418,3 +418,25 @@ ${fitid === null ? "" : `<FITID>${fitid}\n`}<MEMO>M
     assert.deepEqual(r.transacoes.map((t) => t.valor), [15]);
   });
 });
+describe("parseOfx: arredondamento e identidade (#692)", () => {
+  const trn = (valor) => `<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260705
+<TRNAMT>${valor}
+<FITID>F${valor}
+<MEMO>M
+</STMTTRN>`;
+
+  it("arredonda para centavos e ignora o que dá 0.00 (0.004, -0.004)", () => {
+    const r = parseOfx(extratoComTransacoes([trn("0.004"), trn("-0.004"), trn("10.126")].join("\n")));
+    assert.deepEqual(r.transacoes.map((t) => t.valor), [10.13]);
+    assert.equal(r.ignoradas_valor_zero, 2);
+  });
+
+  it("recusa o arquivo quando tudo arredonda para zero", () => {
+    assert.throws(
+      () => parseOfx(extratoComTransacoes([trn("0.004"), trn("0.001")].join("\n"))),
+      (e) => e instanceof OfxParseError && /valor zero/.test(e.message),
+    );
+  });
+});
