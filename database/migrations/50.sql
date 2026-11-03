@@ -14,9 +14,7 @@ ALTER TABLE obrigacoes
   ALTER COLUMN status SET DEFAULT 'pendente',
   ALTER COLUMN criado_em SET DEFAULT NOW();
 
--- Restaura Primary Key Única em 'id' caso haja drift de chave composta
-ALTER TABLE obrigacoes DROP CONSTRAINT IF EXISTS obrigacoes_pkey;
-ALTER TABLE obrigacoes ADD CONSTRAINT obrigacoes_pkey PRIMARY KEY (id);
+-- A conversão da chave primária de obrigacoes é feita em 51.sql.
 
 
 -- ==========================================
@@ -32,8 +30,6 @@ ALTER TABLE notificacoes
 ALTER TABLE notificacoes 
   ALTER COLUMN lida SET DEFAULT FALSE;
 
--- Restaura Primary Key Única em 'id'
-ALTER TABLE notificacoes DROP CONSTRAINT IF EXISTS notificacoes_pkey;
-ALTER TABLE notificacoes ADD CONSTRAINT notificacoes_pkey PRIMARY KEY (id);
+-- A conversão da chave primária de notificacoes é feita em 52.sql.
 
 COMMIT;
