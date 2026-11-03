@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><NFe><infNFe Id="NFe35261068000001000170550010000107021000107023" versao="4.00"><ide><cUF>35</cUF><cNF>00010702</cNF><natOp>Operacao sintetica 680</natOp><mod>55</mod><serie>1</serie><nNF>10702</nNF><dhEmi>2026-10-03T12:00:00+00:00</dhEmi><tpNF>1</tpNF><tpEmis>1</tpEmis><cDV>3</cDV><tpAmb>2</tpAmb></ide><emit><CNPJ>68000001000170</CNPJ><xNome>Emitente sintetico 680</xNome></emit><dest><CNPJ>68090001000108</CNPJ><xNome>Destinatario sintetico 680</xNome></dest><det nItem="1"><prod><cProd>SINTETICO680</cProd><xProd>Produto sintetico 680</xProd><NCM>01012100</NCM><CFOP>5102</CFOP><uCom>UN</uCom><qCom>1.0000</qCom><vUnCom>100.00</vUnCom><vProd>100.00</vProd></prod></det><total><ICMSTot><vNF>100.00</vNF><vICMS>0.00</vICMS><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vIPI>0.00</vIPI></ICMSTot></total></infNFe><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#NFe35261068000001000170550010000107021000107023"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>zrXkrVHE2vWAtbb3tzVmUF2SVDSh9oGosB8mOuijtnQ=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>hURRyViF6V0UBM5I6Nn3HVLw3dJlA3erjHXqR9+3t47bK8Ap5vn9pdTPgdfbNKUZ+MkoqqRhxKEscEep7feHHlBnzm28bJAQCqh3NBAbEIA1v1MOnXd0ADIPDJC6zZn6jA/c/F6Oi6jXZ4QqZkWBpnrEDoVsPkvQyfBUIU+S6nhVoWX20Yrk4Qpw2lmi55rEc53xXOezyqgy+DUGPVj27tJSYFI0KO5T0gI1DIpngMF/pRUj2eG+fWgqogU7tckjWq8EyJcYVqidRtvoEMHoe/mOrGpLsCVHHGFSLp6cS49GKdXs2Nv6+J2/yOPsj2Icpd49QY9PEaCCgqXiq8e6Ww==</ds:SignatureValue><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIIDXjCCAkagAwIBAgIUTxlD1C5R8CmDrOzCVXio64TLFsUwDQYJKoZIhvcNAQEL
+BQAwVDEeMBwGA1UEAwwVQ2VydGlmaWNhZG8gdGVzdGUgSUNQMRcwFQYDVQQFEw42
+ODAwMDAwMTAwMDE3MDEZMBcGBWBMAQMDDA42ODAwMDAwMTAwMDE3MDAeFw0yMDAx
+MDEwMDAwMDBaFw00MDAxMDEwMDAwMDBaMFQxHjAcBgNVBAMMFUNlcnRpZmljYWRv
+IHRlc3RlIElDUDEXMBUGA1UEBRMONjgwMDAwMDEwMDAxNzAxGTAXBgVgTAEDAwwO
+NjgwMDAwMDEwMDAxNzAwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCY
+vnnL0guK6pCv9WKWPZstlexEOQnCu8X0glSrhooA13DQ5dPgiW/2lYV5/STr1yyz
+1A3a3MwgX11XdWIMyxvlRBbp5ecnWTc44TKwjCRX8wieiJBlf67IszfnUq1gGT2l
+VVsngr3KYrowGDZ/ttM69lTbbAg6CvEyKqEn0opfLvT4tNeRhIOU3fGrlj7BpV2T
+fIH2EYDRNRVqH8nFrjMIMozspfOVP3tXUhqmNopZXJ85Kp9pQ8pcwH5PBjf2xCP4
+9uM0krdXQUgveMnI6pzmooEV5OySxrE+q2tTkdqE0DTjSWznRrwli+2YNSOUNln1
+BFV4q0NJ0+NObMylv9YZAgMBAAGjKDAmMCQGA1UdEQQdMBugGQYFYEwBAwOgEBMO
+NjgwMDAwMDEwMDAxNzAwDQYJKoZIhvcNAQELBQADggEBAICegxj1kENYBXDw+16l
+ekIgqUjHI++rPi3Gmt0Q0qLZC85MDIF4KClgv90QRYnLIWK6ulny7UxZoI9quJfz
+rwYKQjqYqCe+0eK2fcTXkVcv6Pwo4a/kHfK5+H3QEOQx73pNePZqaYJiWkU/F4KT
+qznkOJcvnSVWYIH17XFAj5PSAYzW598R30P6YGBU1gF/ZQo6/WFBC47XEpGAUTxS
+l9ZtsuKdS4gAbxmBKaE/e4QXQ4kMHuIDy58540vgsUW5oO2ocNZZp4sNDk87mGaK
+tet+u+j5lD5oXLxbACMRZlviz7ejOTXCwqRnNmPS4jAD1plXck94MufkmvYVbIM2
+i1M=
+</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature></NFe><protNFe versao="4.00"><infProt><tpAmb>2</tpAmb><verAplic>SINTETICO680</verAplic><chNFe>35261068000001000170550010000107021000107023</chNFe><dhRecbto>2026-10-15T12:00:00+00:00</dhRecbto><nProt>168000000010702</nProt><cStat>100</cStat><xMotivo>Autorizacao sintetica para testes</xMotivo></infProt></protNFe></nfeProc>
