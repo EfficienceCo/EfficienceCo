@@ -164,6 +164,7 @@ export async function criarConciliacaoExtrato(req, res) {
       arquivo_nome: req.file.originalname,
       arquivo_hash: arquivoHash,
       status: STATUS_EXTRATO.AGUARDANDO,
+      criado_por: req.usuario.id,
     })
     .select()
     .single();
@@ -580,6 +581,7 @@ export async function criarConciliacao(req, res) {
       total_transacoes: transacoesEncontradas.length,
       total_conciliadas: totalAutomaticos,
       total_pendentes: totalProvaveis + totalTransacoesSemPar,
+      criado_por: req.usuario.id,
     })
     .select()
     .single();
