@@ -5,6 +5,7 @@
 
 import { mascararConta } from "./banco-conta.util.js";
 import { dataIsoValida } from "./data.util.js";
+import { DESCRICAO_MAXIMO } from "./texto-conciliacao.util.js";
 
 export class OfxParseError extends Error {}
 
@@ -69,6 +70,22 @@ function parseValor(trnamt, contexto) {
   return valor;
 }
 
+// MEMO (ou NAME, se o MEMO vier vazio) vira transacoes_extrato.descricao.
+// Acima do teto o arquivo inteiro é recusado, no mesmo caminho de DTPOSTED
+// e TRNAMT: não trunca, porque o contador usa esse texto para reconhecer a linha.
+function descricaoDaTransacao(memo, name, contexto) {
+  const memoLimpo = (memo || "").trim();
+  const nameLimpo = (name || "").trim();
+  const texto = memoLimpo || nameLimpo;
+  if (texto.length > DESCRICAO_MAXIMO) {
+    const campo = memoLimpo ? "MEMO" : "NAME";
+    throw new OfxParseError(
+      `${campo} acima do limite ${contexto}: ${texto.length} caracteres (máximo ${DESCRICAO_MAXIMO})`,
+    );
+  }
+  return texto || null;
+}
+
 // Parseia o conteúdo bruto de um arquivo OFX e retorna banco/conta do
 // cabeçalho e a lista de transações já normalizadas. Lança OfxParseError
 // em qualquer inconsistência — o chamador deve tratar isso como 422.
@@ -88,6 +105,7 @@ export function parseOfx(conteudo) {
   }
   const acctId = extrairCampoOfx(conteudo, "ACCTID");
 
+  let ignoradasValorZero = 0;
   const transacoes = blocosTransacao.map((bloco, indice) => {
     const dtposted = extrairCampoOfx(bloco, "DTPOSTED");
     const trnamt = extrairCampoOfx(bloco, "TRNAMT");
@@ -98,7 +116,13 @@ export function parseOfx(conteudo) {
     const contexto = contextoTransacao(indice, fitid);
 
     const valorNumerico = parseValor(trnamt, contexto);
-    const tipo = valorNumerico >= 0 ? "credito" : "debito";
+    // Linha informativa do banco: não é movimentação, não há o que conciliar.
+    if (valorNumerico === 0) {
+      ignoradasValorZero += 1;
+      return null;
+    }
+    const tipo = valorNumerico > 0 ? "credito" : "debito";
+    const descricao = descricaoDaTransacao(memo, name, contexto);
 
     if (trntype) {
       const esperado = tipo === "credito" ? "CREDIT" : "DEBIT";
@@ -113,15 +137,32 @@ export function parseOfx(conteudo) {
       data_lancamento: parseData(dtposted, contexto),
       valor: Math.abs(valorNumerico),
       tipo,
-      descricao: (memo || name || "").trim() || null,
+      descricao,
       id_banco: fitid || null,
     };
   });
 
+  const validas = transacoes.filter(Boolean);
+  if (validas.length === 0) {
+    throw new OfxParseError("Todas as transações do arquivo têm valor zero (TRNAMT = 0)");
+  }
+
+  // O banco não repete FITID na mesma conta: repetido no arquivo é arquivo inconsistente
+  // (ou editado à mão), e não dá para saber qual das linhas vale. FITID vazio não conta.
+  const vistos = new Set();
+  for (const { id_banco } of validas) {
+    if (!id_banco) continue;
+    if (vistos.has(id_banco)) {
+      throw new OfxParseError(`FITID repetido no arquivo: "${id_banco}"`);
+    }
+    vistos.add(id_banco);
+  }
+
   return {
     banco: bankId,
     conta: mascararConta(acctId),
-    transacoes,
+    transacoes: validas,
+    ignoradas_valor_zero: ignoradasValorZero,
   };
 }
 

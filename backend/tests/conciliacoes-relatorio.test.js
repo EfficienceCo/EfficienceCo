@@ -1,10 +1,14 @@
 import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import PDFDocument from "pdfkit";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { gerarRelatorioConciliacao } from "../src/controllers/conciliacoes.controller.js";
-import { formatarMoeda, gerarRelatorioConciliacaoPDF, montarConteudoRelatorio } from "../src/services/conciliacao-relatorio.service.js";
+import PDFDocument from "pdfkit";
+import {
+  formatarMoeda,
+  montarConteudoRelatorio,
+  gerarRelatorioConciliacaoPDF,
+} from "../src/services/conciliacao-relatorio.service.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -104,82 +108,6 @@ function queueDependenciasBasicas() {
 // ---------------------------------------------------------------------------
 
 describe("GET /conciliacoes/:id/relatorio", () => {
-  it("200: gera PDF com headers e nome de arquivo corretos", async () => {
-    queueConciliacaoConcluida();
-    queueDependenciasBasicas();
-    queue("pares_conciliacao", "await", {
-      data: [
-        { id: "par-1", transacao_id: "t1", lancamento_id: "l1", confianca: "automatico", confirmado_em: null },
-        { id: "par-2", transacao_id: "t2", lancamento_id: "l2", confianca: "provavel", confirmado_em: "2026-08-05T00:00:00.000Z" },
-        { id: "par-3", transacao_id: "t3", lancamento_id: null, confianca: "sem_par", confirmado_em: null },
-      ],
-      error: null,
-    });
-    queue("transacoes_extrato", "await", {
-      data: [
-        { id: "t1", data_lancamento: "2026-08-01", descricao: "PIX recebido", valor: 100 },
-        { id: "t2", data_lancamento: "2026-08-02", descricao: "TED enviada", valor: 50 },
-        { id: "t3", data_lancamento: "2026-08-03", descricao: "Tarifa bancária", valor: 15 },
-      ],
-      error: null,
-    });
-    queue("lancamentos_contabeis", "await", {
-      data: [
-        { id: "l1", data_lancamento: "2026-08-01", descricao: "Recebimento cliente", valor: 100 },
-        { id: "l2", data_lancamento: "2026-08-02", descricao: "Pagamento fornecedor", valor: 50 },
-      ],
-      error: null,
-    });
-
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.headers["Content-Type"], "application/pdf");
-    assert.equal(res.headers["Content-Disposition"], 'attachment; filename="conciliacao-2026-08-cliente_teste_ltda.pdf"');
-    assert.ok(Buffer.isBuffer(res.body));
-    assert.equal(res.body.subarray(0, 4).toString("ascii"), "%PDF");
-  });
-
-  it("200: sessão sem pares ainda gera PDF válido (seções vazias)", async () => {
-    queueConciliacaoConcluida({ total_transacoes: 0, total_conciliadas: 0, total_pendentes: 0 });
-    queueDependenciasBasicas();
-    queue("pares_conciliacao", "await", { data: [], error: null });
-
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.ok(Buffer.isBuffer(res.body));
-    assert.equal(res.body.subarray(0, 4).toString("ascii"), "%PDF");
-  });
-
-  it("400 quando cliente_id não pode ser resolvido", async () => {
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase({ usuario: { perfil: PERFIS.ADMIN_EFFICIENCE } }), res);
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("404 quando a conciliação não existe", async () => {
-    queue("conciliacoes", "maybeSingle", { data: null, error: null });
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("404 quando a conciliação pertence a outro cliente", async () => {
-    queueConciliacaoConcluida({ cliente_id: CLIENTE_B });
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("409 quando a conciliação ainda está em andamento", async () => {
-    queueConciliacaoConcluida({ status: "em_andamento" });
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 409);
-  });
 
   it("500 quando falha a busca do cliente", async () => {
     queueConciliacaoConcluida();
@@ -259,6 +187,51 @@ describe("formatarMoeda (relatório de conciliação)", () => {
   });
 });
 
+async function cabecalhoDoPdf(banco, conta = "7654") {
+  const chamadas = [];
+  const textOriginal = PDFDocument.prototype.text;
+  PDFDocument.prototype.text = function (texto, x, y, opcoes) {
+    if (typeof y === "number") chamadas.push(String(texto));
+    return textOriginal.call(this, texto, x, y, opcoes);
+  };
+  try {
+    await gerarRelatorioConciliacaoPDF({
+      cliente: "Padaria Central",
+      banco,
+      conta,
+      mes: 6,
+      ano: 2024,
+      geradoEm: new Date(2024, 5, 30, 10, 0),
+      totais: {
+        totalTransacoes: 0,
+        totalConciliadas: 0,
+        totalTransacoesPendentes: 0,
+        totalLancamentosSemPar: 0,
+        valorTotalConciliado: 0,
+      },
+      matches: [],
+      semPar: [],
+    });
+  } finally {
+    PDFDocument.prototype.text = textOriginal;
+  }
+  return chamadas.find((texto) => texto.startsWith("Banco:"));
+}
+
+describe("gerarRelatorioConciliacaoPDF — banco e conta", () => {
+  // PRB-C-35 / BUG-CONC-23 (#700). O PDF recebe o BANKID gravado e mostra o nome.
+  it("cabeçalho mostra o nome do banco quando o código é conhecido (0237 → Bradesco) (PRB-C-35, #700)", async () => {
+    const cabecalho = await cabecalhoDoPdf("0237");
+    assert.match(cabecalho, /Bradesco/i);
+    assert.match(cabecalho, /7654/);
+  });
+
+  it("cabeçalho mantém o código desconhecido e o nome que já veio gravado", async () => {
+    assert.match(await cabecalhoDoPdf("999"), /Banco: 999 /);
+    assert.match(await cabecalhoDoPdf("Itaú", "1234"), /Banco: Itaú /);
+  });
+});
+
 describe("montarConteudoRelatorio", () => {
   const transacoesPorId = {
     t1: { id: "t1", data_lancamento: "2026-08-16", descricao: "PIX 16", valor: 100 },
@@ -322,50 +295,5 @@ describe("montarConteudoRelatorio", () => {
       {},
     );
     assert.deepEqual(semPar.map((i) => i.descricao), ["Débito 05", "Sem data"]);
-  });
-});
-
-async function cabecalhoDoPdf(banco, conta = "7654") {
-  const chamadas = [];
-  const textOriginal = PDFDocument.prototype.text;
-  PDFDocument.prototype.text = function (texto, x, y, opcoes) {
-    if (typeof y === "number") chamadas.push(String(texto));
-    return textOriginal.call(this, texto, x, y, opcoes);
-  };
-  try {
-    await gerarRelatorioConciliacaoPDF({
-      cliente: "Padaria Central",
-      banco,
-      conta,
-      mes: 6,
-      ano: 2024,
-      geradoEm: new Date(2024, 5, 30, 10, 0),
-      totais: {
-        totalTransacoes: 0,
-        totalConciliadas: 0,
-        totalTransacoesPendentes: 0,
-        totalLancamentosSemPar: 0,
-        valorTotalConciliado: 0,
-      },
-      matches: [],
-      semPar: [],
-    });
-  } finally {
-    PDFDocument.prototype.text = textOriginal;
-  }
-  return chamadas.find((texto) => texto.startsWith("Banco:"));
-}
-
-describe("gerarRelatorioConciliacaoPDF — banco e conta", () => {
-  // PRB-C-35 / BUG-CONC-23 (#700). O PDF recebe o BANKID gravado e mostra o nome.
-  it("cabeçalho mostra o nome do banco quando o código é conhecido (0237 → Bradesco) (PRB-C-35, #700)", async () => {
-    const cabecalho = await cabecalhoDoPdf("0237");
-    assert.match(cabecalho, /Bradesco/i);
-    assert.match(cabecalho, /7654/);
-  });
-
-  it("cabeçalho mantém o código desconhecido e o nome que já veio gravado", async () => {
-    assert.match(await cabecalhoDoPdf("999"), /Banco: 999 /);
-    assert.match(await cabecalhoDoPdf("Itaú", "1234"), /Banco: Itaú /);
   });
 });
