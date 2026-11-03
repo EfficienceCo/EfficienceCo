@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { gerarRelatorioConciliacao } from "../src/controllers/conciliacoes.controller.js";
-import { formatarMoeda, montarConteudoRelatorio } from "../src/services/conciliacao-relatorio.service.js";
+import PDFDocument from "pdfkit";
+import {
+  formatarMoeda,
+  montarConteudoRelatorio,
+  gerarRelatorioConciliacaoPDF,
+} from "../src/services/conciliacao-relatorio.service.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -179,6 +184,51 @@ describe("formatarMoeda (relatório de conciliação)", () => {
 
   it("separa R$ do número com espaço comum (não NBSP), para o texto extraído bater com a tela", () => {
     assert.equal(formatarMoeda(10).charCodeAt(2), 32); // 32 = espaço comum; o Intl devolve 160 (NBSP)
+  });
+});
+
+async function cabecalhoDoPdf(banco, conta = "7654") {
+  const chamadas = [];
+  const textOriginal = PDFDocument.prototype.text;
+  PDFDocument.prototype.text = function (texto, x, y, opcoes) {
+    if (typeof y === "number") chamadas.push(String(texto));
+    return textOriginal.call(this, texto, x, y, opcoes);
+  };
+  try {
+    await gerarRelatorioConciliacaoPDF({
+      cliente: "Padaria Central",
+      banco,
+      conta,
+      mes: 6,
+      ano: 2024,
+      geradoEm: new Date(2024, 5, 30, 10, 0),
+      totais: {
+        totalTransacoes: 0,
+        totalConciliadas: 0,
+        totalTransacoesPendentes: 0,
+        totalLancamentosSemPar: 0,
+        valorTotalConciliado: 0,
+      },
+      matches: [],
+      semPar: [],
+    });
+  } finally {
+    PDFDocument.prototype.text = textOriginal;
+  }
+  return chamadas.find((texto) => texto.startsWith("Banco:"));
+}
+
+describe("gerarRelatorioConciliacaoPDF — banco e conta", () => {
+  // PRB-C-35 / BUG-CONC-23 (#700). O PDF recebe o BANKID gravado e mostra o nome.
+  it("cabeçalho mostra o nome do banco quando o código é conhecido (0237 → Bradesco) (PRB-C-35, #700)", async () => {
+    const cabecalho = await cabecalhoDoPdf("0237");
+    assert.match(cabecalho, /Bradesco/i);
+    assert.match(cabecalho, /7654/);
+  });
+
+  it("cabeçalho mantém o código desconhecido e o nome que já veio gravado", async () => {
+    assert.match(await cabecalhoDoPdf("999"), /Banco: 999 /);
+    assert.match(await cabecalhoDoPdf("Itaú", "1234"), /Banco: Itaú /);
   });
 });
 

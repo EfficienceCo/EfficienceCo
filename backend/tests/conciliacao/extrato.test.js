@@ -315,6 +315,17 @@ describe("TEST-9: POST /conciliacoes/extrato (upload do OFX)", { timeout: 300_00
     });
   });
 
+  it("conta com hífen guarda os quatro últimos dígitos e preserva o BANKID (#700)", async () => {
+    const resposta = await enviar(ator(A, PERFIL.CLIENTE), montarOfx({
+      banco: "0237", conta: "98765-4",
+      transacoes: [{ data: "20261105", valor: "10.00", fitid: "CONTA-HIFEN" }],
+    }));
+    assert.equal(resposta.status, 201, JSON.stringify(resposta.corpo));
+    assert.deepEqual([resposta.corpo.banco, resposta.corpo.conta], ["0237", "7654"]);
+    const extrato = await buscarLinha(banco, "extratos_bancarios", resposta.corpo.extrato_id);
+    assert.deepEqual([extrato.banco, extrato.conta], ["0237", "7654"]);
+  });
+
   describe("FITID e valor zero (PRB-C-12, #692)", () => {
     it("FITID repetido dentro do mesmo arquivo: 422 e nenhuma transação gravada", async () => {
       const antes = await fotografar(banco, A.cliente.id);
