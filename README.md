@@ -164,8 +164,8 @@ py -3 -m venv .venv
 
 Em Linux, crie o ambiente Python com `python3 -m venv .venv` e instale as
 dependências com `.venv/bin/python -m pip install -r agente/worker/requirements.txt`.
-Os dois comandos npm de instalação são os mesmos. A execução em Linux/CI ainda
-precisa de validação; o workflow será tratado na issue #681.
+Os dois comandos npm de instalação são os mesmos. O workflow da issue #681 usa
+Ubuntu 24.04, Node.js 24 e Python 3.14; veja [CI e bloqueio de merge](docs/ci.md).
 
 ### Executar
 
