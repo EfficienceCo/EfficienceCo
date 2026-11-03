@@ -30,17 +30,22 @@ supabase.from = function (tabela) {
     if (!fila || fila.length === 0) return fallback;
     return fila.shift();
   };
+  // A busca de FITIDs já importados (#692) termina em .in(): fila própria
+  // ("await_in"), para não consumir o resultado do insert de transacoes_extrato.
+  let consultaIn = false;
   const builder = {
     select() { return builder; },
     insert() { return builder; },
     update() { return builder; },
     eq() { return builder; },
+    is() { return builder; },
+    in() { consultaIn = true; return builder; },
     order() { return builder; },
     range() { return builder; },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     single() { return Promise.resolve(consumir("single", { data: null, error: null })); },
     then(resolve, reject) {
-      return Promise.resolve(consumir("await", { data: [], error: null })).then(resolve, reject);
+      return Promise.resolve(consumir(consultaIn ? "await_in" : "await", { data: [], error: null })).then(resolve, reject);
     },
   };
   return builder;
@@ -157,6 +162,7 @@ describe("POST /conciliacoes/extrato", () => {
 
   it("500 e status='erro' quando falha o insert de transacoes_extrato", async () => {
     queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await_in", { data: [], error: null }); // FITIDs já importados: nenhum
     queue("transacoes_extrato", "await", { data: null, error: { message: "falha ao inserir" } });
 
     let statusAtualizado = null;
@@ -187,6 +193,7 @@ describe("POST /conciliacoes/extrato", () => {
 
   it("500 e status='erro' quando falha o update final (transações já salvas ficam órfãs sem isso)", async () => {
     queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await_in", { data: [], error: null }); // FITIDs já importados: nenhum
     queue("transacoes_extrato", "await", { data: [], error: null });
 
     let statusAtualizado = null;

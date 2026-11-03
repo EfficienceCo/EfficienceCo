@@ -103,6 +103,27 @@ function queueExtratoValido(overrides = {}) {
 
 describe("POST /conciliacoes", () => {
 
+  it("matching enxerga lançamento além do teto de 1000 do PostgREST (PRB-C-09, #696)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("lancamentos_contabeis", "await", {
+      data: Array.from({ length: TAMANHO_PAGINA_POSTGREST }, (_, i) => ({ id: `l${i}` })),
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l-alem-do-teto" }],
+      error: null,
+    });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.sem_par, TAMANHO_PAGINA_POSTGREST + 1);
+  });
+
   it("500 quando falha a busca de transações do extrato", async () => {
     queueExtratoValido();
     queue("transacoes_extrato", "await", { data: null, error: { message: "falha" } });
@@ -153,26 +174,5 @@ describe("POST /conciliacoes", () => {
 
     assert.equal(res.statusCode, 500);
     assert.equal(idDeletado, CONCILIACAO_ID);
-  });
-
-  it("matching enxerga lançamento além do teto de 1000 do PostgREST (PRB-C-09, #696)", async () => {
-    queueExtratoValido();
-    queue("transacoes_extrato", "await", { data: [], error: null });
-    queue("lancamentos_contabeis", "await", {
-      data: Array.from({ length: TAMANHO_PAGINA_POSTGREST }, (_, i) => ({ id: `l${i}` })),
-      error: null,
-    });
-    queue("lancamentos_contabeis", "await", {
-      data: [{ id: "l-alem-do-teto" }],
-      error: null,
-    });
-    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
-    queue("pares_conciliacao", "await", { data: [], error: null });
-
-    const res = criarResposta();
-    await criarConciliacao(reqBase(), res);
-
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.sem_par, TAMANHO_PAGINA_POSTGREST + 1);
   });
 });

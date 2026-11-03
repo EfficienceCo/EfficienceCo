@@ -138,21 +138,22 @@ describe("TEST-9: /lancamentos-contabeis", { timeout: 600_000 }, () => {
       assert.deepEqual(Object.keys(resposta.corpo.campos).sort(), ["data_lancamento", "descricao", "valor"]);
     });
 
-    it("o lançamento guarda quem o criou: criado_por = id do token (PRB-C-24, #695)",
-      conhecido("BUG #695 (PRB-C-24): criado_por nunca é gravado; corrigido no PR #703, ainda aberto"), async () => {
-        const quem = ator(A, PERFIL.FUNCIONARIO);
-        const resposta = await criar(quem, VALIDO);
-        assert.equal(resposta.status, 201);
-        assert.equal((await buscarLinha(banco, "lancamentos_contabeis", resposta.corpo.id)).criado_por, quem.usuario.id);
-      });
+    it("o lançamento guarda quem o criou: criado_por = id do token (PRB-C-24, #695)", async () => {
+      const quem = ator(A, PERFIL.FUNCIONARIO);
+      const resposta = await criar(quem, { ...VALIDO, criado_por: UUID_INEXISTENTE });
+      assert.equal(resposta.status, 201);
+      assert.equal(resposta.corpo.criado_por, quem.usuario.id);
+      assert.equal((await buscarLinha(banco, "lancamentos_contabeis", resposta.corpo.id)).criado_por, quem.usuario.id);
+    });
 
     for (const [campo, tamanho] of [["descricao", 10_000], ["categoria", 10_000]]) {
-      it(`${campo} com ${tamanho} caracteres: 400 com a mensagem do campo (PRB-C-07, #697)`,
-        conhecido("BUG #697 (PRB-C-07): descrição e categoria aceitam qualquer tamanho (10.000 caracteres dá 201); aberto, PR #716"), async () => {
-          const resposta = await criar(ator(A, PERFIL.CLIENTE), { ...VALIDO, [campo]: "x".repeat(tamanho) });
-          assert.equal(resposta.status, 400, `devolveu ${resposta.status}`);
-          assert.ok(resposta.corpo.campos?.[campo], `mensagem no campo ${campo}`);
-        });
+      it(`${campo} com ${tamanho} caracteres: 400 com a mensagem do campo (PRB-C-07, #697)`, async () => {
+        const antes = await fotografar(banco);
+        const resposta = await criar(ator(A, PERFIL.CLIENTE), { ...VALIDO, [campo]: "x".repeat(tamanho) });
+        assert.equal(resposta.status, 400, `devolveu ${resposta.status}`);
+        assert.ok(resposta.corpo.campos?.[campo], `mensagem no campo ${campo}`);
+        assert.deepEqual(await fotografar(banco), antes);
+      });
     }
   });
 
@@ -313,13 +314,14 @@ describe("TEST-9: /lancamentos-contabeis", { timeout: 600_000 }, () => {
       assert.deepEqual(await fotografar(banco), antes);
     });
 
-    it("categoria com 10.000 caracteres: 400 com a mensagem do campo (PRB-C-07, #697)",
-      conhecido("BUG #697 (PRB-C-07): categoria aceita qualquer tamanho; aberto, PR #716"), async () => {
-        const [livre] = await criarLancamentos(banco, A.cliente.id, [{ data: "2026-11-05", valor: 100, tipo: "credito" }]);
-        const resposta = await alterar(ator(A, PERFIL.CLIENTE), livre.id, { categoria: "x".repeat(10_000) });
-        assert.equal(resposta.status, 400, `devolveu ${resposta.status}`);
-        assert.ok(resposta.corpo.campos?.categoria);
-      });
+    it("categoria com 10.000 caracteres: 400 com a mensagem do campo (PRB-C-07, #697)", async () => {
+      const [livre] = await criarLancamentos(banco, A.cliente.id, [{ data: "2026-11-05", valor: 100, tipo: "credito" }]);
+      const antes = await fotografar(banco);
+      const resposta = await alterar(ator(A, PERFIL.CLIENTE), livre.id, { categoria: "x".repeat(10_000) });
+      assert.equal(resposta.status, 400, `devolveu ${resposta.status}`);
+      assert.ok(resposta.corpo.campos?.categoria);
+      assert.deepEqual(await fotografar(banco), antes);
+    });
   });
 
   describe("DELETE", () => {

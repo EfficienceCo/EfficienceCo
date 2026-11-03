@@ -35,7 +35,15 @@ describe("TEST-9: POST /conciliacoes/extrato (upload do OFX)", { timeout: 300_00
         // BANKID 0341; ACCTID 1234567890 -> conta guarda os 4 últimos dígitos (7890); 2 de 2 em 11/2026.
         assert.deepEqual(
           { ...resposta.corpo, extrato_id: undefined },
-          { extrato_id: undefined, total_transacoes: 2, banco: "0341", conta: "7890", mes: 11, ano: 2026 },
+          {
+            extrato_id: undefined,
+            total_transacoes: 2,
+            banco: "0341",
+            conta: "7890",
+            mes: 11,
+            ano: 2026,
+            ignoradas: { ja_importadas: 0, valor_zero: 0 },
+          },
         );
         const extrato = await buscarLinha(banco, "extratos_bancarios", resposta.corpo.extrato_id);
         assert.equal(extrato.cliente_id, A.cliente.id);
@@ -269,6 +277,12 @@ describe("TEST-9: POST /conciliacoes/extrato (upload do OFX)", { timeout: 300_00
       ["texto que não é OFX", "isto não é um extrato", /OFX/],
       ["DTPOSTED 20261345 (mês 13 não existe)", montarOfx({ transacoes: [{ data: "20261345", valor: "-10.00", fitid: "X1" }] }), /DTPOSTED/],
       ["TRNAMT fora da faixa do banco (1e15)", montarOfx({ transacoes: [{ data: "20261105", valor: "1000000000000000.00", fitid: "X2" }] }), /TRNAMT/],
+      ["MEMO de 5.000 caracteres (PRB-C-07, #697)", montarOfx({
+        transacoes: [
+          { data: "20261105", valor: "10.00", fitid: "OK" },
+          { data: "20261106", valor: "20.00", fitid: "LONGO", memo: "x".repeat(5_000) },
+        ],
+      }), /MEMO/],
     ]) {
       it(`${nome}: 422, extrato em erro, sem transação, hash zerado`, async () => {
         const antes = await fotografar(banco, A.cliente.id);
@@ -301,44 +315,51 @@ describe("TEST-9: POST /conciliacoes/extrato (upload do OFX)", { timeout: 300_00
     });
   });
 
-  describe("bugs conhecidos: o teste do comportamento certo fica com skip até a correção", () => {
-    it("FITID repetido dentro do mesmo arquivo não grava duas transações (PRB-C-12, #692)",
-      conhecido("BUG #692 (PRB-C-12): FITID repetido no mesmo OFX grava as duas linhas; aberto, PR #718"), async () => {
-        const conteudo = montarOfx({ transacoes: [
-          { data: "20261105", valor: "-10.00", fitid: "DUP1" }, { data: "20261106", valor: "-10.00", fitid: "DUP1" },
-        ] });
-        await enviar(ator(A, PERFIL.CLIENTE), conteudo);
-        // A decisão (recusar o arquivo ou ficar com uma linha) é do produto; o invariante vale nas duas.
-        const gravadas = await buscarLinhas(banco, "transacoes_extrato", { cliente_id: A.cliente.id, id_banco: "DUP1" });
-        assert.ok(gravadas.length <= 1, `FITID DUP1 gravado ${gravadas.length} vezes`);
-      });
+  describe("FITID e valor zero (PRB-C-12, #692)", () => {
+    it("FITID repetido dentro do mesmo arquivo: 422 e nenhuma transação gravada", async () => {
+      const antes = await fotografar(banco, A.cliente.id);
+      const conteudo = montarOfx({ transacoes: [
+        { data: "20261105", valor: "-10.00", fitid: "DUP1" }, { data: "20261106", valor: "-10.00", fitid: "DUP1" },
+      ] });
+      const resposta = await enviar(ator(A, PERFIL.CLIENTE), conteudo, { nome: "dup.ofx" });
+      assert.equal(resposta.status, 422);
+      assert.match(resposta.corpo.detalhe, /FITID repetido/);
+      const gravadas = await buscarLinhas(banco, "transacoes_extrato", { cliente_id: A.cliente.id, id_banco: "DUP1" });
+      assert.equal(gravadas.length, 0);
+      assert.deepEqual((await fotografar(banco, A.cliente.id)).transacoes_extrato, antes.transacoes_extrato);
+    });
 
-    it("segundo OFX com FITID que o cliente já importou não duplica a transação (PRB-C-12, #692)",
-      conhecido("BUG #692 (PRB-C-12): FITID já existente em outro arquivo duplica; aberto, PR #718"), async () => {
-        const quem = ator(A, PERFIL.CLIENTE);
-        await enviar(quem, montarOfx({ transacoes: [{ data: "20261105", valor: "-10.00", fitid: "SOBRE1" }, { data: "20261106", valor: "-20.00", fitid: "SOBRE2" }] }), { nome: "a.ofx" });
-        // Mesmo FITID SOBRE1 com o valor mudado: arquivo diferente (hash diferente), mesma movimentação.
-        await enviar(quem, montarOfx({ transacoes: [{ data: "20261105", valor: "-11.00", fitid: "SOBRE1" }, { data: "20261107", valor: "-30.00", fitid: "SOBRE3" }] }), { nome: "b.ofx" });
-        const gravadas = await buscarLinhas(banco, "transacoes_extrato", { cliente_id: A.cliente.id, id_banco: "SOBRE1" });
-        assert.ok(gravadas.length <= 1, `FITID SOBRE1 gravado ${gravadas.length} vezes`);
-      });
+    it("segundo OFX com FITID que o cliente já importou não duplica a transação", async () => {
+      const quem = ator(A, PERFIL.CLIENTE);
+      const primeiro = await enviar(quem, montarOfx({ transacoes: [{ data: "20261105", valor: "-10.00", fitid: "SOBRE1" }, { data: "20261106", valor: "-20.00", fitid: "SOBRE2" }] }), { nome: "a.ofx" });
+      assert.equal(primeiro.status, 201);
+      // Mesmo FITID SOBRE1 com o valor mudado: arquivo diferente (hash diferente), mesma movimentação.
+      const segundo = await enviar(quem, montarOfx({ transacoes: [{ data: "20261105", valor: "-11.00", fitid: "SOBRE1" }, { data: "20261107", valor: "-30.00", fitid: "SOBRE3" }] }), { nome: "b.ofx" });
+      assert.equal(segundo.status, 201);
+      assert.equal(segundo.corpo.ignoradas?.ja_importadas, 1);
+      const gravadas = await buscarLinhas(banco, "transacoes_extrato", { cliente_id: A.cliente.id, id_banco: "SOBRE1" });
+      assert.equal(gravadas.length, 1);
+      assert.equal(Number(gravadas[0].valor), 10);
+    });
 
-    it("transação de R$ 0,00 não é gravada como crédito de valor 0 (PRB-C-12, #692)",
-      conhecido("BUG #692 (PRB-C-12): TRNAMT 0 é aceito e vira crédito de R$ 0,00; aberto, PR #718"), async () => {
-        const conteudo = montarOfx({ transacoes: [{ data: "20261105", valor: "0.00", fitid: "ZERO1" }, { data: "20261106", valor: "-10.00", fitid: "ZERO2" }] });
-        await enviar(ator(A, PERFIL.CLIENTE), conteudo);
-        const gravadas = await buscarLinhas(banco, "transacoes_extrato", { cliente_id: A.cliente.id, id_banco: "ZERO1" });
-        assert.equal(gravadas.length, 0);
-      });
+    it("transação de R$ 0,00 não é gravada como crédito de valor 0", async () => {
+      const conteudo = montarOfx({ transacoes: [{ data: "20261105", valor: "0.00", fitid: "ZERO1" }, { data: "20261106", valor: "-10.00", fitid: "ZERO2" }] });
+      const resposta = await enviar(ator(A, PERFIL.CLIENTE), conteudo);
+      assert.equal(resposta.status, 201);
+      assert.equal(resposta.corpo.ignoradas?.valor_zero, 1);
+      const gravadas = await buscarLinhas(banco, "transacoes_extrato", { cliente_id: A.cliente.id, id_banco: "ZERO1" });
+      assert.equal(gravadas.length, 0);
+    });
+  });
 
-    it("o extrato guarda quem o enviou: criado_por = id do token (PRB-C-24, #695)",
-      conhecido("BUG #695 (PRB-C-24): criado_por nunca é gravado (extratos_bancarios nem tem a coluna até a migration 102 do PR #703)"), async () => {
-        const quem = ator(A, PERFIL.CLIENTE);
-        const resposta = await enviar(quem, montarOfx(OFX_NOVEMBRO));
-        assert.equal(resposta.status, 201);
-        const extrato = await buscarLinha(banco, "extratos_bancarios", resposta.corpo.extrato_id);
-        assert.equal(extrato.criado_por, quem.usuario.id);
-      });
+  describe("auditoria: criado_por (PRB-C-24, #695)", () => {
+    it("o extrato guarda quem o enviou: criado_por = id do token", async () => {
+      const quem = ator(A, PERFIL.CLIENTE);
+      const resposta = await enviar(quem, montarOfx(OFX_NOVEMBRO), { campos: { criado_por: UUID_INEXISTENTE } });
+      assert.equal(resposta.status, 201);
+      const extrato = await buscarLinha(banco, "extratos_bancarios", resposta.corpo.extrato_id);
+      assert.equal(extrato.criado_por, quem.usuario.id);
+    });
   });
 });
 

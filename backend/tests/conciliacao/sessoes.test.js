@@ -221,15 +221,18 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
         const pares = await buscarLinhas(banco, "pares_conciliacao", { conciliacao_id: resposta.corpo.conciliacao_id });
         assert.ok(!pares.some(p => p.lancamento_id === A.lancamentoAberto(0)), "o lançamento da sessão aberta foi casado duas vezes");
       });
+  });
 
-    it("a sessão guarda quem a criou: criado_por = id do token (PRB-C-24, #695)",
-      conhecido("BUG #695 (PRB-C-24): criado_por nunca é gravado; corrigido no PR #703, ainda aberto"), async () => {
-        const cenario = await montarCenarioNovembro(banco, A.cliente.id);
-        const quem = ator(A, PERFIL.FUNCIONARIO);
-        const resposta = await criar(quem, { extrato_id: cenario.extrato.id, mes: 11, ano: 2026 });
-        assert.equal(resposta.status, 201);
-        assert.equal((await buscarLinha(banco, "conciliacoes", resposta.corpo.conciliacao_id)).criado_por, quem.usuario.id);
+  describe("auditoria: criado_por (PRB-C-24, #695)", () => {
+    it("a sessão guarda quem a criou: criado_por = id do token", async () => {
+      const cenario = await montarCenarioNovembro(banco, A.cliente.id);
+      const quem = ator(A, PERFIL.FUNCIONARIO);
+      const resposta = await criar(quem, {
+        extrato_id: cenario.extrato.id, mes: 11, ano: 2026, criado_por: UUID_INEXISTENTE,
       });
+      assert.equal(resposta.status, 201);
+      assert.equal((await buscarLinha(banco, "conciliacoes", resposta.corpo.conciliacao_id)).criado_por, quem.usuario.id);
+    });
   });
 });
 
