@@ -3,7 +3,16 @@
 // Extração por regex em vez de lib externa: mais tolerante a essas variações
 // e evita depender de um parser XML estrito que rejeitaria o arquivo.
 
+import { mascararConta } from "./banco-conta.util.js";
+import { dataIsoValida } from "./data.util.js";
+import { DESCRICAO_MAXIMO } from "./texto-conciliacao.util.js";
+
 export class OfxParseError extends Error {}
+
+// transacoes_extrato.valor é NUMERIC(15,2) (migration 67): 13 dígitos inteiros.
+// O mesmo teto de lancamentos-contabeis. Acima disso o INSERT estoura e o
+// upload virava 500 genérico.
+const VALOR_MAXIMO = 9999999999999.99;
 
 // OFX de bancos brasileiros normalmente declara CHARSET:1252 (Windows-1252) ou
 // nem declara — nunca UTF-8. Decodificar como UTF-8 direto corrompe silenciosamente
@@ -26,13 +35,22 @@ function extrairCampoOfx(bloco, tag) {
   return match ? match[1].trim() : null;
 }
 
+function contextoTransacao(indice, fitid) {
+  const linha = `na transação #${indice + 1}`;
+  return fitid ? `${linha} (FITID ${fitid})` : linha;
+}
+
 function parseData(dtposted, contexto) {
   const digitos = (dtposted || "").match(/^(\d{4})(\d{2})(\d{2})/);
   if (!digitos) {
     throw new OfxParseError(`DTPOSTED inválido ou ausente ${contexto}: "${dtposted ?? ""}"`);
   }
   const [, ano, mes, dia] = digitos;
-  return `${ano}-${mes}-${dia}`;
+  const iso = `${ano}-${mes}-${dia}`;
+  if (!dataIsoValida(iso)) {
+    throw new OfxParseError(`DTPOSTED inexistente no calendário ${contexto}: "${dtposted}"`);
+  }
+  return iso;
 }
 
 function parseValor(trnamt, contexto) {
@@ -40,10 +58,42 @@ function parseValor(trnamt, contexto) {
     throw new OfxParseError(`TRNAMT ausente ${contexto}`);
   }
   const valor = Number(trnamt.replace(",", "."));
-  if (Number.isNaN(valor)) {
+  if (!Number.isFinite(valor)) {
     throw new OfxParseError(`TRNAMT inválido ${contexto}: "${trnamt}"`);
   }
-  return valor;
+  // A coluna guarda o absoluto. Compara em centavos, como o lançamento contábil:
+  // 1e15 * 100 não cabe em inteiro seguro e também estoura o NUMERIC(15,2).
+  const centavos = Math.round(Math.abs(valor) * 100);
+  if (!Number.isSafeInteger(centavos) || centavos / 100 > VALOR_MAXIMO) {
+    throw new OfxParseError(`TRNAMT fora da faixa ${contexto}: "${trnamt}"`);
+  }
+  // A coluna é NUMERIC(15,2): decide pelo valor já em centavos, senão 0.004 passaria por
+  // "diferente de zero" e seria gravado como 0.00.
+  return Math.sign(valor) * (centavos / 100);
+}
+
+// Identidade do banco e da conta para detectar o mesmo FITID em extratos diferentes:
+// maiúsculas, sem separadores e sem zeros à esquerda (BANKID 0237 = 237; ACCTID 123456-7 =
+// 1234567). A coluna `conta` guarda só os 4 últimos dígitos, que repetem entre contas distintas.
+function normalizarIdentidade(valor) {
+  const normalizado = (valor || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^0+/, "");
+  return normalizado || null;
+}
+
+// MEMO (ou NAME, se o MEMO vier vazio) vira transacoes_extrato.descricao.
+// Acima do teto o arquivo inteiro é recusado, no mesmo caminho de DTPOSTED
+// e TRNAMT: não trunca, porque o contador usa esse texto para reconhecer a linha.
+function descricaoDaTransacao(memo, name, contexto) {
+  const memoLimpo = (memo || "").trim();
+  const nameLimpo = (name || "").trim();
+  const texto = memoLimpo || nameLimpo;
+  if (texto.length > DESCRICAO_MAXIMO) {
+    const campo = memoLimpo ? "MEMO" : "NAME";
+    throw new OfxParseError(
+      `${campo} acima do limite ${contexto}: ${texto.length} caracteres (máximo ${DESCRICAO_MAXIMO})`,
+    );
+  }
+  return texto || null;
 }
 
 // Parseia o conteúdo bruto de um arquivo OFX e retorna banco/conta do
@@ -65,17 +115,24 @@ export function parseOfx(conteudo) {
   }
   const acctId = extrairCampoOfx(conteudo, "ACCTID");
 
+  let ignoradasValorZero = 0;
   const transacoes = blocosTransacao.map((bloco, indice) => {
-    const contexto = `na transação #${indice + 1}`;
     const dtposted = extrairCampoOfx(bloco, "DTPOSTED");
     const trnamt = extrairCampoOfx(bloco, "TRNAMT");
     const memo = extrairCampoOfx(bloco, "MEMO");
     const name = extrairCampoOfx(bloco, "NAME");
     const fitid = extrairCampoOfx(bloco, "FITID");
     const trntype = extrairCampoOfx(bloco, "TRNTYPE");
+    const contexto = contextoTransacao(indice, fitid);
 
     const valorNumerico = parseValor(trnamt, contexto);
-    const tipo = valorNumerico >= 0 ? "credito" : "debito";
+    // Linha informativa do banco: não é movimentação, não há o que conciliar.
+    if (valorNumerico === 0) {
+      ignoradasValorZero += 1;
+      return null;
+    }
+    const tipo = valorNumerico > 0 ? "credito" : "debito";
+    const descricao = descricaoDaTransacao(memo, name, contexto);
 
     if (trntype) {
       const esperado = tipo === "credito" ? "CREDIT" : "DEBIT";
@@ -90,37 +147,78 @@ export function parseOfx(conteudo) {
       data_lancamento: parseData(dtposted, contexto),
       valor: Math.abs(valorNumerico),
       tipo,
-      descricao: (memo || name || "").trim() || null,
+      descricao,
       id_banco: fitid || null,
     };
   });
 
+  const validas = transacoes.filter(Boolean);
+  if (validas.length === 0) {
+    throw new OfxParseError("Todas as transações do arquivo têm valor zero (TRNAMT = 0)");
+  }
+
+  // O banco não repete FITID na mesma conta: repetido no arquivo é arquivo inconsistente
+  // (ou editado à mão), e não dá para saber qual das linhas vale. FITID vazio não conta.
+  const vistos = new Set();
+  for (const { id_banco } of validas) {
+    if (!id_banco) continue;
+    if (vistos.has(id_banco)) {
+      throw new OfxParseError(`FITID repetido no arquivo: "${id_banco}"`);
+    }
+    vistos.add(id_banco);
+  }
+
   return {
     banco: bankId,
-    conta: acctId ? acctId.slice(-4) : null,
-    transacoes,
+    conta: mascararConta(acctId),
+    transacoes: validas,
+    ignoradas_valor_zero: ignoradasValorZero,
+    banco_chave: normalizarIdentidade(bankId),
+    conta_chave: normalizarIdentidade(acctId),
   };
 }
 
-// Infere mes/ano do extrato pela combinação mês+ano mais frequente entre as
-// transações, tolerando algumas transações "vazadas" de outro mês perto da virada.
-export function inferirMesAno(transacoes) {
+function contagemPorMes(transacoes) {
   const contagem = new Map();
   for (const t of transacoes) {
     const [ano, mes] = t.data_lancamento.split("-");
     const chave = `${ano}-${mes}`;
     contagem.set(chave, (contagem.get(chave) || 0) + 1);
   }
+  return contagem;
+}
 
-  let chaveMaisFrequente = null;
+// Mês da maioria, na ordem em que os meses aparecem no arquivo. Empate não
+// troca o primeiro: a comparação é estrita, então o segundo mês com a mesma
+// quantidade não substitui o que já chegou na contagem máxima.
+export function periodosDoExtrato(transacoes) {
+  const contagem = contagemPorMes(transacoes);
   let maiorContagem = -1;
-  for (const [chave, contagemAtual] of contagem) {
-    if (contagemAtual > maiorContagem) {
-      maiorContagem = contagemAtual;
-      chaveMaisFrequente = chave;
-    }
+  for (const quantidade of contagem.values()) {
+    if (quantidade > maiorContagem) maiorContagem = quantidade;
   }
 
-  const [ano, mes] = chaveMaisFrequente.split("-");
-  return { mes: Number(mes), ano: Number(ano) };
+  const meses = [];
+  let escolhido = null;
+  for (const [chave, quantidade] of contagem) {
+    const [ano, mes] = chave.split("-");
+    const item = { mes: Number(mes), ano: Number(ano), quantidade };
+    meses.push(item);
+    if (!escolhido && quantidade === maiorContagem) escolhido = item;
+  }
+
+  const empatados = meses.filter((item) => item.quantidade === maiorContagem).length;
+  return {
+    mes: escolhido.mes,
+    ano: escolhido.ano,
+    empate: empatados > 1,
+    meses,
+  };
+}
+
+// Infere mes/ano do extrato pela combinação mês+ano mais frequente entre as
+// transações, tolerando algumas transações "vazadas" de outro mês perto da virada.
+export function inferirMesAno(transacoes) {
+  const { mes, ano } = periodosDoExtrato(transacoes);
+  return { mes, ano };
 }
