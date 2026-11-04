@@ -1,8 +1,13 @@
 import { createHash } from "node:crypto";
 import supabase from "../config/database.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
-import { parseOfx, decodificarOfx, inferirMesAno } from "../utils/ofx-parser.util.js";
-import { aplicarFiltroPeriodo } from "../utils/periodo.util.js";
+import { parseOfx, decodificarOfx, periodosDoExtrato } from "../utils/ofx-parser.util.js";
+import { aplicarFiltroPeriodo, lerMesConsulta } from "../utils/periodo.util.js";
+import {
+  atualizarPorIdsEmLotes,
+  buscarPorIdsEmLotes,
+  buscarTodasAsLinhas,
+} from "../utils/paginacao.util.js";
 import { executarMatching } from "../utils/conciliacao-matching.util.js";
 import { ehUuid } from "../utils/uuid.util.js";
 import { gerarRelatorioConciliacaoPDF, montarConteudoRelatorio } from "../services/conciliacao-relatorio.service.js";
@@ -15,6 +20,53 @@ const STATUS_EXTRATO = {
 };
 
 const CONSTRAINT_HASH_ARQUIVO = "uq_extratos_bancarios_cliente_arquivo_hash";
+const LIMITE_PADRAO_TRANSACOES = 20;
+const LIMITE_MAXIMO_TRANSACOES = 100;
+
+function valorDeQueryInformado(valor) {
+  return valor !== undefined && valor !== null && String(valor).trim() !== "";
+}
+
+// Ausente usa o padrão. Presente e inválido (negativo, zero no limit, texto)
+// responde 400: parseInt("-1") || 20 deixa o -1 passar e o .range fica negativo,
+// e o PostgREST responde 500.
+function lerPaginacaoTransacoes(query) {
+  let limit = LIMITE_PADRAO_TRANSACOES;
+  if (valorDeQueryInformado(query.limit)) {
+    const numero = Number(query.limit);
+    if (!Number.isSafeInteger(numero) || numero < 1) {
+      return { erro: "limit deve ser um inteiro maior que zero" };
+    }
+    limit = Math.min(numero, LIMITE_MAXIMO_TRANSACOES);
+  }
+
+  let offset = 0;
+  if (valorDeQueryInformado(query.offset)) {
+    const numero = Number(query.offset);
+    if (!Number.isSafeInteger(numero) || numero < 0) {
+      return { erro: "offset deve ser um inteiro maior ou igual a zero" };
+    }
+    offset = numero;
+  }
+
+  if (!Number.isSafeInteger(offset + limit - 1)) {
+    return { erro: "offset excede o máximo que a listagem aceita" };
+  }
+
+  return { limit, offset };
+}
+
+// integer do Postgres (int4) estoura em 2147483648 e a listagem virava 500.
+const ANO_MAXIMO_CONSULTA = 2147483647;
+
+function lerAnoConsulta(ano) {
+  if (!valorDeQueryInformado(ano)) return null;
+  const numero = Number(ano);
+  if (!Number.isSafeInteger(numero) || numero <= 0 || numero > ANO_MAXIMO_CONSULTA) {
+    return { erro: "ano deve ser um inteiro positivo" };
+  }
+  return { numero };
+}
 
 function erroDeArquivoDuplicado(erro) {
   if (erro?.code !== "23505") {
@@ -31,6 +83,8 @@ function periodoAtual() {
   return { mes: agora.getMonth() + 1, ano: agora.getFullYear() };
 }
 
+// criarConciliacao continua com ano > 0. O piso 2020 vale só no upload do OFX.
+// Unificar as duas réguas fica de fora desta issue.
 function periodoDoBody(body) {
   const mes = Number(body?.mes);
   const ano = Number(body?.ano);
@@ -38,6 +92,118 @@ function periodoDoBody(body) {
     return { mes, ano };
   }
   return null;
+}
+
+// Pares que seguram o lançamento (automático ou provável) em conciliações do cliente com
+// o status dado. `sem_par` não segura: o lançamento ali não casou com nada.
+// Consulta só os ids pedidos, em lotes: a lista vai na URL (centenas de UUIDs estouram o
+// limite) e o PostgREST corta em 1000 linhas sem avisar. Devolve { data } ou { error }.
+const LOTE_CONSULTA_LANCAMENTOS = 100;
+
+async function buscarParesQueSeguramLancamento(clienteId, status, lancamentoIds) {
+  const pares = [];
+  for (let i = 0; i < lancamentoIds.length; i += LOTE_CONSULTA_LANCAMENTOS) {
+    const { data, error } = await supabase
+      .from("pares_conciliacao")
+      .select("lancamento_id, conciliacoes!inner(cliente_id, status, mes, ano)")
+      .eq("conciliacoes.cliente_id", clienteId)
+      .eq("conciliacoes.status", status)
+      .in("confianca", ["automatico", "provavel"])
+      .in("lancamento_id", lancamentoIds.slice(i, i + LOTE_CONSULTA_LANCAMENTOS));
+    if (error) return { error };
+    pares.push(...(data ?? []));
+  }
+  return { data: pares };
+}
+
+// Piso do upload, decidido em 2026-10-30: ano anterior a 2020 é fora de faixa.
+// O teto é o mesmo de erroPeriodoConsulta — o DTPOSTED do OFX também tem 4 dígitos.
+const ANO_MINIMO_EXTRATO = 2020;
+const ANO_MAXIMO_EXTRATO = 9999;
+
+function valorInformado(valor) {
+  return valor !== undefined && valor !== null && String(valor).trim() !== "";
+}
+
+function inteiroNaFaixa(valor, minimo, maximo) {
+  const numero = Number(valor);
+  return Number.isInteger(numero) && numero >= minimo && numero <= maximo ? numero : null;
+}
+
+// Sem mes e sem ano o período sai de inferirMesAno (mês+ano com mais transações).
+// Com qualquer um dos dois, os dois são obrigatórios e válidos. Fora de faixa
+// devolve 400 por campo e não cai na inferência.
+function validarPeriodoExtrato(body) {
+  const mesInformado = valorInformado(body?.mes);
+  const anoInformado = valorInformado(body?.ano);
+  if (!mesInformado && !anoInformado) {
+    return { periodo: null };
+  }
+
+  const campos = {};
+  let mes = null;
+  let ano = null;
+
+  if (!mesInformado) {
+    campos.mes = "mes é obrigatório quando ano é informado";
+  } else {
+    mes = inteiroNaFaixa(body.mes, 1, 12);
+    if (mes === null) campos.mes = "mes deve ser um inteiro entre 1 e 12";
+  }
+
+  if (!anoInformado) {
+    campos.ano = "ano é obrigatório quando mes é informado";
+  } else {
+    ano = inteiroNaFaixa(body.ano, ANO_MINIMO_EXTRATO, ANO_MAXIMO_EXTRATO);
+    if (ano === null) campos.ano = "ano deve ser um inteiro entre 2020 e 9999";
+  }
+
+  if (Object.keys(campos).length > 0) {
+    return { campos };
+  }
+  return { periodo: { mes, ano } };
+}
+
+function responderCamposInvalidos(res, campos) {
+  return res.status(400).json({ erro: Object.values(campos).join("; "), campos });
+}
+
+function mensagemPeriodoRecusado(resumo) {
+  const periodo = `${resumo.mes}/${resumo.ano}`;
+  if (resumo.meses.length === 1) {
+    return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo})`;
+  }
+
+  const lista = resumo.meses.map((item) => `${item.mes}/${item.ano} (${item.quantidade})`).join(", ");
+  const criterio = resumo.empate
+    ? "o primeiro mês do arquivo entre os que empatam"
+    : "o mês com mais transações";
+  return `mes/ano informados não correspondem às datas do extrato (período do arquivo: ${periodo}, ${criterio}; o arquivo cobre mais de um mês: ${lista})`;
+}
+
+// FITIDs do arquivo que já existem para o mesmo cliente, banco e conta (o FITID só é único
+// dentro da conta; banco e conta vão normalizados, ver ofx-parser.util.js). Em lotes: a lista
+// vai na URL. É a checagem que gera a resposta amigável; quem garante a unicidade com uploads
+// simultâneos é o índice único da migration 106 (tratado no insert).
+// shortcut: extrato sem ACCTID não entra no índice, só nesta checagem.
+const LOTE_CONSULTA_FITID = 100;
+
+async function buscarFitidsJaImportados(clienteId, bancoChave, contaChave, fitids) {
+  const existentes = new Set();
+  for (let i = 0; i < fitids.length; i += LOTE_CONSULTA_FITID) {
+    let query = supabase
+      .from("transacoes_extrato")
+      .select("id_banco")
+      .eq("cliente_id", clienteId)
+      .eq("banco_chave", bancoChave)
+      .in("id_banco", fitids.slice(i, i + LOTE_CONSULTA_FITID));
+    query = contaChave == null ? query.is("conta_chave", null) : query.eq("conta_chave", contaChave);
+
+    const { data, error } = await query;
+    if (error) return { error };
+    for (const linha of data ?? []) existentes.add(linha.id_banco);
+  }
+  return { existentes };
 }
 
 export async function criarConciliacaoExtrato(req, res) {
@@ -50,9 +216,13 @@ export async function criarConciliacaoExtrato(req, res) {
     return res.status(400).json({ erro: "Arquivo OFX é obrigatório (campo 'arquivo')" });
   }
 
-  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
+  const periodoValidado = validarPeriodoExtrato(req.body);
+  if (periodoValidado.campos) {
+    return responderCamposInvalidos(res, periodoValidado.campos);
+  }
+  const periodoInformado = periodoValidado.periodo;
 
-  const periodoInformado = periodoDoBody(req.body);
+  const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
 
   // Registro criado antes do parsing para que uma falha de parsing tenha
   // onde ser marcada (status='erro'). banco/mes/ano são placeholders aqui —
@@ -68,6 +238,7 @@ export async function criarConciliacaoExtrato(req, res) {
       arquivo_nome: req.file.originalname,
       arquivo_hash: arquivoHash,
       status: STATUS_EXTRATO.AGUARDANDO,
+      criado_por: req.usuario.id,
     })
     .select()
     .single();
@@ -96,11 +267,72 @@ export async function criarConciliacaoExtrato(req, res) {
     });
   }
 
-  const { mes, ano } = periodoInformado ?? inferirMesAno(parsed.transacoes);
+  const periodoArquivo = periodosDoExtrato(parsed.transacoes);
+  if (
+    periodoInformado &&
+    (periodoInformado.mes !== periodoArquivo.mes || periodoInformado.ano !== periodoArquivo.ano)
+  ) {
+    const { error: erroRecusa } = await supabase
+      .from("extratos_bancarios")
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
+      .eq("id", extrato.id);
 
-  const transacoesParaInserir = parsed.transacoes.map((transacao) => ({
+    if (erroRecusa) {
+      console.error(
+        "[conciliacoes.controller] Erro ao marcar extrato recusado por período:",
+        erroRecusa.message,
+      );
+      return res.status(500).json({ erro: "Erro ao registrar recusa do período do extrato" });
+    }
+
+    return res.status(400).json({
+      erro: mensagemPeriodoRecusado(periodoArquivo),
+      campos: {
+        mes: "não corresponde às datas do extrato",
+        ano: "não corresponde às datas do extrato",
+      },
+    });
+  }
+
+  const { mes, ano } = periodoInformado ?? periodoArquivo;
+
+  // Extratos com períodos que se sobrepõem repetem linhas: só entram as que ainda não existem.
+  const fitidsDoArquivo = parsed.transacoes.map((t) => t.id_banco).filter(Boolean);
+  const { existentes: fitidsJaImportados, error: erroFitids } = await buscarFitidsJaImportados(
+    clienteId,
+    parsed.banco_chave,
+    parsed.conta_chave,
+    fitidsDoArquivo,
+  );
+
+  if (erroFitids) {
+    console.error("[conciliacoes.controller] Erro ao verificar FITIDs já importados:", erroFitids.message);
+    await supabase
+      .from("extratos_bancarios")
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
+      .eq("id", extrato.id);
+    return res.status(500).json({ erro: "Erro ao verificar transações já importadas" });
+  }
+
+  const transacoesNovas = parsed.transacoes.filter((t) => !t.id_banco || !fitidsJaImportados.has(t.id_banco));
+  const ignoradasJaImportadas = parsed.transacoes.length - transacoesNovas.length;
+
+  if (transacoesNovas.length === 0) {
+    await supabase
+      .from("extratos_bancarios")
+      .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
+      .eq("id", extrato.id);
+    return res.status(409).json({
+      erro: "Todas as transações deste arquivo já foram importadas em outro extrato (mesmo FITID, banco e conta)",
+      ignoradas: { ja_importadas: ignoradasJaImportadas, valor_zero: parsed.ignoradas_valor_zero },
+    });
+  }
+
+  const transacoesParaInserir = transacoesNovas.map((transacao) => ({
     extrato_id: extrato.id,
     cliente_id: clienteId,
+    banco_chave: parsed.banco_chave,
+    conta_chave: parsed.conta_chave,
     ...transacao,
   }));
 
@@ -114,6 +346,13 @@ export async function criarConciliacaoExtrato(req, res) {
       .from("extratos_bancarios")
       .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
+    // 23505 = violação do índice único (migration 106): outro upload gravou o mesmo FITID
+    // entre a checagem acima e este insert. O insert é um comando só, então nada foi gravado.
+    if (erroTransacoes.code === "23505") {
+      return res.status(409).json({
+        erro: "Transações deste arquivo já foram importadas em outro extrato (mesmo FITID, banco e conta)",
+      });
+    }
     return res.status(500).json({ erro: "Erro ao salvar transações do extrato" });
   }
 
@@ -134,21 +373,21 @@ export async function criarConciliacaoExtrato(req, res) {
       "[conciliacoes.controller] Erro ao atualizar extrato como processado:",
       erroAtualizacao.message,
     );
-    // As transações já foram persistidas — marca como erro em vez de deixar
-    // o extrato preso em 'aguardando' com dados órfãos e sem sinalização.
+    // Marca como erro em vez de deixar o extrato preso em 'aguardando'. As transações são
+    // apagadas junto: com o índice único (migration 106) elas bloqueariam o reenvio do arquivo.
+    await supabase.from("transacoes_extrato").delete().eq("extrato_id", extrato.id);
     await supabase
       .from("extratos_bancarios")
       .update({ status: STATUS_EXTRATO.ERRO, arquivo_hash: null })
       .eq("id", extrato.id);
-    return res.status(500).json({
-      erro: "Erro ao finalizar processamento do extrato",
-      detalhe: "As transações foram salvas, mas o status do extrato não pôde ser atualizado",
-    });
+    return res.status(500).json({ erro: "Erro ao finalizar processamento do extrato" });
   }
 
   return res.status(201).json({
     extrato_id: extrato.id,
     total_transacoes: transacoesParaInserir.length,
+    // Linhas do arquivo que não entraram: já existiam em outro extrato (mesmo FITID) ou têm valor 0.
+    ignoradas: { ja_importadas: ignoradasJaImportadas, valor_zero: parsed.ignoradas_valor_zero },
     banco: parsed.banco,
     conta: parsed.conta,
     mes,
@@ -161,6 +400,12 @@ export async function listarTransacoesExtrato(req, res) {
   if (!clienteId) {
     return res.status(400).json({ erro: "cliente_id é obrigatório" });
   }
+
+  const paginacao = lerPaginacaoTransacoes(req.query);
+  if (paginacao.erro) {
+    return res.status(400).json({ erro: paginacao.erro });
+  }
+  const { limit, offset } = paginacao;
 
   const { id } = req.params;
 
@@ -180,9 +425,6 @@ export async function listarTransacoesExtrato(req, res) {
     return res.status(404).json({ erro: "Extrato bancário não encontrado" });
   }
 
-  const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
-
   const { data, error, count } = await supabase
     .from("transacoes_extrato")
     .select("*", { count: "exact" })
@@ -191,6 +433,9 @@ export async function listarTransacoesExtrato(req, res) {
     .range(offset, offset + limit - 1);
 
   if (error) {
+    if (error.message === "Requested range not satisfiable") {
+      return res.status(200).json({ data: [], total: count ?? 0, limit, offset });
+    }
     console.error("[conciliacoes.controller] Erro ao listar transações:", error.message);
     return res.status(500).json({ erro: "Erro ao listar transações do extrato" });
   }
@@ -211,7 +456,14 @@ export async function buscarExtratoAtual(req, res) {
 
   const mes = Number(req.query.mes);
   const ano = Number(req.query.ano);
-  if (!Number.isInteger(mes) || mes < 1 || mes > 12 || !Number.isInteger(ano) || ano <= 0) {
+  if (
+    !Number.isInteger(mes) ||
+    mes < 1 ||
+    mes > 12 ||
+    !Number.isSafeInteger(ano) ||
+    ano <= 0 ||
+    ano > ANO_MAXIMO_CONSULTA
+  ) {
     return res.status(400).json({ erro: "mes e ano são obrigatórios e devem ser válidos" });
   }
 
@@ -261,10 +513,13 @@ export async function buscarExtratoAtual(req, res) {
     return res.status(200).json({ extrato: null });
   }
 
-  const { data: transacoes, error: erroTransacoes } = await supabase
-    .from("transacoes_extrato")
-    .select("id")
-    .eq("extrato_id", extrato.id);
+  const { data: transacoes, error: erroTransacoes } = await buscarTodasAsLinhas(() =>
+    supabase
+      .from("transacoes_extrato")
+      .select("id")
+      .eq("extrato_id", extrato.id)
+      .order("id", { ascending: true }),
+  );
 
   if (erroTransacoes) {
     console.error(
@@ -366,26 +621,32 @@ export async function criarConciliacao(req, res) {
 
   // Itens já conciliados (conciliado=true, marcados em concluirConciliacao)
   // ficam fora do matching — senão seriam casados de novo em outra conciliação.
-  const { data: transacoes, error: erroTransacoes } = await supabase
-    .from("transacoes_extrato")
-    .select("*")
-    .eq("extrato_id", extratoId)
-    .eq("conciliado", false);
+  const { data: transacoes, error: erroTransacoes } = await buscarTodasAsLinhas(() =>
+    supabase
+      .from("transacoes_extrato")
+      .select("*")
+      .eq("extrato_id", extratoId)
+      .eq("conciliado", false)
+      .order("id", { ascending: true }),
+  );
 
   if (erroTransacoes) {
     console.error("[conciliacoes.controller] Erro ao buscar transações do extrato:", erroTransacoes.message);
     return res.status(500).json({ erro: "Erro ao buscar transações do extrato" });
   }
 
-  const { data: lancamentos, error: erroLancamentos } = await aplicarFiltroPeriodo(
-    supabase
-      .from("lancamentos_contabeis")
-      .select("*")
-      .eq("cliente_id", clienteId)
-      .eq("conciliado", false),
-    "data_lancamento",
-    mes,
-    ano,
+  const { data: lancamentos, error: erroLancamentos } = await buscarTodasAsLinhas(() =>
+    aplicarFiltroPeriodo(
+      supabase
+        .from("lancamentos_contabeis")
+        .select("*")
+        .eq("cliente_id", clienteId)
+        .eq("conciliado", false)
+        .order("id", { ascending: true }),
+      "data_lancamento",
+      mes,
+      ano,
+    ),
   );
 
   if (erroLancamentos) {
@@ -393,8 +654,29 @@ export async function criarConciliacao(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar lançamentos contábeis" });
   }
 
+  // `conciliado` só vira true em concluirConciliacao, então um lançamento que já tem par
+  // numa conciliação em andamento (de outro extrato) ainda aparece como livre acima.
+  // Fica fora do matching, senão duas sessões abertas casariam o mesmo lançamento.
+  const { data: paresEmAndamento, error: erroParesEmAndamento } = await buscarParesQueSeguramLancamento(
+    clienteId,
+    "em_andamento",
+    (lancamentos ?? []).map((l) => l.id),
+  );
+
+  if (erroParesEmAndamento) {
+    console.error(
+      "[conciliacoes.controller] Erro ao buscar lançamentos em outras conciliações:",
+      erroParesEmAndamento.message,
+    );
+    return res.status(500).json({ erro: "Erro ao buscar lançamentos de outras conciliações" });
+  }
+
+  const idsEmOutraConciliacao = new Set((paresEmAndamento ?? []).map((p) => p.lancamento_id).filter(Boolean));
+  const lancamentosLivres = (lancamentos ?? []).filter((l) => !idsEmOutraConciliacao.has(l.id));
+  const lancamentosEmOutraConciliacao = (lancamentos ?? []).length - lancamentosLivres.length;
+
   const transacoesEncontradas = transacoes ?? [];
-  const lancamentosEncontrados = lancamentos ?? [];
+  const lancamentosEncontrados = lancamentosLivres;
   const pares = executarMatching(transacoesEncontradas, lancamentosEncontrados);
 
   const totalAutomaticos = pares.filter((p) => p.confianca === "automatico").length;
@@ -416,6 +698,7 @@ export async function criarConciliacao(req, res) {
       total_transacoes: transacoesEncontradas.length,
       total_conciliadas: totalAutomaticos,
       total_pendentes: totalProvaveis + totalTransacoesSemPar,
+      criado_por: req.usuario.id,
     })
     .select()
     .single();
@@ -435,6 +718,13 @@ export async function criarConciliacao(req, res) {
       // A conciliação foi criada mas ficaria sem nenhum par e com totais incoerentes —
       // remove o registro em vez de deixá-lo órfão (não há status 'erro' para conciliacoes).
       await supabase.from("conciliacoes").delete().eq("id", conciliacao.id);
+      // 23505 = índice único da migration 107: outra conciliação gravou, neste instante, o par de
+      // algum destes lançamentos. O insert é um comando só, então nenhum par foi gravado.
+      if (erroPares.code === "23505") {
+        return res.status(409).json({
+          erro: "Algum lançamento do período foi conciliado por outra conciliação ao mesmo tempo. Tente criar de novo.",
+        });
+      }
       return res.status(500).json({ erro: "Erro ao salvar pares de conciliação" });
     }
   }
@@ -445,6 +735,9 @@ export async function criarConciliacao(req, res) {
     automaticos: totalAutomaticos,
     provaveis: totalProvaveis,
     sem_par: totalSemPar,
+    // Lançamentos do período que já estão numa conciliação em andamento de outro extrato e
+    // por isso não entraram nesta (um lançamento só pode casar com uma linha de extrato).
+    lancamentos_em_outra_conciliacao: lancamentosEmOutraConciliacao,
   });
 }
 
@@ -454,18 +747,27 @@ export async function listarConciliacoes(req, res) {
     return res.status(400).json({ erro: "cliente_id é obrigatório" });
   }
 
-  let query = supabase
-    .from("conciliacoes")
-    .select("id, mes, ano, status, total_transacoes, total_conciliadas, total_pendentes, criado_em, extrato_id")
-    .eq("cliente_id", clienteId)
-    .order("criado_em", { ascending: false });
+  const mesLido = lerMesConsulta(req.query.mes);
+  if (mesLido?.erro) {
+    return res.status(400).json({ erro: mesLido.erro });
+  }
+  const anoLido = lerAnoConsulta(req.query.ano);
+  if (anoLido?.erro) {
+    return res.status(400).json({ erro: anoLido.erro });
+  }
 
-  const mes = Number(req.query.mes);
-  const ano = Number(req.query.ano);
-  if (Number.isInteger(mes) && mes >= 1 && mes <= 12) query = query.eq("mes", mes);
-  if (Number.isInteger(ano) && ano > 0) query = query.eq("ano", ano);
+  const { data: conciliacoes, error } = await buscarTodasAsLinhas(() => {
+    let query = supabase
+      .from("conciliacoes")
+      .select("id, mes, ano, status, total_transacoes, total_conciliadas, total_pendentes, criado_em, extrato_id")
+      .eq("cliente_id", clienteId)
+      .order("criado_em", { ascending: false })
+      .order("id", { ascending: true });
 
-  const { data: conciliacoes, error } = await query;
+    if (mesLido?.numero) query = query.eq("mes", mesLido.numero);
+    if (anoLido?.numero) query = query.eq("ano", anoLido.numero);
+    return query;
+  });
 
   if (error) {
     console.error("[conciliacoes.controller] Erro ao listar conciliações:", error.message);
@@ -477,10 +779,9 @@ export async function listarConciliacoes(req, res) {
 
   let extratosPorId = {};
   if (extratoIds.length > 0) {
-    const { data: extratos, error: erroExtratos } = await supabase
-      .from("extratos_bancarios")
-      .select("id, banco, conta")
-      .in("id", extratoIds);
+    const { data: extratos, error: erroExtratos } = await buscarPorIdsEmLotes(extratoIds, (ids) =>
+      supabase.from("extratos_bancarios").select("id, banco, conta").in("id", ids),
+    );
 
     if (erroExtratos) {
       console.error(
@@ -517,10 +818,13 @@ export async function buscarConciliacao(req, res) {
   }
 
   const [paresResultado, extratoResultado] = await Promise.all([
-    supabase
-      .from("pares_conciliacao")
-      .select("id, transacao_id, lancamento_id, confianca, confirmado_por, confirmado_em")
-      .eq("conciliacao_id", id),
+    buscarTodasAsLinhas(() =>
+      supabase
+        .from("pares_conciliacao")
+        .select("id, transacao_id, lancamento_id, confianca, confirmado_por, confirmado_em")
+        .eq("conciliacao_id", id)
+        .order("id", { ascending: true }),
+    ),
     conciliacao.extrato_id
       ? supabase.from("extratos_bancarios").select("banco, conta").eq("id", conciliacao.extrato_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -541,12 +845,12 @@ export async function buscarConciliacao(req, res) {
   const lancamentoIds = [...new Set(paresTodos.map((par) => par.lancamento_id).filter(Boolean))];
 
   const [transacoesResultado, lancamentosResultado] = await Promise.all([
-    transacaoIds.length > 0
-      ? supabase.from("transacoes_extrato").select("*").in("id", transacaoIds)
-      : Promise.resolve({ data: [], error: null }),
-    lancamentoIds.length > 0
-      ? supabase.from("lancamentos_contabeis").select("*").in("id", lancamentoIds)
-      : Promise.resolve({ data: [], error: null }),
+    buscarPorIdsEmLotes(transacaoIds, (ids) =>
+      supabase.from("transacoes_extrato").select("*").in("id", ids),
+    ),
+    buscarPorIdsEmLotes(lancamentoIds, (ids) =>
+      supabase.from("lancamentos_contabeis").select("*").in("id", ids),
+    ),
   ]);
 
   if (transacoesResultado.error) {
@@ -666,48 +970,21 @@ export async function confirmarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para confirmação" });
   }
 
-  const { error: erroUpdatePar } = await supabase
-    .from("pares_conciliacao")
-    .update({ confirmado_por: req.usuario.id, confirmado_em: new Date().toISOString() })
-    .eq("id", pareId);
+  // Decisão + recálculo dos totais numa transação só (migration 105): de dois pedidos
+  // simultâneos sobre o mesmo par o banco deixa um passar e o outro volta `false` (409).
+  const { data: confirmou, error: erroConfirmar } = await supabase.rpc("confirmar_par_conciliacao", {
+    p_conciliacao_id: id,
+    p_par_id: pareId,
+    p_usuario_id: req.usuario.id,
+  });
 
-  if (erroUpdatePar) {
-    console.error("[conciliacoes.controller] Erro ao confirmar par:", erroUpdatePar.message);
+  if (erroConfirmar) {
+    console.error("[conciliacoes.controller] Erro ao confirmar par:", erroConfirmar.message);
     return res.status(500).json({ erro: "Erro ao confirmar par de conciliação" });
   }
 
-  // Re-busca os totais o mais perto possível do update para reduzir a janela
-  // de corrida do incremento (não há suporte a update atômico/transação neste client).
-  const { data: conciliacaoAtual, error: erroConciliacaoAtual } = await supabase
-    .from("conciliacoes")
-    .select("total_conciliadas, total_pendentes")
-    .eq("id", id)
-    .maybeSingle();
-
-  const erroUpdateConciliacao =
-    erroConciliacaoAtual ??
-    (
-      await supabase
-        .from("conciliacoes")
-        .update({
-          total_conciliadas: conciliacaoAtual.total_conciliadas + 1,
-          total_pendentes: conciliacaoAtual.total_pendentes - 1,
-        })
-        .eq("id", id)
-    ).error;
-
-  if (erroUpdateConciliacao) {
-    console.error(
-      "[conciliacoes.controller] Erro ao atualizar totais da conciliação:",
-      erroUpdateConciliacao.message,
-    );
-    // Desfaz a confirmação do par para permitir uma nova tentativa consistente
-    // (senão o par ficaria marcado como confirmado sem os totais refletirem isso).
-    await supabase
-      .from("pares_conciliacao")
-      .update({ confirmado_por: null, confirmado_em: null })
-      .eq("id", pareId);
-    return res.status(500).json({ erro: "Erro ao atualizar totais da conciliação" });
+  if (!confirmou) {
+    return res.status(409).json({ erro: "Par não está disponível para confirmação" });
   }
 
   return res.status(200).json({
@@ -739,31 +1016,23 @@ export async function rejeitarPar(req, res) {
     return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
-  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e
-  // outro só com o lançamento — no mesmo formato que o matching gera para sobras.
-  // Assim o lançamento continua visível em "Lançamentos sem transação" e no PDF.
-  const { data: parLancamento, error: erroInsertPar } = await supabase
-    .from("pares_conciliacao")
-    .insert({ conciliacao_id: id, transacao_id: null, lancamento_id: par.lancamento_id, confianca: "sem_par" })
-    .select("id")
-    .single();
+  // Rejeitar desfaz o casamento em dois pares 'sem_par' — um só com a transação e outro só com
+  // o lançamento — no mesmo formato que o matching gera para sobras. Assim o lançamento continua
+  // visível em "Lançamentos sem transação" e no PDF. Tudo numa transação só (migration 105): de
+  // dois pedidos simultâneos (confirmar × rejeitar, ou rejeitar × rejeitar) um passa e o outro
+  // volta NULL (409).
+  const { data: parLancamentoId, error: erroRejeitar } = await supabase.rpc("rejeitar_par_conciliacao", {
+    p_conciliacao_id: id,
+    p_par_id: pareId,
+  });
 
-  if (erroInsertPar) {
-    console.error("[conciliacoes.controller] Erro ao separar lançamento do par rejeitado:", erroInsertPar.message);
+  if (erroRejeitar) {
+    console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroRejeitar.message);
     return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
   }
 
-  const desfazerInsert = () => supabase.from("pares_conciliacao").delete().eq("id", parLancamento.id);
-
-  const { error: erroUpdatePar } = await supabase
-    .from("pares_conciliacao")
-    .update({ lancamento_id: null, confianca: "sem_par" })
-    .eq("id", pareId);
-
-  if (erroUpdatePar) {
-    console.error("[conciliacoes.controller] Erro ao rejeitar par:", erroUpdatePar.message);
-    await desfazerInsert();
-    return res.status(500).json({ erro: "Erro ao rejeitar par de conciliação" });
+  if (!parLancamentoId) {
+    return res.status(409).json({ erro: "Par não está disponível para rejeição" });
   }
 
   // total_pendentes não muda: conta só transações (conciliadas + pendentes = total_transacoes,
@@ -772,7 +1041,7 @@ export async function rejeitarPar(req, res) {
   return res.status(200).json({
     id: pareId,
     confianca: "sem_par",
-    par_lancamento: { id: parLancamento.id, lancamento_id: par.lancamento_id, confianca: "sem_par" },
+    par_lancamento: { id: parLancamentoId, lancamento_id: par.lancamento_id, confianca: "sem_par" },
   });
 }
 
@@ -793,10 +1062,13 @@ export async function concluirConciliacao(req, res) {
     return res.status(409).json({ erro: "Conciliação já foi concluída" });
   }
 
-  const { data: pares, error: erroPares } = await supabase
-    .from("pares_conciliacao")
-    .select("transacao_id, lancamento_id, confianca, confirmado_em")
-    .eq("conciliacao_id", id);
+  const { data: pares, error: erroPares } = await buscarTodasAsLinhas(() =>
+    supabase
+      .from("pares_conciliacao")
+      .select("transacao_id, lancamento_id, confianca, confirmado_em")
+      .eq("conciliacao_id", id)
+      .order("id", { ascending: true }),
+  );
 
   if (erroPares) {
     console.error("[conciliacoes.controller] Erro ao buscar pares da conciliação:", erroPares.message);
@@ -818,37 +1090,59 @@ export async function concluirConciliacao(req, res) {
   const transacaoIds = paresConciliados.map((par) => par.transacao_id).filter(Boolean);
   const lancamentoIds = paresConciliados.map((par) => par.lancamento_id).filter(Boolean);
 
-  // As flags de conciliado são marcadas antes do status da conciliação: se
-  // alguma falhar, a conciliação permanece 'em_andamento' e o POST /concluir
-  // pode ser chamado de novo com segurança (marcar conciliado=true de novo é idempotente).
-  if (transacaoIds.length > 0) {
-    const { error: erroTransacoes } = await supabase
-      .from("transacoes_extrato")
-      .update({ conciliado: true })
-      .in("id", transacaoIds);
+  // Duas conciliações criadas ao mesmo tempo não se enxergam no criarConciliacao; para pares
+  // novos o índice único da migration 107 já barra isso na criação. Esta conferência cobre os
+  // pares anteriores à migration (fora do índice) e responde com o período do conflito.
+  if (lancamentoIds.length > 0) {
+    const { data: jaConciliados, error: erroJaConciliados } = await buscarParesQueSeguramLancamento(
+      clienteId,
+      "concluida",
+      lancamentoIds,
+    );
 
-    if (erroTransacoes) {
-      console.error(
-        "[conciliacoes.controller] Erro ao marcar transações como conciliadas:",
-        erroTransacoes.message,
-      );
-      return res.status(500).json({ erro: "Erro ao marcar transações como conciliadas" });
+    if (erroJaConciliados) {
+      console.error("[conciliacoes.controller] Erro ao conferir lançamentos já conciliados:", erroJaConciliados.message);
+      return res.status(500).json({ erro: "Erro ao conferir lançamentos já conciliados" });
+    }
+
+    if (jaConciliados?.length) {
+      const ids = [...new Set(jaConciliados.map((p) => p.lancamento_id))];
+      const periodos = [
+        ...new Set(jaConciliados.map((p) => `${String(p.conciliacoes.mes).padStart(2, "0")}/${p.conciliacoes.ano}`)),
+      ].join(", ");
+      return res.status(409).json({
+        erro: `${ids.length} lançamento(s) desta conciliação já foram conciliados em outra conciliação concluída (${periodos}). Um lançamento só pode corresponder a uma linha de extrato.`,
+        lancamento_ids: ids,
+      });
     }
   }
 
-  if (lancamentoIds.length > 0) {
-    const { error: erroLancamentos } = await supabase
-      .from("lancamentos_contabeis")
-      .update({ conciliado: true })
-      .in("id", lancamentoIds);
+  // As flags de conciliado são marcadas antes do status da conciliação: se
+  // alguma falhar, a conciliação permanece 'em_andamento' e o POST /concluir
+  // pode ser chamado de novo com segurança (marcar conciliado=true de novo é idempotente).
+  // Update em lotes: `.in` com 1001 UUIDs estoura a URL do PostgREST.
+  const { error: erroTransacoes } = await atualizarPorIdsEmLotes(transacaoIds, (ids) =>
+    supabase.from("transacoes_extrato").update({ conciliado: true }).in("id", ids),
+  );
 
-    if (erroLancamentos) {
-      console.error(
-        "[conciliacoes.controller] Erro ao marcar lançamentos como conciliados:",
-        erroLancamentos.message,
-      );
-      return res.status(500).json({ erro: "Erro ao marcar lançamentos como conciliados" });
-    }
+  if (erroTransacoes) {
+    console.error(
+      "[conciliacoes.controller] Erro ao marcar transações como conciliadas:",
+      erroTransacoes.message,
+    );
+    return res.status(500).json({ erro: "Erro ao marcar transações como conciliadas" });
+  }
+
+  const { error: erroLancamentos } = await atualizarPorIdsEmLotes(lancamentoIds, (ids) =>
+    supabase.from("lancamentos_contabeis").update({ conciliado: true }).in("id", ids),
+  );
+
+  if (erroLancamentos) {
+    console.error(
+      "[conciliacoes.controller] Erro ao marcar lançamentos como conciliados:",
+      erroLancamentos.message,
+    );
+    return res.status(500).json({ erro: "Erro ao marcar lançamentos como conciliados" });
   }
 
   const { error: erroUpdateConciliacao } = await supabase
@@ -888,10 +1182,13 @@ export async function gerarRelatorioConciliacao(req, res) {
   const [clienteResultado, extratoResultado, paresResultado] = await Promise.all([
     supabase.from("clientes").select("nome").eq("id", clienteId).maybeSingle(),
     supabase.from("extratos_bancarios").select("banco, conta").eq("id", conciliacao.extrato_id).maybeSingle(),
-    supabase
-      .from("pares_conciliacao")
-      .select("id, transacao_id, lancamento_id, confianca, confirmado_em")
-      .eq("conciliacao_id", id),
+    buscarTodasAsLinhas(() =>
+      supabase
+        .from("pares_conciliacao")
+        .select("id, transacao_id, lancamento_id, confianca, confirmado_em")
+        .eq("conciliacao_id", id)
+        .order("id", { ascending: true }),
+    ),
   ]);
 
   if (clienteResultado.error) {
@@ -914,12 +1211,12 @@ export async function gerarRelatorioConciliacao(req, res) {
   const lancamentoIds = [...new Set(paresTodos.map((par) => par.lancamento_id).filter(Boolean))];
 
   const [transacoesResultado, lancamentosResultado] = await Promise.all([
-    transacaoIds.length > 0
-      ? supabase.from("transacoes_extrato").select("id, data_lancamento, descricao, valor").in("id", transacaoIds)
-      : Promise.resolve({ data: [], error: null }),
-    lancamentoIds.length > 0
-      ? supabase.from("lancamentos_contabeis").select("id, data_lancamento, descricao, valor").in("id", lancamentoIds)
-      : Promise.resolve({ data: [], error: null }),
+    buscarPorIdsEmLotes(transacaoIds, (ids) =>
+      supabase.from("transacoes_extrato").select("id, data_lancamento, descricao, valor").in("id", ids),
+    ),
+    buscarPorIdsEmLotes(lancamentoIds, (ids) =>
+      supabase.from("lancamentos_contabeis").select("id, data_lancamento, descricao, valor").in("id", ids),
+    ),
   ]);
 
   if (transacoesResultado.error) {
