@@ -40,6 +40,7 @@ supabase.from = function (tabela) {
       return builder;
     },
     order() { return builder; },
+    range() { return builder; },
     limit() { return Promise.resolve(consumir("limit", { data: [], error: null })); },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     then(resolve, reject) {

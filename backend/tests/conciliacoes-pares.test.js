@@ -51,11 +51,24 @@ supabase.from = function (tabela) {
   return builder;
 };
 
+const originalRpc = supabase.rpc;
+const chamadasRpc = [];
+let respostaRpc = { data: null, error: null };
+supabase.rpc = function (nome, args) {
+  chamadasRpc.push({ nome, args });
+  return Promise.resolve(respostaRpc);
+};
+
 after(() => {
   supabase.from = originalFrom;
+  supabase.rpc = originalRpc;
 });
 
-beforeEach(() => filas.clear());
+beforeEach(() => {
+  filas.clear();
+  chamadasRpc.length = 0;
+  respostaRpc = { data: null, error: null };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -110,45 +123,143 @@ function queueParValido(overrides = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// PATCH /conciliacoes/:id/pares/:pareId/confirmar
+// POST /conciliacoes/:id/concluir
 // ---------------------------------------------------------------------------
 
-describe("PATCH /conciliacoes/:id/pares/:pareId/confirmar", () => {
-
-  it("500 e desfaz a confirmação do par quando falha o update dos totais", async () => {
+describe("POST /conciliacoes/:id/concluir", () => {
+  it("409 quando um lançamento já foi conciliado em outra conciliação concluída (#691)", async () => {
     queueConciliacaoValida();
-    queueParValido();
-    queue("pares_conciliacao", "await", { data: null, error: null }); // update do par (sucesso)
-    queue("conciliacoes", "maybeSingle", {
-      data: { total_conciliadas: 1, total_pendentes: 2 },
+    queue("pares_conciliacao", "await", {
+      data: [{ transacao_id: "t1", lancamento_id: "l1", confianca: "automatico", confirmado_em: null }],
       error: null,
     });
-    queue("conciliacoes", "await", { data: null, error: { message: "falha ao atualizar totais" } });
+    queue("pares_conciliacao", "await", {
+      data: [{ lancamento_id: "l1", conciliacoes: { mes: 7, ano: 2026 } }],
+      error: null,
+    });
 
-    let parRevertido = null;
-    let chamadas = 0;
+    const escritas = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      const updateOriginal = b.update.bind(b);
+      b.update = (campos) => { escritas.push(tabela); return updateOriginal(campos); };
+      return b;
+    };
+
+    const res = criarResposta();
+    await concluirConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 409);
+    assert.match(res.body.erro, /já foram conciliados em outra conciliação concluída \(07\/2026\)/);
+    assert.deepEqual(res.body.lancamento_ids, ["l1"]);
+    assert.deepEqual(escritas, []); // nada foi marcado como conciliado nem concluído
+  });
+
+  it("confere os lançamentos já conciliados em lotes de até 100 ids (#691)", async () => {
+    queueConciliacaoValida();
+    queue("pares_conciliacao", "await", {
+      data: Array.from({ length: 150 }, (_, i) => ({
+        transacao_id: `t${i}`, lancamento_id: `l${i}`, confianca: "automatico", confirmado_em: null,
+      })),
+      error: null,
+    });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+
+    const tamanhosDosLotes = [];
     const originalFromLocal = supabase.from;
     supabase.from = function (tabela) {
       const b = originalFromLocal(tabela);
       if (tabela === "pares_conciliacao") {
-        const updateOriginal = b.update.bind(b);
-        b.update = (campos) => {
-          chamadas += 1;
-          if (chamadas === 2) parRevertido = campos;
-          return updateOriginal(campos);
+        const inOriginal = b.in.bind(b);
+        b.in = (coluna, valores) => {
+          if (coluna === "lancamento_id") tamanhosDosLotes.push(valores.length);
+          return inOriginal(coluna, valores);
         };
       }
       return b;
     };
-    queue("pares_conciliacao", "await", { data: null, error: null }); // update de reversão
+
+    const res = criarResposta();
+    await concluirConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(tamanhosDosLotes, [100, 50]);
+  });
+
+  it("500 quando falha a conferência de lançamentos já conciliados", async () => {
+    queueConciliacaoValida();
+    queue("pares_conciliacao", "await", {
+      data: [{ transacao_id: "t1", lancamento_id: "l1", confianca: "automatico", confirmado_em: null }],
+      error: null,
+    });
+    queue("pares_conciliacao", "await", { data: null, error: { message: "falha" } });
+    const res = criarResposta();
+    await concluirConciliacao(reqBase(), res);
+    assert.equal(res.statusCode, 500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /conciliacoes/:id/pares/:pareId/confirmar
+// ---------------------------------------------------------------------------
+
+describe("PATCH /conciliacoes/:id/pares/:pareId/confirmar", () => {
+  it("200: confirma o par numa chamada só ao banco (decisão + totais)", async () => {
+    queueConciliacaoValida();
+    queueParValido();
+    respostaRpc = { data: true, error: null };
+
+    const res = criarResposta();
+    await confirmarPar(reqBase(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.confianca, "provavel");
+    assert.equal(res.body.confirmado_por, USUARIO_ID);
+    assert.deepEqual(chamadasRpc, [
+      {
+        nome: "confirmar_par_conciliacao",
+        args: { p_conciliacao_id: CONCILIACAO_ID, p_par_id: PAR_ID, p_usuario_id: USUARIO_ID },
+      },
+    ]);
+  });
+
+  it("409 quando outro pedido já decidiu o par (function devolve false)", async () => {
+    queueConciliacaoValida();
+    queueParValido();
+    respostaRpc = { data: false, error: null };
+
+    const res = criarResposta();
+    await confirmarPar(reqBase(), res);
+
+    assert.equal(res.statusCode, 409);
+  });
+
+  it("500 quando a function falha (o banco desfaz a decisão, o backend não escreve nada)", async () => {
+    queueConciliacaoValida();
+    queueParValido();
+    respostaRpc = { data: null, error: { message: "falha ao atualizar totais" } };
+
+    const escritas = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      for (const metodo of ["insert", "update", "delete"]) {
+        const original = b[metodo].bind(b);
+        b[metodo] = (campos) => { escritas.push({ tabela, metodo }); return original(campos); };
+      }
+      return b;
+    };
 
     const res = criarResposta();
     await confirmarPar(reqBase(), res);
     supabase.from = originalFromLocal;
 
     assert.equal(res.statusCode, 500);
-    assert.equal(parRevertido.confirmado_por, null);
-    assert.equal(parRevertido.confirmado_em, null);
+    assert.equal(escritas.length, 0);
   });
 });
 
@@ -157,49 +268,42 @@ describe("PATCH /conciliacoes/:id/pares/:pareId/confirmar", () => {
 // ---------------------------------------------------------------------------
 
 describe("PATCH /conciliacoes/:id/pares/:pareId/rejeitar", () => {
-  // Espiona insert/update/delete de pares_conciliacao e conciliacoes na ordem em que ocorrem.
-  function espionarEscritas() {
-    const escritas = [];
-    const originalFromLocal = supabase.from;
-    supabase.from = function (tabela) {
-      const b = originalFromLocal(tabela);
-      for (const metodo of ["insert", "update", "delete"]) {
-        const original = b[metodo].bind(b);
-        b[metodo] = (campos) => { escritas.push({ tabela, metodo, campos }); return original(campos); };
-      }
-      return b;
-    };
-    return { escritas, restaurar: () => { supabase.from = originalFromLocal; } };
-  }
-
-  it("500 sem alterar o par quando o insert do lançamento falha", async () => {
+  it("200: devolve o par do lançamento criado pela function (lançamento não some)", async () => {
     queueConciliacaoValida();
     queueParValido();
-    queue("pares_conciliacao", "single", { data: null, error: { message: "falha" } });
+    respostaRpc = { data: "novo-par", error: null };
 
-    const espiao = espionarEscritas();
     const res = criarResposta();
     await rejeitarPar(reqBase(), res);
-    espiao.restaurar();
 
-    assert.equal(res.statusCode, 500);
-    assert.equal(espiao.escritas.filter((e) => e.metodo === "update").length, 0);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.confianca, "sem_par");
+    assert.deepEqual(res.body.par_lancamento, { id: "novo-par", lancamento_id: "l1", confianca: "sem_par" });
+    // total_pendentes conta só transações: a transação segue pendente, então não há recálculo de totais
+    assert.deepEqual(chamadasRpc, [
+      { nome: "rejeitar_par_conciliacao", args: { p_conciliacao_id: CONCILIACAO_ID, p_par_id: PAR_ID } },
+    ]);
   });
 
-  it("500 e remove o par do lançamento quando o update do par original falha", async () => {
+  it("500 quando a function falha", async () => {
     queueConciliacaoValida();
     queueParValido();
-    queue("pares_conciliacao", "single", { data: { id: "novo-par" }, error: null });
-    queue("pares_conciliacao", "await", { data: null, error: { message: "falha" } });
+    respostaRpc = { data: null, error: { message: "falha" } };
 
-    const espiao = espionarEscritas();
     const res = criarResposta();
     await rejeitarPar(reqBase(), res);
-    espiao.restaurar();
 
     assert.equal(res.statusCode, 500);
-    assert.ok(espiao.escritas.some((e) => e.tabela === "pares_conciliacao" && e.metodo === "delete"));
-    assert.ok(!espiao.escritas.some((e) => e.tabela === "conciliacoes"));
+  });
+
+  it("409 quando outro pedido já decidiu o par (function devolve NULL)", async () => {
+    queueConciliacaoValida();
+    queueParValido();
+    respostaRpc = { data: null, error: null };
+
+    const res = criarResposta();
+    await rejeitarPar(reqBase(), res);
+
+    assert.equal(res.statusCode, 409);
   });
 });
-

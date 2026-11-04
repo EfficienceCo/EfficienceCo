@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 HOSTS_LOCAIS = {"127.0.0.1", "::1", "localhost"}
+# socket.AF_UNIX não existe no Python do Windows; sem ele não há socket local a liberar.
+AF_UNIX = getattr(socket, "AF_UNIX", None)
 RAIZ_AGENTE = Path(__file__).resolve().parent.parent
 TESTES = Path(__file__).resolve().parent
 for caminho in (RAIZ_AGENTE, TESTES):
@@ -23,7 +25,7 @@ def _sem_rede_externa(monkeypatch):
 
     def conectar(self, endereco, *args, **kwargs):
         host = endereco[0] if isinstance(endereco, tuple) else None
-        if self.family != socket.AF_UNIX and host not in HOSTS_LOCAIS:
+        if (AF_UNIX is None or self.family != AF_UNIX) and host not in HOSTS_LOCAIS:
             raise AssertionError(f"chamada de rede fora do computador bloqueada: {endereco!r}")
         return conectar_original(self, endereco, *args, **kwargs)
 

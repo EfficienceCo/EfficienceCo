@@ -10,7 +10,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   iniciarBateria, fotografar, chamar, ator, atoresDe, buscarLinha, buscarLinhas, criarExtratoProcessado,
-  criarLancamentos, montarCenarioNovembro, provarOutroEscritorio404, UUID_INEXISTENTE, PERFIL, paraEpoch,
+  criarLancamentos, montarCenarioNovembro, montarSessaoComMuitosPares, provarOutroEscritorio404, UUID_INEXISTENTE, PERFIL, paraEpoch,
 } from "../helpers/conciliacao-http.js";
 import { conhecido } from "../helpers/bug-conhecido.js";
 
@@ -38,7 +38,7 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
         assert.equal(resposta.status, 201, JSON.stringify(resposta.corpo));
         // Os 4 pares sem par são T3, T4 (transações) e L3, L4 (lançamentos).
         assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, {
-          conciliacao_id: undefined, total_transacoes: 4, automaticos: 1, provaveis: 1, sem_par: 4,
+          conciliacao_id: undefined, total_transacoes: 4, automaticos: 1, provaveis: 1, sem_par: 4, lancamentos_em_outra_conciliacao: 0,
         });
         const sessao = await buscarLinha(banco, "conciliacoes", resposta.corpo.conciliacao_id);
         // Totais: conciliadas = 1 automático; pendentes = 1 provável + 2 transações sem par = 3; 1 + 3 = 4 transações.
@@ -72,7 +72,7 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
       const { extrato } = await criarExtratoProcessado(banco, A.cliente.id, { mes: 12, ano: 2026 });
       const resposta = await criar(ator(A, PERFIL.CLIENTE), { extrato_id: extrato.id, mes: 12, ano: 2026 });
       assert.equal(resposta.status, 201);
-      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 0, automaticos: 0, provaveis: 0, sem_par: 0 });
+      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 0, automaticos: 0, provaveis: 0, sem_par: 0, lancamentos_em_outra_conciliacao: 0 });
       assert.deepEqual(await buscarLinhas(banco, "pares_conciliacao", { conciliacao_id: resposta.corpo.conciliacao_id }), []);
     });
 
@@ -115,7 +115,7 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
       const resposta = await criar(ator(A, PERFIL.CLIENTE), { extrato_id: extrato.id, mes: 11, ano: 2026 });
 
       assert.equal(resposta.status, 201, JSON.stringify(resposta.corpo));
-      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 1, automaticos: 1, provaveis: 0, sem_par: 1 });
+      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 1, automaticos: 1, provaveis: 0, sem_par: 1, lancamentos_em_outra_conciliacao: 0 });
       const sessao = await buscarLinha(banco, "conciliacoes", resposta.corpo.conciliacao_id);
       assert.deepEqual([sessao.total_transacoes, sessao.total_conciliadas, sessao.total_pendentes], [1, 1, 0]);
       const pares = await buscarLinhas(banco, "pares_conciliacao", { conciliacao_id: sessao.id });
@@ -200,7 +200,40 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
     });
   });
 
-  describe("bugs conhecidos: o teste do comportamento certo fica com skip até a correção", () => {
+  it("dois extratos criados em paralelo não casam o mesmo lançamento (#691)", async () => {
+    const [lancamento] = await criarLancamentos(banco, A.cliente.id, [
+      { data: "2026-12-03", valor: 170.13, tipo: "credito" },
+    ]);
+    const extratos = [];
+    for (const nome of ["dezembro-a.ofx", "dezembro-b.ofx"]) {
+      extratos.push(await criarExtratoProcessado(banco, A.cliente.id, {
+        mes: 12, ano: 2026, nome,
+        transacoes: [{ data: "2026-12-03", valor: 170.13, tipo: "credito" }],
+      }));
+    }
+    const quem = ator(A, PERFIL.CLIENTE);
+    const respostas = await Promise.all(extratos.map(({ extrato }) => criar(quem, {
+      extrato_id: extrato.id, mes: 12, ano: 2026,
+    })));
+    assert.ok(respostas.some(r => r.status === 201), JSON.stringify(respostas));
+    assert.ok(respostas.every(r => r.status === 201 || r.status === 409), JSON.stringify(respostas));
+    const pares = await buscarLinhas(banco, "pares_conciliacao", { lancamento_id: lancamento.id });
+    assert.equal(pares.filter(p => ["automatico", "provavel"].includes(p.confianca)).length, 1,
+      "o mesmo lançamento deve ter um único par ativo");
+    const sessoes = (await buscarLinhas(banco, "conciliacoes", { cliente_id: A.cliente.id }))
+      .filter(s => extratos.some(({ extrato }) => extrato.id === s.extrato_id));
+    assert.deepEqual(sessoes.map(s => s.id).sort(),
+      respostas.filter(r => r.status === 201).map(r => r.corpo.conciliacao_id).sort(),
+      "uma tentativa recusada não pode deixar conciliação órfã");
+    for (const sessao of sessoes) {
+      const resposta = await chamar(api, quem, { metodo: "POST", caminho: `/conciliacoes/${sessao.id}/concluir` });
+      assert.equal(resposta.status, 200, JSON.stringify(resposta.corpo));
+    }
+    const paresConcluidos = await buscarLinhas(banco, "pares_conciliacao", { lancamento_id: lancamento.id });
+    assert.equal(paresConcluidos.filter(p => ["automatico", "provavel"].includes(p.confianca)).length, 1);
+  });
+
+  describe("regressões conhecidas (skip apenas enquanto a correção estiver pendente)", () => {
     it("duplo clique: dois POST em paralelo para o mesmo extrato dão um 201 e um 409, e uma só sessão (PRB-C-21)",
       conhecido("BUG PRB-C-21 (sem issue; precisa de issue `bug`): checagem é leitura seguida de insert e conciliacoes.extrato_id não tem UNIQUE; os dois pedidos criam sessão"), async () => {
         const cenario = await montarCenarioNovembro(banco, A.cliente.id);
@@ -211,7 +244,7 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
       });
 
     it("lançamento que está numa sessão em andamento de outro extrato não é casado de novo (PRB-C-04, #691)",
-      conhecido("BUG #691 (PRB-C-04): o matching só exclui conciliado=true; lançamento de sessão em_andamento de outro extrato entra de novo"), async () => {
+      async () => {
         // Lançamento I+300 (10/2026, 10, crédito) está num par automático da sessão aberta do A.
         // Um segundo extrato de outubro com a mesma transação não pode pegá-lo.
         const { extrato } = await criarExtratoProcessado(banco, A.cliente.id, {
@@ -222,15 +255,18 @@ describe("TEST-9: POST /conciliacoes (criar a sessão e rodar o matching)", { ti
         const pares = await buscarLinhas(banco, "pares_conciliacao", { conciliacao_id: resposta.corpo.conciliacao_id });
         assert.ok(!pares.some(p => p.lancamento_id === A.lancamentoAberto(0)), "o lançamento da sessão aberta foi casado duas vezes");
       });
+  });
 
-    it("a sessão guarda quem a criou: criado_por = id do token (PRB-C-24, #695)",
-      conhecido("BUG #695 (PRB-C-24): criado_por nunca é gravado; corrigido no PR #703, ainda aberto"), async () => {
-        const cenario = await montarCenarioNovembro(banco, A.cliente.id);
-        const quem = ator(A, PERFIL.FUNCIONARIO);
-        const resposta = await criar(quem, { extrato_id: cenario.extrato.id, mes: 11, ano: 2026 });
-        assert.equal(resposta.status, 201);
-        assert.equal((await buscarLinha(banco, "conciliacoes", resposta.corpo.conciliacao_id)).criado_por, quem.usuario.id);
+  describe("auditoria: criado_por (PRB-C-24, #695)", () => {
+    it("a sessão guarda quem a criou: criado_por = id do token", async () => {
+      const cenario = await montarCenarioNovembro(banco, A.cliente.id);
+      const quem = ator(A, PERFIL.FUNCIONARIO);
+      const resposta = await criar(quem, {
+        extrato_id: cenario.extrato.id, mes: 11, ano: 2026, criado_por: UUID_INEXISTENTE,
       });
+      assert.equal(resposta.status, 201);
+      assert.equal((await buscarLinha(banco, "conciliacoes", resposta.corpo.conciliacao_id)).criado_por, quem.usuario.id);
+    });
   });
 });
 
@@ -299,12 +335,11 @@ describe("TEST-9: GET /conciliacoes (lista de sessões)", { timeout: 300_000 }, 
     assert.deepEqual(resposta.corpo, { erro: "cliente_id é obrigatório" });
   });
 
-  for (const consulta of ["?mes=0", "?mes=13", "?mes=abc", "?ano=0", "?ano=abc"]) {
-    it(`${consulta}: 400 em vez de devolver a lista inteira (PRB-C-09, #696)`,
-      conhecido("BUG #696 (PRB-C-09): mes/ano inválidos são ignorados e a lista inteira volta com 200; corrigido no PR #715, ainda aberto"), async () => {
-        const resposta = await listar(ator(A, PERFIL.CLIENTE), consulta);
-        assert.equal(resposta.status, 400, `devolveu ${resposta.status} com ${Array.isArray(resposta.corpo) ? resposta.corpo.length : "?"} sessões`);
-      });
+  for (const consulta of ["?mes=0", "?mes=13", "?mes=abc", "?ano=0", "?ano=abc", "?ano=2147483648"]) {
+    it(`${consulta}: 400 em vez de devolver a lista inteira (PRB-C-09, #696)`, async () => {
+      const resposta = await listar(ator(A, PERFIL.CLIENTE), consulta);
+      assert.equal(resposta.status, 400, `devolveu ${resposta.status} com ${Array.isArray(resposta.corpo) ? resposta.corpo.length : "?"} sessões`);
+    });
   }
 });
 
@@ -383,5 +418,14 @@ describe("TEST-9: GET /conciliacoes/:id (detalhe da sessão)", { timeout: 300_00
     const resposta = await api.requisitar(`/conciliacoes/${A.sessaoAberta}`, { usuario: A.usuario(PERFIL.EFFICIENCE) });
     assert.equal(resposta.status, 400);
     assert.deepEqual(resposta.corpo, { erro: "cliente_id é obrigatório" });
+  });
+
+  it("sessão com 1001 pares: detalhe devolve todos, sem 500 por .in grande (PRB-C-09, #696)", async () => {
+    const { sessao } = await montarSessaoComMuitosPares(banco, A.cliente.id, { automaticos: 1001 });
+    const resposta = await abrir(ator(A, PERFIL.CLIENTE), sessao.id);
+    assert.equal(resposta.status, 200, JSON.stringify(resposta.corpo)?.slice(0, 200));
+    const totalPares = Object.values(resposta.corpo.pares).flat().length;
+    assert.equal(totalPares, 1001);
+    assert.equal(resposta.corpo.pares.automatico.length, 1001);
   });
 });

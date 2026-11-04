@@ -2,7 +2,7 @@
 // de verdade e banco descartável de verdade. Aqui só mora o que se repete entre os arquivos
 // de tests/conciliacao/: montagem da massa #680, "quem chama", fotografia do banco e OFX.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { recriarMassa680 } from "./massa-680.js";
 import { resetarBanco } from "./banco.js";
 import { iniciarApiTeste } from "./http.js";
@@ -247,6 +247,71 @@ export function hashDoArquivo(conteudo) {
 
 export function paraEpoch(valor) {
   return Date.parse(valor);
+}
+
+// Sessão com N pares automático e, opcionalmente, 1 provável pendente no fim
+// (maior id → segunda página do PostgREST). Usada nos testes da PRB-C-09/#696.
+export async function montarSessaoComMuitosPares(banco, clienteId, {
+  automaticos,
+  comProvavelPendente = false,
+  mes = 12,
+  ano = 2026,
+}) {
+  const { extrato } = await criarExtratoProcessado(banco, clienteId, {
+    mes,
+    ano,
+    nome: `volume-${automaticos}-${comProvavelPendente ? "pendente" : "ok"}.ofx`,
+    transacoes: [{ data: `${ano}-${String(mes).padStart(2, "0")}-01`, valor: 1, tipo: "credito", descricao: "base" }],
+  });
+  const insercaoSessao = await banco.from("conciliacoes").insert({
+    cliente_id: clienteId,
+    extrato_id: extrato.id,
+    mes,
+    ano,
+    status: "em_andamento",
+    total_transacoes: automaticos + (comProvavelPendente ? 1 : 0),
+    total_conciliadas: 0,
+    total_pendentes: automaticos + (comProvavelPendente ? 1 : 0),
+  }).select("*");
+  assert.equal(insercaoSessao.error, null, insercaoSessao.error?.message);
+  const sessao = insercaoSessao.data[0];
+
+  const total = automaticos + (comProvavelPendente ? 1 : 0);
+  const transacoes = [];
+  const lancamentos = [];
+  const pares = [];
+  for (let i = 0; i < total; i++) {
+    const tid = randomUUID();
+    const lid = randomUUID();
+    const pid = randomUUID();
+    const data = `${ano}-${String(mes).padStart(2, "0")}-01`;
+    const automatico = i < automaticos;
+    transacoes.push({
+      id: tid, extrato_id: extrato.id, cliente_id: clienteId, data_lancamento: data,
+      valor: i + 1, tipo: "credito", descricao: `T${i}`, id_banco: `VOL-${i}`, conciliado: false,
+    });
+    lancamentos.push({
+      id: lid, cliente_id: clienteId, data_lancamento: data, valor: i + 1, tipo: "credito",
+      descricao: `volume-L${i}`, categoria: "volume-696", conciliado: false,
+    });
+    pares.push({
+      id: pid, conciliacao_id: sessao.id, transacao_id: tid, lancamento_id: lid,
+      confianca: automatico ? "automatico" : "provavel",
+      confirmado_em: null, confirmado_por: null,
+    });
+  }
+
+  for (let inicio = 0; inicio < transacoes.length; inicio += 200) {
+    const fim = inicio + 200;
+    const { error: eT } = await banco.from("transacoes_extrato").insert(transacoes.slice(inicio, fim));
+    assert.equal(eT, null, eT?.message);
+    const { error: eL } = await banco.from("lancamentos_contabeis").insert(lancamentos.slice(inicio, fim));
+    assert.equal(eL, null, eL?.message);
+    const { error: eP } = await banco.from("pares_conciliacao").insert(pares.slice(inicio, fim));
+    assert.equal(eP, null, eP?.message);
+  }
+
+  return { extrato, sessao, pares, transacoes, lancamentos };
 }
 
 // Prova "outro escritório = mesmo 404 de id inexistente" com o dado do outro lado presente.

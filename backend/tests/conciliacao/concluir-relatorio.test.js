@@ -10,7 +10,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   iniciarBateria, fotografar, chamar, ator, atoresDe, buscarLinha, buscarLinhas, provarOutroEscritorio404,
-  montarOfx, OFX_NOVEMBRO, formularioOfx, criarExtratoProcessado, PERFIL, paraEpoch,
+  montarOfx, OFX_NOVEMBRO, formularioOfx, criarExtratoProcessado, montarSessaoComMuitosPares, PERFIL, paraEpoch,
 } from "../helpers/conciliacao-http.js";
 
 const AUTOMATICOS = [0, 3, 6, 9, 12, 15, 18];
@@ -99,6 +99,49 @@ describe("TEST-9: POST /conciliacoes/:id/concluir", { timeout: 600_000 }, () => 
     const semCliente = await api.requisitar(`/conciliacoes/${A.sessaoAberta}/concluir`, { usuario: A.usuario(PERFIL.EFFICIENCE), metodo: "POST" });
     assert.deepEqual([semCliente.status, semCliente.corpo], [400, { erro: "cliente_id é obrigatório" }]);
   });
+
+  it("1000 automáticos + 1 provável na 2ª página: 409 e nada é marcado (PRB-C-09, #696)", async () => {
+    const { sessao, extrato } = await montarSessaoComMuitosPares(banco, A.cliente.id, {
+      automaticos: 1000,
+      comProvavelPendente: true,
+    });
+    const resposta = await concluir(ator(A, PERFIL.CLIENTE), sessao.id);
+    assert.equal(resposta.status, 409);
+    assert.deepEqual(resposta.corpo, { erro: "Há pares prováveis pendentes de decisão" });
+    assert.equal((await buscarLinha(banco, "conciliacoes", sessao.id)).status, "em_andamento");
+    const { count, error } = await banco.from("transacoes_extrato")
+      .select("id", { count: "exact", head: true })
+      .eq("extrato_id", extrato.id)
+      .eq("conciliado", true);
+    assert.equal(error, null, error?.message);
+    assert.equal(count, 0, "nenhuma transação marcada");
+  });
+
+  it("1001 pares automáticos: conclui e marca os 1001 (PRB-C-09, #696)", async () => {
+    const { sessao, extrato } = await montarSessaoComMuitosPares(banco, A.cliente.id, {
+      automaticos: 1001,
+    });
+    const resposta = await concluir(ator(A, PERFIL.CLIENTE), sessao.id);
+    assert.equal(resposta.status, 200, JSON.stringify(resposta.corpo));
+    assert.deepEqual(resposta.corpo, {
+      conciliacao_id: sessao.id,
+      status: "concluida",
+      total_conciliadas: 1001,
+    });
+    const { count: txs, error: eT } = await banco.from("transacoes_extrato")
+      .select("id", { count: "exact", head: true })
+      .eq("extrato_id", extrato.id)
+      .eq("conciliado", true);
+    assert.equal(eT, null, eT?.message);
+    assert.equal(txs, 1001);
+    const { count: lancs, error: eL } = await banco.from("lancamentos_contabeis")
+      .select("id", { count: "exact", head: true })
+      .eq("cliente_id", A.cliente.id)
+      .eq("conciliado", true)
+      .eq("categoria", "volume-696");
+    assert.equal(eL, null, eL?.message);
+    assert.equal(lancs, 1001);
+  });
 });
 
 describe("TEST-9: GET /conciliacoes/:id/relatorio (PDF)", { timeout: 600_000 }, () => {
@@ -108,6 +151,15 @@ describe("TEST-9: GET /conciliacoes/:id/relatorio (PDF)", { timeout: 600_000 }, 
   beforeEach(async () => { ({ banco, A, B } = await bateria.recriar()); });
 
   const baixar = (a, id) => chamar(api, a, { caminho: `/conciliacoes/${id}/relatorio` });
+
+  it("sessão concluída com 1001 pares: 200 e PDF, sem 500 por .in grande (PRB-C-09, #696)", async () => {
+    const { sessao } = await montarSessaoComMuitosPares(banco, A.cliente.id, { automaticos: 1001 });
+    assert.equal((await chamar(api, ator(A, PERFIL.CLIENTE), { metodo: "POST", caminho: `/conciliacoes/${sessao.id}/concluir` })).status, 200);
+    const resposta = await baixar(ator(A, PERFIL.CLIENTE), sessao.id);
+    assert.equal(resposta.status, 200, JSON.stringify(resposta.corpo)?.slice?.(0, 200) ?? String(resposta.corpo)?.slice(0, 200));
+    assert.match(resposta.headers.get("content-type"), /^application\/pdf/);
+    assert.ok(Buffer.isBuffer(resposta.corpo) && resposta.corpo.subarray(0, 5).toString("latin1") === "%PDF-");
+  });
 
   it("sessão concluída: 200, PDF de verdade e nome do arquivo com ano, mês e nome do cliente, para os três perfis", async () => {
     for (const quem of atoresDe(A)) {
@@ -178,7 +230,7 @@ describe("TEST-9: fluxo completo pela API (upload, lançamentos, sessão, decis�
     const sessao = await chamar(api, quem, { metodo: "POST", caminho: "/conciliacoes", corpo: { extrato_id: upload.corpo.extrato_id, mes: 11, ano: 2026 } });
     assert.equal(sessao.status, 201, JSON.stringify(sessao.corpo));
     // 2 transações: 1 automático, 1 provável, 1 sem par (L3) -> conciliadas 1, pendentes 1.
-    assert.deepEqual({ ...sessao.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 2, automaticos: 1, provaveis: 1, sem_par: 1 });
+    assert.deepEqual({ ...sessao.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 2, automaticos: 1, provaveis: 1, sem_par: 1, lancamentos_em_outra_conciliacao: 0 });
     const detalhe = await chamar(api, quem, { caminho: `/conciliacoes/${sessao.corpo.conciliacao_id}` });
     return { extratoId: upload.corpo.extrato_id, sessaoId: sessao.corpo.conciliacao_id, L: lancamentos, detalhe: detalhe.corpo };
   }

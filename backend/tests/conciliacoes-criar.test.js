@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { criarConciliacao } from "../src/controllers/conciliacoes.controller.js";
+import { TAMANHO_PAGINA_POSTGREST } from "../src/utils/paginacao.util.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -45,6 +46,7 @@ supabase.from = function (tabela) {
       return builder;
     },
     gte() { return builder; },
+    in() { return builder; },
     lte() { return builder; },
     order() { return builder; },
     range() { return builder; },
@@ -102,9 +104,117 @@ function queueExtratoValido(overrides = {}) {
 
 describe("POST /conciliacoes", () => {
 
+  it("matching enxerga lançamento além do teto de 1000 do PostgREST (PRB-C-09, #696)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("lancamentos_contabeis", "await", {
+      data: Array.from({ length: TAMANHO_PAGINA_POSTGREST }, (_, i) => ({ id: `l${i}` })),
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l-alem-do-teto" }],
+      error: null,
+    });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.sem_par, TAMANHO_PAGINA_POSTGREST + 1);
+  });
+
   it("500 quando falha a busca de transações do extrato", async () => {
     queueExtratoValido();
     queue("transacoes_extrato", "await", { data: null, error: { message: "falha" } });
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    assert.equal(res.statusCode, 500);
+  });
+
+  it("lançamento que já tem par numa conciliação em andamento de outro extrato fica fora do matching (#691)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", {
+      data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    // l1 já está casado na conciliação em andamento do outro extrato
+    queue("pares_conciliacao", "await", { data: [{ lancamento_id: "l1" }], error: null });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+
+    let paresInseridos = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "pares_conciliacao") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { paresInseridos = linhas; return insertOriginal(linhas); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.automaticos, 0);
+    assert.equal(res.body.lancamentos_em_outra_conciliacao, 1);
+    // t1 vira sem_par: l1 não pode ser casado de novo
+    assert.deepEqual(
+      paresInseridos.map((p) => [p.transacao_id, p.lancamento_id, p.confianca]),
+      [["t1", null, "sem_par"]],
+    );
+  });
+
+  it("consulta os lançamentos em outras conciliações em lotes de até 100 ids (#691)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    const lancamentos = Array.from({ length: 250 }, (_, i) => ({
+      id: `l${i}`, tipo: "credito", valor: 10, data_lancamento: "2026-07-01",
+    }));
+    queue("lancamentos_contabeis", "await", { data: lancamentos, error: null });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("pares_conciliacao", "await", { data: [{ lancamento_id: "l150" }], error: null }); // 2º lote
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+
+    const tamanhosDosLotes = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "pares_conciliacao") {
+        const inOriginal = b.in.bind(b);
+        b.in = (coluna, valores) => {
+          if (coluna === "lancamento_id") tamanhosDosLotes.push(valores.length);
+          return inOriginal(coluna, valores);
+        };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(tamanhosDosLotes, [100, 100, 50]);
+    assert.equal(res.body.lancamentos_em_outra_conciliacao, 1); // o do 2º lote também conta
+  });
+
+  it("500 quando falha a busca de lançamentos em outras conciliações", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    queue("pares_conciliacao", "await", { data: null, error: { message: "falha" } });
     const res = criarResposta();
     await criarConciliacao(reqBase(), res);
     assert.equal(res.statusCode, 500);
@@ -151,6 +261,41 @@ describe("POST /conciliacoes", () => {
     supabase.from = originalFromLocal;
 
     assert.equal(res.statusCode, 500);
+    assert.equal(idDeletado, CONCILIACAO_ID);
+  });
+
+  it("409 e remove a conciliação quando outra grava o mesmo lançamento ao mesmo tempo (índice único)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", {
+      data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", { data: [], error: null });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+    queue("pares_conciliacao", "await", { data: null, error: { code: "23505", message: "duplicate key" } });
+
+    let idDeletado = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "conciliacoes") {
+        const deleteOriginal = b.delete.bind(b);
+        b.delete = () => {
+          const deletado = deleteOriginal();
+          const eqOriginal = deletado.eq.bind(deletado);
+          deletado.eq = (campo, valor) => { if (campo === "id") idDeletado = valor; return eqOriginal(campo, valor); };
+          return deletado;
+        };
+      }
+      return b;
+    };
+    queue("conciliacoes", "await", { data: null, error: null }); // delete
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 409);
     assert.equal(idDeletado, CONCILIACAO_ID);
   });
 });

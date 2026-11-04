@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { nomeBanco } from "../utils/banco-conta.util.js";
 
 // Mesmo formato da UI (Intl pt-BR/BRL): "R$ 6.562,01". O Intl separa "R$" do número
 // com NBSP; troca por espaço comum para o texto extraído do PDF bater com a tela.
@@ -70,11 +71,42 @@ function desenharHeaderTabela(doc, x, y, colunas) {
   });
 }
 
-function desenharLinhaTabela(doc, x, y, colunas, linha) {
+const ALTURA_LINHA_MINIMA = 14;
+// Uma linha nunca passa disso (cabe folgada numa página A4): o texto que sobra é cortado com "…".
+// Sem teto, uma descrição com muitas quebras viraria uma linha mais alta que a página e o pdfkit
+// empurraria cada coluna para uma página diferente.
+const ALTURA_LINHA_MAXIMA = 120;
+const PADDING_VERTICAL_LINHA = 4;
+
+// Quebras de linha e espaços repetidos viram um espaço só: um MEMO com muitas quebras
+// resultaria numa célula alta e quase vazia.
+function textoDaCelula(linha, coluna) {
+  return String(linha[coluna.chave] ?? "").replace(/\s+/g, " ").trim();
+}
+
+function opcoesDaCelula(coluna) {
+  return { width: coluna.largura - 6, align: coluna.alinhamento || "left" };
+}
+
+// O texto que não cabe na largura da coluna quebra em mais linhas: a altura da linha é a da
+// célula mais alta, senão a linha seguinte é desenhada por cima da continuação.
+function alturaDaLinha(doc, colunas, linha) {
+  doc.font("Helvetica").fontSize(8);
+  const alturaTexto = Math.max(
+    ...colunas.map((coluna) => doc.heightOfString(textoDaCelula(linha, coluna), opcoesDaCelula(coluna))),
+  );
+  return Math.min(ALTURA_LINHA_MAXIMA, Math.max(ALTURA_LINHA_MINIMA, alturaTexto + PADDING_VERTICAL_LINHA));
+}
+
+function desenharLinhaTabela(doc, x, y, colunas, linha, alturaLinha) {
   let cursorX = x;
   colunas.forEach((coluna) => {
     doc.font("Helvetica").fontSize(8).fillColor("black")
-      .text(linha[coluna.chave] ?? "", cursorX + 3, y + 3, { width: coluna.largura - 6, align: coluna.alinhamento || "left" });
+      .text(textoDaCelula(linha, coluna), cursorX + 3, y + 3, {
+        ...opcoesDaCelula(coluna),
+        height: alturaLinha - PADDING_VERTICAL_LINHA,
+        ellipsis: true,
+      });
     cursorX += coluna.largura;
   });
 }
@@ -97,13 +129,13 @@ function desenharTabela(doc, { x0, larguraUtil, limiteInferior }, y, titulo, col
   y += 16;
 
   const alturaHeader = 16;
-  const alturaLinha = 14;
 
   let yTopo = y;
   desenharHeaderTabela(doc, x0, y, colunas);
   y += alturaHeader;
 
   linhas.forEach((linha) => {
+    const alturaLinha = alturaDaLinha(doc, colunas, linha);
     if (y + alturaLinha > limiteInferior) {
       fecharSegmentoTabela(doc, x0, yTopo, y, colunas);
       doc.addPage();
@@ -112,7 +144,7 @@ function desenharTabela(doc, { x0, larguraUtil, limiteInferior }, y, titulo, col
       desenharHeaderTabela(doc, x0, y, colunas);
       y += alturaHeader;
     }
-    desenharLinhaTabela(doc, x0, y, colunas, linha);
+    desenharLinhaTabela(doc, x0, y, colunas, linha, alturaLinha);
     y += alturaLinha;
   });
   fecharSegmentoTabela(doc, x0, yTopo, y, colunas);
@@ -222,7 +254,7 @@ export function gerarRelatorioConciliacaoPDF({ cliente, banco, conta, mes, ano, 
     y += 24;
 
     doc.font("Helvetica").fontSize(9)
-      .text(`Banco: ${banco || "-"}   Conta: ${conta || "-"}   Período: ${String(mes).padStart(2, "0")}/${ano}`, x0 + 6, y);
+      .text(`Banco: ${nomeBanco(banco) || "-"}   Conta: ${conta || "-"}   Período: ${String(mes).padStart(2, "0")}/${ano}`, x0 + 6, y);
     y += 20;
     doc.lineWidth(0.5).moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 

@@ -6,7 +6,9 @@
 //
 // Os números esperados saem da massa #680 (cnpj e ids dos clientes) e de conta feita à mão neste
 // arquivo (chave de acesso: módulo 11 da NT 2012.002, ver helpers/agente-nfe.js). O backend decide
-// o que é 401/403/404/409/422; este arquivo só confere.
+// o que é 401/403/404/409/422; este arquivo só confere. Entre escritórios a regra do time é 404, nunca
+// 403 (comentário do Vitinho, PR #723). Hoje o controller devolve 403 "cliente_id não corresponde ao
+// token" para token de outro escritório, e o mesmo 403 para cliente_id inexistente: bug conhecido, com skip.
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { iniciarApiTeste } from "./helpers/http.js";
@@ -17,6 +19,7 @@ import {
   CNPJ_TERCEIRO, fotografarNfe, lerItens, lerLancamentos, payloadLancamento,
 } from "./helpers/agente-nfe.js";
 import { alterarLicenca, cabecalhoLicenca, criarLicenca } from "./helpers/licenca-agente.js";
+import { conhecido } from "./helpers/bug-conhecido.js";
 
 describe("TEST-11: rotas da NF-e do agente (HTTP, licença e banco reais)", { timeout: 300_000 }, () => {
   let api;
@@ -44,6 +47,7 @@ describe("TEST-11: rotas da NF-e do agente (HTTP, licença e banco reais)", { ti
   const cancelar = (corpo, token) => api.requisitar("/lancamentos-fiscais/cancelar", {
     metodo: "POST", corpo, cabecalhos: cabecalhoLicenca(token),
   });
+  const CLIENTE_ID_INEXISTENTE = "99999999-9999-4999-8999-999999999999";
   const chaveComDvErrado = chave => `${chave.slice(0, 43)}${(Number(chave[43]) + 1) % 10}`;
 
   describe("POST /lancamentos-fiscais: autenticação e isolamento", () => {
@@ -76,11 +80,13 @@ describe("TEST-11: rotas da NF-e do agente (HTTP, licença e banco reais)", { ti
       assert.equal((await postar(payloadLancamento(A), tokenA)).status, 201);
     });
 
-    it("token de outro escritório com o cliente_id do A: 403 e nada é gravado em A nem em B", async () => {
+    it("token de outro escritório com o cliente_id do A: não é 201, o erro cita o cliente_id/token e nada é gravado (o 404 certo está no skip de bug conhecido)", async () => {
+      // Invariante que vale hoje: a recusa acontece pelo motivo do token e o banco dos dois escritórios
+      // fica igual. O status certo (404) está no teste de bug conhecido mais abaixo.
       const antes = await fotografarNfe(banco);
       const resposta = await postar(payloadLancamento(A), tokenB);
-      assert.equal(resposta.status, 403);
-      assert.deepEqual(resposta.corpo, { erro: "cliente_id não corresponde ao token de licença" });
+      assert.notEqual(resposta.status, 201);
+      assert.match(resposta.corpo.erro, /cliente_id|token/i);
       assert.deepEqual(await fotografarNfe(banco), antes);
     });
 
@@ -92,10 +98,11 @@ describe("TEST-11: rotas da NF-e do agente (HTTP, licença e banco reais)", { ti
       assert.deepEqual(await fotografarNfe(banco), antes);
     });
 
-    it("cliente_id que não existe: 403 e nada é gravado", async () => {
+    it("cliente_id que não existe: não é 201, o erro cita o cliente_id/token e nada é gravado (o 404 certo está no skip de bug conhecido)", async () => {
       const antes = await fotografarNfe(banco);
-      const resposta = await postar(payloadLancamento(A, { cliente_id: "99999999-9999-4999-8999-999999999999" }), tokenA);
-      assert.equal(resposta.status, 403);
+      const resposta = await postar(payloadLancamento(A, { cliente_id: CLIENTE_ID_INEXISTENTE }), tokenA);
+      assert.notEqual(resposta.status, 201);
+      assert.match(resposta.corpo.erro, /cliente_id|token/i);
       assert.deepEqual(await fotografarNfe(banco), antes);
     });
   });
@@ -348,9 +355,45 @@ describe("TEST-11: rotas da NF-e do agente (HTTP, licença e banco reais)", { ti
       const antes = await fotografarNfe(banco);
       assert.equal((await avisar(corpoAviso(A))).status, 401);
       assert.equal((await avisar(corpoAviso(A), "token-que-nao-existe")).status, 401);
-      assert.equal((await avisar(corpoAviso(A), tokenB)).status, 403);
+      // Token de outro escritório: não é 201 e o erro cita o token; o 404 certo está no skip de bug conhecido.
+      const deOutro = await avisar(corpoAviso(A), tokenB);
+      assert.notEqual(deOutro.status, 201);
+      assert.match(deOutro.corpo.erro, /token/i);
       assert.equal((await avisar({ cliente_id: A.id }, tokenA)).status, 400);
       assert.deepEqual(await fotografarNfe(banco), antes);
     });
+  });
+
+  describe("bugs conhecidos: o teste do comportamento certo fica com skip até a correção", () => {
+    const REGRA = "a regra do time é 404 entre escritórios, sem revelar que o cliente existe (comentário do Vitinho, PR #723). Ao corrigir, tirar este skip e ajustar o `match` do erro nos testes ativos correspondentes.";
+    const MOTIVO_LANCAMENTO = `BUG (sem issue; precisa de issue \`bug\`): POST /lancamentos-fiscais com token de licença de outro escritório recebe 403 'cliente_id não corresponde ao token de licença' (backend/src/controllers/lancamentos-fiscais.controller.js:104, compara cliente_id com a licença antes de consultar o banco); ${REGRA}`;
+    const MOTIVO_EVENTOS = `BUG (sem issue; precisa de issue \`bug\`): POST /eventos com token de licença de outro escritório recebe 403 'Token não pertence a este cliente' (backend/src/controllers/eventos.controller.js:100); ${REGRA}`;
+    const MOTIVO_INEXISTENTE = `BUG (sem issue; precisa de issue \`bug\`): POST /lancamentos-fiscais com cliente_id que não existe recebe o mesmo 403 'cliente_id não corresponde ao token de licença' (lancamentos-fiscais.controller.js:104); inexistente e de outro escritório têm de ser indistinguíveis (404). ${REGRA}`;
+
+    it("POST /lancamentos-fiscais com token de outro escritório: 404",
+      conhecido(MOTIVO_LANCAMENTO), async () => {
+        const antes = await fotografarNfe(banco);
+        const resposta = await postar(payloadLancamento(A), tokenB);
+        assert.equal(resposta.status, 404);
+        assert.deepEqual(await fotografarNfe(banco), antes);
+      });
+
+    it("POST /eventos com token de outro escritório: 404",
+      conhecido(MOTIVO_EVENTOS), async () => {
+        const antes = await fotografarNfe(banco);
+        const resposta = await api.requisitar("/eventos", {
+          metodo: "POST", corpo: { cliente_id: A.id, descricao: "[NF-e] aviso de teste", sucesso: false }, cabecalhos: cabecalhoLicenca(tokenB),
+        });
+        assert.equal(resposta.status, 404);
+        assert.deepEqual(await fotografarNfe(banco), antes);
+      });
+
+    it("POST /lancamentos-fiscais com cliente_id que não existe (token do A): 404",
+      conhecido(MOTIVO_INEXISTENTE), async () => {
+        const antes = await fotografarNfe(banco);
+        const resposta = await postar(payloadLancamento(A, { cliente_id: CLIENTE_ID_INEXISTENTE }), tokenA);
+        assert.equal(resposta.status, 404);
+        assert.deepEqual(await fotografarNfe(banco), antes);
+      });
   });
 });

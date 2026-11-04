@@ -179,7 +179,7 @@ describe("TEST-9: filtros de escritório do controller, com a RLS neutralizada (
       const antesDoB = await fotografar(banco, B.cliente.id);
       const resposta = await chamar(api, ator(A, PERFIL.CLIENTE), { metodo: "POST", caminho: "/conciliacoes", corpo: { extrato_id: doA.extrato.id, mes: 11, ano: 2026 } });
       assert.equal(resposta.status, 201, JSON.stringify(resposta.corpo));
-      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 4, automaticos: 1, provaveis: 1, sem_par: 4 });
+      assert.deepEqual({ ...resposta.corpo, conciliacao_id: undefined }, { conciliacao_id: undefined, total_transacoes: 4, automaticos: 1, provaveis: 1, sem_par: 4, lancamentos_em_outra_conciliacao: 0 });
       const pares = await buscarLinhas(banco, "pares_conciliacao", { conciliacao_id: resposta.corpo.conciliacao_id });
       assert.ok(!pares.some(p => p.lancamento_id === doB.id), "lançamento do B no matching do A");
       assert.deepEqual(await fotografar(banco, B.cliente.id), antesDoB);
