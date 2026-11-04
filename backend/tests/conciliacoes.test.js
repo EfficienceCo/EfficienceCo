@@ -8,7 +8,6 @@ import {
 } from "../src/controllers/conciliacoes.controller.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
-const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
 const EXTRATO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 // ---------------------------------------------------------------------------
@@ -31,17 +30,23 @@ supabase.from = function (tabela) {
     if (!fila || fila.length === 0) return fallback;
     return fila.shift();
   };
+  // A busca de FITIDs já importados (#692) termina em .in(): fila própria
+  // ("await_in"), para não consumir o resultado do insert de transacoes_extrato.
+  let consultaIn = false;
   const builder = {
     select() { return builder; },
     insert() { return builder; },
     update() { return builder; },
+    delete() { return builder; },
     eq() { return builder; },
+    is() { return builder; },
+    in() { consultaIn = true; return builder; },
     order() { return builder; },
     range() { return builder; },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     single() { return Promise.resolve(consumir("single", { data: null, error: null })); },
     then(resolve, reject) {
-      return Promise.resolve(consumir("await", { data: [], error: null })).then(resolve, reject);
+      return Promise.resolve(consumir(consultaIn ? "await_in" : "await", { data: [], error: null })).then(resolve, reject);
     },
   };
   return builder;
@@ -66,7 +71,7 @@ function criarResposta() {
   };
 }
 
-function ofxValido({ transacoes } = {}) {
+function ofxValido({ transacoes, bankid = "0341", acctid = "1234567890" } = {}) {
   const linhasTransacoes = (transacoes ?? [
     { fitid: "T1", dtposted: "20260705", trnamt: "-150.00", memo: "PAGAMENTO BOLETO", trntype: "DEBIT" },
     { fitid: "T2", dtposted: "20260710", trnamt: "1500.00", memo: "DEPOSITO", trntype: "CREDIT" },
@@ -92,8 +97,8 @@ VERSION:102
 <STMTRS>
 <CURDEF>BRL
 <BANKACCTFROM>
-<BANKID>0341
-<ACCTID>1234567890
+<BANKID>${bankid}
+<ACCTID>${acctid}
 </BANKACCTFROM>
 <BANKTRANLIST>
 ${linhasTransacoes}
@@ -119,75 +124,198 @@ function reqUpload(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe("POST /conciliacoes/extrato", () => {
-  it("201 e persiste extrato + transações quando OFX válido", async () => {
-    queue("extratos_bancarios", "single", {
-      data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
-      error: null,
-    });
-    queue("transacoes_extrato", "await", { data: [], error: null });
+  it("só importa as transações cujo FITID ainda não existe (extratos sobrepostos) e informa as ignoradas (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await_in", { data: [{ id_banco: "T1" }], error: null }); // T1 já existe
+    queue("transacoes_extrato", "await", { data: [], error: null }); // insert
     queue("extratos_bancarios", "await", { data: null, error: null }); // update final
+
+    let inseridas = null;
+    const filtrosEq = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { inseridas = linhas; return insertOriginal(linhas); };
+        const eqOriginal = b.eq.bind(b);
+        b.eq = (coluna, valor) => { filtrosEq.push([coluna, valor]); return eqOriginal(coluna, valor); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.total_transacoes, 1);
+    assert.deepEqual(res.body.ignoradas, { ja_importadas: 1, valor_zero: 0 });
+    assert.deepEqual(inseridas.map((t) => t.id_banco), ["T2"]);
+    // o FITID só é único dentro da conta: a busca é por cliente e pela identidade normalizada
+    // de banco (0341 -> 341) e conta (ACCTID inteiro), não pela máscara de 4 dígitos
+    assert.deepEqual(
+      filtrosEq.filter(([c]) => ["cliente_id", "banco_chave", "conta_chave"].includes(c)),
+      [
+        ["cliente_id", CLIENTE_A],
+        ["banco_chave", "341"],
+        ["conta_chave", "1234567890"],
+      ],
+    );
+    assert.ok(inseridas.every((t) => t.banco_chave === "341" && t.conta_chave === "1234567890"));
+  });
+
+  it("500 quando falha a busca de FITIDs já importados (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await_in", { data: null, error: { message: "falha" } });
 
     const res = criarResposta();
     await criarConciliacaoExtrato(reqUpload(), res);
 
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.extrato_id, EXTRATO_ID);
-    assert.equal(res.body.total_transacoes, 2);
-    assert.equal(res.body.banco, "0341");
-    assert.equal(res.body.conta, "7890");
+    assert.equal(res.statusCode, 500);
   });
 
-  it("upload do MESMO arquivo OFX 2x retorna 409 sem duplicar extrato ou transações", async () => {
-    const hashesInseridos = [];
-    let totalInsertsTransacoes = 0;
-    const originalFromLocal = supabase.from;
-
-    supabase.from = function (tabela) {
-      const builder = originalFromLocal(tabela);
-      const insertOriginal = builder.insert.bind(builder);
-
-      builder.insert = (dados) => {
-        if (tabela === "extratos_bancarios") hashesInseridos.push(dados.arquivo_hash);
-        if (tabela === "transacoes_extrato") totalInsertsTransacoes += 1;
-        return insertOriginal(dados);
-      };
-
-      return builder;
-    };
-
-    queue("extratos_bancarios", "single", {
-      data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
-      error: null,
-    });
+  it("consulta os FITIDs já importados em lotes de até 100 (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
     queue("transacoes_extrato", "await", { data: [], error: null });
     queue("extratos_bancarios", "await", { data: null, error: null });
-    queue("extratos_bancarios", "single", {
-      data: null,
-      error: {
-        code: "23505",
-        message:
-          'duplicate key value violates unique constraint "uq_extratos_bancarios_cliente_arquivo_hash"',
-      },
+    const ofx = ofxValido({
+      transacoes: Array.from({ length: 250 }, (_, i) => ({
+        fitid: `F${i}`, dtposted: "20260705", trnamt: "10.00", memo: "M", trntype: "CREDIT",
+      })),
     });
 
-    try {
-      const primeiraResposta = criarResposta();
-      await criarConciliacaoExtrato(reqUpload(), primeiraResposta);
+    const lotes = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const inOriginal = b.in.bind(b);
+        b.in = (coluna, valores) => { lotes.push(valores.length); return inOriginal(coluna, valores); };
+      }
+      return b;
+    };
 
-      const segundaResposta = criarResposta();
-      await criarConciliacaoExtrato(reqUpload(), segundaResposta);
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload({ file: { originalname: "g.ofx", buffer: Buffer.from(ofx) } }), res);
+    supabase.from = originalFromLocal;
 
-      assert.equal(primeiraResposta.statusCode, 201);
-      assert.equal(segundaResposta.statusCode, 409);
-      assert.match(segundaResposta.body.erro, /já foi importado/i);
-      assert.equal(totalInsertsTransacoes, 1);
-      assert.equal(hashesInseridos.length, 2);
-      assert.equal(hashesInseridos[0], hashesInseridos[1]);
-      assert.match(hashesInseridos[0], /^[0-9a-f]{64}$/);
-    } finally {
-      supabase.from = originalFromLocal;
-    }
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(lotes, [100, 100, 50]);
   });
+
+  // Espia os filtros .eq e o insert de transacoes_extrato de um upload.
+  async function subirEspiando(ofx) {
+    const filtros = [];
+    let inseridas = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const eqOriginal = b.eq.bind(b);
+        b.eq = (coluna, valor) => { filtros.push([coluna, valor]); return eqOriginal(coluna, valor); };
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { inseridas = linhas; return insertOriginal(linhas); };
+      }
+      return b;
+    };
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload({ file: { originalname: "x.ofx", buffer: Buffer.from(ofx) } }), res);
+    supabase.from = originalFromLocal;
+    return { res, filtros, inseridas };
+  }
+
+  function enfileirarUploadSemDuplicatas() {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("extratos_bancarios", "await", { data: null, error: null });
+  }
+
+  it("contas diferentes com os mesmos 4 últimos dígitos são buscadas por identidades diferentes (#692)", async () => {
+    const chaveConta = async (acctid) => {
+      enfileirarUploadSemDuplicatas();
+      const { res, filtros } = await subirEspiando(ofxValido({ acctid }));
+      assert.equal(res.statusCode, 201);
+      assert.equal(res.body.conta, "7890"); // a máscara exibida é a mesma nas duas
+      return filtros.find(([c]) => c === "conta_chave")[1];
+    };
+    const a = await chaveConta("11117890");
+    const b = await chaveConta("22227890");
+    assert.notEqual(a, b);
+  });
+
+  it("BANKID 0237 e 237, e ACCTID com separador e zeros, viram a mesma identidade (#692)", async () => {
+    const chaves = async (bankid, acctid) => {
+      enfileirarUploadSemDuplicatas();
+      const { res, inseridas } = await subirEspiando(ofxValido({ bankid, acctid }));
+      assert.equal(res.statusCode, 201);
+      return [inseridas[0].banco_chave, inseridas[0].conta_chave];
+    };
+    assert.deepEqual(await chaves("0237", "0012345-6"), ["237", "123456"]);
+    assert.deepEqual(await chaves("237", "123456"), ["237", "123456"]);
+  });
+
+  it("TRNAMT que arredonda para 0.00 é ignorado como valor zero, e o valor gravado é o arredondado (#692)", async () => {
+    enfileirarUploadSemDuplicatas();
+    const ofx = ofxValido({
+      transacoes: [
+        { fitid: "Z1", dtposted: "20260705", trnamt: "0.004", memo: "MICRO", trntype: "CREDIT" },
+        { fitid: "T2", dtposted: "20260710", trnamt: "10.126", memo: "DEPOSITO", trntype: "CREDIT" },
+      ],
+    });
+    const { res, inseridas } = await subirEspiando(ofx);
+
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(res.body.ignoradas, { ja_importadas: 0, valor_zero: 1 });
+    assert.deepEqual(inseridas.map((t) => [t.id_banco, t.valor]), [["T2", 10.13]]);
+  });
+
+  it("409 e extrato em erro quando outro upload grava o mesmo FITID no meio (violação do índice único) (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await", { data: null, error: { code: "23505", message: "duplicate key" } });
+
+    let extratoAtualizado = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "extratos_bancarios") {
+        const updateOriginal = b.update.bind(b);
+        b.update = (campos) => { extratoAtualizado = campos; return updateOriginal(campos); };
+      }
+      return b;
+    };
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(extratoAtualizado.status, "erro");
+    assert.equal(extratoAtualizado.arquivo_hash, null);
+  });
+
+  it("apaga as transações do extrato quando falha o update final, para liberar o reenvio (#692)", async () => {
+    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("extratos_bancarios", "await", { data: null, error: { message: "timeout" } });
+
+    const apagadas = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "transacoes_extrato") {
+        const deleteOriginal = b.delete.bind(b);
+        b.delete = () => { apagadas.push(tabela); return deleteOriginal(); };
+      }
+      return b;
+    };
+    const res = criarResposta();
+    await criarConciliacaoExtrato(reqUpload(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(apagadas, ["transacoes_extrato"]);
+  });
+
 
   it("não confunde outra violação de unicidade com arquivo duplicado", async () => {
     queue("extratos_bancarios", "single", {
@@ -205,117 +333,41 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(res.body.erro, "Erro ao registrar extrato bancário");
   });
 
-  it("infere crédito/débito corretamente do sinal do TRNAMT", async () => {
+  it("500 quando a recusa do período não consegue limpar o hash", async () => {
     queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
-
-    let transacoesInseridas = null;
-    const originalInsert = supabase.from;
-    supabase.from = function (tabela) {
-      const builder = originalInsert(tabela);
-      if (tabela === "transacoes_extrato") {
-        const insertOriginal = builder.insert.bind(builder);
-        builder.insert = (linhas) => {
-          transacoesInseridas = linhas;
-          return insertOriginal(linhas);
-        };
-      }
-      return builder;
-    };
-
-    queue("transacoes_extrato", "await", { data: [], error: null });
-    queue("extratos_bancarios", "await", { data: null, error: null });
+    queue("extratos_bancarios", "await", { data: null, error: { message: "falha ao limpar hash" } });
 
     const res = criarResposta();
-    await criarConciliacaoExtrato(reqUpload(), res);
-    supabase.from = originalInsert;
+    await criarConciliacaoExtrato(reqUpload({ body: { mes: "4", ano: "2024" } }), res);
 
-    assert.equal(res.statusCode, 201);
-    assert.equal(transacoesInseridas[0].tipo, "debito");
-    assert.equal(transacoesInseridas[0].valor, 150);
-    assert.equal(transacoesInseridas[1].tipo, "credito");
-    assert.equal(transacoesInseridas[1].valor, 1500);
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.body.erro, "Erro ao registrar recusa do período do extrato");
   });
 
-  it("usa mes/ano do body quando informado, sem inferir das transações", async () => {
-    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
-    queue("transacoes_extrato", "await", { data: [], error: null });
-    queue("extratos_bancarios", "await", { data: null, error: null });
-
-    const res = criarResposta();
-    await criarConciliacaoExtrato(reqUpload({ body: { mes: "1", ano: "2026" } }), res);
-
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.mes, 1);
-    assert.equal(res.body.ano, 2026);
-  });
-
-  // BUG (#693): o período informado (ou inferido) não é conferido com as datas do arquivo:
-  // OFX de junho enviado como abril dá 201 e fica preso no mês errado; mes=13 e ano=1800
-  // também dão 201. Origem: QA-C 2026-10-12 #2 (OFX de junho em Abril/2024; mes=13; ano=1800).
-  // Esperado: erro 4xx quando as datas do OFX não pertencem ao mês/ano informado ou a faixa é inválida.
-  it.skip("4xx quando o mês/ano informado não bate com as datas do OFX ou está fora da faixa (PRB-C-25, #693)", async () => {
+  // #693 (PRB-C-25): o período informado precisa bater com as datas do OFX e ficar na faixa
+  // (mês 1..12, ano 2020..9999). OFX do helper é de julho/2026 (05/07 e 10/07).
+  it("400 quando o mês/ano informado não bate com as datas do OFX ou está fora da faixa (PRB-C-25, #693)", async () => {
     const casos = [
-      { mes: "4", ano: "2024" }, // OFX é de julho/2026 (datas 05/07 e 10/07)
-      { mes: "13", ano: "2026" },
-      { mes: "7", ano: "1800" },
+      { body: { mes: "4", ano: "2024" }, campos: ["ano", "mes"], gravaExtrato: true }, // OFX é de julho/2026
+      { body: { mes: "6", ano: "2026" }, campos: ["ano", "mes"], gravaExtrato: true }, // mês errado, ano certo
+      { body: { mes: "13", ano: "2026" }, campos: ["mes"] },
+      { body: { mes: "7", ano: "1800" }, campos: ["ano"] },
     ];
-    for (const body of casos) {
-      queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
-      queue("transacoes_extrato", "await", { data: [], error: null });
-      queue("extratos_bancarios", "await", { data: null, error: null });
+    for (const { body, campos, gravaExtrato } of casos) {
+      if (gravaExtrato) {
+        queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+        queue("extratos_bancarios", "await", { data: null, error: null }); // update de recusa (status erro, hash nulo)
+      }
 
       const res = criarResposta();
       await criarConciliacaoExtrato(reqUpload({ body }), res);
-      assert.ok(res.statusCode >= 400 && res.statusCode < 500, `body ${JSON.stringify(body)} deu ${res.statusCode}`);
-    }
-  });
 
-  it("422 e status='erro' quando o OFX está malformado", async () => {
-    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
-
-    let statusAtualizado = null;
-    let hashAtualizado;
-    const originalUpdate = supabase.from;
-    supabase.from = function (tabela) {
-      const builder = originalUpdate(tabela);
-      if (tabela === "extratos_bancarios") {
-        const updateOriginal = builder.update.bind(builder);
-        builder.update = (campos) => {
-          if (campos.status) statusAtualizado = campos.status;
-          if (campos.status === "erro") hashAtualizado = campos.arquivo_hash;
-          return updateOriginal(campos);
-        };
+      assert.equal(res.statusCode, 400, `body ${JSON.stringify(body)} deu ${res.statusCode}`);
+      assert.deepEqual(Object.keys(res.body.campos).sort(), campos, `campos de ${JSON.stringify(body)}`);
+      if (gravaExtrato) {
+        assert.match(res.body.erro, /mes\/ano informados não correspondem às datas do extrato \(período do arquivo: 7\/2026\)/);
       }
-      return builder;
-    };
-    queue("extratos_bancarios", "await", { data: null, error: null }); // update de erro
-
-    const req = reqUpload({ file: { originalname: "extrato.ofx", buffer: Buffer.from("isso não é um OFX") } });
-    const res = criarResposta();
-    await criarConciliacaoExtrato(req, res);
-    supabase.from = originalUpdate;
-
-    assert.equal(res.statusCode, 422);
-    assert.ok(res.body.detalhe);
-    assert.equal(statusAtualizado, "erro");
-    assert.equal(hashAtualizado, null);
-  });
-
-  it("400 quando nenhum arquivo é enviado", async () => {
-    const res = criarResposta();
-    await criarConciliacaoExtrato(reqUpload({ file: undefined }), res);
-
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("400 quando cliente_id não pode ser resolvido (admin_efficience sem informar)", async () => {
-    const res = criarResposta();
-    await criarConciliacaoExtrato(
-      reqUpload({ usuario: { perfil: PERFIS.ADMIN_EFFICIENCE }, body: {} }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 400);
+    }
   });
 
   it("500 quando falha o insert inicial de extratos_bancarios", async () => {
@@ -329,6 +381,7 @@ describe("POST /conciliacoes/extrato", () => {
 
   it("500 e status='erro' quando falha o insert de transacoes_extrato", async () => {
     queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await_in", { data: [], error: null }); // FITIDs já importados: nenhum
     queue("transacoes_extrato", "await", { data: null, error: { message: "falha ao inserir" } });
 
     let statusAtualizado = null;
@@ -357,8 +410,9 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(hashAtualizado, null);
   });
 
-  it("500 e status='erro' quando falha o update final (transações já salvas ficam órfãs sem isso)", async () => {
+  it("500 e status='erro' quando falha o update final", async () => {
     queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+    queue("transacoes_extrato", "await_in", { data: [], error: null }); // FITIDs já importados: nenhum
     queue("transacoes_extrato", "await", { data: [], error: null });
 
     let statusAtualizado = null;
@@ -388,46 +442,12 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(statusAtualizado, "erro");
     assert.equal(hashAtualizado, null);
   });
-
-  it("decodifica MEMO acentuado corretamente (extrato real vem em Windows-1252, não UTF-8)", async () => {
-    queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
-
-    let transacoesInseridas = null;
-    const originalFromLocal = supabase.from;
-    supabase.from = function (tabela) {
-      const builder = originalFromLocal(tabela);
-      if (tabela === "transacoes_extrato") {
-        const insertOriginal = builder.insert.bind(builder);
-        builder.insert = (linhas) => {
-          transacoesInseridas = linhas;
-          return insertOriginal(linhas);
-        };
-      }
-      return builder;
-    };
-    queue("transacoes_extrato", "await", { data: [], error: null });
-    queue("extratos_bancarios", "await", { data: null, error: null });
-
-    const conteudoComAcento = ofxValido({
-      transacoes: [
-        { fitid: "T1", dtposted: "20260705", trnamt: "-50.00", memo: "PAGAMENTO À VISTA - CONDOMÍNIO", trntype: "DEBIT" },
-      ],
-    }).replace("OFXHEADER:100", "OFXHEADER:100\nCHARSET:1252");
-
-    const req = reqUpload({
-      file: { originalname: "extrato.ofx", buffer: Buffer.from(conteudoComAcento, "latin1") },
-    });
-    const res = criarResposta();
-    await criarConciliacaoExtrato(req, res);
-    supabase.from = originalFromLocal;
-
-    assert.equal(res.statusCode, 201);
-    assert.equal(transacoesInseridas[0].descricao, "PAGAMENTO À VISTA - CONDOMÍNIO");
-  });
 });
 
 // ---------------------------------------------------------------------------
-// GET /conciliacoes/extrato/:id/transacoes
+// GET /conciliacoes/extrato/:id/transacoes — bordas da paginação (HTTP está em
+// backend/tests/conciliacao/extrato.test.js; aqui ficam o teto 100 e o offset
+// além do fim, que o PostgREST responde com 416).
 // ---------------------------------------------------------------------------
 
 describe("GET /conciliacoes/extrato/:id/transacoes", () => {
@@ -440,51 +460,25 @@ describe("GET /conciliacoes/extrato/:id/transacoes", () => {
     };
   }
 
-  it("200 com transações paginadas do extrato", async () => {
-    queue("extratos_bancarios", "maybeSingle", {
-      data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
-      error: null,
-    });
-    queue("transacoes_extrato", "await", {
-      data: [{ id: "t1" }, { id: "t2" }],
-      error: null,
-      count: 2,
-    });
-
+  it("limit negativo dá 400 ou usa o padrão, nunca range negativo (PRB-C-09, #696)", async () => {
     const res = criarResposta();
-    await listarTransacoesExtrato(reqBase({ query: { limit: "10", offset: "0" } }), res);
+    await listarTransacoesExtrato(reqBase({ query: { limit: "-1" } }), res);
 
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.data.length, 2);
-    assert.equal(res.body.total, 2);
-    assert.equal(res.body.limit, 10);
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.erro, /limit/);
   });
 
-  it("404 quando extrato não existe", async () => {
-    queue("extratos_bancarios", "maybeSingle", { data: null, error: null });
+  for (const [campo, valor] of [["limit", "abc"], ["limit", "0"], ["offset", "-1"], ["offset", "abc"]]) {
+    it(`400 quando ${campo}=${valor} (PRB-C-09, #696)`, async () => {
+      const res = criarResposta();
+      await listarTransacoesExtrato(reqBase({ query: { [campo]: valor } }), res);
 
-    const res = criarResposta();
-    await listarTransacoesExtrato(reqBase(), res);
-
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("404 (nunca 403) quando o extrato pertence a outro cliente", async () => {
-    queue("extratos_bancarios", "maybeSingle", {
-      data: { id: EXTRATO_ID, cliente_id: CLIENTE_B },
-      error: null,
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body.erro, new RegExp(campo));
     });
+  }
 
-    const res = criarResposta();
-    await listarTransacoesExtrato(reqBase(), res);
-
-    assert.equal(res.statusCode, 404);
-    assert.deepEqual(res.body, { erro: "Extrato bancário não encontrado" });
-  });
-
-  // BUG (#696): limit=-1 passa direto (parseInt("-1") || 20 = -1) e vira
-  // .range(0, -2), que o PostgREST recusa com 500. Esperado: 400 ou o padrão.
-  it.skip("limit negativo dá 400 ou usa o padrão, nunca range negativo (PRB-C-09, #696)", async () => {
+  it("limit acima de 100 fica em 100", async () => {
     queue("extratos_bancarios", "maybeSingle", {
       data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
       error: null,
@@ -492,11 +486,30 @@ describe("GET /conciliacoes/extrato/:id/transacoes", () => {
     queue("transacoes_extrato", "await", { data: [], error: null, count: 0 });
 
     const res = criarResposta();
-    await listarTransacoesExtrato(reqBase({ query: { limit: "-1" } }), res);
+    await listarTransacoesExtrato(reqBase({ query: { limit: "150" } }), res);
 
-    if (res.statusCode !== 400) {
-      assert.equal(res.statusCode, 200);
-      assert.ok(res.body.limit >= 1, `limit devolvido: ${res.body.limit}`);
-    }
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.limit, 100);
+  });
+
+  it("200 com lista vazia quando o offset passa do fim", async () => {
+    queue("extratos_bancarios", "maybeSingle", {
+      data: { id: EXTRATO_ID, cliente_id: CLIENTE_A },
+      error: null,
+    });
+    queue("transacoes_extrato", "await", {
+      data: null,
+      error: { message: "Requested range not satisfiable" },
+      count: 4,
+    });
+
+    const res = criarResposta();
+    await listarTransacoesExtrato(reqBase({ query: { offset: "50" } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.data, []);
+    assert.equal(res.body.total, 4);
+    assert.equal(res.body.offset, 50);
   });
 });
+

@@ -124,3 +124,31 @@ export function cnpjValido(cnpj) {
 
   return calcularDigito(12) === Number(cnpj[12]) && calcularDigito(13) === Number(cnpj[13]);
 }
+
+/**
+ * Dígito verificador da chave de acesso da NF-e (módulo 11, pesos 2–9 da
+ * direita para a esquerda nos 43 primeiros dígitos). Recebe 44 dígitos.
+ * CNPJ alfanumérico na chave fica fora desta sprint.
+ */
+export function chaveNfeDvValido(chave) {
+  if (!/^\d{44}$/.test(chave)) return false;
+  const pesos = [2, 3, 4, 5, 6, 7, 8, 9];
+  let soma = 0;
+  for (let i = 0; i < 43; i += 1) {
+    soma += Number(chave[42 - i]) * pesos[i % 8];
+  }
+  const resto = soma % 11;
+  const dv = resto < 2 ? 0 : 11 - resto;
+  return Number(chave[43]) === dv;
+}
+
+/**
+ * Slot 7–20 da chave SEFAZ: CNPJ (14) ou CPF com zeros à esquerda (11 → 14).
+ * O campo da nota não é padado; só a chave leva `000`+CPF (NFE-5 / NFE-7).
+ */
+export function documentoNaChaveNfe(doc) {
+  if (typeof doc !== "string") return null;
+  if (/^\d{14}$/.test(doc)) return doc;
+  if (/^\d{11}$/.test(doc)) return doc.padStart(14, "0");
+  return null;
+}
