@@ -314,10 +314,11 @@ describe("POST /conciliacoes — problemas já achados", () => {
     assert.equal(chamadasEq.size, 0, "não deveria chegar ao banco");
   });
 
-  // BUG (PRB-C-21, sem issue): o 409 de "já existe conciliação para o
-  // extrato" é uma leitura antes do insert. Dois cliques simultâneos passam os
-  // dois pela leitura; não há UNIQUE em conciliacoes.extrato_id (nenhuma
-  // migration cria) e o insert repetido, quando o banco recusar, cai no 500.
+  // BUG (PRB-C-21, sem issue; reconferido contra a main em 2026-11-04): o 409 de
+  // "já existe conciliação para o extrato" é uma leitura antes do insert. Dois
+  // cliques simultâneos passam os dois pela leitura; nenhuma migration (até a 108)
+  // cria UNIQUE em conciliacoes.extrato_id, e o controller trata qualquer erro do
+  // insert da conciliação como 500 (só o insert dos pares trata 23505).
   // Esperado: o banco recusa a segunda (unique_violation) e a API devolve 409.
   // O critério real é "duplo clique nunca cria duas conciliações"; se a correção
   // for por RPC ou lock, ajustar este caso ao desenho escolhido (TEST-9).
@@ -336,12 +337,13 @@ describe("POST /conciliacoes — problemas já achados", () => {
     assert.equal(res.statusCode, 409);
   });
 
-  // BUG (#691): o matching só exclui lançamento com conciliado=true, que só é
-  // marcado ao CONCLUIR. Um lançamento casado numa conciliação em_andamento de
-  // outro extrato do mesmo período é casado de novo aqui. O mock presume a
-  // barreira no casamento; se a correção barrar na conclusão, ajustar ao desenho
-  // escolhido — o critério real é o teste com banco real (TEST-9).
-  it.skip("lançamento casado em conciliação em_andamento de outro extrato não é casado de novo (PRB-C-04, #691)", async () => {
+  // #691 (corrigido): o matching só excluía lançamento com conciliado=true, que só é
+  // marcado ao CONCLUIR; um lançamento casado numa conciliação em_andamento de outro
+  // extrato do mesmo período era casado de novo. Agora o controller consulta os pares
+  // ativos de outras conciliações em andamento e tira esses lançamentos do matching.
+  // Exige a criação com sucesso (201) e os pares gravados ANTES de conferir o l1:
+  // sem isso, uma resposta 500 também "passava" (nenhum par inserido).
+  it("lançamento casado em conciliação em_andamento de outro extrato não é casado de novo (PRB-C-04, #691)", async () => {
     queueExtratoValido();
     queue("transacoes_extrato", "await", {
       data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: false }],
@@ -373,9 +375,16 @@ describe("POST /conciliacoes — problemas já achados", () => {
     await criarConciliacao(reqBase(), res);
     supabase.from = originalFromLocal;
 
+    assert.equal(res.statusCode, 201, JSON.stringify(res.body));
+    assert.equal(res.body.lancamentos_em_outra_conciliacao, 1);
+    assert.ok(paresInseridos.length > 0, "a conciliação precisa gravar os pares (t1 fica sem par)");
     assert.ok(
-      paresInseridos.every((p) => p.lancamento_id !== "l1" || p.confianca === "sem_par"),
+      paresInseridos.every((p) => p.lancamento_id !== "l1"),
       "l1 não pode ser casado em duas conciliações",
+    );
+    assert.ok(
+      paresInseridos.some((p) => p.transacao_id === "t1" && p.confianca === "sem_par"),
+      "t1 não casa com o l1 que está em outra conciliação",
     );
   });
 });

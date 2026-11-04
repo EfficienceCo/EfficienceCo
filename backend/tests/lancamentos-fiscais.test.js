@@ -965,8 +965,9 @@ describe("GET /lancamentos-fiscais/resumo", () => {
 describe("POST /lancamentos-fiscais — problemas já achados", () => {
   // PRB-E-23 (#447 / #467): a unicidade da NF-e é por tenant. A mesma chave
   // escriturada por outro cliente (nota entre dois clientes do escritório) não
-  // pode bloquear a deste — a checagem de duplicata tem que filtrar pelo cliente.
-  it("checagem de duplicata filtra por cliente_id e chave_nfe; chave de outro tenant não bloqueia (PRB-E-23)", async () => {
+  // pode bloquear a deste — a checagem de duplicata tem que filtrar pelo cliente
+  // (o mock não simula linhas de outro tenant; o que se trava é o filtro da query).
+  it("a checagem de duplicata filtra por cliente_id e chave_nfe (PRB-E-23)", async () => {
     tokenValido();
     clienteComCnpj(CNPJ_EMIT);
     queue("lancamentos_fiscais", "maybeSingle", { data: null, error: null });
