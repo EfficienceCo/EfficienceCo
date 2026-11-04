@@ -56,3 +56,45 @@ test("enviar tag nao roda nada", (t) => {
   assert.ok(c.refRemota("refs/tags/v1"));
   assert.equal(c.execucoes().length, 0);
 });
+
+// Bypass apontado na revisao do #713: `git push origin <tag>:refs/heads/<branch>` envia codigo para um branch.
+test("tag enviada para refs/heads/ de outro commit e recusada sem rodar o comando", (t) => {
+  const c = cenario(t);
+  git0(c.trabalho, ["switch", "-q", "-c", "ruim"]);
+  const ruim = commitar(c.trabalho, "backend/a.js", "codigo sem teste\n");
+  git0(c.trabalho, ["tag", "v-ruim"]);
+  git0(c.trabalho, ["switch", "-q", "main"]);
+  const r = c.push(["origin", "v-ruim:refs/heads/alvo"]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.texto, /commit enviado nao e o da pasta/);
+  assert.equal(c.refRemota("refs/heads/alvo"), null);
+  assert.equal(c.execucoes().length, 0);
+  assert.notEqual(ruim, git0(c.trabalho, ["rev-parse", "HEAD"]));
+});
+
+test("tag (leve e anotada) do HEAD enviada para refs/heads/ roda o comando e falha se o comando falhar", (t) => {
+  const c = cenario(t);
+  git0(c.trabalho, ["switch", "-q", "-c", "feat"]);
+  commitar(c.trabalho, "backend/a.js", "a2\n");
+  git0(c.trabalho, ["tag", "leve"]);
+  git0(c.trabalho, ["tag", "-a", "anotada", "-m", "anotada"]);
+
+  const falha = c.push(["origin", "anotada:refs/heads/alvo"], { saida: 1 });
+  assert.notEqual(falha.status, 0);
+  assert.equal(c.refRemota("refs/heads/alvo"), null);
+  assert.equal(c.execucoes().length, 1);
+
+  const ok = c.push(["origin", "leve:refs/heads/alvo"]);
+  assert.equal(ok.status, 0, ok.texto);
+  assert.equal(c.refRemota("refs/heads/alvo"), git0(c.trabalho, ["rev-parse", "HEAD"]));
+  assert.equal(c.execucoes().length, 2);
+});
+
+test("branch enviado para refs/tags/ continua sem rodar nada", (t) => {
+  const c = cenario(t);
+  git0(c.trabalho, ["switch", "-q", "-c", "feat"]);
+  commitar(c.trabalho, "backend/a.js", "a2\n");
+  const r = c.push(["origin", "feat:refs/tags/v2"], { saida: 1 });
+  assert.equal(r.status, 0, r.texto);
+  assert.equal(c.execucoes().length, 0);
+});

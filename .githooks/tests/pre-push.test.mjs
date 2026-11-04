@@ -28,6 +28,10 @@ test("classificarLinha separa exclusao, tag, branch novo e atualizacao", () => {
   assert.equal(classificarLinha(linha({ refLocal: "(delete)", shaLocal: ZERO })), "exclusao");
   assert.equal(classificarLinha(linha({ refLocal: "refs/tags/v1", refRemoto: "refs/tags/v1" })), "tag");
   assert.equal(classificarLinha(linha({ shaRemoto: ZERO })), "novo");
+  // Destino remoto manda: tag local para branch remoto e branch (TEST-5, #713); branch local para tag remota e tag.
+  assert.equal(classificarLinha(linha({ refLocal: "refs/tags/v1", refRemoto: "refs/heads/x", shaRemoto: ZERO })), "novo");
+  assert.equal(classificarLinha(linha({ refLocal: "refs/tags/v1", refRemoto: "refs/heads/x" })), "atualizacao");
+  assert.equal(classificarLinha(linha({ refLocal: "refs/heads/x", refRemoto: "refs/tags/v1", shaRemoto: ZERO })), "tag");
   assert.equal(classificarLinha(linha()), "atualizacao");
   assert.equal(classificarLinha(linha({ refRemoto: "refs/notes/x" })), "outra-ref");
 });
@@ -63,6 +67,16 @@ test("envio de tag nao roda nada", () => {
   const d = decidirUma({ l: linha({ refLocal: "refs/tags/v1", refRemoto: "refs/tags/v1", shaRemoto: ZERO }), dados: {}, head: C });
   assert.equal(d.acao, "pular");
   assert.equal(d.motivo, "nada-a-testar");
+});
+
+test("tag local enviada para refs/heads/ de outro commit e recusada, nao tratada como tag", () => {
+  const d = decidirUma({
+    l: linha({ refLocal: "refs/tags/v1", refRemoto: "refs/heads/x", shaLocal: B, shaRemoto: ZERO }),
+    dados: { origemMainExiste: true, arquivos: ["backend/a.js"] },
+    head: C,
+  });
+  assert.equal(d.acao, "recusar");
+  assert.equal(d.motivo, "commit-diferente-do-head");
 });
 
 test("push so de documentacao pula", () => {

@@ -447,7 +447,10 @@ PATH (Node 24, como em "Testes automatizados"; o `test:hooks` usa o glob do
 - roda `npm test` e cancela o push se falhar; no fim mostra o tempo gasto;
 - push que só muda `*.md`, `docs/` ou `LICENSE` pula os testes (mover código para
   `docs/` ou renomeá-lo para `.md` conta como código e roda os testes);
-- apagar branch e enviar tag não roda nada;
+- apagar branch e enviar tag não roda nada. O hook decide pelo **destino remoto**, não pelo
+  nome local: `git push origin v1:refs/tags/v1` é tag e passa; `git push origin v1:refs/heads/x`
+  envia código para um branch, então segue as mesmas regras de qualquer branch (inclusive a
+  checagem de HEAD);
 - branch novo é comparado com `origin/main` para decidir se pula (se o clone não
   tem `origin/main`, rode `git fetch origin`; sem base ele roda tudo). Vale também
   ao empurrar para outro remoto que não seja o `origin`: a base continua sendo `origin/main`;

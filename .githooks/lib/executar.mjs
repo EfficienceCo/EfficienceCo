@@ -3,7 +3,7 @@
 // Comando de teste: `npm test` (o mesmo do CI). PRE_PUSH_COMANDO o substitui; uso dos testes do hook.
 import { spawnSync } from "node:child_process";
 import { lerEntrada } from "./entrada.mjs";
-import { classificarLinha, decidir, lerLinhas, lerStatus } from "./pre-push.mjs";
+import { classificarLinha, decidir, ehShaZero, lerLinhas, lerStatus } from "./pre-push.mjs";
 
 const inicio = Date.now();
 
@@ -40,12 +40,19 @@ function coletar(linha) {
   return {};
 }
 
+// Tag anotada vira o commit para quem aponta; sem isso `anotada:refs/heads/x` pareceria "outro commit".
+// Falha (ex.: ref que nao e commit) sobe e cancela o push.
+function comCommitLocal(linha) {
+  if (ehShaZero(linha.shaLocal)) return linha;
+  return { ...linha, shaLocal: gitObrigatorio(["rev-parse", "--verify", `${linha.shaLocal}^{commit}`]).trim() };
+}
+
 function tempo() {
   return `${((Date.now() - inicio) / 1000).toFixed(1)} s`;
 }
 
 function main() {
-  const linhas = lerLinhas(lerEntrada());
+  const linhas = lerLinhas(lerEntrada()).map((l) => (classificarLinha(l) === "novo" || classificarLinha(l) === "atualizacao" ? comCommitLocal(l) : l));
 
   const decisao = decidir({
     linhas,

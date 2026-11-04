@@ -24,7 +24,9 @@ export function lerLinhas(texto) {
 // "exclusao" e "tag" nao rodam nada; "novo" e "atualizacao" sao branches que recebem commits.
 export function classificarLinha(linha) {
   if (ehShaZero(linha.shaLocal)) return "exclusao";
-  if (linha.refRemoto.startsWith("refs/tags/") || linha.refLocal.startsWith("refs/tags/")) return "tag";
+  // Classifica so pelo destino remoto: o que importa e o que chega ao remoto, nao o nome do ref local.
+  // `git push origin v1:refs/heads/x` envia codigo para um branch, entao nao e "tag".
+  if (linha.refRemoto.startsWith("refs/tags/")) return "tag";
   if (!linha.refRemoto.startsWith("refs/heads/")) return "outra-ref";
   return ehShaZero(linha.shaRemoto) ? "novo" : "atualizacao";
 }
