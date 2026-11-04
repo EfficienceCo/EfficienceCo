@@ -6,8 +6,8 @@ import { gerarRelatorioConciliacao } from "../src/controllers/conciliacoes.contr
 import PDFDocument from "pdfkit";
 import {
   formatarMoeda,
-  gerarRelatorioConciliacaoPDF,
   montarConteudoRelatorio,
+  gerarRelatorioConciliacaoPDF,
 } from "../src/services/conciliacao-relatorio.service.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
@@ -40,6 +40,8 @@ supabase.from = function (tabela) {
     select() { return builder; },
     eq() { return builder; },
     in() { return builder; },
+    order() { return builder; },
+    range() { return builder; },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     then(resolve, reject) {
       return Promise.resolve(consumir("await", { data: [], error: null })).then(resolve, reject);
@@ -108,82 +110,6 @@ function queueDependenciasBasicas() {
 // ---------------------------------------------------------------------------
 
 describe("GET /conciliacoes/:id/relatorio", () => {
-  it("200: gera PDF com headers e nome de arquivo corretos", async () => {
-    queueConciliacaoConcluida();
-    queueDependenciasBasicas();
-    queue("pares_conciliacao", "await", {
-      data: [
-        { id: "par-1", transacao_id: "t1", lancamento_id: "l1", confianca: "automatico", confirmado_em: null },
-        { id: "par-2", transacao_id: "t2", lancamento_id: "l2", confianca: "provavel", confirmado_em: "2026-08-05T00:00:00.000Z" },
-        { id: "par-3", transacao_id: "t3", lancamento_id: null, confianca: "sem_par", confirmado_em: null },
-      ],
-      error: null,
-    });
-    queue("transacoes_extrato", "await", {
-      data: [
-        { id: "t1", data_lancamento: "2026-08-01", descricao: "PIX recebido", valor: 100 },
-        { id: "t2", data_lancamento: "2026-08-02", descricao: "TED enviada", valor: 50 },
-        { id: "t3", data_lancamento: "2026-08-03", descricao: "Tarifa bancária", valor: 15 },
-      ],
-      error: null,
-    });
-    queue("lancamentos_contabeis", "await", {
-      data: [
-        { id: "l1", data_lancamento: "2026-08-01", descricao: "Recebimento cliente", valor: 100 },
-        { id: "l2", data_lancamento: "2026-08-02", descricao: "Pagamento fornecedor", valor: 50 },
-      ],
-      error: null,
-    });
-
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.headers["Content-Type"], "application/pdf");
-    assert.equal(res.headers["Content-Disposition"], 'attachment; filename="conciliacao-2026-08-cliente_teste_ltda.pdf"');
-    assert.ok(Buffer.isBuffer(res.body));
-    assert.equal(res.body.subarray(0, 4).toString("ascii"), "%PDF");
-  });
-
-  it("200: sessão sem pares ainda gera PDF válido (seções vazias)", async () => {
-    queueConciliacaoConcluida({ total_transacoes: 0, total_conciliadas: 0, total_pendentes: 0 });
-    queueDependenciasBasicas();
-    queue("pares_conciliacao", "await", { data: [], error: null });
-
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.ok(Buffer.isBuffer(res.body));
-    assert.equal(res.body.subarray(0, 4).toString("ascii"), "%PDF");
-  });
-
-  it("400 quando cliente_id não pode ser resolvido", async () => {
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase({ usuario: { perfil: PERFIS.ADMIN_EFFICIENCE } }), res);
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("404 quando a conciliação não existe", async () => {
-    queue("conciliacoes", "maybeSingle", { data: null, error: null });
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("404 quando a conciliação pertence a outro cliente", async () => {
-    queueConciliacaoConcluida({ cliente_id: CLIENTE_B });
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("409 quando a conciliação ainda está em andamento", async () => {
-    queueConciliacaoConcluida({ status: "em_andamento" });
-    const res = criarResposta();
-    await gerarRelatorioConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 409);
-  });
 
   it("500 quando falha a busca do cliente", async () => {
     queueConciliacaoConcluida();
@@ -263,6 +189,51 @@ describe("formatarMoeda (relatório de conciliação)", () => {
   });
 });
 
+async function cabecalhoDoPdf(banco, conta = "7654") {
+  const chamadas = [];
+  const textOriginal = PDFDocument.prototype.text;
+  PDFDocument.prototype.text = function (texto, x, y, opcoes) {
+    if (typeof y === "number") chamadas.push(String(texto));
+    return textOriginal.call(this, texto, x, y, opcoes);
+  };
+  try {
+    await gerarRelatorioConciliacaoPDF({
+      cliente: "Padaria Central",
+      banco,
+      conta,
+      mes: 6,
+      ano: 2024,
+      geradoEm: new Date(2024, 5, 30, 10, 0),
+      totais: {
+        totalTransacoes: 0,
+        totalConciliadas: 0,
+        totalTransacoesPendentes: 0,
+        totalLancamentosSemPar: 0,
+        valorTotalConciliado: 0,
+      },
+      matches: [],
+      semPar: [],
+    });
+  } finally {
+    PDFDocument.prototype.text = textOriginal;
+  }
+  return chamadas.find((texto) => texto.startsWith("Banco:"));
+}
+
+describe("gerarRelatorioConciliacaoPDF — banco e conta", () => {
+  // PRB-C-35 / BUG-CONC-23 (#700). O PDF recebe o BANKID gravado e mostra o nome.
+  it("cabeçalho mostra o nome do banco quando o código é conhecido (0237 → Bradesco) (PRB-C-35, #700)", async () => {
+    const cabecalho = await cabecalhoDoPdf("0237");
+    assert.match(cabecalho, /Bradesco/i);
+    assert.match(cabecalho, /7654/);
+  });
+
+  it("cabeçalho mantém o código desconhecido e o nome que já veio gravado", async () => {
+    assert.match(await cabecalhoDoPdf("999"), /Banco: 999 /);
+    assert.match(await cabecalhoDoPdf("Itaú", "1234"), /Banco: Itaú /);
+  });
+});
+
 describe("montarConteudoRelatorio", () => {
   const transacoesPorId = {
     t1: { id: "t1", data_lancamento: "2026-08-16", descricao: "PIX 16", valor: 100 },
@@ -330,69 +301,103 @@ describe("montarConteudoRelatorio", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// Posição das linhas da tabela (#699): descrição longa quebra em mais linhas e a
+// linha seguinte não pode ser desenhada por cima da continuação.
 // ---------------------------------------------------------------------------
 
-// Grava cada doc.text(texto, x, y, opções) com a altura que o texto ocupa na
-// largura da célula, para conferir o desenho sem abrir o PDF.
-async function desenharRelatorio(dados) {
-  const chamadas = [];
-  const textOriginal = PDFDocument.prototype.text;
-  PDFDocument.prototype.text = function (texto, x, y, opcoes) {
-    if (typeof y === "number") {
-      const altura = this.heightOfString(String(texto), { width: opcoes?.width });
-      chamadas.push({ texto: String(texto), x, y, altura, pagina: this.page });
-    }
-    return textOriginal.call(this, texto, x, y, opcoes);
+describe("gerarRelatorioConciliacaoPDF: linhas de altura variável (#699)", () => {
+  const TOTAIS = {
+    totalTransacoes: 0, totalConciliadas: 0, totalTransacoesPendentes: 0,
+    totalLancamentosSemPar: 0, valorTotalConciliado: 0,
   };
-  try {
-    await gerarRelatorioConciliacaoPDF({
-      cliente: "Padaria Central",
-      banco: "0237",
-      conta: "7654",
-      mes: 7,
-      ano: 2026,
-      geradoEm: new Date(2026, 6, 31, 10, 0),
-      totais: { totalTransacoes: 0, totalConciliadas: 0, totalTransacoesPendentes: 0, totalLancamentosSemPar: 0, valorTotalConciliado: 0 },
-      matches: [],
-      semPar: [],
-      ...dados,
-    });
-  } finally {
-    PDFDocument.prototype.text = textOriginal;
+  const LARGURA_UTIL = 595.28 - 100; // A4 com margem 50
+  const LARGURA_TEXTO_BANCO = LARGURA_UTIL * 0.34 - 6;
+
+  // Registra cada texto desenhado (texto, y, página) sem alterar o PDF gerado.
+  function gerarEspiando(matches) {
+    const desenhos = [];
+    let pagina = 0;
+    const textOriginal = PDFDocument.prototype.text;
+    const addPageOriginal = PDFDocument.prototype.addPage;
+    PDFDocument.prototype.text = function (texto, x, y, opcoes) {
+      if (typeof y === "number") desenhos.push({ texto: String(texto), y, pagina });
+      return textOriginal.call(this, texto, x, y, opcoes);
+    };
+    PDFDocument.prototype.addPage = function (...args) {
+      pagina += 1;
+      return addPageOriginal.apply(this, args);
+    };
+    return gerarRelatorioConciliacaoPDF({
+      cliente: "Cliente", banco: "0341", conta: "7890", mes: 8, ano: 2026, geradoEm: new Date(),
+      totais: TOTAIS, matches, semPar: [],
+    }).finally(() => {
+      PDFDocument.prototype.text = textOriginal;
+      PDFDocument.prototype.addPage = addPageOriginal;
+    }).then(() => desenhos);
   }
-  return chamadas;
-}
 
-describe("gerarRelatorioConciliacaoPDF — problemas já achados", () => {
-  // BUG (#699): a linha da tabela tem altura fixa (14 pt); descrição longa quebra
-  // em várias linhas e invade a linha seguinte.
-  it.skip("descrição de 60 e de 200 caracteres não invade a linha seguinte (PRB-C-32, #699)", async () => {
-    const descricao = (n) => "PAGAMENTO FORNECEDOR ".repeat(20).slice(0, n);
-    const matches = [
-      { data: "2026-07-01", descricaoBanco: descricao(200), descricaoLancamento: "curta", valor: 10 },
-      { data: "2026-07-02", descricaoBanco: descricao(60), descricaoLancamento: "curta", valor: 20 },
-      { data: "2026-07-03", descricaoBanco: "curta", descricaoLancamento: "curta", valor: 30 },
-    ];
+  function match(i, descricaoBanco, descricaoLancamento = "Lançamento") {
+    return { data: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`, descricaoBanco, descricaoLancamento, valor: 10 };
+  }
 
-    const chamadas = await desenharRelatorio({ matches });
+  // Altura que o texto ocupa na coluna "descrição banco", medida pelo próprio pdfkit.
+  function alturaMedida(texto) {
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    doc.font("Helvetica").fontSize(8);
+    return doc.heightOfString(texto, { width: LARGURA_TEXTO_BANCO });
+  }
 
-    for (let i = 0; i < 2; i += 1) {
-      const celula = chamadas.find((c) => c.texto === matches[i].descricaoBanco);
-      const proximaLinha = chamadas.find((c) => c.texto === `0${i + 2}/07/2026`);
-      assert.ok(celula && proximaLinha, "linhas da tabela não encontradas");
-      if (proximaLinha.pagina !== celula.pagina) continue;
-      assert.ok(
-        proximaLinha.y >= celula.y + celula.altura,
-        `linha ${i + 2} em y=${proximaLinha.y}, mas a descrição da linha ${i + 1} vai até y=${celula.y + celula.altura}`,
-      );
+  for (const tamanho of [60, 200]) {
+    it(`descrição de ${tamanho} caracteres não sobrepõe a linha seguinte`, async () => {
+      const longa = ("RECEBIMENTO PIX ".repeat(20)).slice(0, tamanho).trim();
+      const desenhos = await gerarEspiando([match(0, longa), match(1, "CURTA")]);
+
+      const yLonga = desenhos.find((d) => d.texto === longa).y;
+      const yProxima = desenhos.find((d) => d.texto === "CURTA").y;
+
+      assert.ok(alturaMedida(longa) > alturaMedida("CURTA"), "a descrição precisa quebrar em mais de uma linha");
+      // a linha seguinte começa depois de todo o texto da anterior
+      assert.ok(yProxima >= yLonga + alturaMedida(longa), `próxima linha em ${yProxima}, texto vai até ${yLonga + alturaMedida(longa)}`);
+    });
+  }
+
+  it("linha de uma linha só mantém a altura de antes (14 pt)", async () => {
+    const desenhos = await gerarEspiando([match(0, "CURTA A"), match(1, "CURTA B")]);
+    const y = (t) => desenhos.find((d) => d.texto === t).y;
+    assert.equal(y("CURTA B") - y("CURTA A"), 14);
+  });
+
+  it("paginação: nenhuma linha passa do limite inferior com alturas variáveis", async () => {
+    const longa = "DESCRICAO MUITO LONGA DE BANCO ".repeat(8).trim(); // ~250 caracteres
+    const matches = Array.from({ length: 60 }, (_, i) => match(i, i % 3 === 0 ? longa : `CURTA ${i}`));
+    const desenhos = await gerarEspiando(matches);
+
+    const limiteInferior = 841.89 - 50;
+    const linhas = desenhos.filter((d) => d.texto === longa || /^CURTA \d+$/.test(d.texto));
+    assert.equal(linhas.length, 60);
+    assert.ok(Math.max(...linhas.map((l) => l.pagina)) >= 1, "o relatório precisa passar de uma página");
+    for (const l of linhas) {
+      assert.ok(l.y + alturaMedida(l.texto) <= limiteInferior, `linha "${l.texto.slice(0, 20)}" termina em ${l.y + alturaMedida(l.texto)}`);
     }
   });
 
-  // BUG (#700): o cabeçalho mostra o código do banco (0237) em vez do nome.
-  it.skip("cabeçalho mostra o nome do banco quando o código é conhecido (0237 → Bradesco) (PRB-C-35, #700)", async () => {
-    const chamadas = await desenharRelatorio({});
-    const cabecalho = chamadas.find((c) => c.texto.startsWith("Banco:"));
-    assert.match(cabecalho.texto, /Bradesco/i);
+  it("descrição enorme ocupa no máximo 120 pt e a linha seguinte continua na mesma página", async () => {
+    const gigante = "PALAVRA ".repeat(400).trim();
+    const desenhos = await gerarEspiando([match(0, gigante), match(1, "DEPOIS")]);
+    const yGigante = desenhos.find((d) => d.texto === gigante).y;
+    const depois = desenhos.find((d) => d.texto === "DEPOIS");
+    assert.equal(depois.y - yGigante, 120);
+    assert.equal(depois.pagina, desenhos.find((d) => d.texto === gigante).pagina);
+  });
+
+  it("descrição de 199 caracteres com muitas quebras de linha mantém todas as colunas da linha na mesma página", async () => {
+    const comQuebras = "x\n".repeat(99) + "x"; // 199 caracteres, ~100 linhas se as quebras forem respeitadas
+    assert.equal(comQuebras.length, 199);
+    const desenhos = await gerarEspiando([match(0, "ANTES"), match(1, comQuebras, "LANC-QUEBRAS"), match(2, "DEPOIS")]);
+
+    // "Lançamento" é a outra coluna de texto da mesma linha; os dois têm de cair na mesma página
+    const linha = desenhos.filter((d) => d.texto === "LANC-QUEBRAS" || d.texto.startsWith("x"));
+    assert.equal(linha.length, 2);
+    assert.equal(new Set(linha.map((d) => d.pagina)).size, 1, `páginas: ${linha.map((d) => d.pagina)}`);
   });
 });

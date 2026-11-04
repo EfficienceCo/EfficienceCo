@@ -170,7 +170,7 @@ describe("TEST-10 — chave de acesso", () => {
     }
   });
 
-  it.skip("DV errado vira erro em chave_nfe (v02 com DV 4 em vez de 5) — BUG (#661, NFE-7; PR #676 aberto): o backend só confere 44 dígitos", () => {
+  it("DV errado vira erro em chave_nfe (v02 com DV 4 em vez de 5; bug #661 corrigido no #676)", () => {
     // Módulo 11, soma 578, resto 6, DV = 5 (conta completa no teste do agente). Com DV 4 a chave é inventada.
     const r = validarLancamentoFiscal(payload(v02, { chave_nfe: `${CHAVE.v02.slice(0, 43)}4` }), HOJE);
     assert.equal(r.valido, false);

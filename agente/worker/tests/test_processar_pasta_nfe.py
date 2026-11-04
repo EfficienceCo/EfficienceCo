@@ -28,7 +28,9 @@ CLIENTE_ID_EMIT = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 NOME_EMPRESA = "Padaria do João"
 NOME_FILIAL = "Filial Centro"
 NOME_FORNECEDOR = "Mercado Central"
-CHAVE_DOIS_CLIENTES = "35261298765432000198550010000000031000000033"
+CHAVE_ENTRADA = "35260798765432000198550010000000011000000012"
+CHAVE_DOIS_CLIENTES = "35260698765432000198550010000000031000000030"
+CHAVE_SAIDA_CPF = "35260712345678000195550010000000041000000040"
 
 
 @pytest.fixture
@@ -158,7 +160,7 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
     assert mock_ler_xml.call_count == 1
     payload = mock_post.call_args.args[1]
     assert payload["tipo"] == "entrada"
-    assert payload["chave_nfe"] == "35260712345678000190550010000000011000000011"
+    assert payload["chave_nfe"] == CHAVE_ENTRADA
     assert payload["cliente_id"] == CLIENTE_ID
     assert payload["valor_total"] == "1500.00"
     assert payload["data_emissao"] == "2026-07-15"
@@ -179,8 +181,8 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
     return assinar_xml_nfe(f"""<?xml version="1.0" encoding="UTF-8"?>
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
     <NFe>
-      <infNFe Id="NFe35260712345678000195550010000000041000000044" versao="4.00">
-        <ide><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+      <infNFe Id="NFe{CHAVE_SAIDA_CPF}" versao="4.00">
+        <ide><cUF>35</cUF><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit><CNPJ>{CNPJ_CLIENTE}</CNPJ></emit>
         <dest><CPF>12345678909</CPF></dest>
         <det nItem="1"><prod><cProd>1</cProd><xProd>Item</xProd><NCM>19059090</NCM><CFOP>5102</CFOP><vProd>{valor}</vProd></prod></det>
@@ -190,7 +192,7 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
       </infNFe>
     </NFe>
     <protNFe><infProt>
-      <chNFe>35260712345678000195550010000000041000000044</chNFe>
+      <chNFe>{CHAVE_SAIDA_CPF}</chNFe>
       <cStat>100</cStat>
     </infProt></protNFe>
     </nfeProc>
@@ -198,12 +200,12 @@ def _xml_saida_cpf(valor: str = "250.00") -> str:
 
 
 def _xml_entrada_emit_cpf(valor: str = "300.00") -> str:
-    chave = "35260700011144477735550010000000301000000055"
+    chave = "35260700011144477735550010000000021000000024"
     return assinar_xml_nfe(f"""<?xml version="1.0" encoding="UTF-8"?>
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
     <NFe>
       <infNFe Id="NFe{chave}" versao="4.00">
-        <ide><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+        <ide><cUF>35</cUF><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit><CPF>11144477735</CPF></emit>
         <dest><CNPJ>{CNPJ_CLIENTE}</CNPJ></dest>
         <det nItem="1"><prod><cProd>1</cProd><xProd>Item</xProd><NCM>19059090</NCM><CFOP>5102</CFOP><vProd>{valor}</vProd></prod></det>
@@ -418,8 +420,8 @@ def test_cfop_incompativel_ainda_posta(pasta_nfe):
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
     <NFe>
-      <infNFe Id="NFe35260712345678000199550010000000051000000055" versao="4.00">
-        <ide><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
+      <infNFe Id="NFe35260712345678000195550010000000051000000056" versao="4.00">
+        <ide><cUF>35</cUF><tpNF>1</tpNF><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
         <emit><CNPJ>{CNPJ_CLIENTE}</CNPJ></emit>
         <dest><CNPJ>{CNPJ_FORNECEDOR}</CNPJ></dest>
         <det nItem="1"><prod><cProd>1</cProd><xProd>Item</xProd><NCM>19059090</NCM><CFOP>1102</CFOP><vProd>10.00</vProd></prod></det>
@@ -428,7 +430,7 @@ def test_cfop_incompativel_ainda_posta(pasta_nfe):
         </ICMSTot></total>
       </infNFe>
     </NFe>
-    <protNFe><infProt><chNFe>35260712345678000199550010000000051000000055</chNFe><cStat>100</cStat></infProt></protNFe>
+    <protNFe><infProt><chNFe>35260712345678000195550010000000051000000056</chNFe><cStat>100</cStat></infProt></protNFe>
     </nfeProc>"""
     (inbox / "v10-saida-cfop-entrada.xml").write_text(assinar_xml_nfe(xml), encoding="utf-8")
 
@@ -548,7 +550,7 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
             "n03-sem-nfeproc.xml",
             """<?xml version="1.0" encoding="UTF-8"?>
             <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
-              <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+              <infNFe Id="NFe35260712345678000190550010000000011000000015" versao="4.00">
                 <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
                 <emit><CNPJ>98765432000110</CNPJ></emit>
                 <dest><CNPJ>12345678000199</CNPJ></dest>
@@ -565,7 +567,7 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
             """<?xml version="1.0" encoding="UTF-8"?>
             <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
               <NFe>
-                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                <infNFe Id="NFe35260712345678000190550010000000011000000015" versao="4.00">
                   <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
                   <emit><CNPJ>98765432000110</CNPJ></emit>
                   <dest><CNPJ>12345678000199</CNPJ></dest>
@@ -583,7 +585,7 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
             """<?xml version="1.0" encoding="UTF-8"?>
             <pacote xmlns="http://www.portalfiscal.inf.br/nfe">
               <NFe>
-                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                <infNFe Id="NFe35260712345678000190550010000000011000000015" versao="4.00">
                   <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
                   <emit><CNPJ>98765432000110</CNPJ></emit>
                   <dest><CNPJ>12345678000199</CNPJ></dest>
@@ -601,7 +603,7 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
             """<?xml version="1.0" encoding="UTF-8"?>
             <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
               <NFe>
-                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                <infNFe Id="NFe35260712345678000190550010000000011000000015" versao="4.00">
                   <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
                   <emit><CNPJ>98765432000110</CNPJ></emit>
                   <dest><CNPJ>12345678000199</CNPJ></dest>
@@ -623,7 +625,7 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
             """<?xml version="1.0" encoding="UTF-8"?>
             <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
               <NFe>
-                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                <infNFe Id="NFe35260712345678000190550010000000011000000015" versao="4.00">
                   <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
                   <emit><CNPJ>98765432000110</CNPJ></emit>
                   <dest><CNPJ>12345678000199</CNPJ></dest>
@@ -633,7 +635,7 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
                 </infNFe>
               </NFe>
               <protNFe><infProt>
-                <chNFe>35260712345678000190550010000000011000000011X</chNFe>
+                <chNFe>35260712345678000190550010000000011000000015X</chNFe>
                 <cStat>100</cStat>
               </infProt></protNFe>
             </nfeProc>
@@ -645,7 +647,7 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
             """<?xml version="1.0" encoding="UTF-8"?>
             <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
               <NFe>
-                <infNFe Id="NFe35260712345678000190550010000000011000000011" versao="4.00">
+                <infNFe Id="NFe35260712345678000190550010000000011000000015" versao="4.00">
                   <ide><dhEmi>2026-07-15T14:30:00-03:00</dhEmi></ide>
                   <emit><CNPJ>98765432000110</CNPJ></emit>
                   <dest><CNPJ>12345678000199</CNPJ></dest>
@@ -656,7 +658,7 @@ def test_xml_invalido_move_para_nao_identificado(pasta_nfe):
               </NFe>
               <protNFe><infProt><cStat>100</cStat></infProt></protNFe>
               <protNFe><infProt>
-                <chNFe>35260712345678000190550010000000011000000011</chNFe>
+                <chNFe>35260712345678000190550010000000011000000015</chNFe>
                 <cStat>110</cStat>
               </infProt></protNFe>
             </nfeProc>
@@ -946,6 +948,7 @@ def test_nfe_data_emissao_futura_vai_para_nao_identificado(pasta_nfe):
     inbox, _base = pasta_nfe
     texto = (FIXTURES / "entrada.xml").read_text(encoding="utf-8")
     texto = texto.replace("2026-07-15T14:30:00-03:00", "2099-12-08T14:30:00-03:00")
+    texto = texto.replace(CHAVE_ENTRADA, "35991298765432000198550010000000011000000010")
     gravar_nfe_assinada(inbox / "entrada.xml", texto)
 
     with (
@@ -966,7 +969,7 @@ def test_processar_nfe_sem_seta_unicode_nos_prints():
 
 def test_evento_cancelamento_cancela_e_arquiva(pasta_nfe):
     inbox, _base = pasta_nfe
-    chave = "35260712345678000190550010000000011000000011"
+    chave = CHAVE_ENTRADA
     evento = inbox / "cancelamento.xml"
     evento.write_text(
         f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -1037,7 +1040,7 @@ def _payloads_eventos(mock_post):
 def test_evento_cancelamento_sem_nota_mantem_para_retentar(pasta_nfe):
     """Dentro da janela: 404 mantém no inbox (evento pode ter chegado antes da nota)."""
     inbox, _base = pasta_nfe
-    chave = "35260712345678000190550010000000011000000011"
+    chave = CHAVE_ENTRADA
     evento = inbox / "cancelamento.xml"
     evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
 
@@ -1060,7 +1063,7 @@ def test_evento_cancelamento_sem_nota_mantem_para_retentar(pasta_nfe):
 def test_evento_cancelamento_404_expira_para_eventos_pendentes(pasta_nfe):
     """NFE-4 (#656): após esgotar a espera, sai do inbox e POST /eventos."""
     inbox, _base = pasta_nfe
-    chave = "35260712345678000190550010000000011000000011"
+    chave = "35260712345678000190550010000000011000000015"
     evento = inbox / "ev2-cancela-inexistente.xml"
     evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
 
@@ -1091,7 +1094,7 @@ def test_evento_cancelamento_404_expira_para_eventos_pendentes(pasta_nfe):
 def test_evento_cancelamento_404_expira_no_limite_real_de_90s(pasta_nfe):
     """Antes de 90s continua no inbox; na 4ª passagem (t=90) vai a eventos_pendentes/."""
     inbox, _base = pasta_nfe
-    chave = "35260712345678000190550010000000011000000011"
+    chave = "35260712345678000190550010000000011000000015"
     evento = inbox / "ev2-cancela-inexistente.xml"
     evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
     inicio = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
@@ -1135,7 +1138,7 @@ def test_evento_cancelamento_404_expira_no_limite_real_de_90s(pasta_nfe):
 def test_evento_cancelamento_falha_ao_mover_avisa_e_sai_da_varredura(pasta_nfe):
     """Pasta eventos_pendentes/ falha: rename tira o XML da varredura e avisa."""
     inbox, _base = pasta_nfe
-    chave = "35260712345678000190550010000000011000000011"
+    chave = "35260712345678000190550010000000011000000015"
     evento = inbox / "ev2-cancela-inexistente.xml"
     evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
 
@@ -1165,7 +1168,7 @@ def test_evento_cancelamento_falha_ao_mover_avisa_e_sai_da_varredura(pasta_nfe):
 def test_evento_cancelamento_falha_ao_tirar_preserva_espera_e_avisa(pasta_nfe):
     """Se o XML não sai do inbox, o sidecar permanece e o aviso dispara."""
     inbox, _base = pasta_nfe
-    chave = "35260712345678000190550010000000011000000011"
+    chave = "35260712345678000190550010000000011000000015"
     evento = inbox / "ev2-cancela-inexistente.xml"
     evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
     sidecar = inbox / f"{evento.name}.espera-cancel"
@@ -1196,7 +1199,7 @@ def test_evento_cancelamento_falha_ao_tirar_preserva_espera_e_avisa(pasta_nfe):
 def test_evento_cancelamento_sucesso_limpa_sidecar_de_espera(pasta_nfe):
     """Regressão: após 404 e depois sucesso, não sobra .espera-cancel."""
     inbox, _base = pasta_nfe
-    chave = "35260712345678000190550010000000011000000011"
+    chave = "35260712345678000190550010000000011000000015"
     evento = inbox / "cancelamento.xml"
     evento.write_text(_xml_evento_cancelamento(chave), encoding="utf-8")
 

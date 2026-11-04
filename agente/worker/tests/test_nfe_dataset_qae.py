@@ -333,10 +333,6 @@ def test_chave_dv_zero_quando_o_resto_e_0_ou_1():
     assert parsear_nfe(_caminho("v01-entrada"))["chave_nfe"] == CHAVE["v01"]
 
 
-@pytest.mark.skip(
-    reason="BUG (#661, NFE-7; PR #676 aberto): o agente não confere o dígito verificador da chave de "
-    "acesso. A v02 com DV 4 em vez de 5 (módulo 11 = 5, ver test_chave_dv_certo_*) é escriturada."
-)
 def test_chave_dv_errado_recusa(tmp_path):
     ruim = CHAVE["v02"][:-1] + "4"
     caminho = _trocar_chave(tmp_path, "v02-entrada", CHAVE["v02"], ruim, "dv_errado")

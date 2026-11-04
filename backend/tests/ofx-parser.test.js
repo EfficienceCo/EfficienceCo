@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseOfx, decodificarOfx, OfxParseError, inferirMesAno } from "../src/utils/ofx-parser.util.js";
+import { mascararConta, nomeBanco } from "../src/utils/banco-conta.util.js";
+import { parseOfx, decodificarOfx, OfxParseError, inferirMesAno, periodosDoExtrato } from "../src/utils/ofx-parser.util.js";
+import { DESCRICAO_MAXIMO } from "../src/utils/texto-conciliacao.util.js";
 
 function ofx(corpo) {
   return `OFXHEADER:100
@@ -146,6 +148,181 @@ describe("parseOfx", () => {
 
     assert.throws(() => parseOfx(conteudo), OfxParseError);
   });
+
+  // PRB-C-33 / BUG-CONC-17 (#694). O calendário e o NUMERIC(15,2) recusam
+  // antes do INSERT; a mensagem aponta a transação (ou o FITID) e o valor.
+  function assertRecusa(conteudo, trechos) {
+    assert.throws(
+      () => parseOfx(conteudo),
+      (erro) => {
+        assert.ok(erro instanceof OfxParseError);
+        for (const trecho of trechos) {
+          assert.ok(erro.message.includes(trecho), erro.message);
+        }
+        return true;
+      },
+    );
+  }
+
+  it("recusa DTPOSTED 20241345 e aponta a transação e o valor", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20241345
+<TRNAMT>10.00
+<FITID>D13
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["20241345", "transação #1", "FITID D13"]);
+  });
+
+  it("recusa DTPOSTED 20240230 sem devolver a transação anterior", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>10.00
+<FITID>OK
+</STMTTRN>
+<STMTTRN>
+<DTPOSTED>20240230
+<TRNAMT>20.00
+<FITID>FEV
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["20240230", "transação #2", "FITID FEV"]);
+  });
+
+  it("recusa TRNAMT 1e15 fora da faixa", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>1e15
+<FITID>V1
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["1e15", "transação #1", "FITID V1"]);
+  });
+
+  it("recusa TRNAMT negativo cujo absoluto estoura a faixa", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>-1e15
+<FITID>V1N
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["-1e15", "FITID V1N"]);
+  });
+
+  it("recusa TRNAMT 99999999999999.99 fora da faixa", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>99999999999999.99
+<FITID>V2
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["99999999999999.99", "transação #1", "FITID V2"]);
+  });
+
+  it("aceita 29 de fevereiro em ano bissexto e o teto do NUMERIC(15,2)", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240229
+<TRNAMT>-9999999999999.99
+<FITID>TETO
+</STMTTRN>`);
+
+    const { transacoes } = parseOfx(conteudo);
+    assert.equal(transacoes[0].data_lancamento, "2024-02-29");
+    assert.equal(transacoes[0].valor, 9999999999999.99);
+    assert.equal(transacoes[0].tipo, "debito");
+  });
+
+  // PRB-C-07 / BUG-CONC-20 (#697). MEMO vira a descrição da transação.
+  it("recusa MEMO de 5.000 caracteres e aponta a transação", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>10.00
+<FITID>OK
+<MEMO>OK
+</STMTTRN>
+<STMTTRN>
+<DTPOSTED>20240202
+<TRNAMT>20.00
+<FITID>LONGO
+<MEMO>${"x".repeat(5_000)}
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["MEMO", "5000", "transação #2", "FITID LONGO", String(DESCRICAO_MAXIMO)]);
+  });
+
+  it("aceita MEMO no teto e ignora NAME longo quando o MEMO cabe", () => {
+    const memo = "m".repeat(DESCRICAO_MAXIMO);
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>10.00
+<FITID>TETO
+<NAME>${"n".repeat(5_000)}
+<MEMO>${memo}
+</STMTTRN>`);
+
+    const { transacoes } = parseOfx(conteudo);
+    assert.equal(transacoes[0].descricao, memo);
+  });
+
+  it("recusa NAME acima do teto quando o MEMO está ausente", () => {
+    const conteudo = extratoComTransacoes(`<STMTTRN>
+<DTPOSTED>20240201
+<TRNAMT>-10.00
+<FITID>NOME
+<NAME>${"n".repeat(DESCRICAO_MAXIMO + 1)}
+</STMTTRN>`);
+
+    assertRecusa(conteudo, ["NAME", "transação #1", "FITID NOME"]);
+  });
+  // PRB-C-35 / BUG-CONC-23 (#700). slice(-4) contava o hífen e "98765-4" virava "65-4".
+  it("conta mascarada mantém os 4 últimos dígitos (98765-4 → …7654) (PRB-C-35, #700)", () => {
+    const conteudo = ofx(`<BANKMSGSRSV1>
+<STMTTRNRS>
+<STMTRS>
+<CURDEF>BRL
+<BANKACCTFROM>
+<BANKID>0237
+<ACCTID>98765-4
+</BANKACCTFROM>
+<BANKTRANLIST>
+<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260705
+<TRNAMT>10.00
+<FITID>C1
+</STMTTRN>
+${RODAPE_PADRAO}`);
+
+    const { banco, conta } = parseOfx(conteudo);
+    assert.equal(banco, "0237");
+    assert.equal(conta, "7654");
+    assert.ok(conta.replace(/\D/g, "").endsWith("7654"), `conta: ${conta}`);
+  });
+});
+
+describe("mascararConta e nomeBanco", () => {
+  it("não descarta dígito quando a conta tem hífen ou menos de 4 dígitos", () => {
+    assert.equal(mascararConta("98765-4"), "7654");
+    assert.equal(mascararConta("12.345-6"), "3456");
+    assert.equal(mascararConta("1234567890"), "7890");
+    assert.equal(mascararConta("555"), "555");
+    assert.equal(mascararConta("12-3"), "123");
+    assert.equal(mascararConta("ABCD"), "ABCD");
+    assert.equal(mascararConta("  "), null);
+    assert.equal(mascararConta(null), null);
+  });
+
+  it("mostra o nome quando o código COMPE é conhecido e o código quando não é", () => {
+    assert.equal(nomeBanco("0237"), "Bradesco");
+    assert.equal(nomeBanco("237"), "Bradesco");
+    assert.equal(nomeBanco("0341"), "Itaú");
+    assert.equal(nomeBanco("999"), "999");
+    assert.equal(nomeBanco("0999"), "0999");
+    assert.equal(nomeBanco("1234"), "1234");
+    assert.equal(nomeBanco("Itaú"), "Itaú");
+    assert.equal(nomeBanco(""), "");
+    assert.equal(nomeBanco(null), "");
+  });
 });
 
 describe("decodificarOfx", () => {
@@ -180,6 +357,87 @@ describe("inferirMesAno", () => {
     ]);
 
     assert.deepEqual(resultado, { mes: 8, ano: 2026 });
+  });
+
+  it("em empate fica com o primeiro mês que aparece no arquivo", () => {
+    const resultado = periodosDoExtrato([
+      { data_lancamento: "2026-03-10" },
+      { data_lancamento: "2026-01-05" },
+      { data_lancamento: "2026-01-20" },
+      { data_lancamento: "2026-03-15" },
+    ]);
+
+    assert.equal(resultado.empate, true);
+    assert.equal(resultado.mes, 3);
+    assert.equal(resultado.ano, 2026);
+    assert.deepEqual(inferirMesAno([
+      { data_lancamento: "2026-03-10" },
+      { data_lancamento: "2026-01-05" },
+      { data_lancamento: "2026-01-20" },
+      { data_lancamento: "2026-03-15" },
+    ]), { mes: 3, ano: 2026 });
+  });
+});
+
+describe("parseOfx: FITID e valor zero (#692)", () => {
+  const trn = (fitid, valor) => `<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260705
+<TRNAMT>${valor}
+${fitid === null ? "" : `<FITID>${fitid}\n`}<MEMO>M
+</STMTTRN>`;
+
+  it("ignora transação de valor 0 e conta quantas ignorou", () => {
+    const r = parseOfx(extratoComTransacoes([trn("A", "10.00"), trn("B", "0.00"), trn("C", "-0")].join("\n")));
+    assert.deepEqual(r.transacoes.map((t) => t.id_banco), ["A"]);
+    assert.equal(r.ignoradas_valor_zero, 2);
+  });
+
+  it("recusa o arquivo quando todas as transações têm valor 0", () => {
+    assert.throws(
+      () => parseOfx(extratoComTransacoes([trn("A", "0.00"), trn("B", "0")].join("\n"))),
+      (e) => e instanceof OfxParseError && /valor zero/.test(e.message),
+    );
+  });
+
+  it("recusa FITID repetido no mesmo arquivo, citando o FITID", () => {
+    assert.throws(
+      () => parseOfx(extratoComTransacoes([trn("DUP1", "10.00"), trn("OK", "20.00"), trn("DUP1", "30.00")].join("\n"))),
+      (e) => e instanceof OfxParseError && /FITID repetido no arquivo: "DUP1"/.test(e.message),
+    );
+  });
+
+  it("não trata FITID ausente como repetido", () => {
+    const r = parseOfx(extratoComTransacoes([trn(null, "10.00"), trn(null, "20.00")].join("\n")));
+    assert.equal(r.transacoes.length, 2);
+    assert.equal(r.transacoes[0].id_banco, null);
+  });
+
+  it("FITID repetido só entre linha de valor 0 e linha válida não derruba o arquivo", () => {
+    const r = parseOfx(extratoComTransacoes([trn("X", "0.00"), trn("X", "15.00")].join("\n")));
+    assert.deepEqual(r.transacoes.map((t) => t.valor), [15]);
+  });
+});
+describe("parseOfx: arredondamento e identidade (#692)", () => {
+  const trn = (valor) => `<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260705
+<TRNAMT>${valor}
+<FITID>F${valor}
+<MEMO>M
+</STMTTRN>`;
+
+  it("arredonda para centavos e ignora o que dá 0.00 (0.004, -0.004)", () => {
+    const r = parseOfx(extratoComTransacoes([trn("0.004"), trn("-0.004"), trn("10.126")].join("\n")));
+    assert.deepEqual(r.transacoes.map((t) => t.valor), [10.13]);
+    assert.equal(r.ignoradas_valor_zero, 2);
+  });
+
+  it("recusa o arquivo quando tudo arredonda para zero", () => {
+    assert.throws(
+      () => parseOfx(extratoComTransacoes([trn("0.004"), trn("0.001")].join("\n"))),
+      (e) => e instanceof OfxParseError && /valor zero/.test(e.message),
+    );
   });
 });
 

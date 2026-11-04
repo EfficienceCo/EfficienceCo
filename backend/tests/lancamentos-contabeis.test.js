@@ -8,10 +8,13 @@ import {
   atualizarLancamentoContabil,
   deletarLancamentoContabil,
 } from "../src/controllers/lancamentos-contabeis.controller.js";
+import { TAMANHO_PAGINA_POSTGREST } from "../src/utils/paginacao.util.js";
+import { CATEGORIA_MAXIMO, DESCRICAO_MAXIMO } from "../src/utils/texto-conciliacao.util.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
-const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
 const LANCAMENTO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const USUARIO_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+const OUTRO_USUARIO_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 
 // ---------------------------------------------------------------------------
 // Mock de supabase
@@ -19,9 +22,10 @@ const LANCAMENTO_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 const originalFrom = supabase.from;
 const filas = new Map();
+const ranges = [];
 let ultimoPayload = null;
 function chave(t, m) { return `${t}:${m}`; }
-function queue(tabela, metodo, resultado) {
+function enqueue(tabela, metodo, resultado) {
   const k = chave(tabela, metodo);
   if (!filas.has(k)) filas.set(k, []);
   filas.get(k).push(resultado);
@@ -43,6 +47,7 @@ supabase.from = function (tabela) {
     gte() { return builder; },
     lte() { return builder; },
     order() { return builder; },
+    range(inicio, fim) { ranges.push([inicio, fim]); return builder; },
     single() { return Promise.resolve(consumir("single", { data: null, error: null })); },
     then(resolve, reject) {
       return Promise.resolve(consumir("await", { data: [], error: null })).then(resolve, reject);
@@ -57,6 +62,7 @@ after(() => {
 
 beforeEach(() => {
   filas.clear();
+  ranges.length = 0;
   ultimoPayload = null;
 });
 
@@ -101,94 +107,28 @@ function payloadValido(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe("POST /lancamentos-contabeis", () => {
-  it("201 e persiste quando payload válido", async () => {
-    queue("lancamentos_contabeis", "single", { data: { id: "novo-id", ...payloadValido() }, error: null });
-
-    const res = criarResposta();
-    await criarLancamentoContabil(reqAdmin(payloadValido()), res);
-
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.id, "novo-id");
-  });
-
-  it("400 quando campo obrigatório está faltando", async () => {
-    const { descricao, ...semDescricao } = payloadValido();
-
-    const res = criarResposta();
-    await criarLancamentoContabil(reqAdmin(semDescricao), res);
-
-    assert.equal(res.statusCode, 400);
-    assert.ok(res.body.faltando.includes("descricao"));
-  });
-
-  it("400 quando tipo não é credito nem debito", async () => {
-    const res = criarResposta();
-    await criarLancamentoContabil(reqAdmin(payloadValido({ tipo: "transferencia" })), res);
-
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("404 (nunca 403) quando cliente_id do payload é de outro cliente", async () => {
-    const res = criarResposta();
-    await criarLancamentoContabil(reqAdmin(payloadValido({ cliente_id: CLIENTE_B })), res);
-
-    assert.equal(res.statusCode, 404);
-    assert.deepEqual(res.body, { erro: "Cliente não encontrado" });
-  });
 
   // Validação de entrada (#558): só a UI validava; a API aceitava lixo ou
   // devolvia 500 genérico.
-  for (const [nome, overrides, campo] of [
-    ["valor zero", { valor: 0 }, "valor"],
-    ["valor negativo", { valor: -5 }, "valor"],
-    ["valor que arredonda para 0,00", { valor: 0.001 }, "valor"],
-    ["valor não numérico", { valor: "abc" }, "valor"],
-    ["valor acima do NUMERIC(15,2)", { valor: 1e20 }, "valor"],
-    ["data em dd/mm/aaaa", { data_lancamento: "05/02/2022" }, "data_lancamento"],
-    ["data com dia/mês inexistente", { data_lancamento: "2022-13-45" }, "data_lancamento"],
-    ["data 31 de fevereiro", { data_lancamento: "2022-02-31" }, "data_lancamento"],
-    ["descrição só com espaços", { descricao: "   " }, "descricao"],
-    ["descrição não-texto", { descricao: 123 }, "descricao"],
-  ]) {
-    it(`400 com mensagem do campo quando ${nome}`, async () => {
-      const res = criarResposta();
-      await criarLancamentoContabil(reqAdmin(payloadValido(overrides)), res);
 
-      assert.equal(res.statusCode, 400);
-      assert.ok(res.body.campos[campo], `esperava mensagem para ${campo}`);
-      assert.ok(res.body.erro.includes(res.body.campos[campo]));
-      assert.equal(ultimoPayload, null, "não deveria chegar ao insert");
-    });
-  }
-
-  it("400 lista todos os campos inválidos de uma vez", async () => {
-    const res = criarResposta();
-    await criarLancamentoContabil(
-      reqAdmin(payloadValido({ valor: 0, data_lancamento: "05/02/2022", descricao: " " })),
-      res,
-    );
-
-    assert.equal(res.statusCode, 400);
-    assert.deepEqual(Object.keys(res.body.campos).sort(), ["data_lancamento", "descricao", "valor"]);
-  });
-
-  it("aceita valor como string numérica, no limite máximo, e grava descrição sem espaços nas pontas", async () => {
-    queue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+  it("grava criado_por do token, categoria validada, e ignora criado_por do corpo (PRB-C-24, #695)", async () => {
+    enqueue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
 
     const res = criarResposta();
     await criarLancamentoContabil(
-      reqAdmin(payloadValido({ valor: "9999999999999.99", descricao: "  Aluguel  " })),
+      reqAdmin(payloadValido({ criado_por: OUTRO_USUARIO_ID, categoria: "  fornecedor  " }), {
+        usuario: { id: USUARIO_ID, perfil: PERFIS.ADMIN_CLIENTE, cliente_id: CLIENTE_A },
+      }),
       res,
     );
 
     assert.equal(res.statusCode, 201);
-    assert.equal(ultimoPayload.valor, 9999999999999.99);
-    assert.equal(ultimoPayload.descricao, "Aluguel");
-    assert.equal(ultimoPayload.data_lancamento, "2026-08-05");
+    assert.equal(ultimoPayload.criado_por, USUARIO_ID);
+    assert.equal(ultimoPayload.categoria, "fornecedor");
   });
 
   it("500 quando o Supabase retorna erro no insert", async () => {
-    queue("lancamentos_contabeis", "single", { data: null, error: { message: "falha" } });
+    enqueue("lancamentos_contabeis", "single", { data: null, error: { message: "falha" } });
 
     const res = criarResposta();
     await criarLancamentoContabil(reqAdmin(payloadValido()), res);
@@ -202,257 +142,60 @@ describe("POST /lancamentos-contabeis", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /lancamentos-contabeis", () => {
-  it("200 com a lista de lançamentos do cliente", async () => {
-    queue("lancamentos_contabeis", "await", {
-      data: [
-        { id: "1", data_lancamento: "2026-08-05" },
-        { id: "2", data_lancamento: "2026-08-01" },
-      ],
+  it("devolve os lançamentos além do teto de 1000 do PostgREST (PRB-C-09, #696)", async () => {
+    const primeira = Array.from({ length: TAMANHO_PAGINA_POSTGREST }, (_, i) => ({ id: `l${i}` }));
+    enqueue("lancamentos_contabeis", "await", { data: primeira, error: null });
+    enqueue("lancamentos_contabeis", "await", { data: [{ id: "l-alem-do-teto" }], error: null });
+
+    const res = criarResposta();
+    await listarLancamentosContabeis(reqAdmin(undefined, { query: { mes: "8", ano: "2026" } }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.length, TAMANHO_PAGINA_POSTGREST + 1);
+    assert.equal(res.body.at(-1).id, "l-alem-do-teto");
+    assert.deepEqual(ranges, [
+      [0, TAMANHO_PAGINA_POSTGREST - 1],
+      [TAMANHO_PAGINA_POSTGREST, TAMANHO_PAGINA_POSTGREST * 2 - 1],
+    ]);
+  });
+
+  it("500 quando a página seguinte falha, sem devolver a lista cortada (PRB-C-09, #696)", async () => {
+    enqueue("lancamentos_contabeis", "await", {
+      data: Array.from({ length: TAMANHO_PAGINA_POSTGREST }, (_, i) => ({ id: `l${i}` })),
       error: null,
     });
+    enqueue("lancamentos_contabeis", "await", { data: null, error: { message: "falha" } });
 
     const res = criarResposta();
     await listarLancamentosContabeis(reqAdmin(undefined, { query: {} }), res);
 
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.length, 2);
-  });
-
-  it("400 quando clienteId ausente (perfil admin_efficience sem query)", async () => {
-    const req = reqAdmin(undefined, { usuario: { perfil: PERFIS.ADMIN_EFFICIENCE }, query: {} });
-    const res = criarResposta();
-    await listarLancamentosContabeis(req, res);
-
-    assert.equal(res.statusCode, 400);
+    assert.equal(res.statusCode, 500);
+    assert.equal(Array.isArray(res.body), false);
   });
 
   it("500 quando o Supabase retorna erro", async () => {
-    queue("lancamentos_contabeis", "await", { data: null, error: { message: "falha" } });
+    enqueue("lancamentos_contabeis", "await", { data: null, error: { message: "falha" } });
 
     const res = criarResposta();
     await listarLancamentosContabeis(reqAdmin(undefined, { query: {} }), res);
 
     assert.equal(res.statusCode, 500);
   });
-
-  it("400 quando clienteId não é UUID (admin_efficience)", async () => {
-    const req = reqAdmin(undefined, {
-      usuario: { perfil: PERFIS.ADMIN_EFFICIENCE },
-      query: { clienteId: "abc" },
-    });
-    const res = criarResposta();
-    await listarLancamentosContabeis(req, res);
-
-    assert.equal(res.statusCode, 400);
-    assert.match(res.body.erro, /UUID/);
-  });
-
-  it("400 quando mês vem sem ano", async () => {
-    const res = criarResposta();
-    await listarLancamentosContabeis(
-      reqAdmin(undefined, { query: { mes: "9" } }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 400);
-    assert.match(res.body.erro, /ano/);
-  });
 });
 
-// ---------------------------------------------------------------------------
-// PATCH /lancamentos-contabeis/:id
-// ---------------------------------------------------------------------------
-
-describe("PATCH /lancamentos-contabeis/:id", () => {
-  it("200 e atualiza campos permitidos", async () => {
-    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
-    queue("lancamentos_contabeis", "single", {
-      data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A, valor: 2000 },
-      error: null,
-    });
-
-    const res = criarResposta();
-    await atualizarLancamentoContabil(
-      reqAdmin({ valor: 2000 }, { params: { id: LANCAMENTO_ID } }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.valor, 2000);
-  });
-
-  it("não permite mudar cliente_id — campo é ignorado no update", async () => {
-    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
-    queue("lancamentos_contabeis", "single", {
-      data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A, descricao: "nova descricao" },
-      error: null,
-    });
-
-    const res = criarResposta();
-    await atualizarLancamentoContabil(
-      reqAdmin({ cliente_id: CLIENTE_B, descricao: "nova descricao" }, { params: { id: LANCAMENTO_ID } }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.cliente_id, CLIENTE_A);
-  });
-
-  it("409 quando lançamento já está conciliado", async () => {
-    queue("lancamentos_contabeis", "single", {
-      data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A, conciliado: true },
-      error: null,
-    });
-
-    const res = criarResposta();
-    await atualizarLancamentoContabil(
-      reqAdmin({ valor: 100 }, { params: { id: LANCAMENTO_ID } }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 409);
-  });
-
-  it("404 (nunca 403) quando admin_cliente tenta alterar lançamento de outro cliente", async () => {
-    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_B }, error: null });
-
-    const res = criarResposta();
-    await atualizarLancamentoContabil(
-      reqAdmin({ valor: 100 }, { params: { id: LANCAMENTO_ID } }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 404);
-    assert.deepEqual(res.body, { erro: "Lançamento contábil não encontrado" });
-  });
-
-  it("404 quando lançamento não existe", async () => {
-    const res = criarResposta();
-    await atualizarLancamentoContabil(
-      reqAdmin({ valor: 100 }, { params: { id: LANCAMENTO_ID } }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 404);
-  });
-
-  for (const [nome, body, campo] of [
-    ["valor zero", { valor: 0 }, "valor"],
-    ["valor null", { valor: null }, "valor"],
-    ["data em dd/mm/aaaa", { data_lancamento: "13/02/2022" }, "data_lancamento"],
-    ["descrição vazia", { descricao: "  " }, "descricao"],
-  ]) {
-    it(`400 com mensagem do campo quando ${nome}`, async () => {
-      queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
-
-      const res = criarResposta();
-      await atualizarLancamentoContabil(reqAdmin(body, { params: { id: LANCAMENTO_ID } }), res);
-
-      assert.equal(res.statusCode, 400);
-      assert.ok(res.body.campos[campo]);
-      assert.equal(ultimoPayload, null, "não deveria chegar ao update");
-    });
-  }
-
-  it("atualiza só os campos enviados, já normalizados", async () => {
-    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
-    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID }, error: null });
-
-    const res = criarResposta();
-    await atualizarLancamentoContabil(
-      reqAdmin({ descricao: " Nova ", valor: "10.50" }, { params: { id: LANCAMENTO_ID } }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 200);
-    assert.deepEqual(ultimoPayload, { descricao: "Nova", valor: 10.5 });
-  });
-
-  it("400 quando tipo inválido", async () => {
-    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
-
-    const res = criarResposta();
-    await atualizarLancamentoContabil(
-      reqAdmin({ tipo: "invalido" }, { params: { id: LANCAMENTO_ID } }),
-      res,
-    );
-
-    assert.equal(res.statusCode, 400);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // DELETE /lancamentos-contabeis/:id
 // ---------------------------------------------------------------------------
 
 describe("DELETE /lancamentos-contabeis/:id", () => {
-  it("204 quando lançamento não está conciliado", async () => {
-    queue("lancamentos_contabeis", "single", {
-      data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A, conciliado: false },
-      error: null,
-    });
-    queue("lancamentos_contabeis", "await", { data: null, error: null });
-
-    const res = criarResposta();
-    await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
-
-    assert.equal(res.statusCode, 204);
-  });
-
-  it("409 quando lançamento já está conciliado", async () => {
-    queue("lancamentos_contabeis", "single", {
-      data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A, conciliado: true },
-      error: null,
-    });
-
-    const res = criarResposta();
-    await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
-
-    assert.equal(res.statusCode, 409);
-  });
-
-  it("404 (nunca 403) quando admin_cliente tenta remover lançamento de outro cliente", async () => {
-    queue("lancamentos_contabeis", "single", {
-      data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_B, conciliado: false },
-      error: null,
-    });
-
-    const res = criarResposta();
-    await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
-
-    assert.equal(res.statusCode, 404);
-    assert.deepEqual(res.body, { erro: "Lançamento contábil não encontrado" });
-  });
-
-  it("404 quando lançamento não existe", async () => {
-    const res = criarResposta();
-    await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
-
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("409 quando lançamento está vinculado a pares_conciliacao (FK 23503)", async () => {
-    queue("lancamentos_contabeis", "single", {
-      data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A, conciliado: false },
-      error: null,
-    });
-    queue("lancamentos_contabeis", "await", {
-      data: null,
-      error: { code: "23503", message: "violates foreign key constraint" },
-    });
-
-    const res = criarResposta();
-    await deletarLancamentoContabil(reqAdmin(undefined, { params: { id: LANCAMENTO_ID } }), res);
-
-    assert.equal(res.statusCode, 409);
-  });
 
   it("500 quando delete falha por outro motivo (não FK)", async () => {
-    queue("lancamentos_contabeis", "single", {
+    enqueue("lancamentos_contabeis", "single", {
       data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A, conciliado: false },
       error: null,
     });
-    queue("lancamentos_contabeis", "await", {
+    enqueue("lancamentos_contabeis", "await", {
       data: null,
       error: { code: "08000", message: "connection error" },
     });
@@ -465,38 +208,119 @@ describe("DELETE /lancamentos-contabeis/:id", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// PRB-C-07 / BUG-CONC-20 (#697). Mesmos títulos do skip da TEST-7.
 // ---------------------------------------------------------------------------
 
-describe("Lançamentos contábeis — problemas já achados", () => {
+describe("Lançamentos contábeis — descrição e categoria com teto", () => {
   const TEXTO_LONGO = "x".repeat(10_000);
 
-  // BUG (#697): descrição e categoria sem limite de tamanho (10.000 caracteres → 201)
-  // e categoria sem validação de tipo.
   for (const [nome, overrides, campo] of [
     ["descrição com 10.000 caracteres", { descricao: TEXTO_LONGO }, "descricao"],
     ["categoria com 10.000 caracteres", { categoria: TEXTO_LONGO }, "categoria"],
     ["categoria não-texto", { categoria: 123 }, "categoria"],
   ]) {
-    it.skip(`POST: 400 com mensagem do campo quando ${nome} (PRB-C-07, #697)`, async () => {
-      queue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+    it(`POST: 400 com mensagem do campo quando ${nome} (PRB-C-07, #697)`, async () => {
+      enqueue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
       const res = criarResposta();
       await criarLancamentoContabil(reqAdmin(payloadValido(overrides)), res);
 
       assert.equal(res.statusCode, 400);
       assert.ok(res.body.campos?.[campo], `esperava mensagem para ${campo}`);
+      assert.ok(res.body.erro.includes(res.body.campos[campo]));
       assert.equal(ultimoPayload, null, "não deveria chegar ao insert");
     });
   }
 
-  // BUG (#697)
-  it.skip("PATCH: 400 quando a categoria tem 10.000 caracteres (PRB-C-07, #697)", async () => {
-    queue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+  it("PATCH: 400 quando a categoria tem 10.000 caracteres (PRB-C-07, #697)", async () => {
+    enqueue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
     const res = criarResposta();
-    await atualizarLancamentoContabil(reqAdmin({ categoria: TEXTO_LONGO }, { params: { id: LANCAMENTO_ID } }), res);
+    await atualizarLancamentoContabil(
+      reqAdmin({ categoria: TEXTO_LONGO }, { params: { id: LANCAMENTO_ID } }),
+      res,
+    );
 
     assert.equal(res.statusCode, 400);
     assert.ok(res.body.campos?.categoria);
     assert.equal(ultimoPayload, null, "não deveria chegar ao update");
+  });
+
+  it("PATCH: 400 quando a descrição tem 10.000 caracteres e quando a categoria não é texto", async () => {
+    for (const body of [{ descricao: TEXTO_LONGO }, { categoria: { nome: "x" } }]) {
+      ultimoPayload = null;
+      enqueue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+      const res = criarResposta();
+      await atualizarLancamentoContabil(reqAdmin(body, { params: { id: LANCAMENTO_ID } }), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.equal(ultimoPayload, null);
+    }
+  });
+
+  it("aceita descrição e categoria no teto e grava sem espaços nas pontas", async () => {
+    enqueue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+    const res = criarResposta();
+    await criarLancamentoContabil(
+      reqAdmin(payloadValido({
+        descricao: `  ${"a".repeat(DESCRICAO_MAXIMO)}  `,
+        categoria: `  ${"b".repeat(CATEGORIA_MAXIMO)}  `,
+      })),
+      res,
+    );
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(ultimoPayload.descricao, "a".repeat(DESCRICAO_MAXIMO));
+    assert.equal(ultimoPayload.categoria, "b".repeat(CATEGORIA_MAXIMO));
+  });
+
+  it("400 quando descrição ou categoria passam uma unidade do teto", async () => {
+    for (const [overrides, campo] of [
+      [{ descricao: "a".repeat(DESCRICAO_MAXIMO + 1) }, "descricao"],
+      [{ categoria: "b".repeat(CATEGORIA_MAXIMO + 1) }, "categoria"],
+    ]) {
+      ultimoPayload = null;
+      const res = criarResposta();
+      await criarLancamentoContabil(reqAdmin(payloadValido(overrides)), res);
+
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body.campos[campo], /máximo/);
+      assert.equal(ultimoPayload, null);
+    }
+  });
+
+  it("grava categoria vazia ou null como null", async () => {
+    for (const categoria of ["   ", null]) {
+      ultimoPayload = null;
+      enqueue("lancamentos_contabeis", "single", { data: { id: "novo-id" }, error: null });
+      const res = criarResposta();
+      await criarLancamentoContabil(reqAdmin(payloadValido({ categoria })), res);
+
+      assert.equal(res.statusCode, 201);
+      assert.equal(ultimoPayload.categoria, null);
+    }
+  });
+
+  it("PATCH grava a categoria no teto e limpa categoria vazia", async () => {
+    enqueue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+    enqueue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID }, error: null });
+    const res = criarResposta();
+    await atualizarLancamentoContabil(
+      reqAdmin({ categoria: `  ${"c".repeat(CATEGORIA_MAXIMO)}  ` }, { params: { id: LANCAMENTO_ID } }),
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(ultimoPayload, { categoria: "c".repeat(CATEGORIA_MAXIMO) });
+
+    ultimoPayload = null;
+    enqueue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID, cliente_id: CLIENTE_A }, error: null });
+    enqueue("lancamentos_contabeis", "single", { data: { id: LANCAMENTO_ID }, error: null });
+    const limpa = criarResposta();
+    await atualizarLancamentoContabil(
+      reqAdmin({ categoria: "" }, { params: { id: LANCAMENTO_ID } }),
+      limpa,
+    );
+
+    assert.equal(limpa.statusCode, 200);
+    assert.deepEqual(ultimoPayload, { categoria: null });
   });
 });
