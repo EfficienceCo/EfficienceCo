@@ -478,14 +478,14 @@ não ativa o hook). `npm test` roda esses testes antes do executor. Nos testes d
 integração, a variável `PRE_PUSH_COMANDO` troca o `npm test` do hook por um
 comando falso; não a defina no uso normal.
 
-**Tempo:** só duas partes foram medidas: `npm run test:hooks` leva cerca de 12 s e a
-decisão do hook leva cerca de 0,2 s (10 execuções de `node .githooks/lib/executar.mjs`
-numa linha de push só de `docs/`, em clone temporário, Windows e Node 24: 0,18 a 0,22 s). O total de um push que roda tudo é uma
-**estimativa**, não a medição de um push real: esses 12 s mais cerca de 104 s do
-`npm test` da TEST-1 (103,7 s medidos em 30/10/2026, sem a primeira execução com
-download das imagens), ou seja, cerca de 115 s. A medição de ponta a ponta fica
-pendente para uma máquina com Docker. Push só de documentação, exclusão e tag não
-pagam nada disso.
+**Tempo:** medido em um `git push` real com o hook e o `npm test` completo (Docker), em 04/11/2026,
+no WSL2 (Ubuntu, Docker 29, Node 24, 12 CPUs, 7 GB de RAM), clone novo com remoto bare local, branch
+com uma linha alterada em `backend/src`: **596 s (≈ 10 min)**, dos quais 11 s do `test:hooks`, 575 s do
+executor da TEST-1 (banco descartável, 1455 testes do backend e 300 do agente) e o resto é a decisão
+do hook (~0,2 s). Foi **uma única execução**, com a máquina disputada por outras sessões de teste (load
+average ≈ 8,6 em 12 CPUs, só 3 GB livres), por isso o número é um teto pessimista: a medição anterior
+da TEST-1 em máquina livre foi 103,7 s (30/10/2026), o que dá cerca de 115 s por push. Conte com entre ~2
+e ~10 min conforme a carga da máquina. Push só de documentação, exclusão e tag não pagam nada disso.
 
 ---
 
