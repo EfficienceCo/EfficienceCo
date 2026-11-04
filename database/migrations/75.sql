@@ -1,7 +1,8 @@
 CREATE TABLE IF NOT EXISTS eventos_esocial (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   cliente_id UUID NOT NULL REFERENCES clientes(id),
-  funcionario_id UUID REFERENCES funcionarios(id),
+  -- A chave estrangeira é criada em 76.sql, após a tabela funcionarios.
+  funcionario_id UUID,
   tipo_evento TEXT NOT NULL,
   xml_gerado TEXT,
   status TEXT NOT NULL DEFAULT 'rascunho' CHECK (status IN ('rascunho','aprovado','transmitido','aceito','rejeitado')),

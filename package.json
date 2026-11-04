@@ -1,12 +1,15 @@
 {
   "scripts": {
     "dev": "concurrently -n backend,frontend -c blue,green --kill-others-on-fail \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
-    "dev:full": "concurrently -n backend,frontend,agente -c blue,green,yellow --kill-others-on-fail \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\" \"python agente/main.py\""
+    "dev:full": "concurrently -n backend,frontend,agente -c blue,green,yellow --kill-others-on-fail \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\" \"python agente/main.py\"",
+    "test": "node scripts/teste-678/executar.mjs",
+    "test:smoke": "node scripts/teste-678/executar.mjs --smoke"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.0"
   },
   "devDependencies": {
-    "concurrently": "^10.0.4"
+    "concurrently": "^10.0.4",
+    "supabase": "2.122.0"
   }
 }

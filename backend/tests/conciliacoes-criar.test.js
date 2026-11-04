@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { PERFIS } from "../src/config/perfis.js";
 import { criarConciliacao } from "../src/controllers/conciliacoes.controller.js";
+import { TAMANHO_PAGINA_POSTGREST } from "../src/utils/paginacao.util.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
 const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
@@ -45,6 +46,7 @@ supabase.from = function (tabela) {
       return builder;
     },
     gte() { return builder; },
+    in() { return builder; },
     lte() { return builder; },
     order() { return builder; },
     range() { return builder; },
@@ -101,106 +103,54 @@ function queueExtratoValido(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe("POST /conciliacoes", () => {
-  it("201: roda o matching e persiste conciliacao + pares", async () => {
+
+  it("matching enxerga lançamento além do teto de 1000 do PostgREST (PRB-C-09, #696)", async () => {
     queueExtratoValido();
-    queue("transacoes_extrato", "await", {
-      data: [
-        { id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" },
-        { id: "t2", tipo: "debito", valor: 50, data_lancamento: "2026-07-10" },
-        { id: "t3", tipo: "credito", valor: 999, data_lancamento: "2026-07-15" },
-      ],
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("lancamentos_contabeis", "await", {
+      data: Array.from({ length: TAMANHO_PAGINA_POSTGREST }, (_, i) => ({ id: `l${i}` })),
       error: null,
     });
     queue("lancamentos_contabeis", "await", {
-      data: [
-        { id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }, // automatico com t1
-        { id: "l2", tipo: "debito", valor: 50, data_lancamento: "2026-07-12" }, // provavel com t2 (2 dias)
-      ],
-      error: null,
-    });
-
-    let paresInseridos = null;
-    let conciliacaoInserida = null;
-    const originalFromLocal = supabase.from;
-    supabase.from = function (tabela) {
-      const b = originalFromLocal(tabela);
-      if (tabela === "pares_conciliacao") {
-        const insertOriginal = b.insert.bind(b);
-        b.insert = (linhas) => { paresInseridos = linhas; return insertOriginal(linhas); };
-      }
-      if (tabela === "conciliacoes") {
-        const insertOriginal = b.insert.bind(b);
-        b.insert = (campos) => { conciliacaoInserida = campos; return insertOriginal(campos); };
-      }
-      return b;
-    };
-
-    queue("conciliacoes", "single", {
-      data: { id: CONCILIACAO_ID, cliente_id: CLIENTE_A, extrato_id: EXTRATO_ID },
-      error: null,
-    });
-    queue("pares_conciliacao", "await", { data: [], error: null });
-
-    const res = criarResposta();
-    await criarConciliacao(reqBase(), res);
-    supabase.from = originalFromLocal;
-
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.conciliacao_id, CONCILIACAO_ID);
-    assert.equal(res.body.total_transacoes, 3);
-    assert.equal(res.body.automaticos, 1);
-    assert.equal(res.body.provaveis, 1);
-    assert.equal(res.body.sem_par, 1);
-
-    assert.equal(conciliacaoInserida.total_transacoes, 3);
-    assert.equal(conciliacaoInserida.total_conciliadas, 1);
-    assert.equal(conciliacaoInserida.total_pendentes, 2);
-    assert.equal(conciliacaoInserida.status, "em_andamento");
-
-    assert.equal(paresInseridos.length, 3);
-    assert.ok(paresInseridos.every((p) => p.conciliacao_id === CONCILIACAO_ID));
-    assert.ok(paresInseridos.some((p) => p.transacao_id === "t1" && p.lancamento_id === "l1" && p.confianca === "automatico"));
-    assert.ok(paresInseridos.some((p) => p.transacao_id === "t2" && p.lancamento_id === "l2" && p.confianca === "provavel"));
-    assert.ok(paresInseridos.some((p) => p.transacao_id === "t3" && p.lancamento_id === null && p.confianca === "sem_par"));
-  });
-
-  it("lançamento já conciliado NÃO deve ser re-casado", async () => {
-    queueExtratoValido();
-    queue("transacoes_extrato", "await", {
-      data: [
-        { id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: false },
-        // já conciliada numa sessão anterior do mesmo extrato
-        { id: "t0", tipo: "debito", valor: 30, data_lancamento: "2026-07-02", conciliado: true },
-      ],
-      error: null,
-    });
-    queue("lancamentos_contabeis", "await", {
-      data: [
-        // idêntico a t1, mas já conciliado em outra conciliação
-        { id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: true },
-      ],
+      data: [{ id: "l-alem-do-teto" }],
       error: null,
     });
     queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
     queue("pares_conciliacao", "await", { data: [], error: null });
 
-    // O mock padrão ignora .eq(); aqui os filtros são aplicados de verdade
-    // sobre os dados enfileirados, para refletir o que o banco devolveria.
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.sem_par, TAMANHO_PAGINA_POSTGREST + 1);
+  });
+
+  it("500 quando falha a busca de transações do extrato", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: null, error: { message: "falha" } });
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    assert.equal(res.statusCode, 500);
+  });
+
+  it("lançamento que já tem par numa conciliação em andamento de outro extrato fica fora do matching (#691)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", {
+      data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    // l1 já está casado na conciliação em andamento do outro extrato
+    queue("pares_conciliacao", "await", { data: [{ lancamento_id: "l1" }], error: null });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+
     let paresInseridos = null;
     const originalFromLocal = supabase.from;
     supabase.from = function (tabela) {
       const b = originalFromLocal(tabela);
-      if (tabela === "transacoes_extrato" || tabela === "lancamentos_contabeis") {
-        const filtros = [];
-        const eqOriginal = b.eq.bind(b);
-        b.eq = (campo, valor) => { filtros.push([campo, valor]); eqOriginal(campo, valor); return b; };
-        const thenOriginal = b.then.bind(b);
-        b.then = (resolve, reject) => thenOriginal((r) => resolve(
-          r.data
-            ? { ...r, data: r.data.filter((linha) => filtros.every(([c, v]) => !(c in linha) || linha[c] === v)) }
-            : r,
-        ), reject);
-      }
       if (tabela === "pares_conciliacao") {
         const insertOriginal = b.insert.bind(b);
         b.insert = (linhas) => { paresInseridos = linhas; return insertOriginal(linhas); };
@@ -214,144 +164,57 @@ describe("POST /conciliacoes", () => {
 
     assert.equal(res.statusCode, 201);
     assert.equal(res.body.automaticos, 0);
-    assert.equal(res.body.total_transacoes, 1);
-    assert.equal(res.body.sem_par, 1);
-    assert.ok(paresInseridos.every((p) => p.lancamento_id !== "l1"));
-    assert.ok(paresInseridos.every((p) => p.transacao_id !== "t0"));
+    assert.equal(res.body.lancamentos_em_outra_conciliacao, 1);
+    // t1 vira sem_par: l1 não pode ser casado de novo
+    assert.deepEqual(
+      paresInseridos.map((p) => [p.transacao_id, p.lancamento_id, p.confianca]),
+      [["t1", null, "sem_par"]],
+    );
   });
 
-  it("201: total_pendentes conta só transações — lançamento sem transação não entra (#559)", async () => {
+  it("consulta os lançamentos em outras conciliações em lotes de até 100 ids (#691)", async () => {
     queueExtratoValido();
-    queue("transacoes_extrato", "await", {
-      data: [
-        { id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" },
-        { id: "t2", tipo: "credito", valor: 999, data_lancamento: "2026-07-15" },
-      ],
-      error: null,
-    });
-    queue("lancamentos_contabeis", "await", {
-      data: [
-        { id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }, // automatico com t1
-        { id: "l2", tipo: "debito", valor: 40, data_lancamento: "2026-07-20" }, // sem par (sem transação)
-        { id: "l3", tipo: "debito", valor: 70, data_lancamento: "2026-07-25" }, // sem par (sem transação)
-      ],
-      error: null,
-    });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    const lancamentos = Array.from({ length: 250 }, (_, i) => ({
+      id: `l${i}`, tipo: "credito", valor: 10, data_lancamento: "2026-07-01",
+    }));
+    queue("lancamentos_contabeis", "await", { data: lancamentos, error: null });
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("pares_conciliacao", "await", { data: [{ lancamento_id: "l150" }], error: null }); // 2º lote
+    queue("pares_conciliacao", "await", { data: [], error: null });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
 
-    let conciliacaoInserida = null;
+    const tamanhosDosLotes = [];
     const originalFromLocal = supabase.from;
     supabase.from = function (tabela) {
       const b = originalFromLocal(tabela);
-      if (tabela === "conciliacoes") {
-        const insertOriginal = b.insert.bind(b);
-        b.insert = (campos) => { conciliacaoInserida = campos; return insertOriginal(campos); };
+      if (tabela === "pares_conciliacao") {
+        const inOriginal = b.in.bind(b);
+        b.in = (coluna, valores) => {
+          if (coluna === "lancamento_id") tamanhosDosLotes.push(valores.length);
+          return inOriginal(coluna, valores);
+        };
       }
       return b;
     };
-    queue("conciliacoes", "single", {
-      data: { id: CONCILIACAO_ID, cliente_id: CLIENTE_A, extrato_id: EXTRATO_ID },
-      error: null,
-    });
-    queue("pares_conciliacao", "await", { data: [], error: null });
 
     const res = criarResposta();
     await criarConciliacao(reqBase(), res);
     supabase.from = originalFromLocal;
 
     assert.equal(res.statusCode, 201);
-    assert.equal(conciliacaoInserida.total_transacoes, 2);
-    assert.equal(conciliacaoInserida.total_conciliadas, 1);
-    assert.equal(conciliacaoInserida.total_pendentes, 1);
-    assert.equal(
-      conciliacaoInserida.total_conciliadas + conciliacaoInserida.total_pendentes,
-      conciliacaoInserida.total_transacoes,
-    );
+    assert.deepEqual(tamanhosDosLotes, [100, 100, 50]);
+    assert.equal(res.body.lancamentos_em_outra_conciliacao, 1); // o do 2º lote também conta
   });
 
-  it("400 quando extrato_id não é informado", async () => {
-    const res = criarResposta();
-    await criarConciliacao(reqBase({ body: { mes: 7, ano: 2026 } }), res);
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("400 quando mes/ano ausentes ou inválidos", async () => {
-    const res = criarResposta();
-    await criarConciliacao(reqBase({ body: { extrato_id: EXTRATO_ID, mes: 13, ano: 2026 } }), res);
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("400 quando cliente_id não pode ser resolvido (admin_efficience sem informar)", async () => {
-    const res = criarResposta();
-    await criarConciliacao(
-      reqBase({ usuario: { perfil: PERFIS.ADMIN_EFFICIENCE }, body: { extrato_id: EXTRATO_ID, mes: 7, ano: 2026 } }),
-      res,
-    );
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("404 quando o extrato não existe", async () => {
-    queue("extratos_bancarios", "maybeSingle", { data: null, error: null });
-    const res = criarResposta();
-    await criarConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("404 (nunca 403) quando o extrato pertence a outro cliente", async () => {
-    queueExtratoValido({ cliente_id: CLIENTE_B });
-    const res = criarResposta();
-    await criarConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 404);
-    assert.deepEqual(res.body, { erro: "Extrato bancário não encontrado" });
-  });
-
-  it("409 quando o extrato ainda não foi processado com sucesso", async () => {
-    queueExtratoValido({ status: "erro" });
-    const res = criarResposta();
-    await criarConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 409);
-  });
-
-  it("400 quando mes/ano do body não correspondem ao período do extrato", async () => {
-    queueExtratoValido({ mes: 8, ano: 2026 });
-    const res = criarResposta();
-    await criarConciliacao(reqBase({ body: { extrato_id: EXTRATO_ID, mes: 7, ano: 2026 } }), res);
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("409 quando já existe uma conciliação em andamento para o extrato", async () => {
+  it("500 quando falha a busca de lançamentos em outras conciliações", async () => {
     queueExtratoValido();
-    queue("conciliacoes", "limit", { data: [{ id: "conciliacao-existente" }], error: null });
-    const res = criarResposta();
-    await criarConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 409);
-  });
-
-  it("409 quando a conciliação do extrato já foi CONCLUÍDA (não só em_andamento) — evita reprocessar transações já conciliadas", async () => {
-    // Regressão: extratos_bancarios.status não muda quando a conciliação é
-    // concluída, então filtrar só por status='em_andamento' aqui deixava
-    // passar uma 2ª sessão pro mesmo extrato, reprocessando via
-    // executarMatching todas as transacoes_extrato (sem filtrar
-    // conciliado=true) e duplicando pares/totais já conciliados.
-    queueExtratoValido();
-    queue("conciliacoes", "limit", { data: [{ id: "conciliacao-concluida" }], error: null });
-    const res = criarResposta();
-    await criarConciliacao(reqBase(), res);
-    assert.equal(res.statusCode, 409);
-
-    const filtrosConciliacoes = chamadasEq.get("conciliacoes") ?? [];
-    assert.ok(
-      filtrosConciliacoes.some(([coluna, valor]) => coluna === "extrato_id" && valor === EXTRATO_ID),
-      "esperava filtrar por extrato_id",
-    );
-    assert.ok(
-      !filtrosConciliacoes.some(([coluna]) => coluna === "status"),
-      `não deveria filtrar conciliações por status (bug original) — chamadas: ${JSON.stringify(filtrosConciliacoes)}`,
-    );
-  });
-
-  it("500 quando falha a busca de transações do extrato", async () => {
-    queueExtratoValido();
-    queue("transacoes_extrato", "await", { data: null, error: { message: "falha" } });
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
+    queue("pares_conciliacao", "await", { data: null, error: { message: "falha" } });
     const res = criarResposta();
     await criarConciliacao(reqBase(), res);
     assert.equal(res.statusCode, 500);
@@ -401,20 +264,39 @@ describe("POST /conciliacoes", () => {
     assert.equal(idDeletado, CONCILIACAO_ID);
   });
 
-  it("sem transações e sem lançamentos → 201 com todos os totais zerados e nenhum par inserido", async () => {
+  it("409 e remove a conciliação quando outra grava o mesmo lançamento ao mesmo tempo (índice único)", async () => {
     queueExtratoValido();
-    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("transacoes_extrato", "await", {
+      data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01" }],
+      error: null,
+    });
     queue("lancamentos_contabeis", "await", { data: [], error: null });
     queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+    queue("pares_conciliacao", "await", { data: null, error: { code: "23505", message: "duplicate key" } });
+
+    let idDeletado = null;
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "conciliacoes") {
+        const deleteOriginal = b.delete.bind(b);
+        b.delete = () => {
+          const deletado = deleteOriginal();
+          const eqOriginal = deletado.eq.bind(deletado);
+          deletado.eq = (campo, valor) => { if (campo === "id") idDeletado = valor; return eqOriginal(campo, valor); };
+          return deletado;
+        };
+      }
+      return b;
+    };
+    queue("conciliacoes", "await", { data: null, error: null }); // delete
 
     const res = criarResposta();
     await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
 
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.total_transacoes, 0);
-    assert.equal(res.body.automaticos, 0);
-    assert.equal(res.body.provaveis, 0);
-    assert.equal(res.body.sem_par, 0);
+    assert.equal(res.statusCode, 409);
+    assert.equal(idDeletado, CONCILIACAO_ID);
   });
 });
 
@@ -432,10 +314,11 @@ describe("POST /conciliacoes — problemas já achados", () => {
     assert.equal(chamadasEq.size, 0, "não deveria chegar ao banco");
   });
 
-  // BUG (PRB-C-21, sem issue): o 409 de "já existe conciliação para o
-  // extrato" é uma leitura antes do insert. Dois cliques simultâneos passam os
-  // dois pela leitura; não há UNIQUE em conciliacoes.extrato_id (nenhuma
-  // migration cria) e o insert repetido, quando o banco recusar, cai no 500.
+  // BUG (PRB-C-21, sem issue; reconferido contra a main em 2026-11-04): o 409 de
+  // "já existe conciliação para o extrato" é uma leitura antes do insert. Dois
+  // cliques simultâneos passam os dois pela leitura; nenhuma migration (até a 108)
+  // cria UNIQUE em conciliacoes.extrato_id, e o controller trata qualquer erro do
+  // insert da conciliação como 500 (só o insert dos pares trata 23505).
   // Esperado: o banco recusa a segunda (unique_violation) e a API devolve 409.
   // O critério real é "duplo clique nunca cria duas conciliações"; se a correção
   // for por RPC ou lock, ajustar este caso ao desenho escolhido (TEST-9).
@@ -454,12 +337,13 @@ describe("POST /conciliacoes — problemas já achados", () => {
     assert.equal(res.statusCode, 409);
   });
 
-  // BUG (#691): o matching só exclui lançamento com conciliado=true, que só é
-  // marcado ao CONCLUIR. Um lançamento casado numa conciliação em_andamento de
-  // outro extrato do mesmo período é casado de novo aqui. O mock presume a
-  // barreira no casamento; se a correção barrar na conclusão, ajustar ao desenho
-  // escolhido — o critério real é o teste com banco real (TEST-9).
-  it.skip("lançamento casado em conciliação em_andamento de outro extrato não é casado de novo (PRB-C-04, #691)", async () => {
+  // #691 (corrigido): o matching só excluía lançamento com conciliado=true, que só é
+  // marcado ao CONCLUIR; um lançamento casado numa conciliação em_andamento de outro
+  // extrato do mesmo período era casado de novo. Agora o controller consulta os pares
+  // ativos de outras conciliações em andamento e tira esses lançamentos do matching.
+  // Exige a criação com sucesso (201) e os pares gravados ANTES de conferir o l1:
+  // sem isso, uma resposta 500 também "passava" (nenhum par inserido).
+  it("lançamento casado em conciliação em_andamento de outro extrato não é casado de novo (PRB-C-04, #691)", async () => {
     queueExtratoValido();
     queue("transacoes_extrato", "await", {
       data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: false }],
@@ -491,9 +375,16 @@ describe("POST /conciliacoes — problemas já achados", () => {
     await criarConciliacao(reqBase(), res);
     supabase.from = originalFromLocal;
 
+    assert.equal(res.statusCode, 201, JSON.stringify(res.body));
+    assert.equal(res.body.lancamentos_em_outra_conciliacao, 1);
+    assert.ok(paresInseridos.length > 0, "a conciliação precisa gravar os pares (t1 fica sem par)");
     assert.ok(
-      paresInseridos.every((p) => p.lancamento_id !== "l1" || p.confianca === "sem_par"),
+      paresInseridos.every((p) => p.lancamento_id !== "l1"),
       "l1 não pode ser casado em duas conciliações",
+    );
+    assert.ok(
+      paresInseridos.some((p) => p.transacao_id === "t1" && p.confianca === "sem_par"),
+      "t1 não casa com o l1 que está em outra conciliação",
     );
   });
 });

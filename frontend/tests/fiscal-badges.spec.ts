@@ -97,6 +97,7 @@ test.describe('Fiscal — badges e navegação (issue #302)', () => {
     await expect(saida).toHaveClass(/bg-rose-100/);
     await expect(saida).toHaveClass(/text-rose-700/);
     await expect(page.getByText('123.456.789-09').filter({ visible: true })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'CNPJ/CPF emitente' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'CNPJ/CPF destinatário' })).toBeVisible();
 
     const cancelada = page.getByText('Cancelada', { exact: true }).filter({ visible: true }).first();

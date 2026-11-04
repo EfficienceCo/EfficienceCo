@@ -241,6 +241,7 @@ describe("desligarFuncionarioDeS2299", () => {
     });
 
     const { funcionario, erro } = await desligarFuncionarioDeS2299({
+      clienteId: CLIENTE_ID,
       funcionarioId: FUNC_ID,
       dadosFormulario: {
         dadosAdmissao: { desligamento: { data: "15/09/2026" } },
@@ -251,6 +252,7 @@ describe("desligarFuncionarioDeS2299", () => {
     assert.equal(funcionario.id, FUNC_ID);
     assert.deepEqual(updates[0].dados, { data_desligamento: "2026-09-15" });
     assert.ok(chamadas.some((c) => c.campo === "id" && c.valor === FUNC_ID));
+    assert.ok(chamadas.some((c) => c.campo === "cliente_id" && c.valor === CLIENTE_ID));
   });
 
   it("aceita desligamento.data e dataDesligamento como caminhos alternativos", async () => {
@@ -259,6 +261,7 @@ describe("desligarFuncionarioDeS2299", () => {
       error: null,
     });
     await desligarFuncionarioDeS2299({
+      clienteId: CLIENTE_ID,
       funcionarioId: FUNC_ID,
       dadosFormulario: { desligamento: { data: "2026-01-10" } },
     });
@@ -270,6 +273,7 @@ describe("desligarFuncionarioDeS2299", () => {
       error: null,
     });
     await desligarFuncionarioDeS2299({
+      clienteId: CLIENTE_ID,
       funcionarioId: FUNC_ID,
       dadosFormulario: { dataDesligamento: "2026-02-20" },
     });
@@ -284,6 +288,7 @@ describe("desligarFuncionarioDeS2299", () => {
     });
 
     await desligarFuncionarioDeS2299({
+      clienteId: CLIENTE_ID,
       funcionarioId: FUNC_ID,
       dadosFormulario: {},
     });
@@ -293,6 +298,7 @@ describe("desligarFuncionarioDeS2299", () => {
 
   it("recusa S-2299 sem funcionarioId", async () => {
     const { funcionario, erro } = await desligarFuncionarioDeS2299({
+      clienteId: CLIENTE_ID,
       funcionarioId: null,
       dadosFormulario: { dataDesligamento: "2026-09-01" },
     });
@@ -309,6 +315,7 @@ describe("desligarFuncionarioDeS2299", () => {
     });
 
     const { funcionario, erro } = await desligarFuncionarioDeS2299({
+      clienteId: CLIENTE_ID,
       funcionarioId: FUNC_ID,
       dadosFormulario: { dataDesligamento: "2026-09-01" },
     });
