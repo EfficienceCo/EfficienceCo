@@ -61,15 +61,45 @@ test("enviar tag nao roda nada", (t) => {
 test("tag enviada para refs/heads/ de outro commit e recusada sem rodar o comando", (t) => {
   const c = cenario(t);
   git0(c.trabalho, ["switch", "-q", "-c", "ruim"]);
-  const ruim = commitar(c.trabalho, "backend/a.js", "codigo sem teste\n");
+  commitar(c.trabalho, "backend/a.js", "codigo sem teste\n");
   git0(c.trabalho, ["tag", "v-ruim"]);
+  git0(c.trabalho, ["tag", "-a", "anot-ruim", "-m", "anotada"]);
   git0(c.trabalho, ["switch", "-q", "main"]);
   const r = c.push(["origin", "v-ruim:refs/heads/alvo"]);
   assert.notEqual(r.status, 0);
   assert.match(r.texto, /commit enviado nao e o da pasta/);
   assert.equal(c.refRemota("refs/heads/alvo"), null);
   assert.equal(c.execucoes().length, 0);
-  assert.notEqual(ruim, git0(c.trabalho, ["rev-parse", "HEAD"]));
+
+  const anotada = c.push(["origin", "anot-ruim:refs/heads/alvo"]);
+  assert.notEqual(anotada.status, 0);
+  assert.match(anotada.texto, /commit enviado nao e o da pasta/);
+  assert.equal(c.refRemota("refs/heads/alvo"), null);
+  assert.equal(c.execucoes().length, 0);
+});
+
+test("ref local que nao e commit enviada para refs/heads/ cancela o push (nunca libera)", (t) => {
+  const c = cenario(t);
+  const r = c.push(["origin", "HEAD^{tree}:refs/heads/alvo"]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.texto, /Erro inesperado/);
+  assert.equal(c.refRemota("refs/heads/alvo"), null);
+  assert.equal(c.execucoes().length, 0);
+});
+
+test("varias refspecs: tag para refs/heads/ de outro commit recusa mesmo junto de uma tag legitima", (t) => {
+  const c = cenario(t);
+  git0(c.trabalho, ["switch", "-q", "-c", "ruim"]);
+  commitar(c.trabalho, "backend/a.js", "codigo sem teste\n");
+  git0(c.trabalho, ["tag", "v-ruim"]);
+  git0(c.trabalho, ["switch", "-q", "main"]);
+  git0(c.trabalho, ["tag", "v-ok"]);
+  const r = c.push(["origin", "v-ok:refs/tags/v-ok", "v-ruim:refs/heads/alvo"]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.texto, /commit enviado nao e o da pasta/);
+  assert.equal(c.refRemota("refs/heads/alvo"), null);
+  assert.equal(c.refRemota("refs/tags/v-ok"), null);
+  assert.equal(c.execucoes().length, 0);
 });
 
 test("tag (leve e anotada) do HEAD enviada para refs/heads/ roda o comando e falha se o comando falhar", (t) => {
