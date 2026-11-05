@@ -3,10 +3,20 @@ name: Kanban automação
 # Move os cards do board "Esqueleto Efficience" conforme o ciclo de vida do PR.
 #   branch <issue>-... criada      -> In progress
 #   PR aberto (não draft)          -> Teste interno
-#   PR aprovado                    -> Fila de deploy
+#   PR aprovado (não draft)        -> Fila de deploy (draft aprovado segue em In progress)
 #   mudanças solicitadas / draft   -> In progress
 #   PR mergeado                    -> Done
-# Requer o secret PROJECT_TOKEN (PAT com escopo `project`): o GITHUB_TOKEN não alcança Projects de org.
+# Requer o secret PROJECT_TOKEN: o GITHUB_TOKEN não alcança Projects de org. O repo é privado e o
+# kanban-move.sh também lê issue/PR via GraphQL, então o PAT precisa de:
+#   - classic:      escopos `project` + `repo`
+#   - fine-grained: acesso ao repositório (Metadata: read, Pull requests: read, Issues: read)
+#                   + permissão da organização "Projects: read and write"
+#   - org com SAML SSO: o PAT precisa ser autorizado para a org (Configure SSO > Authorize)
+#   - fine-grained: o "Resource owner" tem que ser a ORGANIZAÇÃO, não a conta pessoal
+#   Ref.: https://github.github.com/gh-aw/reference/auth-projects/#personal-access-tokens
+# PROJECT_TOKEN é lido no passo de verificação (só checa se está vazio) e no "Mover cards" (acesso ao Project);
+# a leitura de PR (gh pr view) usa github.token.
+# Sem PROJECT_TOKEN o job falha (vermelho) de propósito. Lógica em .github/scripts (testes: test-kanban.sh).
 # Convenção de branch: <numero-da-issue>-descricao (ex.: 695-backend-criado-por).
 
 on:
@@ -32,10 +42,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verificar PROJECT_TOKEN
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: bash .github/scripts/kanban-checar-token.sh
+
       - name: Decidir destino e itens
         id: plan
         env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
           REVIEW_STATE: ${{ github.event.review.state }}
@@ -45,42 +60,15 @@ jobs:
           PR_BRANCH: ${{ github.event.pull_request.head.ref }}
           REF_NAME: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
-        run: |
-          status=""; items=""; branch="$REF_NAME"
-          case "$EVENT" in
-            create)
-              status="In progress" ;;
-            pull_request)
-              branch="$PR_BRANCH"; items="$PR_NUMBER"
-              case "$ACTION" in
-                opened|reopened|ready_for_review) [ "$PR_DRAFT" = "true" ] && status="In progress" || status="Teste interno" ;;
-                converted_to_draft) status="In progress" ;;
-                closed) [ "$PR_MERGED" = "true" ] && status="Done" ;;
-              esac ;;
-            pull_request_review)
-              branch="$PR_BRANCH"; items="$PR_NUMBER"
-              case "$(echo "$REVIEW_STATE" | tr '[:upper:]' '[:lower:]')" in
-                approved) status="Fila de deploy" ;;
-                changes_requested) status="In progress" ;;
-              esac ;;
-          esac
-          [ -n "$status" ] || { echo "Evento sem transição, nada a fazer"; echo "status=" >> "$GITHUB_OUTPUT"; exit 0; }
-
-          # Issue do nome da branch (<numero>-...) + issues que o PR fecha.
-          num="${branch%%-*}"
-          [[ "$num" =~ ^[0-9]+$ ]] && items="$items $num"
-          if [ -n "$PR_NUMBER" ]; then
-            closing=$(gh pr view "$PR_NUMBER" -R "$REPO" --json closingIssuesReferences --jq '.closingIssuesReferences[].number' || true)
-            items="$items $closing"
-          fi
-          items=$(echo $items | tr ' ' '\n' | awk 'NF && !s[$0]++' | tr '\n' ' ')
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          echo "items=$items" >> "$GITHUB_OUTPUT"
-          echo "Destino: $status | itens: $items"
+        run: bash .github/scripts/kanban-decidir.sh
 
       - name: Mover cards
-        if: steps.plan.outputs.status != '' && steps.plan.outputs.items != ''
+        if: steps.plan.outputs.status != '' && (steps.plan.outputs.items != '' || steps.plan.outputs.branch_items != '')
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           REPO: ${{ github.repository }}
-        run: bash .github/scripts/kanban-move.sh "${{ steps.plan.outputs.status }}" ${{ steps.plan.outputs.items }}
+          STATUS: ${{ steps.plan.outputs.status }}
+          ITEMS: ${{ steps.plan.outputs.items }}
+          # só o número vindo do nome da branch pode não existir (NOT_FOUND vira warning); os demais, não
+          TOLERANT_ITEMS: ${{ steps.plan.outputs.branch_items }}
+        run: bash .github/scripts/kanban-move.sh "$STATUS" $ITEMS $TOLERANT_ITEMS
