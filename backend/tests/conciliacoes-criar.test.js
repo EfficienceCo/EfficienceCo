@@ -299,3 +299,92 @@ describe("POST /conciliacoes", () => {
     assert.equal(idDeletado, CONCILIACAO_ID);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// ---------------------------------------------------------------------------
+
+describe("POST /conciliacoes — problemas já achados", () => {
+  // PRB-C-20 (#326): ano=0 passava na validação e o filtro de período abria o
+  // histórico inteiro de lançamentos do cliente para o matching.
+  it("400 quando ano=0, sem consultar extrato nem lançamentos (PRB-C-20)", async () => {
+    const res = criarResposta();
+    await criarConciliacao(reqBase({ body: { extrato_id: EXTRATO_ID, mes: 7, ano: 0 } }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(chamadasEq.size, 0, "não deveria chegar ao banco");
+  });
+
+  // BUG (PRB-C-21, sem issue; reconferido contra a main em 2026-11-04): o 409 de
+  // "já existe conciliação para o extrato" é uma leitura antes do insert. Dois
+  // cliques simultâneos passam os dois pela leitura; nenhuma migration (até a 108)
+  // cria UNIQUE em conciliacoes.extrato_id, e o controller trata qualquer erro do
+  // insert da conciliação como 500 (só o insert dos pares trata 23505).
+  // Esperado: o banco recusa a segunda (unique_violation) e a API devolve 409.
+  // O critério real é "duplo clique nunca cria duas conciliações"; se a correção
+  // for por RPC ou lock, ajustar este caso ao desenho escolhido (TEST-9).
+  it.skip("409 quando o insert da conciliação colide por unique_violation (duplo clique, PRB-C-21)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", { data: [], error: null });
+    queue("lancamentos_contabeis", "await", { data: [], error: null });
+    queue("conciliacoes", "single", {
+      data: null,
+      error: { code: "23505", message: "duplicate key value violates unique constraint" },
+    });
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+
+    assert.equal(res.statusCode, 409);
+  });
+
+  // #691 (corrigido): o matching só excluía lançamento com conciliado=true, que só é
+  // marcado ao CONCLUIR; um lançamento casado numa conciliação em_andamento de outro
+  // extrato do mesmo período era casado de novo. Agora o controller consulta os pares
+  // ativos de outras conciliações em andamento e tira esses lançamentos do matching.
+  // Exige a criação com sucesso (201) e os pares gravados ANTES de conferir o l1:
+  // sem isso, uma resposta 500 também "passava" (nenhum par inserido).
+  it("lançamento casado em conciliação em_andamento de outro extrato não é casado de novo (PRB-C-04, #691)", async () => {
+    queueExtratoValido();
+    queue("transacoes_extrato", "await", {
+      data: [{ id: "t1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: false }],
+      error: null,
+    });
+    queue("lancamentos_contabeis", "await", {
+      data: [{ id: "l1", tipo: "credito", valor: 100, data_lancamento: "2026-07-01", conciliado: false }],
+      error: null,
+    });
+    // l1 já está num par automático de outra conciliação em_andamento
+    queue("pares_conciliacao", "await", {
+      data: [{ conciliacao_id: "outra-conciliacao", transacao_id: "t-outro-extrato", lancamento_id: "l1", confianca: "automatico" }],
+      error: null,
+    });
+    queue("conciliacoes", "single", { data: { id: CONCILIACAO_ID }, error: null });
+
+    let paresInseridos = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      if (tabela === "pares_conciliacao") {
+        const insertOriginal = b.insert.bind(b);
+        b.insert = (linhas) => { paresInseridos = linhas; return insertOriginal(linhas); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await criarConciliacao(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 201, JSON.stringify(res.body));
+    assert.equal(res.body.lancamentos_em_outra_conciliacao, 1);
+    assert.ok(paresInseridos.length > 0, "a conciliação precisa gravar os pares (t1 fica sem par)");
+    assert.ok(
+      paresInseridos.every((p) => p.lancamento_id !== "l1"),
+      "l1 não pode ser casado em duas conciliações",
+    );
+    assert.ok(
+      paresInseridos.some((p) => p.transacao_id === "t1" && p.confianca === "sem_par"),
+      "t1 não casa com o l1 que está em outra conciliação",
+    );
+  });
+});

@@ -308,11 +308,39 @@ describe("PATCH /conciliacoes/:id/pares/:pareId/rejeitar", () => {
   });
 });
 
+
 // ---------------------------------------------------------------------------
 // Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
 // ---------------------------------------------------------------------------
 
 describe("Pares e conclusão — problemas já achados", () => {
+  // PRB-C-18 (#327): rejeitarPar não olhava confirmado_em e "desconfirmava" um
+  // provável já confirmado, voltando a transação para pendente.
+  it("rejeitar: 409 quando o par já foi confirmado, sem escrever nada (PRB-C-18)", async () => {
+    queueConciliacaoValida();
+    queueParValido({ confirmado_em: "2026-08-01T00:00:00.000Z" });
+    // A RPC diria "ok": só a checagem prévia de confirmado_em pode produzir o 409.
+    respostaRpc = { data: "novo-par", error: null };
+
+    const escritas = [];
+    const originalFromLocal = supabase.from;
+    supabase.from = function (tabela) {
+      const b = originalFromLocal(tabela);
+      for (const metodo of ["insert", "update", "delete"]) {
+        const original = b[metodo].bind(b);
+        b[metodo] = (campos) => { escritas.push({ tabela, metodo }); return original(campos); };
+      }
+      return b;
+    };
+
+    const res = criarResposta();
+    await rejeitarPar(reqBase(), res);
+    supabase.from = originalFromLocal;
+
+    assert.equal(res.statusCode, 409);
+    assert.deepEqual(escritas, []);
+  });
+
   // PRB-C-16 (#327): a conciliação virava 'concluida' antes de marcar
   // conciliado=true; se a marcação falhava, não havia como tentar de novo.
   for (const tabelaQueFalha of ["transacoes_extrato", "lancamentos_contabeis"]) {
@@ -343,4 +371,177 @@ describe("Pares e conclusão — problemas já achados", () => {
       assert.equal(statusGravado, null, "a conciliação tem que continuar em_andamento para o retry");
     });
   }
+});
+
+// Banco em memória com estado para os casos de paralelismo: cada consulta
+// cede a vez (setImmediate) como uma ida ao banco de verdade, então dois pedidos
+// em Promise.all intercalam as leituras do controller. Filtros de update
+// (.eq/.is/.in) valem de verdade.
+// As decisões de par (#690, migration 105) acontecem no banco, em
+// confirmar_par_conciliacao / rejeitar_par_conciliacao; `rpcEmMemoria` imita as duas
+// functions sobre as mesmas tabelas e roda sem ceder a vez, como a transação do
+// Postgres (condição, escrita e recálculo dos totais de uma vez). Mesma simulação de
+// conciliacoes-pares-concorrencia.test.js. Prova o que o controller faz com o
+// resultado (200/409, nada escrito fora da function); NÃO prova o SQL nem o lock —
+// isso é do teste com banco real (backend/tests/conciliacao/pares.test.js).
+function bancoEmMemoria(tabelas) {
+  return function from(tabela) {
+    const linhas = tabelas[tabela] ?? (tabelas[tabela] = []);
+    let operacao = "select";
+    let payload = null;
+    let devolverLinhas = false;
+    const filtros = [];
+    const casa = (linha) => filtros.every((filtro) => filtro(linha));
+
+    async function executar() {
+      await new Promise((resolve) => setImmediate(resolve));
+      if (operacao === "select") {
+        return { data: linhas.filter(casa).map((l) => ({ ...l })), error: null };
+      }
+      if (operacao === "update") {
+        const alvo = linhas.filter(casa);
+        alvo.forEach((linha) => Object.assign(linha, payload));
+        return { data: devolverLinhas ? alvo.map((l) => ({ ...l })) : null, error: null, count: alvo.length };
+      }
+      if (operacao === "insert") {
+        const novas = [].concat(payload).map((l, i) => ({ id: `novo-${linhas.length + i}`, confirmado_em: null, ...l }));
+        linhas.push(...novas);
+        return { data: devolverLinhas ? novas.map((l) => ({ ...l })) : null, error: null };
+      }
+      const restantes = linhas.filter((l) => !casa(l));
+      linhas.splice(0, linhas.length, ...restantes);
+      return { data: null, error: null };
+    }
+
+    const umaLinha = async () => {
+      const r = await executar();
+      return { ...r, data: Array.isArray(r.data) ? r.data[0] ?? null : r.data };
+    };
+
+    const b = {
+      select() { if (operacao !== "select") devolverLinhas = true; return b; },
+      insert(p) { operacao = "insert"; payload = p; return b; },
+      update(p) { operacao = "update"; payload = p; return b; },
+      delete() { operacao = "delete"; return b; },
+      eq(coluna, valor) { filtros.push((l) => l[coluna] === valor); return b; },
+      is(coluna, valor) { filtros.push((l) => (l[coluna] ?? null) === valor); return b; },
+      in(coluna, valores) { filtros.push((l) => valores.includes(l[coluna])); return b; },
+      maybeSingle: umaLinha,
+      single: umaLinha,
+      then(resolve, reject) { return executar().then(resolve, reject); },
+    };
+    return b;
+  };
+}
+
+// Imita as functions da migration 105 (SQL: database/migrations/105.sql). O recálculo
+// segue recalcular_totais_conciliacao: conciliadas = automáticos + prováveis confirmados;
+// pendentes = prováveis sem decisão + 'sem_par' que ainda têm transação.
+function rpcEmMemoria(tabelas) {
+  const recalcular = (conciliacaoId) => {
+    const pares = tabelas.pares_conciliacao;
+    const conciliacao = tabelas.conciliacoes.find((c) => c.id === conciliacaoId);
+    conciliacao.total_conciliadas = pares.filter(
+      (p) => p.confianca === "automatico" || (p.confianca === "provavel" && p.confirmado_em),
+    ).length;
+    conciliacao.total_pendentes = pares.filter(
+      (p) => (p.confianca === "provavel" && !p.confirmado_em) || (p.confianca === "sem_par" && p.transacao_id),
+    ).length;
+  };
+
+  return async function rpc(nome, args) {
+    await new Promise((resolve) => setImmediate(resolve)); // ida ao banco; daqui até o return é atômico
+    const par = tabelas.pares_conciliacao.find(
+      (p) => p.id === args.p_par_id && p.conciliacao_id === args.p_conciliacao_id,
+    );
+    const disponivel = Boolean(par) && par.confianca === "provavel" && !par.confirmado_em;
+
+    if (nome === "confirmar_par_conciliacao") {
+      if (!disponivel) return { data: false, error: null };
+      par.confirmado_por = args.p_usuario_id;
+      par.confirmado_em = "2026-08-01T00:00:00.000Z";
+      recalcular(args.p_conciliacao_id);
+      return { data: true, error: null };
+    }
+
+    assert.equal(nome, "rejeitar_par_conciliacao");
+    if (!disponivel) return { data: null, error: null };
+    const lancamentoId = par.lancamento_id;
+    Object.assign(par, { lancamento_id: null, confianca: "sem_par" });
+    const novo = {
+      id: `novo-${tabelas.pares_conciliacao.length}`, conciliacao_id: args.p_conciliacao_id,
+      transacao_id: null, lancamento_id: lancamentoId, confianca: "sem_par", confirmado_em: null,
+    };
+    tabelas.pares_conciliacao.push(novo);
+    return { data: novo.id, error: null };
+  };
+}
+
+describe("Pares em paralelo (#690)", () => {
+  const PAR_2 = "cccccccc-cccc-cccc-cccc-ccccccccccc2";
+  const PAR_3 = "cccccccc-cccc-cccc-cccc-ccccccccccc3";
+  let tabelas;
+  let originalFromLocal;
+  let originalRpcLocal;
+
+  beforeEach(() => {
+    tabelas = {
+      conciliacoes: [{
+        id: CONCILIACAO_ID, cliente_id: CLIENTE_A, extrato_id: null, mes: 7, ano: 2026,
+        status: "em_andamento", total_transacoes: 3, total_conciliadas: 0, total_pendentes: 3,
+      }],
+      pares_conciliacao: [PAR_ID, PAR_2, PAR_3].map((id, i) => ({
+        id, conciliacao_id: CONCILIACAO_ID, transacao_id: `t${i}`, lancamento_id: `l${i}`,
+        confianca: "provavel", confirmado_por: null, confirmado_em: null,
+      })),
+    };
+    originalFromLocal = supabase.from;
+    originalRpcLocal = supabase.rpc;
+    supabase.from = bancoEmMemoria(tabelas);
+    supabase.rpc = rpcEmMemoria(tabelas);
+  });
+
+  const restaurar = () => {
+    supabase.from = originalFromLocal;
+    supabase.rpc = originalRpcLocal;
+  };
+  const chamar = async (acao, pareId = PAR_ID) => {
+    const res = criarResposta();
+    await acao(reqBase({ params: { id: CONCILIACAO_ID, pareId } }), res);
+    return res.statusCode;
+  };
+  const conciliacao = () => tabelas.conciliacoes[0];
+  const paresDoLancamento = (lancamentoId) =>
+    tabelas.pares_conciliacao.filter((p) => p.lancamento_id === lancamentoId);
+
+  // Prova que o banco em memória (from + rpc) reproduz o comportamento sequencial
+  // — senão o caso de paralelismo abaixo não provaria nada.
+  it("sequencial: confirmar e depois rejeitar o mesmo par dá 200 e 409, totais 1/2", async () => {
+    try {
+      assert.equal(await chamar(confirmarPar), 200);
+      assert.equal(await chamar(rejeitarPar), 409);
+      assert.equal(conciliacao().total_conciliadas, 1);
+      assert.equal(conciliacao().total_pendentes, 2);
+      assert.equal(paresDoLancamento("l0").length, 1);
+    } finally {
+      restaurar();
+    }
+  });
+
+  // #690 (PRB-C-15): os totais eram lidos e gravados (+1/−1) sem operação atômica e
+  // confirmações paralelas de pares diferentes perdiam incrementos. Hoje o recálculo
+  // está dentro da function (migration 105).
+  // Os demais cenários do #690 (PRB-C-13: 3× confirmar e confirmar × rejeitar do mesmo
+  // par; PRB-C-14: rejeitar em duas abas) têm teste equivalente, ativo, em
+  // conciliacoes-pares-concorrencia.test.js — não repetidos aqui.
+  it("confirmar 3 pares diferentes em paralelo: totais 3/0 (PRB-C-15, #690)", async () => {
+    try {
+      const status = await Promise.all([PAR_ID, PAR_2, PAR_3].map((id) => chamar(confirmarPar, id)));
+      assert.deepEqual(status, [200, 200, 200]);
+      assert.equal(conciliacao().total_conciliadas, 3);
+      assert.equal(conciliacao().total_pendentes, 0);
+    } finally {
+      restaurar();
+    }
+  });
 });
