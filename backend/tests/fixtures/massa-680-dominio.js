@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { CONFIG_MASSA_680, criarMassaBase680, gerarCpfSintetico, gerarCnpjSintetico } from "./massa-680.js";
 
-function chaveNfe(documento, numero) {
+export function chaveNfe(documento, numero) {
   // NF-e: CPF ocupa as 14 posições da chave com zeros à esquerda (NT 2018.001).
   // O campo emitente/CPF continua com 11 dígitos; não é adaptado para o banco.
   const base = `352610${documento.padStart(14, "0")}55001${String(numero).padStart(9, "0")}1${String(numero).padStart(8, "0")}`;

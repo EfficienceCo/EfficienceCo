@@ -156,7 +156,8 @@ def test_processar_pasta_entrada_posta_e_move(pasta_nfe):
         mock_post.return_value = MagicMock()
         processar_pasta_nfe(str(inbox))
 
-    assert mock_post.called
+    # Spy (`wraps`): ler UMA vez garante que a assinatura conferida e os dados lançados vêm do
+    # mesmo conteúdo do arquivo (signature wrapping, PRB-E-14).
     assert mock_ler_xml.call_count == 1
     payload = mock_post.call_args.args[1]
     assert payload["tipo"] == "entrada"
@@ -484,7 +485,6 @@ def test_falha_mover_nao_identificado_nao_aborta_pasta(pasta_nfe):
         mock_post.return_value = MagicMock()
         processar_pasta_nfe(str(inbox))
 
-    assert mock_post.called
     assert mock_post.call_args.args[1]["tipo"] == "entrada"
     assert quebrado.is_file()
     assert (inbox / "b-valido.xml").is_file()
@@ -994,6 +994,7 @@ def test_evento_cancelamento_cancela_e_arquiva(pasta_nfe):
         mock_post.return_value = MagicMock()
         processar_pasta_nfe(str(inbox))
 
+    # O evento só traz a chave: cancelar não consulta o cadastro (GET /clientes/por-cnpj).
     mock_lookup.assert_not_called()
     assert mock_post.call_args.args[0] == "/lancamentos-fiscais/cancelar"
     payload = mock_post.call_args.args[1]
@@ -1057,6 +1058,7 @@ def test_evento_cancelamento_sem_nota_mantem_para_retentar(pasta_nfe):
     assert (inbox / "cancelamento.xml.espera-cancel").is_file()
     assert not (inbox / "eventos_cancelamento" / "cancelamento.xml").exists()
     assert not (inbox / "eventos_pendentes" / "cancelamento.xml").exists()
+    # Dentro da espera de 90 s não há aviso ao painel.
     mock_evento.assert_not_called()
 
 

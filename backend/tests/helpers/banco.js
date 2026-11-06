@@ -106,3 +106,14 @@ export function criarCenarioBanco() {
     },
   };
 }
+
+// Lê uma tabela inteira ordenada por `ordem` (e filtrada por igualdade em `filtros`), para conferir o
+// que o backend gravou. Lança com o nome da tabela e a mensagem do banco se a leitura falhar.
+export async function lerTabela(banco, tabela, ordem = "id", filtros = {}) {
+  let consulta = banco.from(tabela).select("*");
+  for (const coluna of [].concat(ordem)) consulta = consulta.order(coluna);
+  for (const [coluna, valor] of Object.entries(filtros)) consulta = consulta.eq(coluna, valor);
+  const { data, error } = await consulta;
+  if (error) throw new Error(`Falha lendo ${tabela}: ${error.message}`);
+  return data;
+}

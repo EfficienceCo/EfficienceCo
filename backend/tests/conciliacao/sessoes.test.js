@@ -10,8 +10,9 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   iniciarBateria, fotografar, chamar, ator, atoresDe, buscarLinha, buscarLinhas, criarExtratoProcessado,
-  criarLancamentos, montarCenarioNovembro, montarSessaoComMuitosPares, provarOutroEscritorio404, conhecido, UUID_INEXISTENTE, PERFIL, paraEpoch,
+  criarLancamentos, montarCenarioNovembro, montarSessaoComMuitosPares, provarOutroEscritorio404, UUID_INEXISTENTE, PERFIL, paraEpoch,
 } from "../helpers/conciliacao-http.js";
+import { conhecido } from "../helpers/bug-conhecido.js";
 
 const porId = (a, b) => String(a.id).localeCompare(String(b.id));
 

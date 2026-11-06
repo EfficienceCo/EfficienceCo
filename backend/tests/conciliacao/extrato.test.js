@@ -9,9 +9,10 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   iniciarBateria, fotografar, chamar, ator, atoresDe, buscarLinha, buscarLinhas, criarExtratoProcessado,
-  montarOfx, OFX_NOVEMBRO, formularioOfx, hashDoArquivo, provarOutroEscritorio404, conhecido,
+  montarOfx, OFX_NOVEMBRO, formularioOfx, hashDoArquivo, provarOutroEscritorio404,
   UUID_INEXISTENTE, PERFIL, paraEpoch,
 } from "../helpers/conciliacao-http.js";
+import { conhecido } from "../helpers/bug-conhecido.js";
 
 describe("TEST-9: POST /conciliacoes/extrato (upload do OFX)", { timeout: 300_000 }, () => {
   let bateria; let api; let banco; let A; let B;

@@ -11,8 +11,9 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  iniciarBateria, fotografar, chamar, ator, formularioOfx, montarOfx, OFX_NOVEMBRO, conhecido, UUID_INEXISTENTE, PERFIL,
+  iniciarBateria, fotografar, chamar, ator, formularioOfx, montarOfx, OFX_NOVEMBRO, UUID_INEXISTENTE, PERFIL,
 } from "../helpers/conciliacao-http.js";
+import { conhecido } from "../helpers/bug-conhecido.js";
 
 const MOTIVO = "BUG PRB-C-48 (achado novo, sem issue; precisa de issue `bug`): admin_efficience com cliente_id inválido chega ao banco e a resposta é 500";
 
