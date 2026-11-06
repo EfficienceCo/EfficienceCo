@@ -1,0 +1,74 @@
+name: Kanban automação
+
+# Move os cards do board "Esqueleto Efficience" conforme o ciclo de vida do PR.
+#   branch <issue>-... criada      -> In progress
+#   PR aberto (não draft)          -> Teste interno
+#   PR aprovado (não draft)        -> Fila de deploy (draft aprovado segue em In progress)
+#   mudanças solicitadas / draft   -> In progress
+#   PR mergeado                    -> Done
+# Requer o secret PROJECT_TOKEN: o GITHUB_TOKEN não alcança Projects de org. O repo é privado e o
+# kanban-move.sh também lê issue/PR via GraphQL, então o PAT precisa de:
+#   - classic:      escopos `project` + `repo`
+#   - fine-grained: acesso ao repositório (Metadata: read, Pull requests: read, Issues: read)
+#                   + permissão da organização "Projects: read and write"
+#   - org com SAML SSO: o PAT precisa ser autorizado para a org (Configure SSO > Authorize)
+#   - fine-grained: o "Resource owner" tem que ser a ORGANIZAÇÃO, não a conta pessoal
+#   Ref.: https://github.github.com/gh-aw/reference/auth-projects/#personal-access-tokens
+# PROJECT_TOKEN é lido no passo de verificação (só checa se está vazio) e no "Mover cards" (acesso ao Project);
+# a leitura de PR (gh pr view) usa github.token.
+# Sem PROJECT_TOKEN o job falha (vermelho) de propósito. Lógica em .github/scripts (testes: test-kanban.sh).
+# Convenção de branch: <numero-da-issue>-descricao (ex.: 695-backend-criado-por).
+
+on:
+  create:
+  pull_request:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: kanban-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'create' || github.ref_type == 'branch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar PROJECT_TOKEN
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: bash .github/scripts/kanban-checar-token.sh
+
+      - name: Decidir destino e itens
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/kanban-decidir.sh
+
+      - name: Mover cards
+        if: steps.plan.outputs.status != '' && (steps.plan.outputs.items != '' || steps.plan.outputs.branch_items != '')
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          REPO: ${{ github.repository }}
+          STATUS: ${{ steps.plan.outputs.status }}
+          ITEMS: ${{ steps.plan.outputs.items }}
+          # só o número vindo do nome da branch pode não existir (NOT_FOUND vira warning); os demais, não
+          TOLERANT_ITEMS: ${{ steps.plan.outputs.branch_items }}
+        run: bash .github/scripts/kanban-move.sh "$STATUS" $ITEMS $TOLERANT_ITEMS
