@@ -440,3 +440,23 @@ describe("parseOfx: arredondamento e identidade (#692)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Problemas já achados (catálogo do TEST-7, vault: referencias/catalogo-problemas-viram-teste-2026-10)
+// ---------------------------------------------------------------------------
+
+describe("parseOfx — problemas já achados", () => {
+  // PRB-C-36 (baseline do QA-C 10-12): banco BR exporta TRNAMT com vírgula decimal.
+  it("aceita TRNAMT com vírgula decimal (-1234,56)", () => {
+    const resultado = parseOfx(extratoComTransacoes(`<STMTTRN>
+<TRNTYPE>DEBIT
+<DTPOSTED>20260705
+<TRNAMT>-1234,56
+<FITID>V1
+<MEMO>TARIFA
+</STMTTRN>`));
+
+    assert.equal(resultado.transacoes[0].valor, 1234.56);
+    assert.equal(resultado.transacoes[0].tipo, "debito");
+  });
+});
