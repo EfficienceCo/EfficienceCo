@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><NFe><infNFe versao="4.00" Id="NFe35250144555666000181559120000000021202610145"><ide><cUF>35</cUF><natOp>Venda</natOp><mod>55</mod><serie>912</serie><nNF>2</nNF><dhEmi>2025-01-20T09:00:00-03:00</dhEmi><tpNF>1</tpNF></ide><emit><CNPJ>44555666000181</CNPJ><xNome>Fornecedor Alfa Ltda</xNome></emit><dest><CNPJ>11111111000191</CNPJ><xNome>Destinatario Beta</xNome></dest><det nItem="1"><prod><cProd>1</cProd><xProd>Item QA-E</xProd><NCM>19059090</NCM><CFOP>6102</CFOP><vProd>987.65</vProd></prod></det><total><ICMSTot><vBC>987.65</vBC><vICMS>177.78</vICMS><vPIS>16.30</vPIS><vCOFINS>75.06</vCOFINS><vNF>987.65</vNF></ICMSTot></total></infNFe><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#NFe35250144555666000181559120000000021202610145"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>KWwiQh6DbjlbRJ/hbyL2bwFPjlXaVNLF9t14KbKHGsM=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>oNAcdBRGqE3z6JimbOj3PetzHoILiPEY1vm5tBBYYbdGwDIHCMkO7/3+yLfwKW5sk+vFjRpMmBpbZqg3cWvhPY2CGcdWskGp9L748UHJX5tzWxk1q++BZg2Ia1lA3plbNgcl5hU1T72hx1tFWC67a4h1wM/nouxGMV7AUKw60XGPk7OuNUeYBJFfJVUZ75uClJwxJ3TdmWDSLLEuaAS5z77zJvpS3OAhv5YCJgh6QY74j9TWNVo68jGXRevvSq3eVEtUQfyzU+lx1XiWCh9m6NF7YwNGa7ZC6lqHkMMUIQd03pPLZK5yGHA6J9hXaBr0dQR70B5aDgIke0zavV2gPg==</ds:SignatureValue><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIIDXjCCAkagAwIBAgIUDgle8Of643F33UWt3TazuSgBWsMwDQYJKoZIhvcNAQEL
+BQAwVDEeMBwGA1UEAwwVQ2VydGlmaWNhZG8gdGVzdGUgSUNQMRcwFQYDVQQFEw40
+NDU1NTY2NjAwMDE4MTEZMBcGBWBMAQMDDA40NDU1NTY2NjAwMDE4MTAeFw0yNjEw
+MzAxNDAzMzlaFw0yNzEwMzExNDAzMzlaMFQxHjAcBgNVBAMMFUNlcnRpZmljYWRv
+IHRlc3RlIElDUDEXMBUGA1UEBRMONDQ1NTU2NjYwMDAxODExGTAXBgVgTAEDAwwO
+NDQ1NTU2NjYwMDAxODEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCt
+5D9QxLTPUVRWcBcK4zpSRH31n10lQlbTdMlcyxIhmxF0aMCBujhWN35i7+DuigDm
+QsBI0siRFbVnh70fHux8tBDY1XuZLGHvW5hQcitp/pccKP07Rth/gjoyx1jZMFWW
+/rNxLhfuX4Go5HnvSoWfFPqokHLpBvgcMs5SHVwjKjTtFwRini3N1I7CazpdKz5T
+989tVxBIBw3mVm33dWfJzBRmAEMDaWTkWbMbvyNXf/UrWb+8Eyc8VXfzzmU54BZX
+IAOJxfBIdkL6ZZXK58BEt+sPM/2kraHQ48yPswU0vuLiS//tf+qzOpzvD6m2kI13
+HaPGi5qhjMU1npC7DIqLAgMBAAGjKDAmMCQGA1UdEQQdMBugGQYFYEwBAwOgEBMO
+NDQ1NTU2NjYwMDAxODEwDQYJKoZIhvcNAQELBQADggEBAGxWyYYHNKZGw1YTcdEO
+u+1ySZ8kGOIcoFa8zsnoqfxbGi861BOWZijZ7k1SypCkI7VFSw59H88Iz4nMNsi/
+oh9SsCQR8I4869SntvHPOaDZ/2YgNpsSb1hn/ZhWfTkvhywmk9CQ5zmri4rhaUhu
+Vb2KmDhIXaZG1oYKPrhzu5L3uGM7WFQndXyef60CFkhQKIwF6XmJuOUo9kkw7Ynj
+6gWlzF7R527XX1fZg7jzu/XZfPeM5oUsefBu1nFESHa3/glozRqxCgzZZQX08mZ2
+hca5C37ddW0GlDFgb4LPJr5aGMvi+WBpdzHmQVt2v68QVp2NDGm99wo4IBxIBkRJ
+i2o=
+</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature></NFe><protNFe versao="4.00"><infProt><chNFe>35250144555666000181559120000000021202610145</chNFe><cStat>100</cStat><xMotivo>x</xMotivo><nProt>135250000000001</nProt></infProt></protNFe></nfeProc>
