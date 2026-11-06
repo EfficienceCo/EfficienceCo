@@ -344,6 +344,32 @@ describe("POST /conciliacoes/extrato", () => {
     assert.equal(res.body.erro, "Erro ao registrar recusa do período do extrato");
   });
 
+  // #693 (PRB-C-25): o período informado precisa bater com as datas do OFX e ficar na faixa
+  // (mês 1..12, ano 2020..9999). OFX do helper é de julho/2026 (05/07 e 10/07).
+  it("400 quando o mês/ano informado não bate com as datas do OFX ou está fora da faixa (PRB-C-25, #693)", async () => {
+    const casos = [
+      { body: { mes: "4", ano: "2024" }, campos: ["ano", "mes"], gravaExtrato: true }, // OFX é de julho/2026
+      { body: { mes: "6", ano: "2026" }, campos: ["ano", "mes"], gravaExtrato: true }, // mês errado, ano certo
+      { body: { mes: "13", ano: "2026" }, campos: ["mes"] },
+      { body: { mes: "7", ano: "1800" }, campos: ["ano"] },
+    ];
+    for (const { body, campos, gravaExtrato } of casos) {
+      if (gravaExtrato) {
+        queue("extratos_bancarios", "single", { data: { id: EXTRATO_ID, cliente_id: CLIENTE_A }, error: null });
+        queue("extratos_bancarios", "await", { data: null, error: null }); // update de recusa (status erro, hash nulo)
+      }
+
+      const res = criarResposta();
+      await criarConciliacaoExtrato(reqUpload({ body }), res);
+
+      assert.equal(res.statusCode, 400, `body ${JSON.stringify(body)} deu ${res.statusCode}`);
+      assert.deepEqual(Object.keys(res.body.campos).sort(), campos, `campos de ${JSON.stringify(body)}`);
+      if (gravaExtrato) {
+        assert.match(res.body.erro, /mes\/ano informados não correspondem às datas do extrato \(período do arquivo: 7\/2026\)/);
+      }
+    }
+  });
+
   it("500 quando falha o insert inicial de extratos_bancarios", async () => {
     queue("extratos_bancarios", "single", { data: null, error: { message: "falha de conexão" } });
 
