@@ -173,8 +173,11 @@ precisa de validação; o workflow será tratado na issue #681.
 # Confere o banco real: migrations, inserção, leitura e remoção de um cliente sintético
 npm run test:smoke
 
-# Roda todos os testes automáticos do backend e do agente Python
+# Roda os testes do hook pre-push e depois todos os automáticos do backend e do agente Python
 npm test
+
+# Só os testes do hook pre-push (rápidos, sem Docker)
+npm run test:hooks
 
 # Confira imediatamente o código de saída no PowerShell
 $LASTEXITCODE
@@ -420,6 +423,69 @@ ou execução em CI/Linux.
 O esquema atual não modela escritório → vários clientes; esse critério aguarda
 alinhamento com João. A #680 permanece parcial enquanto o requisito de
 escritórios/clientes não tiver representação e cobertura correspondentes.
+
+## Testes antes de cada push
+
+Um hook opcional do Git roda `npm test` (os mesmos testes que o CI vai rodar)
+antes de cada `git push` e cancela o envio se algo falhar. Assim o teste
+quebrado aparece na sua máquina, não depois do push.
+
+**Ativar (uma vez por clone):**
+
+```powershell
+npm run hooks:install   # é só: git config core.hooksPath .githooks
+```
+
+O hook não é ativado por `npm install`/`npm ci`: nada no `prepare` ou
+`postinstall`, então Railway, Vercel e CI não são afetados. Precisa de Node no
+PATH (Node 24, como em "Testes automatizados"; o `test:hooks` usa o glob do
+`node --test`, que só existe a partir do Node 21) e das mesmas dependências de
+"Testes automatizados" (Docker incluso).
+
+**O que ele faz:**
+
+- roda `npm test` e cancela o push se falhar; no fim mostra o tempo gasto;
+- push que só muda `*.md`, `docs/` ou `LICENSE` pula os testes (mover código para
+  `docs/` ou renomeá-lo para `.md` conta como código e roda os testes);
+- apagar branch e enviar tag não roda nada. O hook decide pelo **destino remoto**, não pelo
+  nome local: `git push origin v1:refs/tags/v1` é tag e passa; `git push origin v1:refs/heads/x`
+  envia código para um branch, então segue as mesmas regras de qualquer branch (inclusive a
+  checagem de HEAD);
+- branch novo é comparado com `origin/main` para decidir se pula (se o clone não
+  tem `origin/main`, rode `git fetch origin`; sem base ele roda tudo). Vale também
+  ao empurrar para outro remoto que não seja o `origin`: a base continua sendo `origin/main`;
+- se a versão remota do branch não existe no seu clone (comum em `--force` depois
+  de outra pessoa empurrar), ele avisa para rodar `git fetch` e roda tudo.
+
+**Quando recusa o push:**
+
+- **alteração não commitada** (inclui arquivos novos não rastreados): os testes
+  rodariam sobre a pasta e não sobre o que vai ser enviado. A mensagem lista os
+  arquivos; commite, `git stash -u` ou descarte;
+- **o commit enviado não é o da pasta**: em `feat-bom`, `git push origin feat-ruim`
+  testaria `feat-bom`. Faça `git switch feat-ruim` e tente de novo, um branch por vez.
+
+As duas recusas só valem quando os testes iriam rodar; um push só de documentação
+passa mesmo com a pasta suja.
+
+**Pular o hook:** `git push --no-verify`. O CI pega o que escapar.
+
+**Desativar:** `git config --unset core.hooksPath`.
+
+**Testes do hook:** `npm run test:hooks` (a decisão pura, o hook num repositório
+temporário com `git push` para um remoto local, e a garantia de que o `package.json`
+não ativa o hook). `npm test` roda esses testes antes do executor. Nos testes de
+integração, a variável `PRE_PUSH_COMANDO` troca o `npm test` do hook por um
+comando falso; não a defina no uso normal.
+
+**Tempo:** medido em um `git push` real com o hook e o `npm test` completo (Docker), em 04/11/2026,
+no WSL2 (Ubuntu, Docker 29, Node 24, 12 CPUs, 7 GB de RAM), clone novo com remoto bare local, branch
+com uma linha alterada em `backend/src`: **596 s (≈ 10 min)**, dos quais 11 s do `test:hooks`, 575 s do
+executor da TEST-1 (banco descartável, 1455 testes do backend e 300 do agente) e o resto é a decisão
+do hook (~0,2 s). Foi **uma única execução**, com a máquina disputada por outras sessões de teste (load
+average ≈ 8,6 em 12 CPUs, só 3 GB livres), por isso o número é um teto pessimista: a medição anterior
+da TEST-1 em máquina livre foi 103,7 s (30/10/2026), o que dá cerca de 115 s por push. Conte com entre ~2
+e ~10 min conforme a carga da máquina. Push só de documentação, exclusão e tag não pagam nada disso.
 
 ---
 

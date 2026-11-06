@@ -1,0 +1,7 @@
+#!/bin/sh
+# Hook opcional: ative com `npm run hooks:install` (veja "Testes antes de cada push" no README).
+if ! command -v node >/dev/null 2>&1; then
+  echo "[pre-push] Node.js nao encontrado no PATH; o hook nao consegue decidir. Instale o Node ou use git push --no-verify." >&2
+  exit 1
+fi
+exec node "$(dirname "$0")/lib/executar.mjs" "$@"
