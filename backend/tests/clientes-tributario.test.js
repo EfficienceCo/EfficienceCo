@@ -285,6 +285,19 @@ describe("atualizarCliente — campos tributários", () => {
     }
   });
 
+  // PRB-AP-11 / #615 — receita negativa no cadastro (POST). O PATCH está no teste
+  // acima; competência futura em "historico_receita com competência futura".
+  it("PRB-AP-11: 400 quando a receita do histórico é negativa (criar)", async () => {
+    const res = criarResposta();
+    await criarCliente(
+      { body: { nome: "Alfa", historico_receita: [{ mes: 8, ano: 2025, receita: -1 }] } },
+      res,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(ultimaOperacao("insert"), undefined);
+  });
+
   it("400 quando o histórico não é uma lista", async () => {
     queueClienteExistente();
 

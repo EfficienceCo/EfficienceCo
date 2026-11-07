@@ -172,6 +172,27 @@ describe("POST /apuracoes", () => {
     assert.equal(insert.payload.folha_status, null);
   });
 
+  // PRB-AP-08 / BUG-APUR-11 / #611 — o POST de Anexo II, III e IV também grava
+  // folha_status null (não o DEFAULT 'pendente' da coluna).
+  for (const anexo of ["II", "III", "IV"]) {
+    it(`PRB-AP-08: POST Anexo ${anexo} grava folha_status null`, async () => {
+      queueSemDuplicata();
+      queueCliente(anexo, { nome: "Cliente Teste" });
+      queueNotas([
+        { valor_total: 40000, data_emissao: "2025-09-15", status: "ativa" },
+        { valor_total: 45000, data_emissao: "2026-08-10", status: "ativa" },
+      ]);
+      queue("apuracoes", "single", { data: { id: "nova-apuracao", status: "rascunho" }, error: null });
+
+      const res = criarResposta();
+      await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
+
+      assert.equal(res.statusCode, 201);
+      const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+      assert.equal(insert.payload.folha_status, null);
+    });
+  }
+
   it("422 quando regime não é simples_nacional", async () => {
     const res = criarResposta();
     await dispararApuracao(reqAdmin({ body: payloadValido({ regime: "lucro_presumido" }) }), res);
