@@ -32,6 +32,14 @@ function resolverFolhaStatus(anexoOriginal, semDadosFolha) {
   return semDadosFolha ? FOLHA_STATUS.PENDENTE : FOLHA_STATUS.VERIFICADO;
 }
 
+// Rascunho provisório do Anexo V (#619): criado sem a folha dos 12 meses, com
+// o DAS no pior caso e fator_r = 0 como sentinela. Gravado, ele se reconhece
+// por fator_r preenchido (origem Anexo V) sem folha12. É um estado válido, não
+// dado corrompido: quem reconstrói o cálculo precisa saber disso (DAS-1 / #725).
+function ehProvisorioSemFolha(apuracao) {
+  return apuracao.fator_r != null && apuracao.folha12 == null;
+}
+
 // GET usa clienteId (camelCase) — mesmo padrão do dashboard em lancamentos-fiscais.controller.js.
 function resolverClienteIdQuery(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
@@ -687,11 +695,14 @@ export async function detalharApuracao(req, res) {
   // O anexo persistido é o efetivo. Fator R preenchido identifica que o
   // cadastro original era Anexo V, inclusive quando ele permaneceu no V.
   const anexoOriginal = data.fator_r == null ? data.anexo : "V";
+  // O provisório volta com os mesmos números do POST que o criou; sem o flag o
+  // motor responde FATOR_R_SEM_FOLHA e o rascunho não abria (DAS-1 / #725).
   const resultado = calcularSimplesNacional({
     rbt12: Number(data.rbt12_usado),
     receita_mes: Number(data.receita_mes),
     anexo: anexoOriginal,
     folha12: data.folha12 == null ? null : Number(data.folha12),
+    provisorioSemFolha: ehProvisorioSemFolha(data),
   });
 
   if (resultado.erro) {
@@ -803,7 +814,7 @@ export async function aprovarApuracao(req, res) {
   // Anexo V provisório (fator_r sentinela sem folha12): bloquear até o
   // recálculo com FS12 real — resultado-folha só troca folha_status e não
   // recalcula o DAS (#619 / review PR #633).
-  if (apuracao.fator_r != null && apuracao.folha12 == null) {
+  if (ehProvisorioSemFolha(apuracao)) {
     return res.status(409).json({ erro: "FOLHA_PENDENTE" });
   }
 
