@@ -5,6 +5,7 @@ import { calcularSimplesNacional } from "../utils/simples-nacional.util.js";
 import {
   competenciaEstaFechada,
   dataLocalISO,
+  hojeNoBrasil,
   mesJaFechado,
   ultimaCompetenciaFechada,
   ultimoDiaDoMes,
@@ -104,10 +105,33 @@ function ehNotaDeSaida(nota) {
   return nota?.tipo === undefined || nota?.tipo === "saida";
 }
 
-function filtrarNotasAtivas(notas) {
-  // Defesa adicional para mocks/adapters que não apliquem o .eq("status", "ativa").
-  // Registros legados sem status continuam ativos; só canceladas são excluídas.
-  return (notas || []).filter((nota) => nota?.status !== "cancelada");
+// Registros legados sem status continuam ativos; só "cancelada" sai da soma.
+function ehNotaCancelada(nota) {
+  return nota?.status === "cancelada";
+}
+
+// cancelado_em é TIMESTAMPTZ: a data mostrada ao contador é o dia em Brasília.
+function dataCancelamentoBR(canceladoEm) {
+  const instante = canceladoEm ? new Date(canceladoEm) : null;
+  if (!instante || Number.isNaN(instante.getTime())) return null;
+  const [ano, mes, dia] = hojeNoBrasil(instante).split("-");
+  return `${dia}/${mes}/${ano}`;
+}
+
+// DAS-4 (#728): a cancelada não compõe a receita bruta, mas aparece em
+// "excluídas" com o motivo, para o contador não achar que a nota sumiu.
+function resumirNotaCancelada(nota) {
+  const data = dataCancelamentoBR(nota.cancelado_em);
+  return resumirNota(nota, {
+    compoe_rbt12: false,
+    compoe_receita_mes: false,
+    motivo: data
+      ? `NF-e cancelada em ${data} — não compõe a receita bruta.`
+      : "NF-e cancelada — não compõe a receita bruta.",
+    cancelado_em: nota.cancelado_em ?? null,
+    motivo_cancelamento: nota.motivo_cancelamento ?? null,
+    protocolo_cancelamento: nota.protocolo_cancelamento ?? null,
+  });
 }
 
 function resumirNota(nota, detalhes) {
@@ -180,7 +204,9 @@ export function montarBasesCalculo({
     ),
   );
   const mesReferenciaAtual = chaveMes(ano, mes);
-  const linhasNotas = Array.isArray(notas) ? notas : [];
+  const todasNotas = Array.isArray(notas) ? notas : [];
+  const notasCanceladas = todasNotas.filter(ehNotaCancelada);
+  const linhasNotas = todasNotas.filter((nota) => !ehNotaCancelada(nota));
   const notasSaida = linhasNotas.filter(ehNotaDeSaida);
 
   const notaComDataFutura = (nota) => {
@@ -287,6 +313,7 @@ export function montarBasesCalculo({
         motivo: "Nota fiscal de entrada não compõe a receita bruta.",
       })),
     ...notasExcluidasPeriodo,
+    ...notasCanceladas.map(resumirNotaCancelada),
   ];
 
   return {
@@ -345,6 +372,17 @@ function enriquecerApuracao(apuracao, resultado, bases, clienteNome) {
     notas_fiscais: bases.notasFiscais,
     ...detectarBreakdownDesatualizado(resultado, bases),
   };
+}
+
+// As canceladas vêm junto: montarBasesCalculo é quem as tira da soma e as lista
+// em "excluídas" com o motivo (DAS-4 / #728). Usada pelo POST, GET /:id e recalcular.
+function buscarNotasDaApuracao(clienteId, janelaRbt12, fimMesAtual) {
+  return supabase
+    .from("lancamentos_fiscais")
+    .select("id, chave_nfe, tipo, valor_total, data_emissao, status, cancelado_em, motivo_cancelamento, protocolo_cancelamento")
+    .eq("cliente_id", clienteId)
+    .gte("data_emissao", janelaRbt12.inicio)
+    .lte("data_emissao", fimMesAtual);
 }
 
 // Busca folha12 (FS12: base_calculo + fgts, pró-labore incluso) e semDadosFolha pra Anexo V —
@@ -493,13 +531,7 @@ export async function dispararApuracao(req, res) {
   const janelaRbt12 = calcularJanela12MesesAnteriores(mesNum, anoNum);
   const fimMesAtual = ultimoDiaDoMes(anoNum, mesNum);
 
-  const { data: notas, error: erroNotas } = await supabase
-    .from("lancamentos_fiscais")
-    .select("id, chave_nfe, tipo, valor_total, data_emissao, status")
-    .eq("cliente_id", clienteId)
-    .eq("status", "ativa")
-    .gte("data_emissao", janelaRbt12.inicio)
-    .lte("data_emissao", fimMesAtual);
+  const { data: notas, error: erroNotas } = await buscarNotasDaApuracao(clienteId, janelaRbt12, fimMesAtual);
 
   if (erroNotas) {
     console.error("[apuracoes.controller] Erro ao buscar lançamentos fiscais:", erroNotas.message);
@@ -507,7 +539,7 @@ export async function dispararApuracao(req, res) {
   }
 
   const bases = montarBasesCalculo({
-    notas: filtrarNotasAtivas(notas),
+    notas,
     historicoReceita: cliente.historico_receita,
     dataInicioAtividade: cliente.data_inicio_atividade,
     mes: mesNum,
@@ -651,13 +683,7 @@ export async function detalharApuracao(req, res) {
       .select("nome, anexo_simples, historico_receita, data_inicio_atividade")
       .eq("id", data.cliente_id)
       .maybeSingle(),
-    supabase
-      .from("lancamentos_fiscais")
-      .select("id, chave_nfe, tipo, valor_total, data_emissao, status")
-      .eq("cliente_id", data.cliente_id)
-      .eq("status", "ativa")
-      .gte("data_emissao", janelaRbt12.inicio)
-      .lte("data_emissao", fimMesAtual),
+    buscarNotasDaApuracao(data.cliente_id, janelaRbt12, fimMesAtual),
   ]);
 
   if (erroCliente || erroNotas) {
@@ -673,7 +699,7 @@ export async function detalharApuracao(req, res) {
   }
 
   const bases = montarBasesCalculo({
-    notas: filtrarNotasAtivas(notas),
+    notas,
     historicoReceita: cliente.historico_receita,
     dataInicioAtividade: cliente.data_inicio_atividade,
     mes: data.periodo_mes,
@@ -961,13 +987,11 @@ export async function recalcularApuracao(req, res) {
   const janelaRbt12 = calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano);
   const fimMesAtual = ultimoDiaDoMes(apuracao.periodo_ano, apuracao.periodo_mes);
 
-  const { data: notas, error: erroNotas } = await supabase
-    .from("lancamentos_fiscais")
-    .select("id, chave_nfe, tipo, valor_total, data_emissao, status")
-    .eq("cliente_id", apuracao.cliente_id)
-    .eq("status", "ativa")
-    .gte("data_emissao", janelaRbt12.inicio)
-    .lte("data_emissao", fimMesAtual);
+  const { data: notas, error: erroNotas } = await buscarNotasDaApuracao(
+    apuracao.cliente_id,
+    janelaRbt12,
+    fimMesAtual,
+  );
 
   if (erroNotas) {
     console.error("[apuracoes.controller] Erro ao buscar lançamentos fiscais:", erroNotas.message);
@@ -975,7 +999,7 @@ export async function recalcularApuracao(req, res) {
   }
 
   const bases = montarBasesCalculo({
-    notas: filtrarNotasAtivas(notas),
+    notas,
     historicoReceita: cliente.historico_receita,
     dataInicioAtividade: cliente.data_inicio_atividade,
     mes: apuracao.periodo_mes,
