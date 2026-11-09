@@ -356,11 +356,16 @@ function enriquecerApuracao(apuracao, resultado, bases, clienteNome) {
 }
 
 // Busca folha12 (FS12: base_calculo + fgts, pró-labore incluso) e semDadosFolha pra Anexo V —
-// exige processamentos_folha "concluido" para os 12 meses inteiros da janela.
+// exige ao menos um processamentos_folha "concluido" na janela; mês sem folha conta como zero
+// (decisão técnica DAS-2). Com menos de 12 meses de atividade, a FS12 é anualizada pela média
+// dos meses de atividade × 12 (Res. CGSN 140/2018, art. 26 §4º c/c art. 22 §§2º a 4º).
 // Usada tanto na criação (dispararApuracao) quanto no recálculo
 // (recalcularApuracao, #365) depois que o agente confirma a folha local e/ou
 // novo upload chega via POST /folha/upload/agente.
-async function coletarFolha12(clienteId, janelaRbt12) {
+async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade = null) {
+  // shortcut: mês de início (mesesAtividade 0) fica provisório; §6º usa a folha do próprio mês — upgrade se o contador pedir.
+  if (mesesAtividade === 0) return { folha12: null, semDadosFolha: true };
+  const mesesFolha = mesesAtividade ? new Set([...janelaRbt12.meses].slice(-mesesAtividade)) : janelaRbt12.meses;
   const { data: processamentos, error: erroProcessamentos } = await supabase
     .from("processamentos_folha")
     .select("id, mes_referencia, criado_em")
@@ -380,14 +385,14 @@ async function coletarFolha12(clienteId, janelaRbt12) {
   const processamentoPorMes = new Map();
   for (const processamento of processamentos || []) {
     const referencia = processamento.mes_referencia?.slice(0, 7);
-    if (janelaRbt12.meses.has(referencia) && !processamentoPorMes.has(referencia)) {
+    if (mesesFolha.has(referencia) && !processamentoPorMes.has(referencia)) {
       processamentoPorMes.set(referencia, processamento.id);
     }
   }
 
   const idsProcessamentos = [...processamentoPorMes.values()];
 
-  if (idsProcessamentos.length !== 12) {
+  if (idsProcessamentos.length === 0) {
     return { folha12: null, semDadosFolha: true };
   }
 
@@ -406,9 +411,8 @@ async function coletarFolha12(clienteId, janelaRbt12) {
   // sócio) + CPP efetivamente recolhida. O Fator R só roda para cliente do
   // Anexo V, que resulta em V ou III — nos dois a CPP vai dentro do DAS, então
   // a CPP recolhida fora dele é 0 e não entra aqui (#612).
-  const folha12 = arredondar(
-    (calculos || []).reduce((soma, linha) => soma + Number(linha.base_calculo) + Number(linha.fgts), 0),
-  );
+  const somaFolha = (calculos || []).reduce((soma, linha) => soma + Number(linha.base_calculo) + Number(linha.fgts), 0);
+  const folha12 = arredondar(mesesAtividade ? (somaFolha / mesesAtividade) * 12 : somaFolha);
 
   return { folha12, semDadosFolha: false };
 }
@@ -530,7 +534,7 @@ export async function dispararApuracao(req, res) {
   let semDadosFolha = false;
 
   if (cliente.anexo_simples === "V") {
-    const insumosFolha = await coletarFolha12(clienteId, janelaRbt12);
+    const insumosFolha = await coletarFolha12(clienteId, janelaRbt12, bases.mesesAtividade);
     if (insumosFolha.erro) {
       return res.status(500).json({ erro: insumosFolha.erro });
     }
@@ -1001,7 +1005,7 @@ export async function recalcularApuracao(req, res) {
   let semDadosFolha = false;
 
   if (anexoOriginal === "V") {
-    const insumosFolha = await coletarFolha12(apuracao.cliente_id, janelaRbt12);
+    const insumosFolha = await coletarFolha12(apuracao.cliente_id, janelaRbt12, bases.mesesAtividade);
     if (insumosFolha.erro) {
       return res.status(500).json({ erro: insumosFolha.erro });
     }

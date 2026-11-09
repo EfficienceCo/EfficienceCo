@@ -465,7 +465,6 @@ describe("QA-F 2026-10-12 — via dispararApuracao (filtrarNotasAtivas + janela,
   // concluídos (coletarFolha12), então devolve o provisório do pior caso: Anexo V 15,5% → R$ 2.325,00.
   it(
     "QA-F 2026-10-12, cenário D (art. 26 §4º): Anexo V com 4 meses de folha anualiza a FS12 (72.000) → Fator R 0,40 → Anexo III → DAS R$ 900,00",
-    { skip: "BUG (DAS-2) PRB-AP-14: coletarFolha12 exige 12 processamentos e não anualiza a FS12 (art. 26 §4º); hoje sai provisório de R$ 2.325,00" },
     async () => {
       const processamentos = ["2026-05", "2026-06", "2026-07", "2026-08"].map((mesRef, i) => ({
         id: `proc-${i + 1}`,

@@ -113,8 +113,11 @@ export function calcularSimplesNacional({
       // - FS12 = 0 e RBT12 = 0: Fator R = 0,01;
       // - FS12 > 0 e RBT12 = 0: Fator R = 0,28.
       // Nos demais casos o PGDAS-D trunca o quociente em duas casas, sem arredondar.
+      // - FS12 = 0 e RBT12 > 0: Fator R = 0,01 (inciso IV).
       if (rbt12 === 0) {
         fator_r = folha12 > 0 ? 0.28 : 0.01;
+      } else if (folha12 === 0) {
+        fator_r = 0.01;
       } else {
         fator_r = truncarFatorR(folha12 / rbt12);
       }
