@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createClient } from "@supabase/supabase-js";
 import soap from "soap";
-import { lerTentativas, consumirTentativas } from "../helpers/servicos-externos.js";
+import { lerTentativas, consumirTentativas, comStorageDescartavel } from "../helpers/servicos-externos.js";
 
 // DNS é um serviço externo: o teste deve falhar antes de precisar dele.
 beforeEach(t => {
@@ -89,6 +89,37 @@ test("#679: SDK do storage local é interceptado mesmo quando devolve error", as
   assert.match(error?.message ?? "", /bloqueado: storage/);
   assert.equal(recebidas, 0, "Nenhuma requisição deve chegar ao servidor de storage.");
   conferirTentativa("storage", "fetch");
+});
+
+test("QA-F storage descartável exige guard, isola contexto e não segue redirecionamento", async t => {
+  let recebidas = 0;
+  const alvo = http.createServer((_req, res) => { recebidas += 1; res.end("não alcançar"); });
+  await new Promise(resolve => alvo.listen(0, "127.0.0.1", resolve));
+  const servidor = http.createServer((req, res) => {
+    if (req.url.endsWith("/redirect")) res.writeHead(302, { Location: `http://127.0.0.1:${alvo.address().port}/storage/v1/externo` }).end();
+    else res.end("storage-local");
+  });
+  await new Promise(resolve => servidor.listen(0, "127.0.0.1", resolve));
+  t.after(async () => { await Promise.all([alvo, servidor].map(s => new Promise(resolve => s.close(resolve)))); });
+  const nomes = ["NODE_ENV", "TEST_SUPABASE_PROJECT_ID", "TEST_SUPABASE_PORT", "TEST_SUPABASE_URL", "SUPABASE_URL", "TEST_SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_KEY"];
+  const antes = Object.fromEntries(nomes.map(n => [n, process.env[n]]));
+  const url = `http://127.0.0.1:${servidor.address().port}`;
+  Object.assign(process.env, { NODE_ENV: "test", TEST_SUPABASE_PROJECT_ID: "efficience-testes-678-0123456789ab", TEST_SUPABASE_PORT: String(servidor.address().port), TEST_SUPABASE_URL: url, SUPABASE_URL: url, TEST_SUPABASE_SERVICE_KEY: "chave-sintetica", SUPABASE_SERVICE_KEY: "chave-sintetica" });
+  try {
+    await Promise.all([
+      comStorageDescartavel(async () => {
+        assert.equal(await (await fetch(url + "/storage/v1/ok")).text(), "storage-local");
+        await assert.rejects(fetch(`http://127.0.0.1:${alvo.address().port}/storage/v1/externo`), /bloqueado: storage/); conferirTentativa("storage");
+        await assert.rejects(fetch(url + "/storage/v1/redirect", { redirect: "follow" }), /fetch failed/);
+      }),
+      (async () => { await assert.rejects(fetch(url + "/storage/v1/sem-contexto"), /bloqueado: storage/); conferirTentativa("storage"); })(),
+    ]);
+    await assert.rejects(comStorageDescartavel(async () => { throw Error("falha controlada"); }), /falha controlada/);
+    await assert.rejects(fetch(url + "/storage/v1/depois"), /bloqueado: storage/); conferirTentativa("storage");
+    assert.equal(recebidas, 0, "destino do redirect e outro host não recebem requisição");
+    process.env.SUPABASE_URL = "https://banco.example.invalid";
+    assert.throws(() => comStorageDescartavel(() => {}), /Destino de teste inválido/);
+  } finally { for (const n of nomes) if (antes[n] === undefined) delete process.env[n]; else process.env[n] = antes[n]; }
 });
 
 test("#679: bloqueio ignorado faz teste falhar e próximo teste recebe registro limpo", { timeout: 10_000 }, async () => {

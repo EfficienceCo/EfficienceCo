@@ -61,7 +61,7 @@ def _arquivos_folha_no_mes(pasta_cliente, mes, ano):
     return encontrados
 
 
-def verificar_pastas_folha(nome_empresa, mes_ref, ano_ref, pasta_base=None):
+def verificar_pastas_folha(nome_empresa, mes_ref, ano_ref, pasta_base=None, meses_esperados=None):
     """
     Varre Folha dos últimos 12 meses a partir de mes_ref/ano_ref (inclusive).
     Retorna flags do report + lista de caminhos absolutos para o envio.
@@ -73,8 +73,10 @@ def verificar_pastas_folha(nome_empresa, mes_ref, ano_ref, pasta_base=None):
     meses_encontrados = []
     arquivos_encontrados = []
 
-    for i in range(12):
-        ano_check, mes_check = _subtrair_meses(ano_ref, mes_ref, i)
+    referencias = ([(item["ano"], item["mes"]) for item in meses_esperados]
+                   if meses_esperados is not None else
+                   [_subtrair_meses(ano_ref, mes_ref, i) for i in range(12)])
+    for ano_check, mes_check in referencias:
         arquivos_mes = _arquivos_folha_no_mes(pasta_cliente, mes_check, ano_check)
         if arquivos_mes:
             meses_encontrados.append({"mes": mes_check, "ano": ano_check})
@@ -110,9 +112,16 @@ def _processar_item(item):
         print("[folha_fator_r] PASTA_BASE ausente — pulando ciclo")
         return
 
-    resultado = verificar_pastas_folha(nome, int(mes_ref), int(ano_ref), pasta_base=pasta_base)
+    # Polling mes/ano identify the PA. The ordinary window ends one month
+    # earlier; the backend supplies the exact months for new companies.
+    ano_fim, mes_fim = _subtrair_meses(int(ano_ref), int(mes_ref), 1)
+    resultado = verificar_pastas_folha(
+        nome, mes_fim, ano_fim, pasta_base=pasta_base,
+        meses_esperados=item.get("mesesFolha"),
+    )
 
-    enviar_arquivos_folha(resultado["arquivosEncontrados"])
+    enviados = enviar_arquivos_folha(resultado["arquivosEncontrados"])
+    falha_upload = set(enviados) != set(resultado["arquivosEncontrados"])
 
     reportar_resultado_folha(
         apuracao_id,
@@ -120,6 +129,7 @@ def _processar_item(item):
             "temDozeMeses": resultado["temDozeMeses"],
             "mesesEncontrados": resultado["mesesEncontrados"],
             "totalMesesEncontrados": resultado["totalMesesEncontrados"],
+            "falhaUpload": falha_upload,
         },
     )
     print(

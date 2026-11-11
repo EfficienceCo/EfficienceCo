@@ -78,6 +78,9 @@ function criarMockSupabase() {
         in() {
           return builder;
         },
+        not() { return builder; },
+        order() { return builder; },
+        range() { return builder; },
         maybeSingle() {
           return Promise.resolve(consumir("maybeSingle"));
         },
