@@ -472,7 +472,7 @@ describe("POST /apuracoes", () => {
     assert.match(excluida.motivo, /data de emissão futura/i);
   });
 
-  it("201 pendente quando faltam meses de folha na janela completa do Fator R", async () => {
+  it("201 verificado quando falta um mês de folha: o mês sem folha conta como zero (DAS-2)", async () => {
     queueSemDuplicata();
     queueCliente("V");
     queueNotas([
@@ -484,7 +484,7 @@ describe("POST /apuracoes", () => {
       error: null,
     });
     queue("apuracoes", "single", {
-      data: { id: "nova-apuracao-v-parcial", anexo: "V", folha_status: "pendente", fator_r: 0 },
+      data: { id: "nova-apuracao-v-parcial", anexo: "V", folha_status: "verificado", fator_r: 0.01 },
       error: null,
     });
 
@@ -493,8 +493,8 @@ describe("POST /apuracoes", () => {
 
     assert.equal(res.statusCode, 201);
     const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
-    assert.equal(insert.payload.folha_status, "pendente");
-    assert.equal(insert.payload.fator_r, 0);
+    assert.equal(insert.payload.folha_status, "verificado");
+    assert.notEqual(insert.payload.folha12, null);
     assert.equal(insert.payload.anexo, "V");
   });
 
