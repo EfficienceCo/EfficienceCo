@@ -432,6 +432,32 @@ describe("POST /apuracoes", () => {
     assert.equal(bases.receitaMes, 250);
   });
 
+  // DAS-4 (#728): o cenário completo (data de cancelamento, rotas) está em
+  // tests/apuracao/nota-cancelada-auditoria.test.js; aqui só os casos da função pura.
+  it("lista cancelada sem data (legado) e cancelada de entrada uma vez só, com o motivo de cancelada", () => {
+    const bases = montarBasesCalculo({
+      notas: [
+        { id: "ativa", tipo: "saida", valor_total: 1000, data_emissao: "2026-07-10", status: "ativa" },
+        { id: "legado", tipo: "saida", valor_total: 700, data_emissao: "2026-07-11", status: "cancelada" },
+        { id: "entrada", tipo: "entrada", valor_total: 300, data_emissao: "2026-07-12", status: "cancelada", cancelado_em: null },
+      ],
+      historicoReceita: [],
+      mes: 7,
+      ano: 2026,
+      hojeISO: "2026-09-25",
+    });
+
+    assert.equal(bases.receitaMes, 1000);
+    assert.deepEqual(bases.notasFiscais.consideradas.map((nota) => nota.id), ["ativa"]);
+    assert.deepEqual(
+      bases.notasFiscais.excluidas.map(({ id, tipo, motivo, cancelado_em }) => ({ id, tipo, motivo, cancelado_em })),
+      [
+        { id: "legado", tipo: "saida", motivo: "NF-e cancelada — não compõe a receita bruta.", cancelado_em: null },
+        { id: "entrada", tipo: "entrada", motivo: "NF-e cancelada — não compõe a receita bruta.", cancelado_em: null },
+      ],
+    );
+  });
+
   it("exclui NF-e com data de emissão futura da RBT12 e da receita (BUG-APUR-08)", async () => {
     const agora = new Date();
     const amanha = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1);
