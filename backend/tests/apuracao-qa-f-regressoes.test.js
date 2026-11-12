@@ -32,6 +32,41 @@ test("QA-F QA01 provisório legado é legível sem modificar números ou banco",
   assert.equal(get.status, 200, "QA01 GET de provisório válido");
   conferirCalculo(get.corpo, { fr: 0, fs: null, anexo: "V", das: 1550 });
   assert.equal(get.corpo.anexo_original, "V"); assert.deepEqual(await s.estado(a), antes);
+  function metadadosProvisorio(resposta) {
+    for (const [campo, valor] of Object.entries({ rbt12: 120000, anexo_original: "V", anexo_efetivo: "V", aliquota_nominal: .155, faixa_limite: 180000, parcela_deduzir: 0, rbt12_metodo: "janela_12_meses", meses_atividade: null })) assert.equal(resposta[campo], valor, `provisório ${campo}`);
+  }
+  metadadosProvisorio(get.corpo);
+  // DAS-1/Gabriel #735: o fluxo novo só é provisório se há processamento
+  // conhecido ainda não concluído. Ausência legítima já significa folha zero.
+  const novo = await s.cliente(); await s.notas(novo);
+  await s.processo(novo, "2026-09-01", 0, { status: "erro" });
+  const usuario = await s.usuario(novo, "admin_cliente"), criado = await s.criar(novo);
+  const campos = ["valor_calculado", "aliquota_efetiva", "rbt12_usado", "receita_mes", "anexo", "fator_r", "folha12", "folha_status", "status"];
+  const numeros = x => Object.fromEntries(campos.map(k => [k, x[k]]));
+  const esperado = { valor_calculado: 1550, aliquota_efetiva: .155, rbt12_usado: 120000, receita_mes: 10000, anexo: "V", fator_r: 0, folha12: null, folha_status: "pendente", status: "rascunho" };
+  assert.deepEqual(numeros(get.corpo), esperado); assert.deepEqual(numeros(antes), esperado);
+  assert.deepEqual(numeros(criado), esperado);
+  metadadosProvisorio(criado);
+  const aberto = await s.chamar(caminho(criado), { usuario }); assert.equal(aberto.status, 200); assert.deepEqual(numeros(aberto.corpo), esperado); assert.deepEqual(numeros(await s.estado(criado)), esperado);
+  metadadosProvisorio(aberto.corpo); assert.equal(aberto.corpo.rbt12, criado.rbt12);
+  const antesNovo = await s.estado(criado), estrangeiro = await s.usuario(c, "admin_cliente");
+  for (const metodo of ["GET", "DELETE"]) {
+    const negado = await s.chamar(caminho(criado), { usuario: estrangeiro, metodo });
+    const ausente = await s.chamar(caminho({ id: randomUUID() }), { usuario: estrangeiro, metodo });
+    assert.equal(negado.status, 404); assert.deepEqual(negado.corpo, ausente.corpo); assert.deepEqual(await s.estado(criado), antesNovo); assert.deepEqual(await s.estado(a), antes);
+  }
+  const editado = await s.chamar(caminho(criado), { usuario, metodo: "PATCH", corpo: { valor_editado: 1500, motivo: "Conferência do provisório" } }); assert.equal(editado.status, 200);
+  const gravado = await s.estado(criado); assert.equal(gravado.valor_editado, 1500); assert.equal(gravado.valor_calculado, 1550); assert.equal(gravado.historico_edicoes.length, 1); assert.equal(gravado.historico_edicoes[0].motivo, "Conferência do provisório"); assert.equal(gravado.historico_edicoes[0].editado_por, usuario.email);
+  const reaberto = await s.chamar(caminho(criado), { usuario }); assert.equal(reaberto.status, 200); assert.equal(reaberto.corpo.valor_editado, 1500);
+  metadadosProvisorio(reaberto.corpo);
+  const duplicado = () => s.chamar("/apuracoes", { usuario, metodo: "POST", corpo: { mes: 10, ano: 2026, regime: "simples_nacional" } });
+  assert.equal((await duplicado()).status, 409); assert.equal((await s.chamar(caminho(criado), { usuario, metodo: "DELETE" })).status, 204);
+  assert.deepEqual(await lerTodos(s.banco, "apuracoes", { id: criado.id }), []); assert.equal((await s.chamar(caminho(criado), { usuario })).status, 404); assert.equal((await duplicado()).status, 201);
+  // O legado segue provisório mesmo se um report antigo marcou verificado sem FS12.
+  const pendente = await atualizar(s, a, "aprovar"); assert.equal(pendente.status, 409); assert.equal(pendente.corpo.erro, "FOLHA_PENDENTE"); assert.deepEqual(await s.estado(a), antes);
+  const marcado = await s.banco.from("apuracoes").update({ folha_status: "verificado" }).eq("id", a.id); assert.ifError(marcado.error);
+  const antesVerificado = await s.estado(a), verificado = await atualizar(s, a, "aprovar");
+  assert.equal(verificado.status, 409); assert.equal(verificado.corpo.erro, "FOLHA_PENDENTE"); assert.deepEqual(await s.estado(a), antesVerificado);
 });
 
 test("QA-F QA02 ausência zero aprovável, startup dois meses e primeiro PA", async t => {
@@ -44,10 +79,12 @@ test("QA-F QA02 ausência zero aprovável, startup dois meses e primeiro PA", as
   await s.notas(novo, [25000]); await s.processo(novo, "2026-08-01", 15000); await s.processo(novo, "2026-09-01", 15000);
   const b = await s.criar(novo); conferirCalculo(b, { fr: .30, fs: 180000, rb: 600000, anexo: "III", das: 2640, taxa: .1056 });
   const br = await atualizar(s, b, "recalcular"); assert.equal(br.status, 200); conferirCalculo(br.corpo, { fr: .30, fs: 180000, anexo: "III", das: 2640 });
+  assert.equal((await atualizar(s, b, "aprovar")).status, 200, "DAS-2 empresa nova é aprovável"); assert.equal((await s.estado(b)).status, "aprovado");
   const primeiro = await s.cliente({ data_inicio_atividade: "2026-10-01", historico_receita: [] });
   await s.notas(primeiro, [25000]); await s.processo(primeiro, "2026-10-01", 7500);
   const d = await s.criar(primeiro); conferirCalculo(d, { fr: .30, fs: 90000, rb: 300000, anexo: "III", das: 2020, taxa: .0808 });
   const dr = await atualizar(s, d, "recalcular"); assert.equal(dr.status, 200); conferirCalculo(dr.corpo, { fr: .30, fs: 90000, anexo: "III", das: 2020 });
+  assert.equal((await atualizar(s, d, "aprovar")).status, 200, "primeiro PA com folha calculada é aprovável"); assert.equal((await s.estado(d)).status, "aprovado");
 });
 
 test("QA-F QA03 FSzero/RBpositiva gera FR0,01 no motor, API e persistência", async t => {
@@ -77,16 +114,34 @@ test("QA-F QA04 paginação de1001notas,1001salários e1012processamentos", { ti
 });
 
 test("QA-F QA05 cancelada auditada uma vez e excluída das somas nas3rotas", async t => {
-  const s = await iniciarCenarioApuracao(t), c = await s.cliente({ anexo_simples: "I" }); await s.notas(c, [5000]);
-  const [cancelada] = await s.notas(c, [1000], { status: "cancelada" }); const [entrada] = await s.notas(c, [9000], { tipo: "entrada" });
-  const a = await s.criar(c), get = await s.chamar(caminho(a)), recalc = await atualizar(s, a, "recalcular");
+  // DAS-4/Gabriel #736, QA-F item10: 09/2026, 10000*4%=400;
+  // se a cancelada do mês entrasse, seriam 15000*4%=600.
+  const refs = Array.from({ length: 12 }, (_, i) => { const n = 2025 * 12 + 8 + i; return { ano: Math.floor(n / 12), mes: n % 12 + 1, receita: 10000 }; });
+  const s = await iniciarCenarioApuracao(t), c = await s.cliente({ anexo_simples: "I", historico_receita: refs });
+  const [ativa] = await s.notas(c, [10000], { data_emissao: "2026-09-10" });
+  const [cancelada] = await s.notas(c, [5000], { status: "cancelada", data_emissao: "2026-09-06", cancelado_em: "2026-09-09T02:30:00Z", motivo_cancelamento: "Erro no valor da nota", protocolo_cancelamento: "135260000000001" });
+  const [janela] = await s.notas(c, [50000], { status: "cancelada", data_emissao: "2026-03-15", cancelado_em: "2026-03-20T15:00:00Z" });
+  const [entrada] = await s.notas(c, [9000], { tipo: "entrada", data_emissao: "2026-09-12" });
+  const a = await s.criar(c, 9), get = await s.chamar(caminho(a)), recalc = await atualizar(s, a, "recalcular");
   assert.equal(get.status, 200); assert.equal(recalc.status, 200);
   for (const r of [a, get.corpo, recalc.corpo]) {
-    assert.equal(r.valor_calculado, 200); assert.equal(r.receita_mes, 5000); assert.equal(r.rbt12_usado, 120000);
-    const excluidas = r.notas_fiscais.excluidas; assert.equal(excluidas.length, 2);
+    assert.equal(r.valor_calculado, 400); assert.equal(r.receita_mes, 10000); assert.equal(r.rbt12_usado, 120000); assert.equal(r.aliquota_efetiva, .04);
+    assert.deepEqual(r.notas_fiscais.consideradas.map(n => n.id), [ativa.id]);
+    assert.deepEqual(r.notas_fiscais.consideradas.map(n => [n.chave_nfe, n.tipo]), [[ativa.chave_nfe, "saida"]]);
+    const excluidas = r.notas_fiscais.excluidas; assert.equal(excluidas.length, 3);
+    assert.deepEqual(excluidas.map(n => [n.chave_nfe, n.tipo]).sort(), [[cancelada.chave_nfe, "saida"], [janela.chave_nfe, "saida"], [entrada.chave_nfe, "entrada"]].sort());
     assert.equal(excluidas.filter(n => n.id === cancelada.id).length, 1, "QA05 cancelada não desaparece");
-    assert.match(excluidas.find(n => n.id === cancelada.id).motivo, /cancelada/); assert.ok(excluidas.some(n => n.id === entrada.id));
+    const auditada = excluidas.find(n => n.id === cancelada.id);
+    assert.deepEqual(auditada, { id: cancelada.id, chave_nfe: cancelada.chave_nfe, tipo: "saida", data_emissao: "2026-09-06", valor_total: 5000, compoe_rbt12: false, compoe_receita_mes: false, motivo: "NF-e cancelada em 08/09/2026 — não compõe a receita bruta.", cancelado_em: "2026-09-09T02:30:00+00:00", motivo_cancelamento: "Erro no valor da nota", protocolo_cancelamento: "135260000000001" });
+    assert.equal(new Date(auditada.cancelado_em).toISOString(), "2026-09-09T02:30:00.000Z");
+    assert.equal(auditada.motivo, "NF-e cancelada em 08/09/2026 — não compõe a receita bruta.");
+    for (const campo of ["cancelado_em", "motivo_cancelamento", "protocolo_cancelamento", "data_emissao", "valor_total"]) assert.equal(auditada[campo], cancelada[campo]);
+    assert.equal(auditada.compoe_rbt12, false); assert.equal(auditada.compoe_receita_mes, false);
+    assert.equal(excluidas.find(n => n.id === janela.id).motivo, "NF-e cancelada em 20/03/2026 — não compõe a receita bruta.");
+    assert.equal(excluidas.find(n => n.id === entrada.id).motivo, "Nota fiscal de entrada não compõe a receita bruta.");
   }
+  assert.equal(get.corpo.breakdown_desatualizado, false);
+  const gravado = await s.estado(a); conferirCalculo(gravado, { anexo: "I", das: 400, rb: 120000, taxa: .04 }); assert.equal(gravado.receita_mes, 10000);
 });
 
 test("QA-F QA06 seis edições concorrentes preservam todo aceite e sua cadeia", async t => {
@@ -147,7 +202,12 @@ test("QA-F QA11 report valida contradição,calendário,duplicata e janela", asy
   }
   await s.processo(c, "2026-09-01"); assert.equal((await s.reportar(c, a, relatorio([{ ano: 2026, mes: 9 }]))).status, 200);
   assert.equal((await s.estado(a)).folha_status, "verificado");
+  assert.equal((await s.estado(a)).dados_folha.processamentoPendente, false, "DAS-3 verificado não convive com processamento pendente");
   assert.equal((await s.reportar(c, a, relatorio([]))).status, 200); assert.equal((await s.estado(a)).folha_status, "sem_dados");
+  for (const ref of REFERENCIAS.filter(r => r.mes !== 9)) await s.processo(c, refISO(ref));
+  const completo = await s.reportar(c, a, relatorio()); assert.equal(completo.status, 200);
+  const gravado = await s.estado(a); assert.equal(gravado.folha_status, "verificado"); assert.deepEqual(completo.corpo, gravado);
+  assert.deepEqual(gravado.dados_folha, { temDozeMeses: true, mesesEncontrados: REFERENCIAS, totalMesesEncontrados: 12, falhaUpload: false, processamentoPendente: false, mesesPendentes: [] });
 });
 
 test("QA-F QA12 worker real respeita janela explícita e fallback na virada doano", { timeout: 120_000 }, async t => {
