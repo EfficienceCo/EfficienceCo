@@ -85,6 +85,8 @@ export function calcularSimplesNacional({
   folha12 = null,
   semDadosFolha = false,
   provisorioSemFolha = false,
+  baseFatorR = null,
+  aplicarFatorR = true,
 }) {
   if (!TABELAS_SIMPLES[anexo]) return { erro: "ANEXO_INVALIDO" };
   if (!Number.isFinite(rbt12) || rbt12 < 0) return { erro: "RBT12_INVALIDO" };
@@ -94,7 +96,8 @@ export function calcularSimplesNacional({
   let fator_r = null;
   let provisorio_sem_folha = false;
 
-  if (anexo === "V") {
+  // A reconstrução de uma apuração usa seu anexo efetivo já persistido.
+  if (anexo === "V" && aplicarFatorR) {
     if (semDadosFolha || folha12 === null || folha12 === undefined) {
       if (!provisorioSemFolha) {
         return { erro: "FATOR_R_SEM_FOLHA" };
@@ -108,14 +111,23 @@ export function calcularSimplesNacional({
     } else {
       if (!Number.isFinite(folha12) || folha12 < 0) return { erro: "FOLHA12_INVALIDA" };
 
+      // No início de atividade a razão usa as somas do período (Manual
+      // PGDAS-D 8.2.1), antes de arredondar as bases monetárias anualizadas.
+      const fs = baseFatorR?.folha ?? folha12;
+      const rb = baseFatorR?.receita ?? rbt12;
+      if (!Number.isFinite(fs) || fs < 0) return { erro: "FOLHA12_INVALIDA" };
+      if (!Number.isFinite(rb) || rb < 0) return { erro: "RBT12_INVALIDO" };
+
       // Resolução CGSN 140/2018, art. 26, § 7º:
       // - FS12 = 0 e RBT12 = 0: Fator R = 0,01;
       // - FS12 > 0 e RBT12 = 0: Fator R = 0,28.
       // Nos demais casos o PGDAS-D trunca o quociente em duas casas, sem arredondar.
-      if (rbt12 === 0) {
-        fator_r = folha12 > 0 ? 0.28 : 0.01;
+      if (rb === 0) {
+        fator_r = fs > 0 ? 0.28 : 0.01;
+      } else if (fs === 0) {
+        fator_r = 0.01;
       } else {
-        fator_r = truncarFatorR(folha12 / rbt12);
+        fator_r = truncarFatorR(fs / rb);
       }
       if (fator_r >= FATOR_R_LIMIAR) anexo_efetivo = "III";
     }

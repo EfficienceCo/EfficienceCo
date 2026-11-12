@@ -76,6 +76,7 @@ supabase.from = function (tabela) {
     limit() {
       return builder;
     },
+    range() { return builder; },
     maybeSingle() {
       return Promise.resolve(consumir("maybeSingle", { data: null, error: null }));
     },
@@ -198,7 +199,11 @@ describe("GET /apuracoes/folha-pendente (#365)", () => {
 
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body, [
-      { id: APURACAO_ID, clienteId: CLIENTE_A, nomeEmpresa: "Souza Contabilidade", mes: 3, ano: 2026 },
+      { id: APURACAO_ID, clienteId: CLIENTE_A, nomeEmpresa: "Souza Contabilidade", mes: 3, ano: 2026,
+        mesesFolha: Array.from({ length: 12 }, (_, i) => {
+          const n = 2025 * 12 + 2 + i;
+          return { ano: Math.floor(n / 12), mes: n % 12 + 1 };
+        }) },
     ]);
   });
 
@@ -254,7 +259,7 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
   it("401 quando token de licença é inválido", async () => {
     const res = criarResposta();
     await registrarResultadoFolha(
-      reqAgente({ params: { id: APURACAO_ID }, body: { temDozeMeses: true, mesesEncontrados: [], totalMesesEncontrados: 0 } }),
+      reqAgente({ params: { id: APURACAO_ID }, body: { temDozeMeses: false, mesesEncontrados: [], totalMesesEncontrados: 0 } }),
       res,
     );
     assert.equal(res.statusCode, 401);
@@ -311,7 +316,7 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
       reqAgente({
         headers: { "x-licenca-token": "token-valido" },
         params: { id: APURACAO_ID },
-        body: { temDozeMeses: true, mesesEncontrados: [], totalMesesEncontrados: 0 },
+        body: { temDozeMeses: false, mesesEncontrados: [], totalMesesEncontrados: 0 },
       }),
       res,
     );
@@ -327,7 +332,7 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
       reqAgente({
         headers: { "x-licenca-token": "token-valido" },
         params: { id: "abc" },
-        body: { temDozeMeses: true, mesesEncontrados: [], totalMesesEncontrados: 0 },
+        body: { temDozeMeses: false, mesesEncontrados: [], totalMesesEncontrados: 0 },
       }),
       res,
     );
@@ -343,7 +348,7 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
   it("404 quando a apuração pertence a outro cliente (isolamento multi-tenant)", async () => {
     tokenLicencaValido(CLIENTE_A);
     queue("apuracoes", "maybeSingle", {
-      data: { id: APURACAO_ID, cliente_id: CLIENTE_B, status: "rascunho", fator_r: 0.1 },
+      data: { id: APURACAO_ID, cliente_id: CLIENTE_B, status: "rascunho", fator_r: 0.1, periodo_mes: 8, periodo_ano: 2026 },
       error: null,
     });
 
@@ -352,7 +357,7 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
       reqAgente({
         headers: { "x-licenca-token": "token-valido" },
         params: { id: APURACAO_ID },
-        body: { temDozeMeses: true, mesesEncontrados: [], totalMesesEncontrados: 0 },
+        body: { temDozeMeses: false, mesesEncontrados: [], totalMesesEncontrados: 0 },
       }),
       res,
     );
@@ -372,7 +377,7 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
       reqAgente({
         headers: { "x-licenca-token": "token-valido" },
         params: { id: APURACAO_ID },
-        body: { temDozeMeses: true, mesesEncontrados: [], totalMesesEncontrados: 0 },
+        body: { temDozeMeses: false, mesesEncontrados: [], totalMesesEncontrados: 0 },
       }),
       res,
     );
@@ -392,7 +397,7 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
       reqAgente({
         headers: { "x-licenca-token": "token-valido" },
         params: { id: APURACAO_ID },
-        body: { temDozeMeses: true, mesesEncontrados: [], totalMesesEncontrados: 0 },
+        body: { temDozeMeses: false, mesesEncontrados: [], totalMesesEncontrados: 0 },
       }),
       res,
     );
@@ -403,12 +408,17 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
   it("200 marca folha_status = verificado quando temDozeMeses é true e persiste dados_folha", async () => {
     tokenLicencaValido(CLIENTE_A);
     queue("apuracoes", "maybeSingle", {
-      data: { id: APURACAO_ID, cliente_id: CLIENTE_A, status: "rascunho", fator_r: 0.1 },
+      data: { id: APURACAO_ID, cliente_id: CLIENTE_A, status: "rascunho", fator_r: 0.1, periodo_mes: 8, periodo_ano: 2026 },
       error: null,
     });
-    const mesesEncontrados = Array.from({ length: 12 }, (_, i) => ({ mes: i + 1, ano: 2026 }));
-    queue("apuracoes", "single", { data: { id: APURACAO_ID, folha_status: "verificado" }, error: null });
+    const mesesEncontrados = processamentosDosDozeMeses().map((p) => {
+      const [ano, mes] = p.mes_referencia.split("-").map(Number);
+      return { ano, mes };
+    });
+    queue("processamentos_folha", "await", { data: processamentosDosDozeMeses(), error: null });
+    queue("apuracoes", "maybeSingle", { data: { id: APURACAO_ID, folha_status: "verificado" }, error: null });
 
+    queueCliente();
     const res = criarResposta();
     await registrarResultadoFolha(
       reqAgente({
@@ -424,23 +434,24 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
 
     const update = operacoes.find((op) => op.tabela === "apuracoes" && op.metodo === "update");
     assert.equal(update.payload.folha_status, "verificado");
-    assert.deepEqual(update.payload.dados_folha, { temDozeMeses: true, mesesEncontrados, totalMesesEncontrados: 12 });
+    assert.deepEqual(update.payload.dados_folha, { temDozeMeses: true, mesesEncontrados, totalMesesEncontrados: 12, falhaUpload: false, processamentoPendente: false, mesesPendentes: [] });
   });
 
-  it("200 marca folha_status = sem_dados quando temDozeMeses é false", async () => {
+  it("200 marca folha_status = sem_dados quando nenhum arquivo foi encontrado", async () => {
     tokenLicencaValido(CLIENTE_A);
     queue("apuracoes", "maybeSingle", {
-      data: { id: APURACAO_ID, cliente_id: CLIENTE_A, status: "rascunho", fator_r: 0.1 },
+      data: { id: APURACAO_ID, cliente_id: CLIENTE_A, status: "rascunho", fator_r: 0.1, periodo_mes: 8, periodo_ano: 2026 },
       error: null,
     });
-    queue("apuracoes", "single", { data: { id: APURACAO_ID, folha_status: "sem_dados" }, error: null });
+    queue("apuracoes", "maybeSingle", { data: { id: APURACAO_ID, folha_status: "sem_dados" }, error: null });
 
+    queueCliente();
     const res = criarResposta();
     await registrarResultadoFolha(
       reqAgente({
         headers: { "x-licenca-token": "token-valido" },
         params: { id: APURACAO_ID },
-        body: { temDozeMeses: false, mesesEncontrados: [{ mes: 1, ano: 2026 }], totalMesesEncontrados: 1 },
+        body: { temDozeMeses: false, mesesEncontrados: [], totalMesesEncontrados: 0 },
       }),
       res,
     );
@@ -449,64 +460,40 @@ describe("POST /apuracoes/:id/resultado-folha (#365)", () => {
     assert.equal(res.body.folha_status, "sem_dados");
   });
 
-  // #619 / BUG-APUR-19 (d) — resultado-folha só marca folha_status; o DAS
-  // provisório (folha12 null) continua 409 até um recálculo (review PR #633).
-  it("resultado-folha verificado mantém 409 FOLHA_PENDENTE até recálculo com folha12", async () => {
+  // DAS-3: o report já aplica a folha concluída, sem um clique manual posterior.
+  it("resultado-folha atualiza cálculo provisório e permite aprovação", async () => {
     tokenLicencaValido(CLIENTE_A);
-    queue("apuracoes", "maybeSingle", {
-      data: { id: APURACAO_ID, cliente_id: CLIENTE_A, status: "rascunho", fator_r: 0 },
-      error: null,
+    const apuracao = { id: APURACAO_ID, cliente_id: CLIENTE_A, status: "rascunho",
+      fator_r: 0, periodo_mes: 8, periodo_ano: 2026, anexo: "V", folha12: null,
+      rbt12_usado: 120000, receita_mes: 10000, valor_calculado: 1550, historico_edicoes: [] };
+    queue("apuracoes", "maybeSingle", { data: apuracao, error: null });
+    const mesesEncontrados = processamentosDosDozeMeses().map((p) => {
+      const [ano, mes] = p.mes_referencia.split("-").map(Number);
+      return { ano, mes };
     });
-    const mesesEncontrados = Array.from({ length: 12 }, (_, i) => ({ mes: i + 1, ano: 2026 }));
-    queue("apuracoes", "single", { data: { id: APURACAO_ID, folha_status: "verificado", fator_r: 0 }, error: null });
-
+    queueCliente({ historico_receita: mesesEncontrados.map((ref) => ({ ...ref, receita: 10000 })) });
+    queueNotas([{ valor_total: 10000, data_emissao: "2026-08-10", tipo: "saida" }]);
+    queue("processamentos_folha", "await", { data: processamentosDosDozeMeses(), error: null });
+    queue("folha_calculos", "await", { data: [{ base_calculo: 60000, fgts: 0 }], error: null });
+    const atualizada = { ...apuracao, fator_r: 0.5, folha12: 60000, anexo: "III", valor_calculado: 600, folha_status: "verificado" };
+    queue("apuracoes", "maybeSingle", { data: atualizada, error: null });
     const resFolha = criarResposta();
-    await registrarResultadoFolha(
-      reqAgente({
-        headers: { "x-licenca-token": "token-valido" },
-        params: { id: APURACAO_ID },
-        body: { temDozeMeses: true, mesesEncontrados, totalMesesEncontrados: 12 },
-      }),
-      resFolha,
-    );
+    await registrarResultadoFolha(reqAgente({ headers: { "x-licenca-token": "token-valido" },
+      params: { id: APURACAO_ID }, body: { temDozeMeses: true, mesesEncontrados, totalMesesEncontrados: 12 } }), resFolha);
     assert.equal(resFolha.statusCode, 200);
-    assert.equal(resFolha.body.folha_status, "verificado");
+    const update = operacoes.find((op) => op.metodo === "update").payload;
+    assert.equal(update.folha_status, "verificado");
+    assert.equal(update.folha12, 60000);
+    assert.equal(update.fator_r, 0.5);
+    assert.equal(update.valor_calculado, 600);
+    assert.equal(update.historico_edicoes.at(-1).valor_anterior, 1550);
+    assert.equal(update.historico_edicoes.at(-1).valor_novo, 600);
 
-    queue("apuracoes", "maybeSingle", {
-      data: {
-        cliente_id: CLIENTE_A,
-        status: "rascunho",
-        periodo_mes: 8,
-        periodo_ano: 2026,
-        folha_status: "verificado",
-        fator_r: 0,
-        folha12: null,
-      },
-      error: null,
-    });
-
-    const resAprovarProvisorio = criarResposta();
-    await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), resAprovarProvisorio);
-    assert.equal(resAprovarProvisorio.statusCode, 409);
-    assert.equal(resAprovarProvisorio.body.erro, "FOLHA_PENDENTE");
-
-    queue("apuracoes", "maybeSingle", {
-      data: {
-        cliente_id: CLIENTE_A,
-        status: "rascunho",
-        periodo_mes: 8,
-        periodo_ano: 2026,
-        folha_status: "verificado",
-        fator_r: 0.28,
-        folha12: 120000,
-      },
-      error: null,
-    });
-    queue("apuracoes", "maybeSingle", {
-      data: { id: APURACAO_ID, status: "aprovado" },
-      error: null,
-    });
-
+    queue("apuracoes", "maybeSingle", { data: atualizada, error: null });
+    queueCliente();
+    queue("processamentos_folha", "await", { data: processamentosDosDozeMeses(), error: null });
+    queue("folha_calculos", "await", { data: [{ base_calculo: 60000, fgts: 0 }], error: null });
+    queue("apuracoes", "maybeSingle", { data: { id: APURACAO_ID, status: "aprovado" }, error: null });
     const resAprovar = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), resAprovar);
     assert.equal(resAprovar.statusCode, 200);
@@ -586,17 +573,19 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
     assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
   });
 
-  it("422 FATOR_R_SEM_FOLHA quando Anexo V ainda sem processamentos de folha completos", async () => {
+  it("200 com folha zero quando Anexo V não tem processamentos (#726)", async () => {
     queueApuracaoBase({ anexo: "III", fator_r: 0.35 });
     queueCliente();
     queueNotas([{ valor_total: 30000, data_emissao: "2026-08-10", tipo: "saida" }]);
     queue("processamentos_folha", "await", { data: [], error: null });
 
+    queue("apuracoes", "maybeSingle", { data: { id: APURACAO_ID }, error: null });
     const res = criarResposta();
     await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
-    assert.equal(res.statusCode, 422);
-    assert.equal(res.body.erro, "FATOR_R_SEM_FOLHA");
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.fator_r, 0.01);
+    assert.equal(operacoes.find((op) => op.metodo === "update").payload.folha12, 0);
   });
 
   it("200 recalcula Anexo I com os lançamentos fiscais atuais e limpa valor_editado antigo", async () => {
