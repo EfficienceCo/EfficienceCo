@@ -387,7 +387,6 @@ describe("DAS conferido — Res. CGSN 140/2018, art. 26 §7º (meses seguintes a
   // §7º IV / §6º II (Fator R 0,01 com folha zero): conforme D1/D2 do sprint (lei não reconferida nesta sessão).
   it(
     "§7º, IV: FS12 = 0 e RBT12 > 0 → Fator R 0,01 (Anexo V; folha zero é caso previsto e aprovável)",
-    { skip: "BUG (DAS-2) PRB-AP-51: o motor devolve fator_r 0 (0 ÷ RBT12) em vez de 0,01; o Anexo (V) acerta, o Fator R registrado não" },
     () => {
       const r = calcularSimplesNacional({ rbt12: 300000, receita_mes: 1000, anexo: "V", folha12: 0 });
       assert.equal(r.fator_r, 0.01);
@@ -399,7 +398,7 @@ describe("DAS conferido — Res. CGSN 140/2018, art. 26 §7º (meses seguintes a
 describe("DAS conferido — Res. CGSN 140/2018, art. 26 §6º (mês de início de atividade; conforme D1/D2 do sprint, lei não reconferida)", () => {
   // ATENÇÃO: não há cobertura real de "mês de início". A função só recebe (rbt12, folha12); os testes
   // I e III abaixo são o mesmo cálculo do §7º II/III, com entradas multiplicadas por 12 (folha e
-  // receita do mês × 12). O inciso II é skip porque a regra não existe no código.
+  // receita do mês × 12).
   it("§6º, I (mesmo cálculo do §7º, II com entradas × 12; sem noção de mês de início): FS12 = 5.000 × 12 e RBT12 0 → Fator R 0,28", () => {
     const r = calcularSimplesNacional({ rbt12: 0 * 12, receita_mes: 0, anexo: "V", folha12: 5000 * 12 });
     assert.equal(r.fator_r, 0.28);
@@ -409,7 +408,6 @@ describe("DAS conferido — Res. CGSN 140/2018, art. 26 §6º (mês de início d
   // Conforme D1/D2 do sprint (lei não reconferida nesta sessão).
   it(
     "§6º, II: folha 0 e receita > 0 → Fator R 0,01 (entradas anualizadas: RBT12 = 20.000 × 12, FS12 0)",
-    { skip: "BUG (DAS-2) PRB-AP-51: fator_r sai 0 em vez de 0,01; a função não conhece 'mês de início' e a regra não está implementada" },
     () => {
       const r = calcularSimplesNacional({ rbt12: 20000 * 12, receita_mes: 20000, anexo: "V", folha12: 0 * 12 });
       assert.equal(r.fator_r, 0.01);

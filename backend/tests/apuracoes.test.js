@@ -131,6 +131,7 @@ function processamentosDosDozeMeses() {
       id: `proc-${indice + 1}`,
       mes_referencia: `${ano}-${String(mes).padStart(2, "0")}-01`,
       criado_em: `${ano}-${String(mes).padStart(2, "0")}-02T00:00:00.000Z`,
+      status: "concluido",
     };
   });
 }
@@ -198,12 +199,15 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 404);
   });
 
-  // #619 / BUG-APUR-19 opção A — sem folha completa cria rascunho pendente (fila do agente).
-  it("201 pendente quando Anexo V sem processamentos de folha no período", async () => {
+  // #619 / BUG-APUR-19 opção A — folha que existe mas falhou cria rascunho pendente (fila do agente).
+  it("201 pendente quando o processamento de folha mais recente de um mês está em erro (DAS-2)", async () => {
     queueSemDuplicata();
     queueCliente("V");
     queueNotas([{ valor_total: 50000, data_emissao: "2026-08-10" }]);
-    queue("processamentos_folha", "await", { data: [], error: null });
+    queue("processamentos_folha", "await", {
+      data: processamentosDosDozeMeses().map((p, i) => (i === 10 ? { ...p, status: "erro" } : p)),
+      error: null,
+    });
     queue("apuracoes", "single", {
       data: { id: "nova-apuracao-v-pendente", anexo: "V", folha_status: "pendente", fator_r: 0 },
       error: null,

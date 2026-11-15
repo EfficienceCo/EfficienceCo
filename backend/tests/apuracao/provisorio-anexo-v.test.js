@@ -11,7 +11,8 @@
 // - competência 08/2026; janela da RBT12 = 08/2025 a 07/2026 (12 meses anteriores);
 // - histórico de receita de R$ 10.000,00 em cada mês da janela, sem NF-e nela -> RBT12 = 120.000,00;
 // - receita da competência = uma NF-e de saída de R$ 10.000,00 em 10/08/2026;
-// - sem folha processada -> provisório no pior caso (Anexo V, sem migrar para o III):
+// - folha de 07/2026 com processamento em erro -> provisório no pior caso (Anexo V, sem migrar
+//   para o III). Sem processamento nenhum a folha conta como zero e não há provisório (DAS-2, #726):
 //   alíquota efetiva = (120.000 × 15,5% − 0) ÷ 120.000 = 15,5%; DAS = 10.000 × 15,5% = 1.550,00;
 // - fator_r = 0 é a sentinela do provisório (não é Fator R apurado) e folha_status = pendente.
 import { describe, it, before, after, beforeEach } from "node:test";
@@ -53,7 +54,7 @@ async function buscarApuracao(banco, id) {
   return data;
 }
 
-// Cliente da massa #680 vira Simples Nacional, Anexo V, ativo desde 2018 e sem folha nenhuma.
+// Cliente da massa #680 vira Simples Nacional, Anexo V, ativo desde 2018 e com a folha de 07/2026 em erro.
 async function prepararAnexoVSemFolha(banco, massa, indice) {
   const cliente = massa.tabelas.clientes[indice];
   const { error } = await banco.from("clientes").update({
@@ -81,6 +82,11 @@ async function prepararAnexoVSemFolha(banco, massa, indice) {
     inconsistencias: [],
   });
   if (erroNota) throw new Error(`Erro preparando NF-e: ${erroNota.message}`);
+
+  const { error: erroFolha } = await banco.from("processamentos_folha").insert({
+    cliente_id: cliente.id, mes_referencia: "2026-07-01", status: "erro", arquivo_origem_path: `das-1/folha-${indice}.xlsx`,
+  });
+  if (erroFolha) throw new Error(`Erro preparando folha: ${erroFolha.message}`);
 
   const usuario = massa.tabelas.usuarios.find(item => item.cliente_id === cliente.id && item.perfil === "admin_cliente");
   return { cliente, usuario };

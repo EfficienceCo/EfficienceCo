@@ -156,6 +156,7 @@ function processamentosDosDozeMeses() {
       id: `proc-${indice + 1}`,
       mes_referencia: `${ano}-${String(mes).padStart(2, "0")}-01`,
       criado_em: `${ano}-${String(mes).padStart(2, "0")}-02T00:00:00.000Z`,
+      status: "concluido",
     };
   });
 }
@@ -586,11 +587,14 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
     assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
   });
 
-  it("422 FATOR_R_SEM_FOLHA quando Anexo V ainda sem processamentos de folha completos", async () => {
+  it("422 FATOR_R_SEM_FOLHA quando um processamento de folha da janela ainda não concluiu (DAS-2)", async () => {
     queueApuracaoBase({ anexo: "III", fator_r: 0.35 });
     queueCliente();
     queueNotas([{ valor_total: 30000, data_emissao: "2026-08-10", tipo: "saida" }]);
-    queue("processamentos_folha", "await", { data: [], error: null });
+    queue("processamentos_folha", "await", {
+      data: processamentosDosDozeMeses().map((p, i) => (i === 3 ? { ...p, status: "processando" } : p)),
+      error: null,
+    });
 
     const res = criarResposta();
     await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);

@@ -408,6 +408,7 @@ describe("QA-F 2026-10-12 — via dispararApuracao (filtrarNotasAtivas + janela,
     id: `proc-9-${i + 1}`,
     mes_referencia: `${n.data_emissao.slice(0, 7)}-01`,
     criado_em: `${n.data_emissao.slice(0, 7)}-28T00:00:00.000Z`,
+    status: "concluido",
   }));
   const notas9 = saidasMensais("2025-09", "2026-09", 20000);
   const cliente9 = { anexo_simples: "V", historico_receita: [], data_inicio_atividade: "2019-03-01" };
@@ -461,8 +462,7 @@ describe("QA-F 2026-10-12 — via dispararApuracao (filtrarNotasAtivas + janela,
   // Cliente D do QA-F: Anexo V, início 01/05/2026, saídas de 15k de 05 a 09/2026; folha de 05 a 08/2026
   // com pró-labore de 6.000. Pelo art. 26 §4º da Res. CGSN 140/2018 (conforme D1/D2 do sprint; lei não reconferida nesta sessão) (c/c art. 22 §§2º a 4º) a FS12 é
   // anualizada: (4 × 6.000 ÷ 4) × 12 = 72.000; RBT12 = (4 × 15.000 ÷ 4) × 12 = 180.000; Fator R 0,40 →
-  // Anexo III, 1ª faixa, 6% → 15.000 × 6% = R$ 900,00. Hoje o controller só aceita folha com 12 processamentos
-  // concluídos (coletarFolha12), então devolve o provisório do pior caso: Anexo V 15,5% → R$ 2.325,00.
+  // Anexo III, 1ª faixa, 6% → 15.000 × 6% = R$ 900,00.
   it(
     "QA-F 2026-10-12, cenário D (art. 26 §4º): Anexo V com 4 meses de folha anualiza a FS12 (72.000) → Fator R 0,40 → Anexo III → DAS R$ 900,00",
     async () => {
@@ -470,6 +470,7 @@ describe("QA-F 2026-10-12 — via dispararApuracao (filtrarNotasAtivas + janela,
         id: `proc-${i + 1}`,
         mes_referencia: `${mesRef}-01`,
         criado_em: `${mesRef}-02T00:00:00.000Z`,
+        status: "concluido",
       }));
       const res = await disparar({
         cliente: { anexo_simples: "V", historico_receita: [], data_inicio_atividade: "2026-05-01" },
