@@ -76,8 +76,9 @@ function truncarFatorR(valor) {
 // provisorioSemFolha (#619 / BUG-APUR-19): na criação da apuração, em vez de
 // FATOR_R_SEM_FOLHA, calcula o DAS no pior caso (Anexo V, sem migrar para III)
 // e devolve fator_r = 0 só para marcar origem Anexo V na fila folha-pendente.
-// A fórmula do Fator R em si não muda — esse ramo não a aplica. Recálculo
-// continua estrito (sem a flag) até a folha existir no banco.
+// A fórmula do Fator R em si não muda — esse ramo não a aplica. O detalhe
+// (GET /apuracoes/:id) reconstrói o provisório gravado com a flag (#725); o
+// recálculo continua estrito (sem a flag) até a folha existir no banco.
 export function calcularSimplesNacional({
   rbt12,
   receita_mes,
@@ -120,7 +121,8 @@ export function calcularSimplesNacional({
 
       // Resolução CGSN 140/2018, art. 26, § 7º:
       // - FS12 = 0 e RBT12 = 0: Fator R = 0,01;
-      // - FS12 > 0 e RBT12 = 0: Fator R = 0,28.
+      // - FS12 > 0 e RBT12 = 0: Fator R = 0,28;
+      // - FS12 = 0 e RBT12 > 0: Fator R = 0,01 (inciso IV).
       // Nos demais casos o PGDAS-D trunca o quociente em duas casas, sem arredondar.
       if (rb === 0) {
         fator_r = fs > 0 ? 0.28 : 0.01;

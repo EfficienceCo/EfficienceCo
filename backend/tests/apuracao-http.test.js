@@ -21,11 +21,9 @@ const rotas = [
   { nome: "resultado-folha", metodo: "POST", url: id => `/apuracoes/${id}/resultado-folha`, corpo: relatorio([]), agente: true },
 ];
 
-// O aceite literal #730 pede404 entre escritórios, citando #557. Nesta API,
-// porém, clienteId só é alvo aceito para admin_efficience: admin_cliente usa
-// exclusivamente o vínculo do token, inclusive quando manda outro clienteId.
-// Decisão explícita do autor: preservar o404 literal nos dois BUG/skip, sem
-// alterar produção nesta tarefa. As provas de isolamento continuam ATIVAS.
+// AP-HTTP-01: #730 define 404 para clienteId explícito de outro tenant.
+// O contrato ainda não está implementado para POST/GET de coleção; mantemos
+// os casos pendentes em skips até a correção separada da issue #740.
 test.skip("BUG (AP-HTTP-01) POST com clienteId estrangeiro deve404 conforme aceite literal #730", async t => {
   const s = await iniciarCenarioApuracao(t), a = await s.cliente({ anexo_simples: "I" }), b = await s.cliente({ anexo_simples: "I" });
   await s.notas(b); const estrangeira = await s.criar(b), antes = await s.estado(estrangeira), usuario = await s.usuario(a, "admin_cliente");
@@ -317,6 +315,21 @@ test("DAS HTTP report sem override: histórico automático registra 1550 para 60
   assert.deepEqual((await s.estado(a)).historico_edicoes, gravado.historico_edicoes);
 });
 
+test("DAS HTTP aprovação bloqueada informa o motivo e os meses pendentes", async t => {
+  const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
+  await s.processo(c, refISO(REFERENCIAS[0]), 0, { status: "erro" });
+  const apuracao = await s.criar(c), antes = await s.estado(apuracao);
+  const resposta = await s.chamar(`/apuracoes/${apuracao.id}/aprovar`, { metodo: "PATCH" });
+
+  assert.equal(resposta.status, 409);
+  assert.deepEqual(resposta.corpo, {
+    erro: "FOLHA_PENDENTE",
+    motivo: "A folha ainda aguarda confirmação ou processamento.",
+    mesesPendentes: [],
+  });
+  assert.deepEqual(await s.estado(apuracao), antes, "bloqueio não altera a apuração");
+});
+
 test("DAS HTTP regras de período, regime e cadastro são conferidas sem mutação", async t => {
   const { s, a, ap, admin } = await preparar(t), antes = await s.estado(ap);
   const futuro = { mes: 12, ano: new Date().getUTCFullYear() + 1 };
@@ -548,7 +561,7 @@ test("DAS HTTP POST normal origem V já efetivo III persiste folha completa ante
   assert.equal(fila.status, 200); assert.deepEqual(fila.corpo, [], "POST V→III completo não entra na fila");
 });
 
-test("DAS HTTP POST normal V com onze meses concluídos sem cálculos mantém o mês ausente pendente na fila", async t => {
+test("DAS HTTP POST normal V com onze meses concluídos e um ausente trata o mês como zero", async t => {
   const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
   for (const ref of REFERENCIAS.slice(0, 11)) await s.processo(c, refISO(ref));
   const processos = await lerTodos(s.banco, "processamentos_folha", { cliente_id: c.id });
@@ -561,14 +574,14 @@ test("DAS HTTP POST normal V com onze meses concluídos sem cálculos mantém o 
   assert.equal(criado.status, 201, JSON.stringify(criado.corpo));
   const gravado = await s.estado(criado.corpo);
   // Ausência legítima=zero: FS0/RBT120000 dá FRmínimo.01; AnexoV faixa1,
-  // PD0: 10000*15,5%=DAS1550. A busca do mês faltante continua pendente.
+  // PD0: 10000*15,5%=DAS1550. Mês sem processamento não fica pendente.
   for (const [origem, linha] of [["DB", gravado], ["JSON", criado.corpo]]) {
-    for (const [campo, valor] of Object.entries({ rbt12_usado: 120000, receita_mes: 10000, folha12: 0, fator_r: .01, anexo: "V", valor_calculado: 1550, folha_status: "pendente", aliquota_efetiva: .155, cliente_id: c.id, periodo_mes: 10, periodo_ano: 2026, status: "rascunho" })) {
+    for (const [campo, valor] of Object.entries({ rbt12_usado: 120000, receita_mes: 10000, folha12: 0, fator_r: .01, anexo: "V", valor_calculado: 1550, folha_status: "verificado", aliquota_efetiva: .155, cliente_id: c.id, periodo_mes: 10, periodo_ano: 2026, status: "rascunho" })) {
       assert.equal(linha[campo], valor, `R15 POST V parcial ${origem} ${campo}`);
     }
   }
   assert.equal(criado.corpo.rbt12_metodo, "janela_12_meses"); assert.equal(criado.corpo.meses_atividade, null);
   const fila = await s.chamar("/apuracoes/folha-pendente", { usuario: null, cabecalhos: { "x-licenca-token": c.licenca } });
   assert.equal(fila.status, 200);
-  assert.deepEqual(fila.corpo, [{ id: criado.corpo.id, clienteId: c.id, nomeEmpresa: c.nome, mes: 10, ano: 2026, mesesFolha: REFERENCIAS }]);
+  assert.deepEqual(fila.corpo, [], "mês sem processamento conta como zero e não gera pendência de coleta");
 });
