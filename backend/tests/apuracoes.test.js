@@ -50,6 +50,7 @@ supabase.from = function (tabela) {
     lte() { return builder; },
     in() { return builder; },
     order() { return builder; },
+    range() { return builder; },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     single() { return Promise.resolve(consumir("single", { data: null, error: null })); },
     then(resolve, reject) {
@@ -198,7 +199,7 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 404);
   });
 
-  // #619 / BUG-APUR-19 opção A — sem folha completa cria rascunho pendente (fila do agente).
+  // #726: ausência vale zero; a fila ainda permite localizar arquivos locais.
   it("201 pendente quando Anexo V sem processamentos de folha no período", async () => {
     queueSemDuplicata();
     queueCliente("V");
@@ -216,7 +217,7 @@ describe("POST /apuracoes", () => {
     const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
     assert.equal(insert.payload.folha_status, "pendente");
     assert.equal(insert.payload.anexo, "V");
-    assert.equal(insert.payload.fator_r, 0);
+    assert.equal(insert.payload.fator_r, 0.01);
     assert.ok(insert.payload.valor_calculado > 0);
   });
 
@@ -411,13 +412,13 @@ describe("POST /apuracoes", () => {
     assert.equal(bases.receitaMes, 250);
   });
 
-  // DAS-4 (#728): o cenário completo (data de cancelamento, rotas) está em
-  // tests/apuracao/nota-cancelada-auditoria.test.js; aqui só os casos da função pura.
-  it("lista cancelada sem data (legado) e cancelada de entrada uma vez só, com o motivo de cancelada", () => {
+  // DAS-4 (#728): as rotas, a data de cancelamento e a saída cancelada legada sem data estão em
+  // apuracao-qa-f-regressoes.test.js (QA05 e G1, versão do #739). Só este teste cobre a
+  // cancelada de entrada aparecendo uma vez só.
+  it("cancelada de entrada aparece uma vez só, com o motivo de cancelada", () => {
     const bases = montarBasesCalculo({
       notas: [
         { id: "ativa", tipo: "saida", valor_total: 1000, data_emissao: "2026-07-10", status: "ativa" },
-        { id: "legado", tipo: "saida", valor_total: 700, data_emissao: "2026-07-11", status: "cancelada" },
         { id: "entrada", tipo: "entrada", valor_total: 300, data_emissao: "2026-07-12", status: "cancelada", cancelado_em: null },
       ],
       historicoReceita: [],
@@ -431,7 +432,6 @@ describe("POST /apuracoes", () => {
     assert.deepEqual(
       bases.notasFiscais.excluidas.map(({ id, tipo, motivo, cancelado_em }) => ({ id, tipo, motivo, cancelado_em })),
       [
-        { id: "legado", tipo: "saida", motivo: "NF-e cancelada — não compõe a receita bruta.", cancelado_em: null },
         { id: "entrada", tipo: "entrada", motivo: "NF-e cancelada — não compõe a receita bruta.", cancelado_em: null },
       ],
     );
@@ -499,7 +499,7 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 201);
     const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
     assert.equal(insert.payload.folha_status, "pendente");
-    assert.equal(insert.payload.fator_r, 0);
+    assert.equal(insert.payload.fator_r, 0.01);
     assert.equal(insert.payload.anexo, "V");
   });
 
@@ -516,7 +516,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 0 }) }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   // #497 — competência futura ou mês corrente ainda aberto não podem ser
@@ -568,7 +568,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 15 }) }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   it("400 quando ano é anterior a 2020", async () => {
@@ -576,7 +576,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ ano: 1999 }) }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   it("400 quando mes contém sufixo não numérico", async () => {
@@ -1183,6 +1183,10 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
       error: null,
     });
 
+    queueCliente("V");
+    queue("processamentos_folha", "await", { data: processamentosDosDozeMeses(), error: null });
+    queue("folha_calculos", "await", { data: [{ base_calculo: 120000, fgts: 0 }], error: null });
+
     const res = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
@@ -1424,7 +1428,7 @@ describe("validação de UUID em /apuracoes (BUG-APUR-13)", () => {
     await listarApuracoes(reqAdmin({ query: { mes: "abc" } }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   for (const [nome, handler] of [
