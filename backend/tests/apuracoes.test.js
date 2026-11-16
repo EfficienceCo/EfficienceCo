@@ -1181,6 +1181,7 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
         folha_status: "pendente",
         fator_r: 0,
         folha12: null,
+        dados_folha: { mesesPendentes: ["2026-07"] },
       },
       error: null,
     });
@@ -1190,6 +1191,8 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
 
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.erro, "FOLHA_PENDENTE");
+    assert.deepEqual(res.body.mesesPendentes, ["2026-07"]);
+    assert.match(res.body.motivo, /2026-07/);
     assert.deepEqual(operacoes, []);
   });
 
