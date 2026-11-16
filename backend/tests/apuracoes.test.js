@@ -131,6 +131,7 @@ function processamentosDosDozeMeses() {
       id: `proc-${indice + 1}`,
       mes_referencia: `${ano}-${String(mes).padStart(2, "0")}-01`,
       criado_em: `${ano}-${String(mes).padStart(2, "0")}-02T00:00:00.000Z`,
+      status: "concluido",
     };
   });
 }
@@ -219,12 +220,15 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 404);
   });
 
-  // #619 / BUG-APUR-19 opção A — sem folha completa cria rascunho pendente (fila do agente).
-  it("201 pendente quando Anexo V sem processamentos de folha no período", async () => {
+  // #619 / BUG-APUR-19 opção A — folha que existe mas falhou cria rascunho pendente (fila do agente).
+  it("201 pendente quando o processamento de folha mais recente de um mês está em erro (DAS-2)", async () => {
     queueSemDuplicata();
     queueCliente("V");
     queueNotas([{ valor_total: 50000, data_emissao: "2026-08-10" }]);
-    queue("processamentos_folha", "await", { data: [], error: null });
+    queue("processamentos_folha", "await", {
+      data: processamentosDosDozeMeses().map((p, i) => (i === 10 ? { ...p, status: "erro" } : p)),
+      error: null,
+    });
     queue("apuracoes", "single", {
       data: { id: "nova-apuracao-v-pendente", anexo: "V", folha_status: "pendente", fator_r: 0 },
       error: null,
@@ -472,7 +476,7 @@ describe("POST /apuracoes", () => {
     assert.match(excluida.motivo, /data de emissão futura/i);
   });
 
-  it("201 pendente quando faltam meses de folha na janela completa do Fator R", async () => {
+  it("201 verificado quando falta um mês de folha: o mês sem folha conta como zero (DAS-2)", async () => {
     queueSemDuplicata();
     queueCliente("V");
     queueNotas([
@@ -484,7 +488,7 @@ describe("POST /apuracoes", () => {
       error: null,
     });
     queue("apuracoes", "single", {
-      data: { id: "nova-apuracao-v-parcial", anexo: "V", folha_status: "pendente", fator_r: 0 },
+      data: { id: "nova-apuracao-v-parcial", anexo: "V", folha_status: "verificado", fator_r: 0.01 },
       error: null,
     });
 
@@ -493,8 +497,8 @@ describe("POST /apuracoes", () => {
 
     assert.equal(res.statusCode, 201);
     const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
-    assert.equal(insert.payload.folha_status, "pendente");
-    assert.equal(insert.payload.fator_r, 0);
+    assert.equal(insert.payload.folha_status, "verificado");
+    assert.notEqual(insert.payload.folha12, null);
     assert.equal(insert.payload.anexo, "V");
   });
 

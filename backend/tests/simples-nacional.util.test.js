@@ -119,6 +119,12 @@ describe("calcularSimplesNacional — RBT12 = 0 (sem faturamento nos últimos 12
     assert.equal(Number.isFinite(r.valor_das), true);
   });
 
+  it("Anexo V: folha zero com receita positiva resulta em Fator R 0,01 (art. 26 §7º, IV)", () => {
+    const r = calcularSimplesNacional({ rbt12: 180000, receita_mes: 15000, anexo: "V", folha12: 0 });
+    assert.equal(r.fator_r, 0.01);
+    assert.equal(r.anexo_efetivo, "V");
+  });
+
   it("Anexo V: folha e receita zeradas resultam em Fator R 0,01", () => {
     const r = calcularSimplesNacional({ rbt12: 0, receita_mes: 0, anexo: "V", folha12: 0 });
     assert.equal(r.fator_r, 0.01);

@@ -32,6 +32,14 @@ function resolverFolhaStatus(anexoOriginal, semDadosFolha) {
   return semDadosFolha ? FOLHA_STATUS.PENDENTE : FOLHA_STATUS.VERIFICADO;
 }
 
+// Rascunho provisório do Anexo V (#619): criado sem a folha dos 12 meses, com
+// o DAS no pior caso e fator_r = 0 como sentinela. Gravado, ele se reconhece
+// por fator_r preenchido (origem Anexo V) sem folha12. É um estado válido, não
+// dado corrompido: quem reconstrói o cálculo precisa saber disso (DAS-1 / #725).
+function ehProvisorioSemFolha(apuracao) {
+  return apuracao.fator_r != null && apuracao.folha12 == null;
+}
+
 // GET usa clienteId (camelCase) — mesmo padrão do dashboard em lancamentos-fiscais.controller.js.
 function resolverClienteIdQuery(req) {
   if (req.usuario?.perfil === PERFIS.ADMIN_EFFICIENCE) {
@@ -296,6 +304,8 @@ export function montarBasesCalculo({
     rbt12Mensal,
     rbt12Metodo: rbt12Proporcional ? "proporcional_inicio_atividade" : "janela_12_meses",
     mesesAtividade: rbt12Proporcional ? mesesAtividade : null,
+    // Receita somada do mesmo período da folha, para a razão do Fator R (Manual PGDAS-D 8.2.1).
+    receitaPeriodo: mesesAtividade === 0 ? receitaMes : arredondar(somaJanela),
     notasFiscais: {
       consideradas: notasConsideradas,
       excluidas: notasExcluidas,
@@ -347,19 +357,27 @@ function enriquecerApuracao(apuracao, resultado, bases, clienteNome) {
   };
 }
 
-// Busca folha12 (FS12: base_calculo + fgts, pró-labore incluso) e semDadosFolha pra Anexo V —
-// exige processamentos_folha "concluido" para os 12 meses inteiros da janela.
+// Busca folha12 (FS12: base_calculo + fgts, pró-labore incluso) e semDadosFolha pra Anexo V.
+// Mês sem processamento conta como zero (decisão técnica DAS-2, #726); processamento que
+// existe mas falhou ou ainda não concluiu deixa a apuração provisória (pendente).
+// Com menos de 12 meses de atividade, a FS12 é anualizada pela média dos meses de atividade
+// × 12; no mês de abertura usa a folha do próprio PA × 12 (Res. CGSN 140/2018, art. 26
+// §§4º e 6º c/c art. 22 §§2º a 4º). folhaPeriodo (soma sem anualizar) alimenta a razão.
 // Usada tanto na criação (dispararApuracao) quanto no recálculo
 // (recalcularApuracao, #365) depois que o agente confirma a folha local e/ou
 // novo upload chega via POST /folha/upload/agente.
-async function coletarFolha12(clienteId, janelaRbt12) {
+async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade, mes, ano) {
+  const meses = mesesAtividade === 0
+    ? new Set([chaveMes(ano, mes)])
+    : new Set([...janelaRbt12.meses].slice(-(mesesAtividade || 12)));
+  const referencias = [...meses];
+  const [anoFim, mesFim] = referencias.at(-1).split("-").map(Number);
   const { data: processamentos, error: erroProcessamentos } = await supabase
     .from("processamentos_folha")
-    .select("id, mes_referencia, criado_em")
+    .select("id, mes_referencia, criado_em, status")
     .eq("cliente_id", clienteId)
-    .eq("status", "concluido")
-    .gte("mes_referencia", janelaRbt12.inicio)
-    .lte("mes_referencia", janelaRbt12.fim)
+    .gte("mes_referencia", `${referencias[0]}-01`)
+    .lte("mes_referencia", ultimoDiaDoMes(anoFim, mesFim))
     .order("criado_em", { ascending: false });
 
   if (erroProcessamentos) {
@@ -367,26 +385,24 @@ async function coletarFolha12(clienteId, janelaRbt12) {
     return { erro: "Erro ao buscar dados de folha" };
   }
 
-  // Pode haver reprocessamento do mesmo mês; usa apenas o mais recente para
+  // Pode haver reprocessamento do mesmo mês; vale apenas o mais recente para
   // não duplicar a folha. A consulta já vem em criado_em decrescente.
   const processamentoPorMes = new Map();
   for (const processamento of processamentos || []) {
     const referencia = processamento.mes_referencia?.slice(0, 7);
-    if (janelaRbt12.meses.has(referencia) && !processamentoPorMes.has(referencia)) {
-      processamentoPorMes.set(referencia, processamento.id);
+    if (meses.has(referencia) && !processamentoPorMes.has(referencia)) {
+      processamentoPorMes.set(referencia, processamento);
     }
   }
 
-  const idsProcessamentos = [...processamentoPorMes.values()];
-
-  if (idsProcessamentos.length !== 12) {
+  if ([...processamentoPorMes.values()].some((processamento) => processamento.status !== "concluido")) {
     return { folha12: null, semDadosFolha: true };
   }
 
-  const { data: calculos, error: erroCalculos } = await supabase
-    .from("folha_calculos")
-    .select("base_calculo, fgts")
-    .in("processamento_id", idsProcessamentos);
+  const idsProcessamentos = [...processamentoPorMes.values()].map((processamento) => processamento.id);
+  const { data: calculos, error: erroCalculos } = idsProcessamentos.length
+    ? await supabase.from("folha_calculos").select("base_calculo, fgts").in("processamento_id", idsProcessamentos)
+    : { data: [], error: null };
 
   if (erroCalculos) {
     console.error("[apuracoes.controller] Erro ao buscar cálculos de folha:", erroCalculos.message);
@@ -398,11 +414,11 @@ async function coletarFolha12(clienteId, janelaRbt12) {
   // sócio) + CPP efetivamente recolhida. O Fator R só roda para cliente do
   // Anexo V, que resulta em V ou III — nos dois a CPP vai dentro do DAS, então
   // a CPP recolhida fora dele é 0 e não entra aqui (#612).
-  const folha12 = arredondar(
-    (calculos || []).reduce((soma, linha) => soma + Number(linha.base_calculo) + Number(linha.fgts), 0),
-  );
+  const somaFolha = (calculos || []).reduce((soma, linha) => soma + Number(linha.base_calculo) + Number(linha.fgts), 0);
+  const divisor = mesesAtividade === 0 ? 1 : mesesAtividade;
+  const folha12 = arredondar(divisor == null ? somaFolha : (somaFolha / divisor) * 12);
 
-  return { folha12, semDadosFolha: false };
+  return { folha12, semDadosFolha: false, folhaPeriodo: arredondar(somaFolha) };
 }
 
 export async function dispararApuracao(req, res) {
@@ -520,13 +536,14 @@ export async function dispararApuracao(req, res) {
 
   let folha12 = null;
   let semDadosFolha = false;
+  let folhaPeriodo = null;
 
   if (cliente.anexo_simples === "V") {
-    const insumosFolha = await coletarFolha12(clienteId, janelaRbt12);
+    const insumosFolha = await coletarFolha12(clienteId, janelaRbt12, bases.mesesAtividade, mesNum, anoNum);
     if (insumosFolha.erro) {
       return res.status(500).json({ erro: insumosFolha.erro });
     }
-    ({ folha12, semDadosFolha } = insumosFolha);
+    ({ folha12, semDadosFolha, folhaPeriodo } = insumosFolha);
   }
 
   // Anexo V sem os 12 meses: cria rascunho provisório (pior caso Anexo V) e
@@ -538,6 +555,7 @@ export async function dispararApuracao(req, res) {
     anexo: cliente.anexo_simples,
     folha12,
     semDadosFolha,
+    baseFatorR: { folha: folhaPeriodo, receita: bases.receitaPeriodo },
     provisorioSemFolha: cliente.anexo_simples === "V" && semDadosFolha,
   });
 
@@ -687,12 +705,20 @@ export async function detalharApuracao(req, res) {
   // O anexo persistido é o efetivo. Fator R preenchido identifica que o
   // cadastro original era Anexo V, inclusive quando ele permaneceu no V.
   const anexoOriginal = data.fator_r == null ? data.anexo : "V";
-  const resultado = calcularSimplesNacional({
+  // O provisório volta com os mesmos números do POST que o criou; sem o flag o
+  // motor responde FATOR_R_SEM_FOLHA e o rascunho não abria (DAS-1 / #725).
+  // Fora do provisório, anexo e FR persistidos vieram das somas exatas do período:
+  // não refazer a razão com as bases anualizadas já arredondadas (DAS-2 / #726).
+  const provisorio = ehProvisorioSemFolha(data);
+  const calculo = calcularSimplesNacional({
     rbt12: Number(data.rbt12_usado),
     receita_mes: Number(data.receita_mes),
-    anexo: anexoOriginal,
+    anexo: provisorio ? "V" : data.anexo,
     folha12: data.folha12 == null ? null : Number(data.folha12),
+    provisorioSemFolha: provisorio,
+    aplicarFatorR: provisorio,
   });
+  const resultado = calculo.erro ? calculo : { ...calculo, anexo_original: anexoOriginal, fator_r: data.fator_r };
 
   if (resultado.erro) {
     console.error("[apuracoes.controller] Apuração persistida com dados inválidos:", resultado.erro);
@@ -803,7 +829,7 @@ export async function aprovarApuracao(req, res) {
   // Anexo V provisório (fator_r sentinela sem folha12): bloquear até o
   // recálculo com FS12 real — resultado-folha só troca folha_status e não
   // recalcula o DAS (#619 / review PR #633).
-  if (apuracao.fator_r != null && apuracao.folha12 == null) {
+  if (ehProvisorioSemFolha(apuracao)) {
     return res.status(409).json({ erro: "FOLHA_PENDENTE" });
   }
 
@@ -988,13 +1014,14 @@ export async function recalcularApuracao(req, res) {
 
   let folha12 = null;
   let semDadosFolha = false;
+  let folhaPeriodo = null;
 
   if (anexoOriginal === "V") {
-    const insumosFolha = await coletarFolha12(apuracao.cliente_id, janelaRbt12);
+    const insumosFolha = await coletarFolha12(apuracao.cliente_id, janelaRbt12, bases.mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
     if (insumosFolha.erro) {
       return res.status(500).json({ erro: insumosFolha.erro });
     }
-    ({ folha12, semDadosFolha } = insumosFolha);
+    ({ folha12, semDadosFolha, folhaPeriodo } = insumosFolha);
   }
 
   const resultado = calcularSimplesNacional({
@@ -1003,6 +1030,7 @@ export async function recalcularApuracao(req, res) {
     anexo: anexoOriginal,
     folha12,
     semDadosFolha,
+    baseFatorR: { folha: folhaPeriodo, receita: bases.receitaPeriodo },
   });
 
   if (resultado.erro) {
