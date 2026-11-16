@@ -1,10 +1,12 @@
 import supabase from "../config/database.js";
+import { isDeepStrictEqual } from "node:util";
 import { PERFIS } from "../config/perfis.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { calcularSimplesNacional } from "../utils/simples-nacional.util.js";
 import {
   competenciaEstaFechada,
   dataLocalISO,
+  hojeNoBrasil,
   mesJaFechado,
   ultimaCompetenciaFechada,
   ultimoDiaDoMes,
@@ -22,22 +24,59 @@ const FOLHA_STATUS = {
 // Mesma ideia de LIMITE_ETAPAS_POR_POLLING em processos.controller.js — evita
 // resposta ilimitada quando pendências de folha se acumulam para um cliente.
 const LIMITE_APURACOES_POR_POLLING = 50;
+const ANO_MAXIMO = 2147483647;
+const VALOR_MAXIMO = 9999999999999.99; // NUMERIC(15,2)
+
+// PostgREST limits each response to 1,000 rows. Stable ordering and fresh
+// builders on each page keep the fiscal bases and their audit complete.
+async function coletarPaginas(criarConsulta) {
+  const linhas = [];
+  const tamanho = 1000;
+  for (let inicio = 0; ; inicio += tamanho) {
+    const { data, error } = await criarConsulta().range(inicio, inicio + tamanho - 1);
+    if (error) return { data: null, error };
+    linhas.push(...(data || []));
+    if ((data || []).length < tamanho) return { data: linhas, error: null };
+  }
+}
+
+function coletarNotas(clienteId, inicio, fim) {
+  return coletarPaginas(() => supabase.from("lancamentos_fiscais")
+    .select("id, chave_nfe, tipo, valor_total, data_emissao, status, cancelado_em, motivo_cancelamento, protocolo_cancelamento")
+    .eq("cliente_id", clienteId).gte("data_emissao", inicio).lte("data_emissao", fim)
+    .order("id"));
+}
+
+function ehProvisorioSemFolha(apuracao) {
+  return apuracao.fator_r != null && apuracao.folha12 == null;
+}
+
+function reconstruirCalculo(apuracao) {
+  const provisorio = ehProvisorioSemFolha(apuracao);
+  const resultado = calcularSimplesNacional({
+    rbt12: Number(apuracao.rbt12_usado),
+    receita_mes: Number(apuracao.receita_mes),
+    anexo: provisorio ? "V" : apuracao.anexo,
+    folha12: apuracao.folha12 == null ? null : Number(apuracao.folha12),
+    provisorioSemFolha: provisorio,
+    aplicarFatorR: provisorio,
+  });
+  // O enquadramento e FR persistidos foram calculados pelas somas exatas do
+  // período. Não refazer essa razão usando bases anualizadas já arredondadas.
+  return resultado.erro ? resultado : {
+    ...resultado,
+    anexo_original: apuracao.fator_r == null ? apuracao.anexo : "V",
+    fator_r: apuracao.fator_r,
+  };
+}
 
 // Folha (FS12 / Fator R) só se aplica ao Anexo V. Anexos I–IV devem gravar
 // null explícito — o DEFAULT da coluna é 'pendente' e o CHECK aceita NULL,
 // então omitir o campo faria o banco preencher 'pendente' e a tela mostrar
 // "Aguardando confirmação do agente" sem sentido (BUG-APUR-11 / #611).
-function resolverFolhaStatus(anexoOriginal, semDadosFolha) {
+function resolverFolhaStatus(anexoOriginal, pendenteFolha) {
   if (anexoOriginal !== "V") return null;
-  return semDadosFolha ? FOLHA_STATUS.PENDENTE : FOLHA_STATUS.VERIFICADO;
-}
-
-// Rascunho provisório do Anexo V (#619): criado sem a folha dos 12 meses, com
-// o DAS no pior caso e fator_r = 0 como sentinela. Gravado, ele se reconhece
-// por fator_r preenchido (origem Anexo V) sem folha12. É um estado válido, não
-// dado corrompido: quem reconstrói o cálculo precisa saber disso (DAS-1 / #725).
-function ehProvisorioSemFolha(apuracao) {
-  return apuracao.fator_r != null && apuracao.folha12 == null;
+  return pendenteFolha ? FOLHA_STATUS.PENDENTE : FOLHA_STATUS.VERIFICADO;
 }
 
 // GET usa clienteId (camelCase) — mesmo padrão do dashboard em lancamentos-fiscais.controller.js.
@@ -76,6 +115,13 @@ function calcularJanela12MesesAnteriores(mes, ano) {
   }
 
   return { inicio, fim, meses };
+}
+
+function mesesFolhaEsperados(mes, ano, dataInicioAtividade) {
+  const inicio = referenciaInicioAtividade(dataInicioAtividade);
+  const janela = calcularJanela12MesesAnteriores(mes, ano);
+  if (inicio.referencia === chaveMes(ano, mes)) return new Set([chaveMes(ano, mes)]);
+  return new Set([...janela.meses].filter((ref) => !inicio.referencia || ref >= inicio.referencia));
 }
 
 function somarHistoricoReceita(historico, mesesEsperados, mesesComNotas) {
@@ -127,6 +173,20 @@ function resumirNota(nota, detalhes) {
     valor_total: arredondar(Number(nota.valor_total) || 0),
     ...detalhes,
   };
+}
+
+function resumirNotaCancelada(nota) {
+  const instante = nota.cancelado_em ? new Date(nota.cancelado_em) : null;
+  const data = instante && !Number.isNaN(instante.getTime())
+    ? hojeNoBrasil(instante).split("-").reverse().join("/") : null;
+  return resumirNota(nota, {
+    compoe_rbt12: false, compoe_receita_mes: false,
+    motivo: data ? `NF-e cancelada em ${data} — não compõe a receita bruta.`
+      : "NF-e cancelada — não compõe a receita bruta.",
+    cancelado_em: nota.cancelado_em ?? null,
+    motivo_cancelamento: nota.motivo_cancelamento ?? null,
+    protocolo_cancelamento: nota.protocolo_cancelamento ?? null,
+  });
 }
 
 function dataEmissaoISO(nota) {
@@ -189,7 +249,8 @@ export function montarBasesCalculo({
   );
   const mesReferenciaAtual = chaveMes(ano, mes);
   const linhasNotas = Array.isArray(notas) ? notas : [];
-  const notasSaida = linhasNotas.filter(ehNotaDeSaida);
+  const notasAtivas = filtrarNotasAtivas(linhasNotas);
+  const notasSaida = notasAtivas.filter(ehNotaDeSaida);
 
   const notaComDataFutura = (nota) => {
     const emissao = dataEmissaoISO(nota);
@@ -287,7 +348,9 @@ export function montarBasesCalculo({
   }
 
   const notasExcluidas = [
-    ...linhasNotas
+    ...linhasNotas.filter((nota) => nota.status === "cancelada")
+      .map(resumirNotaCancelada),
+    ...notasAtivas
       .filter((nota) => !ehNotaDeSaida(nota))
       .map((nota) => resumirNota(nota, {
         compoe_rbt12: false,
@@ -301,11 +364,10 @@ export function montarBasesCalculo({
     janelaRbt12,
     rbt12,
     receitaMes,
+    receitaPeriodo: mesesAtividade === 0 ? receitaMes : arredondar(somaJanela),
     rbt12Mensal,
     rbt12Metodo: rbt12Proporcional ? "proporcional_inicio_atividade" : "janela_12_meses",
     mesesAtividade: rbt12Proporcional ? mesesAtividade : null,
-    // Receita somada do mesmo período da folha, para a razão do Fator R (Manual PGDAS-D 8.2.1).
-    receitaPeriodo: mesesAtividade === 0 ? receitaMes : arredondar(somaJanela),
     notasFiscais: {
       consideradas: notasConsideradas,
       excluidas: notasExcluidas,
@@ -357,36 +419,30 @@ function enriquecerApuracao(apuracao, resultado, bases, clienteNome) {
   };
 }
 
-// Busca folha12 (FS12: base_calculo + fgts, pró-labore incluso) e semDadosFolha pra Anexo V.
-// Mês sem processamento conta como zero (decisão técnica DAS-2, #726); processamento que
-// existe mas falhou ou ainda não concluiu deixa a apuração provisória (pendente).
-// Com menos de 12 meses de atividade, a FS12 é anualizada pela média dos meses de atividade
-// × 12; no mês de abertura usa a folha do próprio PA × 12 (Res. CGSN 140/2018, art. 26
-// §§4º e 6º c/c art. 22 §§2º a 4º). folhaPeriodo (soma sem anualizar) alimenta a razão.
-// Usada tanto na criação (dispararApuracao) quanto no recálculo
-// (recalcularApuracao, #365) depois que o agente confirma a folha local e/ou
-// novo upload chega via POST /folha/upload/agente.
-async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade, mes, ano) {
+// Months without a processing count as zero (#726). An existing failed or
+// unfinished processing is different: it must remain retryable and provisional.
+async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade = null, mes, ano) {
   const meses = mesesAtividade === 0
     ? new Set([chaveMes(ano, mes)])
     : new Set([...janelaRbt12.meses].slice(-(mesesAtividade || 12)));
   const referencias = [...meses];
+  const inicio = `${referencias[0]}-01`;
   const [anoFim, mesFim] = referencias.at(-1).split("-").map(Number);
-  const { data: processamentos, error: erroProcessamentos } = await supabase
+  const fim = ultimoDiaDoMes(anoFim, mesFim);
+  const { data: processamentos, error: erroProcessamentos } = await coletarPaginas(() => supabase
     .from("processamentos_folha")
     .select("id, mes_referencia, criado_em, status")
     .eq("cliente_id", clienteId)
-    .gte("mes_referencia", `${referencias[0]}-01`)
-    .lte("mes_referencia", ultimoDiaDoMes(anoFim, mesFim))
-    .order("criado_em", { ascending: false });
+    .gte("mes_referencia", inicio)
+    .lte("mes_referencia", fim)
+    .order("criado_em", { ascending: false })
+    .order("id"));
 
   if (erroProcessamentos) {
     console.error("[apuracoes.controller] Erro ao buscar processamentos de folha:", erroProcessamentos.message);
     return { erro: "Erro ao buscar dados de folha" };
   }
 
-  // Pode haver reprocessamento do mesmo mês; vale apenas o mais recente para
-  // não duplicar a folha. A consulta já vem em criado_em decrescente.
   const processamentoPorMes = new Map();
   for (const processamento of processamentos || []) {
     const referencia = processamento.mes_referencia?.slice(0, 7);
@@ -394,14 +450,14 @@ async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade, mes, ano) 
       processamentoPorMes.set(referencia, processamento);
     }
   }
-
-  if ([...processamentoPorMes.values()].some((processamento) => processamento.status !== "concluido")) {
-    return { folha12: null, semDadosFolha: true };
+  if ([...processamentoPorMes.values()].some((p) => p.status !== undefined && p.status !== "concluido")) {
+    return { folha12: null, semDadosFolha: true, pendenteFolha: true, mesesConcluidos: [] };
   }
 
-  const idsProcessamentos = [...processamentoPorMes.values()].map((processamento) => processamento.id);
+  const idsProcessamentos = [...processamentoPorMes.values()].map((p) => p.id);
   const { data: calculos, error: erroCalculos } = idsProcessamentos.length
-    ? await supabase.from("folha_calculos").select("base_calculo, fgts").in("processamento_id", idsProcessamentos)
+    ? await coletarPaginas(() => supabase.from("folha_calculos")
+      .select("base_calculo, fgts").in("processamento_id", idsProcessamentos).order("id"))
     : { data: [], error: null };
 
   if (erroCalculos) {
@@ -409,16 +465,130 @@ async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade, mes, ano) 
     return { erro: "Erro ao buscar dados de folha" };
   }
 
-  // FS12 (LC 123 art. 18 §24; Res. CGSN 140/2018 art. 26) = remunerações
-  // (base_calculo, incl. pró-labore das linhas SOCIO) + FGTS recolhido (0 no
-  // sócio) + CPP efetivamente recolhida. O Fator R só roda para cliente do
-  // Anexo V, que resulta em V ou III — nos dois a CPP vai dentro do DAS, então
-  // a CPP recolhida fora dele é 0 e não entra aqui (#612).
-  const somaFolha = (calculos || []).reduce((soma, linha) => soma + Number(linha.base_calculo) + Number(linha.fgts), 0);
+  // CPP effectively collected is not available in the current schema (DAS-6).
+  // Annualize both bases by the same period, including the PA only on opening.
+  const soma = (calculos || []).reduce((total, linha) => total + Number(linha.base_calculo) + Number(linha.fgts), 0);
   const divisor = mesesAtividade === 0 ? 1 : mesesAtividade;
-  const folha12 = arredondar(divisor == null ? somaFolha : (somaFolha / divisor) * 12);
+  const folha12 = arredondar(divisor == null ? soma : (soma / divisor) * 12);
+  return {
+    folha12, semDadosFolha: false,
+    folhaPeriodo: arredondar(soma),
+    // Mês sem processamento é zero e não bloqueia a apuração (#726/#737).
+    pendenteFolha: false,
+    mesesConcluidos: [...processamentoPorMes.keys()],
+  };
+}
 
-  return { folha12, semDadosFolha: false, folhaPeriodo: arredondar(somaFolha) };
+function avaliarEstadoFolha(apuracao, folha, relatorio = null) {
+  const anterior = apuracao.dados_folha;
+  if (!relatorio && !anterior) {
+    return { folha_status: resolverFolhaStatus("V", folha.pendenteFolha), dados_folha: null };
+  }
+  const dados = relatorio || anterior;
+  const referencias = new Set((dados.mesesEncontrados || []).map((item) => chaveMes(item.ano, item.mes)));
+  const anteriores = anterior?.mesesPendentes || [];
+  const falhaInformada = Boolean(dados.falhaUpload);
+  const falhaUpload = falhaInformada || Boolean(anterior?.falhaUpload && anteriores.some((ref) => !referencias.has(ref)));
+  const mesesPendentes = [...new Set([...referencias, ...anteriores])].filter((ref) =>
+    !folha.mesesConcluidos.includes(ref) || (falhaInformada && referencias.has(ref)) ||
+    (anterior?.falhaUpload && !referencias.has(ref)));
+  const processamentoPendente = folha.semDadosFolha || mesesPendentes.length > 0;
+  const folhaStatus = falhaUpload || processamentoPendente ? FOLHA_STATUS.PENDENTE
+    : referencias.size || anteriores.length ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.SEM_DADOS;
+  return {
+    folha_status: folhaStatus,
+    dados_folha: { ...dados, falhaUpload, processamentoPendente, mesesPendentes },
+  };
+}
+
+function respostaFolhaPendente(apuracao, mesesPendentes = null, motivo = null) {
+  const meses = [...new Set(mesesPendentes ?? apuracao.dados_folha?.mesesPendentes ?? [])];
+  const motivoBase = motivo || (apuracao.dados_folha?.falhaUpload
+    ? "Falha no envio dos arquivos de folha; reenvie-os ou aguarde uma nova tentativa."
+    : "A folha ainda aguarda confirmação ou processamento.");
+  const detalheMeses = meses.length ? ` Meses pendentes: ${meses.join(", ")}.` : "";
+  return { erro: "FOLHA_PENDENTE", motivo: `${motivoBase}${detalheMeses}`, mesesPendentes: meses };
+}
+
+async function prepararAtualizacaoFolha(apuracao, cliente, folha, estado) {
+  if (folha.semDadosFolha || estado.dados_folha?.falhaUpload || estado.dados_folha?.processamentoPendente) {
+    return { alteracoes: estado };
+  }
+  const janela = calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano);
+  const { data: notas, error } = await coletarNotas(apuracao.cliente_id, janela.inicio,
+    ultimoDiaDoMes(apuracao.periodo_ano, apuracao.periodo_mes));
+  if (error) return { erro: "Erro ao buscar lançamentos fiscais", status: 500 };
+  const bases = montarBasesCalculo({ notas, historicoReceita: cliente.historico_receita,
+    dataInicioAtividade: cliente.data_inicio_atividade, mes: apuracao.periodo_mes, ano: apuracao.periodo_ano });
+  if (bases.erro) return { erro: bases.erro, status: 422 };
+  const resultado = calcularSimplesNacional({ rbt12: bases.rbt12, receita_mes: bases.receitaMes,
+    anexo: "V", folha12: folha.folha12,
+    baseFatorR: { folha: folha.folhaPeriodo, receita: bases.receitaPeriodo } });
+  if (resultado.erro) return { erro: resultado.erro, status: 422 };
+  const calculo = {
+    rbt12_usado: resultado.rbt12_usado, receita_mes: resultado.receita_mes,
+    anexo: resultado.anexo_efetivo, fator_r: resultado.fator_r, folha12: folha.folha12,
+    aliquota_efetiva: resultado.aliquota_efetiva, valor_calculado: resultado.valor_das,
+  };
+  const mudou = Object.entries(calculo).some(([campo, valor]) =>
+    campo === "anexo" ? apuracao[campo] !== valor : apuracao[campo] == null || Number(apuracao[campo]) !== valor);
+  const alteracoes = { ...estado, ...calculo };
+  if (mudou) {
+    // A ação explícita Recalcular descarta o override (#609). A chegada
+    // automática da folha preserva a decisão manual e audita a nova base.
+    alteracoes.historico_edicoes = [...(apuracao.historico_edicoes || []), {
+      tipo: "recalculo", origem: "folha",
+      valor_anterior: apuracao.valor_editado ?? apuracao.valor_calculado,
+      valor_novo: apuracao.valor_editado ?? resultado.valor_das,
+      valor_calculado_anterior: apuracao.valor_calculado, valor_calculado_novo: resultado.valor_das,
+      motivo: apuracao.valor_editado != null
+        ? "Folha processada: cálculo atualizado e edição manual preservada"
+        : "Recálculo automático após processamento da folha",
+      editado_por: "sistema (folha)", editado_em: new Date().toISOString(),
+    }];
+  }
+  return { alteracoes };
+}
+
+// Fechamento do fluxo assíncrono DAS-3: vale também quando o processamento
+// termina depois do relatório do agente. Nunca modifica apuração aprovada.
+export async function atualizarApuracoesAposFolha(clienteId, mesReferencia) {
+  const { data: apuracoes, error } = await coletarPaginas(() => supabase.from("apuracoes")
+    .select("*").eq("cliente_id", clienteId).eq("status", "rascunho")
+    .not("fator_r", "is", null).order("id"));
+  if (error) throw new Error(error.message);
+  if (!apuracoes.length) return;
+  const { data: cliente, error: erroCliente } = await supabase.from("clientes")
+    .select("nome, historico_receita, data_inicio_atividade").eq("id", clienteId).maybeSingle();
+  if (erroCliente || !cliente) throw new Error(erroCliente?.message || "Cliente não encontrado");
+  for (const inicial of apuracoes) {
+    if (!mesesFolhaEsperados(inicial.periodo_mes, inicial.periodo_ano, cliente.data_inicio_atividade)
+      .has(mesReferencia.slice(0, 7))) continue;
+    let apuracao = inicial;
+    for (let tentativa = 0; tentativa < 5; tentativa += 1) {
+      if (!apuracao || apuracao.status !== "rascunho") break;
+      const meses = mesesFolhaEsperados(apuracao.periodo_mes, apuracao.periodo_ano, cliente.data_inicio_atividade);
+      const mesesAtividade = meses.has(chaveMes(apuracao.periodo_ano, apuracao.periodo_mes)) ? 0 : meses.size < 12 ? meses.size : null;
+      const folha = await coletarFolha12(clienteId,
+        calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano),
+        mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
+      if (folha.erro) throw new Error(folha.erro);
+      const preparado = await prepararAtualizacaoFolha(apuracao, cliente, folha, avaliarEstadoFolha(apuracao, folha));
+      if (preparado.erro) throw new Error(preparado.erro);
+      // Outros meses podem concluir juntos. Se outra chamada já aplicou o
+      // mesmo cálculo/estado, não grava de novo nem disputa seu histórico.
+      if (Object.entries(preparado.alteracoes).every(([campo, valor]) =>
+        isDeepStrictEqual(apuracao[campo] ?? null, valor ?? null))) break;
+      const { data, error: erroAtualizacao } = await supabase.from("apuracoes").update(preparado.alteracoes)
+        .eq("id", apuracao.id).eq("cliente_id", clienteId).eq("status", "rascunho").eq("atualizado_em", apuracao.atualizado_em).select().maybeSingle();
+      if (erroAtualizacao) throw new Error(erroAtualizacao.message);
+      if (data) break;
+      if (tentativa === 4) throw new Error("Apuração alterada durante atualização automática da folha");
+      const atualizado = await supabase.from("apuracoes").select("*").eq("id", apuracao.id).eq("cliente_id", clienteId).maybeSingle();
+      if (atualizado.error) throw new Error(atualizado.error.message);
+      apuracao = atualizado.data;
+    }
+  }
 }
 
 export async function dispararApuracao(req, res) {
@@ -450,8 +620,8 @@ export async function dispararApuracao(req, res) {
 
   // Mesmos limites da CHECK constraint em database/migrations/71.sql — falhar aqui
   // com 400 em vez de deixar o Postgres rejeitar o insert com um 500 genérico.
-  if (!Number.isInteger(mesNum) || mesNum < 1 || mesNum > 12 || !Number.isInteger(anoNum) || anoNum < 2020) {
-    return res.status(400).json({ erro: "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020" });
+  if (!Number.isInteger(mesNum) || mesNum < 1 || mesNum > 12 || !Number.isInteger(anoNum) || anoNum < 2020 || anoNum > ANO_MAXIMO) {
+    return res.status(400).json({ erro: "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647" });
   }
 
   // Teto contra a data atual (#497). Sem isso, competência futura ou o mês
@@ -509,13 +679,7 @@ export async function dispararApuracao(req, res) {
   const janelaRbt12 = calcularJanela12MesesAnteriores(mesNum, anoNum);
   const fimMesAtual = ultimoDiaDoMes(anoNum, mesNum);
 
-  const { data: notas, error: erroNotas } = await supabase
-    .from("lancamentos_fiscais")
-    .select("id, chave_nfe, tipo, valor_total, data_emissao, status")
-    .eq("cliente_id", clienteId)
-    .eq("status", "ativa")
-    .gte("data_emissao", janelaRbt12.inicio)
-    .lte("data_emissao", fimMesAtual);
+  const { data: notas, error: erroNotas } = await coletarNotas(clienteId, janelaRbt12.inicio, fimMesAtual);
 
   if (erroNotas) {
     console.error("[apuracoes.controller] Erro ao buscar lançamentos fiscais:", erroNotas.message);
@@ -523,7 +687,7 @@ export async function dispararApuracao(req, res) {
   }
 
   const bases = montarBasesCalculo({
-    notas: filtrarNotasAtivas(notas),
+    notas,
     historicoReceita: cliente.historico_receita,
     dataInicioAtividade: cliente.data_inicio_atividade,
     mes: mesNum,
@@ -536,6 +700,7 @@ export async function dispararApuracao(req, res) {
 
   let folha12 = null;
   let semDadosFolha = false;
+  let pendenteFolha = false;
   let folhaPeriodo = null;
 
   if (cliente.anexo_simples === "V") {
@@ -543,20 +708,19 @@ export async function dispararApuracao(req, res) {
     if (insumosFolha.erro) {
       return res.status(500).json({ erro: insumosFolha.erro });
     }
-    ({ folha12, semDadosFolha, folhaPeriodo } = insumosFolha);
+    ({ folha12, semDadosFolha, pendenteFolha, folhaPeriodo } = insumosFolha);
   }
 
-  // Anexo V sem os 12 meses: cria rascunho provisório (pior caso Anexo V) e
-  // entra na fila do agente — em vez do 422 FATOR_R_SEM_FOLHA que deixava
-  // folha-pendente sempre vazia (#619 / BUG-APUR-19, opção A).
+  // Mês sem processamento vale zero (#726), mantendo a busca de arquivos
+  // locais. Só um processamento existente ainda não concluído é provisório.
   const resultado = calcularSimplesNacional({
     rbt12: bases.rbt12,
     receita_mes: bases.receitaMes,
     anexo: cliente.anexo_simples,
     folha12,
     semDadosFolha,
-    baseFatorR: { folha: folhaPeriodo, receita: bases.receitaPeriodo },
     provisorioSemFolha: cliente.anexo_simples === "V" && semDadosFolha,
+    baseFatorR: { folha: folhaPeriodo, receita: bases.receitaPeriodo },
   });
 
   if (resultado.erro) {
@@ -575,11 +739,10 @@ export async function dispararApuracao(req, res) {
       anexo: resultado.anexo_efetivo,
       fator_r: resultado.fator_r,
       folha12,
-      // Anexo V com folha12 já completa na criação (semDadosFolha: false) não
-      // precisa entrar na fila de polling do agente — só fica "pendente"
-      // quando a folha realmente está faltando (#365, achado do Vinicius no
-      // review do PR #366). Anexos I–IV: null explícito (BUG-APUR-11 / #611).
-      folha_status: resolverFolhaStatus(cliente.anexo_simples, semDadosFolha),
+      // Mantém o polling dos meses ainda não verificados localmente. A folha
+      // zero continua aprovável; falha conhecida exige reprocessamento.
+      // Anexos I–IV: null explícito (BUG-APUR-11 / #611).
+      folha_status: resolverFolhaStatus(cliente.anexo_simples, pendenteFolha),
       aliquota_efetiva: resultado.aliquota_efetiva,
       valor_calculado: resultado.valor_das,
       status: "rascunho",
@@ -616,8 +779,8 @@ export async function listarApuracoes(req, res) {
   const anoNum = ano === undefined ? null : inteiroEstrito(ano);
 
   if ((mes !== undefined && (mesNum === null || mesNum < 1 || mesNum > 12)) ||
-      (ano !== undefined && (anoNum === null || anoNum < 2020))) {
-    return res.status(400).json({ erro: "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020" });
+      (ano !== undefined && (anoNum === null || anoNum < 2020 || anoNum > ANO_MAXIMO))) {
+    return res.status(400).json({ erro: "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647" });
   }
 
   let query = supabase
@@ -637,7 +800,10 @@ export async function listarApuracoes(req, res) {
     return res.status(500).json({ erro: "Erro ao listar apurações" });
   }
 
-  return res.status(200).json(data);
+  return res.status(200).json((data || []).map((apuracao) => {
+    const resultado = reconstruirCalculo(apuracao);
+    return resultado.erro ? apuracao : { ...apuracao, aliquota_efetiva: resultado.aliquota_efetiva };
+  }));
 }
 
 export async function detalharApuracao(req, res) {
@@ -669,13 +835,7 @@ export async function detalharApuracao(req, res) {
       .select("nome, anexo_simples, historico_receita, data_inicio_atividade")
       .eq("id", data.cliente_id)
       .maybeSingle(),
-    supabase
-      .from("lancamentos_fiscais")
-      .select("id, chave_nfe, tipo, valor_total, data_emissao, status")
-      .eq("cliente_id", data.cliente_id)
-      .eq("status", "ativa")
-      .gte("data_emissao", janelaRbt12.inicio)
-      .lte("data_emissao", fimMesAtual),
+    coletarNotas(data.cliente_id, janelaRbt12.inicio, fimMesAtual),
   ]);
 
   if (erroCliente || erroNotas) {
@@ -691,7 +851,7 @@ export async function detalharApuracao(req, res) {
   }
 
   const bases = montarBasesCalculo({
-    notas: filtrarNotasAtivas(notas),
+    notas,
     historicoReceita: cliente.historico_receita,
     dataInicioAtividade: cliente.data_inicio_atividade,
     mes: data.periodo_mes,
@@ -704,21 +864,7 @@ export async function detalharApuracao(req, res) {
 
   // O anexo persistido é o efetivo. Fator R preenchido identifica que o
   // cadastro original era Anexo V, inclusive quando ele permaneceu no V.
-  const anexoOriginal = data.fator_r == null ? data.anexo : "V";
-  // O provisório volta com os mesmos números do POST que o criou; sem o flag o
-  // motor responde FATOR_R_SEM_FOLHA e o rascunho não abria (DAS-1 / #725).
-  // Fora do provisório, anexo e FR persistidos vieram das somas exatas do período:
-  // não refazer a razão com as bases anualizadas já arredondadas (DAS-2 / #726).
-  const provisorio = ehProvisorioSemFolha(data);
-  const calculo = calcularSimplesNacional({
-    rbt12: Number(data.rbt12_usado),
-    receita_mes: Number(data.receita_mes),
-    anexo: provisorio ? "V" : data.anexo,
-    folha12: data.folha12 == null ? null : Number(data.folha12),
-    provisorioSemFolha: provisorio,
-    aplicarFatorR: provisorio,
-  });
-  const resultado = calculo.erro ? calculo : { ...calculo, anexo_original: anexoOriginal, fator_r: data.fator_r };
+  const resultado = reconstruirCalculo(data);
 
   if (resultado.erro) {
     console.error("[apuracoes.controller] Apuração persistida com dados inválidos:", resultado.erro);
@@ -748,9 +894,13 @@ export async function editarApuracao(req, res) {
     return res.status(400).json({ erro: "valor_editado deve ser um número não negativo" });
   }
 
+  if (valorNumerico > VALOR_MAXIMO || valorNumerico !== Number(valorNumerico.toFixed(2))) {
+    return res.status(400).json({ erro: "valor_editado deve ter até duas casas decimais e ser <= 9999999999999.99" });
+  }
+
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("cliente_id, status, valor_editado, valor_calculado, historico_edicoes")
+    .select("cliente_id, status, valor_editado, valor_calculado, historico_edicoes, atualizado_em, dados_folha")
     .eq("id", id)
     .maybeSingle();
 
@@ -784,6 +934,7 @@ export async function editarApuracao(req, res) {
     .update({ valor_editado: valorNumerico, historico_edicoes: historicoAtualizado })
     .eq("id", id)
     .eq("status", "rascunho")
+    .eq("atualizado_em", apuracao.atualizado_em)
     .select()
     .maybeSingle();
 
@@ -793,7 +944,7 @@ export async function editarApuracao(req, res) {
   }
 
   if (!data) {
-    return res.status(409).json({ erro: "Apuração já aprovada não pode ser editada" });
+    return res.status(409).json({ erro: "Apuração alterada por outra solicitação; atualize e tente novamente" });
   }
 
   return res.status(200).json(data);
@@ -809,7 +960,7 @@ export async function aprovarApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("cliente_id, status, periodo_mes, periodo_ano, folha_status, fator_r, folha12")
+    .select("cliente_id, status, periodo_mes, periodo_ano, folha_status, fator_r, folha12, atualizado_em, dados_folha")
     .eq("id", id)
     .maybeSingle();
 
@@ -826,11 +977,10 @@ export async function aprovarApuracao(req, res) {
     return res.status(409).json({ erro: "Apuração já está aprovada" });
   }
 
-  // Anexo V provisório (fator_r sentinela sem folha12): bloquear até o
-  // recálculo com FS12 real — resultado-folha só troca folha_status e não
-  // recalcula o DAS (#619 / review PR #633).
-  if (ehProvisorioSemFolha(apuracao)) {
-    return res.status(409).json({ erro: "FOLHA_PENDENTE" });
+  // Provisório legado ou arquivo com falha não pode ser aprovado. Ausência
+  // legítima já calculada como folha zero é aprovável (#726).
+  if (ehProvisorioSemFolha(apuracao) || apuracao.dados_folha?.falhaUpload || apuracao.dados_folha?.processamentoPendente) {
+    return res.status(409).json(respostaFolhaPendente(apuracao));
   }
 
   // Aprovar é o que transforma o rascunho em número oficial do cliente, então
@@ -845,6 +995,27 @@ export async function aprovarApuracao(req, res) {
     });
   }
 
+  if (apuracao.fator_r != null) {
+    const { data: cliente, error: erroCliente } = await supabase.from("clientes")
+      .select("data_inicio_atividade").eq("id", apuracao.cliente_id).maybeSingle();
+    if (erroCliente) return res.status(500).json({ erro: "Erro ao buscar dados do cliente" });
+    if (!cliente) return res.status(404).json({ erro: "Cliente não encontrado" });
+    const meses = mesesFolhaEsperados(apuracao.periodo_mes, apuracao.periodo_ano, cliente.data_inicio_atividade);
+    const mesesAtividade = meses.has(chaveMes(apuracao.periodo_ano, apuracao.periodo_mes)) ? 0 : meses.size < 12 ? meses.size : null;
+    const folha = await coletarFolha12(apuracao.cliente_id,
+      calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano),
+      mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
+    if (folha.erro) return res.status(500).json({ erro: folha.erro });
+    if (folha.semDadosFolha || folha.folha12 !== Number(apuracao.folha12)) {
+      const mesesPendentes = [...meses].filter((ref) => !folha.mesesConcluidos.includes(ref));
+      return res.status(409).json(respostaFolhaPendente(
+        apuracao,
+        mesesPendentes,
+        "A folha mudou ou está em processamento; aguarde a atualização do cálculo.",
+      ));
+    }
+  }
+
   const { data, error } = await supabase
     .from("apuracoes")
     .update({
@@ -854,6 +1025,7 @@ export async function aprovarApuracao(req, res) {
     })
     .eq("id", id)
     .eq("status", "rascunho")
+    .eq("atualizado_em", apuracao.atualizado_em)
     .select()
     .maybeSingle();
 
@@ -863,7 +1035,7 @@ export async function aprovarApuracao(req, res) {
   }
 
   if (!data) {
-    return res.status(409).json({ erro: "Apuração já está aprovada" });
+    return res.status(409).json({ erro: "Apuração alterada por outra solicitação; atualize e tente novamente" });
   }
 
   return res.status(200).json(data);
@@ -882,7 +1054,7 @@ export async function excluirApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("cliente_id, status")
+    .select("cliente_id, status, atualizado_em")
     .eq("id", id)
     .maybeSingle();
 
@@ -906,6 +1078,7 @@ export async function excluirApuracao(req, res) {
     .delete()
     .eq("id", id)
     .eq("status", "rascunho")
+    .eq("atualizado_em", apuracao.atualizado_em)
     .select()
     .maybeSingle();
 
@@ -915,7 +1088,7 @@ export async function excluirApuracao(req, res) {
   }
 
   if (!data) {
-    return res.status(409).json({ erro: "Apuração já aprovada não pode ser excluída" });
+    return res.status(409).json({ erro: "Apuração alterada por outra solicitação; atualize e tente novamente" });
   }
 
   return res.status(204).send();
@@ -936,7 +1109,7 @@ export async function recalcularApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("id, cliente_id, periodo_mes, periodo_ano, status, anexo, fator_r, valor_editado, valor_calculado, historico_edicoes")
+    .select("id, cliente_id, periodo_mes, periodo_ano, status, anexo, fator_r, valor_editado, valor_calculado, historico_edicoes, atualizado_em, dados_folha")
     .eq("id", id)
     .maybeSingle();
 
@@ -951,6 +1124,10 @@ export async function recalcularApuracao(req, res) {
 
   if (apuracao.status === "aprovado") {
     return res.status(409).json({ erro: "Apuração já aprovada não pode ser recalculada" });
+  }
+
+  if (apuracao.dados_folha?.falhaUpload) {
+    return res.status(409).json(respostaFolhaPendente(apuracao));
   }
 
   // Mesma regra da criação (#497): registros de competência futura criados
@@ -987,13 +1164,7 @@ export async function recalcularApuracao(req, res) {
   const janelaRbt12 = calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano);
   const fimMesAtual = ultimoDiaDoMes(apuracao.periodo_ano, apuracao.periodo_mes);
 
-  const { data: notas, error: erroNotas } = await supabase
-    .from("lancamentos_fiscais")
-    .select("id, chave_nfe, tipo, valor_total, data_emissao, status")
-    .eq("cliente_id", apuracao.cliente_id)
-    .eq("status", "ativa")
-    .gte("data_emissao", janelaRbt12.inicio)
-    .lte("data_emissao", fimMesAtual);
+  const { data: notas, error: erroNotas } = await coletarNotas(apuracao.cliente_id, janelaRbt12.inicio, fimMesAtual);
 
   if (erroNotas) {
     console.error("[apuracoes.controller] Erro ao buscar lançamentos fiscais:", erroNotas.message);
@@ -1001,7 +1172,7 @@ export async function recalcularApuracao(req, res) {
   }
 
   const bases = montarBasesCalculo({
-    notas: filtrarNotasAtivas(notas),
+    notas,
     historicoReceita: cliente.historico_receita,
     dataInicioAtividade: cliente.data_inicio_atividade,
     mes: apuracao.periodo_mes,
@@ -1014,6 +1185,7 @@ export async function recalcularApuracao(req, res) {
 
   let folha12 = null;
   let semDadosFolha = false;
+  let pendenteFolha = false;
   let folhaPeriodo = null;
 
   if (anexoOriginal === "V") {
@@ -1021,7 +1193,17 @@ export async function recalcularApuracao(req, res) {
     if (insumosFolha.erro) {
       return res.status(500).json({ erro: insumosFolha.erro });
     }
-    ({ folha12, semDadosFolha, folhaPeriodo } = insumosFolha);
+    ({ folha12, semDadosFolha, pendenteFolha, folhaPeriodo } = insumosFolha);
+    // A previously reported file is not an absent month. Recalculation must
+    // wait for its successful processing, even with an older agent payload.
+    const referenciasInformadas = [
+      ...(apuracao.dados_folha?.mesesEncontrados || []).map((item) => chaveMes(item.ano, item.mes)),
+      ...(apuracao.dados_folha?.mesesPendentes || []),
+    ];
+    const mesesPendentes = referenciasInformadas.filter((ref) => !insumosFolha.mesesConcluidos.includes(ref));
+    if (mesesPendentes.length) {
+      return res.status(409).json(respostaFolhaPendente(apuracao, mesesPendentes));
+    }
   }
 
   const resultado = calcularSimplesNacional({
@@ -1066,18 +1248,20 @@ export async function recalcularApuracao(req, res) {
       anexo: resultado.anexo_efetivo,
       fator_r: resultado.fator_r,
       folha12,
-      // Mesmo raciocínio do insert em dispararApuracao (#365 / BUG-APUR-11):
-      // Anexo V resolvido → verificado; sem dados → pendente; demais → null.
-      folha_status: resolverFolhaStatus(anexoOriginal, semDadosFolha),
+      // Mesma fila da criação: meses ainda não encontrados continuam no
+      // polling; demais anexos não usam folha.
+      folha_status: resolverFolhaStatus(anexoOriginal, pendenteFolha),
       aliquota_efetiva: resultado.aliquota_efetiva,
       valor_calculado: resultado.valor_das,
       // Um override manual anterior foi feito em cima do cálculo antigo — com
       // números novos de folha, ele deixa de fazer sentido sem revisão.
       valor_editado: null,
       historico_edicoes: historicoAtualizado,
+      dados_folha: apuracao.dados_folha ? { ...apuracao.dados_folha, processamentoPendente: false, mesesPendentes: [] } : null,
     })
     .eq("id", id)
     .eq("status", "rascunho")
+    .eq("atualizado_em", apuracao.atualizado_em)
     .select()
     .maybeSingle();
 
@@ -1087,7 +1271,7 @@ export async function recalcularApuracao(req, res) {
   }
 
   if (!data) {
-    return res.status(409).json({ erro: "Apuração foi aprovada por outra solicitação" });
+    return res.status(409).json({ erro: "Apuração alterada por outra solicitação; atualize e tente novamente" });
   }
 
   return res.status(200).json({
@@ -1115,6 +1299,7 @@ export async function listarFolhaPendente(req, res) {
     .select("id, cliente_id, periodo_mes, periodo_ano")
     .eq("cliente_id", licenca.cliente_id)
     .not("fator_r", "is", null)
+    .eq("status", "rascunho")
     .eq("folha_status", FOLHA_STATUS.PENDENTE)
     .limit(LIMITE_APURACOES_POR_POLLING);
 
@@ -1124,10 +1309,11 @@ export async function listarFolhaPendente(req, res) {
   }
 
   let nomeEmpresa = null;
+  let dataInicioAtividade = null;
   if ((data || []).length > 0) {
     const { data: cliente, error: erroCliente } = await supabase
       .from("clientes")
-      .select("nome")
+      .select("nome, data_inicio_atividade")
       .eq("id", licenca.cliente_id)
       .maybeSingle();
 
@@ -1137,6 +1323,7 @@ export async function listarFolhaPendente(req, res) {
     }
 
     nomeEmpresa = cliente?.nome ?? null;
+    dataInicioAtividade = cliente?.data_inicio_atividade ?? null;
   }
 
   const apuracoes = (data || []).map((apuracao) => ({
@@ -1145,14 +1332,20 @@ export async function listarFolhaPendente(req, res) {
     nomeEmpresa,
     mes: apuracao.periodo_mes,
     ano: apuracao.periodo_ano,
+    mesesFolha: [...mesesFolhaEsperados(apuracao.periodo_mes, apuracao.periodo_ano, dataInicioAtividade)]
+      .map((ref) => { const [ano, mes] = ref.split("-").map(Number); return { ano, mes }; }),
   }));
 
   return res.status(200).json(apuracoes);
 }
 
 // Rota do agente — reporta o que encontrou ao verificar as pastas locais de
-// folha. Não recalcula o DAS: o contador clica em "Recalcular" depois.
+// folha. Reconcilia o DAS quando os arquivos já foram efetivamente processados.
 export async function registrarResultadoFolha(req, res) {
+  return registrarResultadoFolhaTentativa(req, res, 0);
+}
+
+async function registrarResultadoFolhaTentativa(req, res, tentativa) {
   const token = req.headers["x-licenca-token"];
   const licenca = await validarTokenLicenca(token);
 
@@ -1167,7 +1360,7 @@ export async function registrarResultadoFolha(req, res) {
     return res.status(404).json({ erro: "Apuração não encontrada" });
   }
 
-  const { temDozeMeses, mesesEncontrados, totalMesesEncontrados } = req.body || {};
+  const { temDozeMeses, mesesEncontrados, totalMesesEncontrados, falhaUpload = false } = req.body || {};
 
   if (typeof temDozeMeses !== "boolean") {
     return res.status(400).json({ erro: "temDozeMeses deve ser booleano" });
@@ -1185,9 +1378,22 @@ export async function registrarResultadoFolha(req, res) {
     return res.status(400).json({ erro: "totalMesesEncontrados não corresponde ao tamanho de mesesEncontrados" });
   }
 
+  const referencias = new Set();
+  for (const item of mesesEncontrados) {
+    if (!item || !Number.isInteger(item.ano) || item.ano < 1 || item.ano > 9999 ||
+        !Number.isInteger(item.mes) || item.mes < 1 || item.mes > 12) {
+      return res.status(400).json({ erro: "mesesEncontrados deve conter ano e mês válidos" });
+    }
+    referencias.add(chaveMes(item.ano, item.mes));
+  }
+  if (referencias.size !== totalMesesEncontrados || totalMesesEncontrados > 12 ||
+      temDozeMeses !== (totalMesesEncontrados === 12) || typeof falhaUpload !== "boolean") {
+    return res.status(400).json({ erro: "Relatório de folha contraditório ou com meses repetidos" });
+  }
+
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("id, cliente_id, status, fator_r")
+    .select("*")
     .eq("id", id)
     .maybeSingle();
 
@@ -1214,19 +1420,43 @@ export async function registrarResultadoFolha(req, res) {
     return res.status(409).json({ erro: "Apuração já aprovada não pode ser alterada" });
   }
 
+  const { data: cliente, error: erroCliente } = await supabase.from("clientes")
+    .select("nome, historico_receita, data_inicio_atividade").eq("id", apuracao.cliente_id).maybeSingle();
+  if (erroCliente) return res.status(500).json({ erro: "Erro ao buscar dados do cliente" });
+  if (!cliente) return res.status(404).json({ erro: "Cliente não encontrado" });
+  const esperados = mesesFolhaEsperados(apuracao.periodo_mes, apuracao.periodo_ano, cliente?.data_inicio_atividade);
+  if ([...referencias].some((ref) => !esperados.has(ref))) {
+    return res.status(400).json({ erro: "mesesEncontrados fora da janela da apuração" });
+  }
+  const mesesAtividade = esperados.has(chaveMes(apuracao.periodo_ano, apuracao.periodo_mes))
+    ? 0 : esperados.size < 12 ? esperados.size : null;
+  const folha = await coletarFolha12(apuracao.cliente_id,
+    calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano),
+    mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
+  if (folha.erro) return res.status(500).json({ erro: folha.erro });
+  const estado = avaliarEstadoFolha(apuracao, folha, { temDozeMeses, mesesEncontrados, totalMesesEncontrados, falhaUpload });
+  const preparado = await prepararAtualizacaoFolha(apuracao, cliente, folha, estado);
+  if (preparado.erro) return res.status(preparado.status).json({ erro: preparado.erro });
+
   const { data, error } = await supabase
     .from("apuracoes")
-    .update({
-      folha_status: temDozeMeses ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.SEM_DADOS,
-      dados_folha: { temDozeMeses, mesesEncontrados, totalMesesEncontrados },
-    })
+    .update(preparado.alteracoes)
     .eq("id", id)
+    .eq("status", "rascunho")
+    .eq("atualizado_em", apuracao.atualizado_em)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error("[apuracoes.controller] Erro ao registrar resultado de folha:", error.message);
     return res.status(500).json({ erro: "Erro ao registrar resultado de folha" });
+  }
+
+  if (!data) {
+    // O pipeline pode concluir durante o report. Relê o estado para preservar
+    // seus dados/auditoria; uma aprovação concorrente continua retornando 409.
+    if (tentativa < 4) return registrarResultadoFolhaTentativa(req, res, tentativa + 1);
+    return res.status(409).json({ erro: "Apuração alterada por outra solicitação; atualize e tente novamente" });
   }
 
   return res.status(200).json(data);

@@ -50,6 +50,7 @@ supabase.from = function (tabela) {
     lte() { return builder; },
     in() { return builder; },
     order() { return builder; },
+    range() { return builder; },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     single() { return Promise.resolve(consumir("single", { data: null, error: null })); },
     then(resolve, reject) {
@@ -243,6 +244,27 @@ describe("POST /apuracoes", () => {
     assert.equal(insert.payload.anexo, "V");
     assert.equal(insert.payload.fator_r, 0);
     assert.ok(insert.payload.valor_calculado > 0);
+  });
+
+  // #726/#737: mês sem processamento conta como zero e não deixa a apuração pendente.
+  it("201 verificado quando Anexo V não tem processamentos de folha", async () => {
+    queueSemDuplicata();
+    queueCliente("V");
+    queueNotas([{ valor_total: 50000, data_emissao: "2026-08-10" }]);
+    queue("processamentos_folha", "await", { data: [], error: null });
+    queue("apuracoes", "single", {
+      data: { id: "nova-apuracao-v-sem-folha", anexo: "V", folha_status: "verificado", fator_r: 0.01 },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
+
+    assert.equal(res.statusCode, 201);
+    const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+    assert.equal(insert.payload.folha_status, "verificado");
+    assert.equal(insert.payload.folha12, 0);
+    assert.equal(insert.payload.fator_r, 0.01);
   });
 
   it("201 quando Anexo V com folha suficiente para cair no Fator R (Anexo III efetivo)", async () => {
@@ -515,7 +537,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 0 }) }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   // #497 — competência futura ou mês corrente ainda aberto não podem ser
@@ -567,7 +589,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 15 }) }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   it("400 quando ano é anterior a 2020", async () => {
@@ -575,7 +597,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ ano: 1999 }) }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   it("400 quando mes contém sufixo não numérico", async () => {
@@ -1182,6 +1204,10 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
       error: null,
     });
 
+    queueCliente("V");
+    queue("processamentos_folha", "await", { data: processamentosDosDozeMeses(), error: null });
+    queue("folha_calculos", "await", { data: [{ base_calculo: 120000, fgts: 0 }], error: null });
+
     const res = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
@@ -1201,6 +1227,7 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
         folha_status: "pendente",
         fator_r: 0,
         folha12: null,
+        dados_folha: { mesesPendentes: ["2026-07"] },
       },
       error: null,
     });
@@ -1210,6 +1237,8 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
 
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.erro, "FOLHA_PENDENTE");
+    assert.deepEqual(res.body.mesesPendentes, ["2026-07"]);
+    assert.match(res.body.motivo, /2026-07/);
     assert.deepEqual(operacoes, []);
   });
 
@@ -1423,7 +1452,7 @@ describe("validação de UUID em /apuracoes (BUG-APUR-13)", () => {
     await listarApuracoes(reqAdmin({ query: { mes: "abc" } }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   for (const [nome, handler] of [
