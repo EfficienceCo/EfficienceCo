@@ -473,7 +473,8 @@ async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade = null, mes
   return {
     folha12, semDadosFolha: false,
     folhaPeriodo: arredondar(soma),
-    pendenteFolha: processamentoPorMes.size < meses.size,
+    // Mês sem processamento é zero e não bloqueia a apuração (#726/#737).
+    pendenteFolha: false,
     mesesConcluidos: [...processamentoPorMes.keys()],
   };
 }

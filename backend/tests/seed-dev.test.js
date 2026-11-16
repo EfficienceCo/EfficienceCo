@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import {
   CREDENCIAIS_SEED_DEV,
@@ -26,6 +29,18 @@ function criarSupabaseFake(erros = {}) {
 }
 
 describe("seed de desenvolvimento", () => {
+  // PRB-AP-21 / #504 — `npm run seed:dev` apontava para um script inexistente.
+  it("PRB-AP-21: o script npm seed:dev aponta para um arquivo que existe", () => {
+    const raizBackend = resolve(fileURLToPath(import.meta.url), "..", "..");
+    const pacote = JSON.parse(readFileSync(resolve(raizBackend, "package.json"), "utf8"));
+    const comando = pacote.scripts["seed:dev"];
+
+    assert.ok(comando, "package.json precisa declarar o script seed:dev");
+    const alvo = comando.match(/^node\s+(\S+\.js)$/)?.[1];
+    assert.ok(alvo, `seed:dev deve ser "node <arquivo>.js", veio: ${comando}`);
+    assert.ok(existsSync(resolve(raizBackend, alvo)), `${alvo} não existe`);
+  });
+
   it("exige service role, confirmação explícita e bloqueia produção", () => {
     assert.throws(
       () => validarConfiguracaoSeed({ NODE_ENV: "production" }),

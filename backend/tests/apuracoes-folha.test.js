@@ -157,6 +157,7 @@ function processamentosDosDozeMeses() {
       id: `proc-${indice + 1}`,
       mes_referencia: `${ano}-${String(mes).padStart(2, "0")}-01`,
       criado_em: `${ano}-${String(mes).padStart(2, "0")}-02T00:00:00.000Z`,
+      status: "concluido",
     };
   });
 }
@@ -573,13 +574,29 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
     assert.equal(res.body.erro, "COMPETENCIA_NAO_FECHADA");
   });
 
-  it("200 com folha zero quando Anexo V não tem processamentos (#726)", async () => {
+  it("422 FATOR_R_SEM_FOLHA quando um processamento de folha da janela ainda não concluiu (DAS-2)", async () => {
+    queueApuracaoBase({ anexo: "III", fator_r: 0.35 });
+    queueCliente();
+    queueNotas([{ valor_total: 30000, data_emissao: "2026-08-10", tipo: "saida" }]);
+    queue("processamentos_folha", "await", {
+      data: processamentosDosDozeMeses().map((p, i) => (i === 3 ? { ...p, status: "processando" } : p)),
+      error: null,
+    });
+
+    const res = criarResposta();
+    await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
+
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.erro, "FATOR_R_SEM_FOLHA");
+  });
+
+  it("200 com folha zero quando Anexo V não tem processamentos (#726/#737)", async () => {
     queueApuracaoBase({ anexo: "III", fator_r: 0.35 });
     queueCliente();
     queueNotas([{ valor_total: 30000, data_emissao: "2026-08-10", tipo: "saida" }]);
     queue("processamentos_folha", "await", { data: [], error: null });
-
     queue("apuracoes", "maybeSingle", { data: { id: APURACAO_ID }, error: null });
+
     const res = criarResposta();
     await recalcularApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
