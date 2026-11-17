@@ -156,7 +156,7 @@ export async function iniciarCenarioApuracao(t) {
     for (const p of processos) if (p.arquivo_origem_path !== "fixture-qa-f-sem-arquivo") uploads.add(p.id);
     assert.equal(code, 0, log); return log;
   }
-  return { banco, api, cliente, criar, chamar, estado, reportar, notas, processo, pendente, worker, prepararStorage,
+  return { banco, api, pasta, cliente, criar, chamar, estado, reportar, notas, processo, pendente, worker, prepararStorage,
     usuario: (c, perfil) => massa.criarUsuario({ clienteId: c.id, perfil }),
     async concluidos(c) {
       return aguardar(async () => {

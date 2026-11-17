@@ -131,6 +131,11 @@ async function processarUploadFolha(req, res, clienteId) {
       return res.status(500).json({ erro: "Erro ao registrar processamento da folha" });
     }
 
+    // DAS-3: a folha nova vale para a apuração desde que é gravada. Enquanto
+    // não conclui (pendente, processando ou erro), o DAS do mês não fica
+    // "verificado", nem se o pipeline não chegar a pegar a linha.
+    await sincronizarApuracoes({ cliente_id: clienteId, mes_referencia: mesReferencia });
+
     // BK-FOLHA-AUTO-PIPELINE: dispara cálculo + geração de saída em background — não
     // espera o pipeline terminar pra responder o upload (a tela de status já faz
     // polling a cada 5s). Erros do pipeline em si ficam registrados no próprio
@@ -249,16 +254,7 @@ export async function calcularFolha(req, res) {
 
     // O cálculo pode terminar após o report do agente. Atualiza o DAS assim
     // que a folha está disponível, sem depender da geração de PDFs.
-    try {
-      // Somente esta reconciliação interna usa a identidade do sistema. O
-      // processamento e seu cliente já foram autorizados com o JWT da rota.
-      await contextoDb.run(servicoDb, () =>
-        atualizarApuracoesAposFolha(processamento.cliente_id, processamento.mes_referencia));
-    } catch (err) {
-      // A folha foi calculada; uma falha na apuração não transforma esse
-      // processamento concluído em erro nem duplica salários num retry.
-      console.error("[folha.controller] Erro ao atualizar apuração após folha:", err.message);
-    }
+    await sincronizarApuracoes(processamento);
 
     const totais = calculos.reduce(
       (acc, calculo) => ({
@@ -753,5 +749,20 @@ async function marcarErro(processamentoId, motivo) {
 
   if (error) {
     console.error("[folha.controller] Falha ao marcar processamento como erro:", error.message);
+  }
+}
+
+// Reflete o estado da folha (recebida ou concluída) nas apurações
+// em rascunho do cliente (DAS-3). Somente esta reconciliação interna usa a
+// identidade do sistema: o processamento e seu cliente já foram autorizados
+// com o JWT ou a licença da rota.
+async function sincronizarApuracoes(processamento) {
+  try {
+    await contextoDb.run(servicoDb, () =>
+      atualizarApuracoesAposFolha(processamento.cliente_id, processamento.mes_referencia));
+  } catch (err) {
+    // Uma falha na apuração não muda o resultado da folha nem duplica
+    // salários num retry; a aprovação confere a folha viva de novo.
+    console.error("[folha.controller] Erro ao atualizar apuração após folha:", err.message);
   }
 }

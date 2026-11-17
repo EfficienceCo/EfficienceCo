@@ -395,9 +395,12 @@ function detectarBreakdownDesatualizado(resultado, bases) {
   };
 }
 
-function enriquecerApuracao(apuracao, resultado, bases, clienteNome) {
+// `folha`: a folha viva da apuração (Anexo V em rascunho), ou null.
+function enriquecerApuracao(apuracao, resultado, bases, clienteNome, folha = null) {
   return {
-    ...apuracao,
+    ...comFolhaStatusCoerente(apuracao, folha),
+    // Mesmo corpo do 409 FOLHA_PENDENTE que a aprovação devolveria agora (DAS-3).
+    bloqueio_folha: folha ? bloqueioFolha(apuracao, folha) : null,
     cliente_nome: clienteNome,
     anexo_original: resultado.anexo_original,
     anexo_efetivo: resultado.anexo_efetivo,
@@ -419,22 +422,48 @@ function enriquecerApuracao(apuracao, resultado, bases, clienteNome) {
   };
 }
 
-// Months without a processing count as zero (#726). An existing failed or
-// unfinished processing is different: it must remain retryable and provisional.
-async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade = null, mes, ano) {
-  const meses = mesesAtividade === 0
+function mesesDaJanela(janelaRbt12, mesesAtividade, mes, ano) {
+  return mesesAtividade === 0
     ? new Set([chaveMes(ano, mes)])
     : new Set([...janelaRbt12.meses].slice(-(mesesAtividade || 12)));
-  const referencias = [...meses];
-  const inicio = `${referencias[0]}-01`;
+}
+
+// Carga de folha (DAS-3): processamento mais recente de cada mês de `meses`
+// (`processamentos` em criado_em decrescente) e, por processamento, a soma de
+// base + FGTS das `linhas` de cálculo em centavos inteiros. A soma inteira não
+// depende da ordem das linhas, então a carga de uma janela e a de várias
+// janelas juntas (lista) dão a mesma FS12.
+export function montarCargaFolha(meses, processamentos, linhas = []) {
+  const porMes = new Map();
+  for (const processamento of processamentos || []) {
+    const referencia = processamento.mes_referencia?.slice(0, 7);
+    if (meses.has(referencia) && !porMes.has(referencia)) porMes.set(referencia, processamento);
+  }
+  const centavosPorId = new Map();
+  for (const linha of linhas || []) {
+    const centavos = Math.round(Number(linha.base_calculo) * 100) + Math.round(Number(linha.fgts) * 100);
+    centavosPorId.set(linha.processamento_id, (centavosPorId.get(linha.processamento_id) || 0) + centavos);
+  }
+  return { porMes, centavosPorId };
+}
+
+// Busca a carga de folha das `janelas` (lista de conjuntos de meses). Uma carga
+// serve a todas as apurações do mesmo cliente (DAS-3: a lista avalia a folha
+// viva sem uma consulta por linha). As linhas de folha_calculos só são lidas
+// para as janelas com todos os processamentos concluídos: com um mês pendente,
+// em processamento ou com erro, folhaDaJanela não calcula a FS12. Por isso
+// `comCalculos: false` (fila do agente) basta para semDadosFolha/pendenteFolha
+// e para a situação de cada mês, não para a FS12, que sai zerada.
+async function carregarFolha(clienteId, janelas, { comCalculos = true } = {}) {
+  const meses = new Set(janelas.flatMap((janela) => [...janela]));
+  const referencias = [...meses].sort();
   const [anoFim, mesFim] = referencias.at(-1).split("-").map(Number);
-  const fim = ultimoDiaDoMes(anoFim, mesFim);
   const { data: processamentos, error: erroProcessamentos } = await coletarPaginas(() => supabase
     .from("processamentos_folha")
     .select("id, mes_referencia, criado_em, status")
     .eq("cliente_id", clienteId)
-    .gte("mes_referencia", inicio)
-    .lte("mes_referencia", fim)
+    .gte("mes_referencia", `${referencias[0]}-01`)
+    .lte("mes_referencia", ultimoDiaDoMes(anoFim, mesFim))
     .order("criado_em", { ascending: false })
     .order("id"));
 
@@ -443,61 +472,298 @@ async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade = null, mes
     return { erro: "Erro ao buscar dados de folha" };
   }
 
-  const processamentoPorMes = new Map();
-  for (const processamento of processamentos || []) {
-    const referencia = processamento.mes_referencia?.slice(0, 7);
-    if (meses.has(referencia) && !processamentoPorMes.has(referencia)) {
-      processamentoPorMes.set(referencia, processamento);
-    }
-  }
-  if ([...processamentoPorMes.values()].some((p) => p.status !== undefined && p.status !== "concluido")) {
-    return { folha12: null, semDadosFolha: true, pendenteFolha: true, mesesConcluidos: [] };
-  }
-
-  const idsProcessamentos = [...processamentoPorMes.values()].map((p) => p.id);
-  const { data: calculos, error: erroCalculos } = idsProcessamentos.length
-    ? await coletarPaginas(() => supabase.from("folha_calculos")
-      .select("base_calculo, fgts").in("processamento_id", idsProcessamentos).order("id"))
-    : { data: [], error: null };
+  const carga = montarCargaFolha(meses, processamentos);
+  const ids = !comCalculos ? [] : [...new Set(janelas.flatMap((janela) => {
+    const daJanela = [...janela].map((ref) => carga.porMes.get(ref)).filter(Boolean);
+    return daJanela.every((p) => (p.status ?? "concluido") === "concluido") ? daJanela.map((p) => p.id) : [];
+  }))];
+  if (!ids.length) return carga;
+  const { data: linhas, error: erroCalculos } = await coletarPaginas(() => supabase.from("folha_calculos")
+    .select("processamento_id, base_calculo, fgts").in("processamento_id", ids).order("id"));
 
   if (erroCalculos) {
     console.error("[apuracoes.controller] Erro ao buscar cálculos de folha:", erroCalculos.message);
     return { erro: "Erro ao buscar dados de folha" };
   }
 
+  return montarCargaFolha(meses, processamentos, linhas);
+}
+
+// Months without a processing count as zero (#726). An existing failed or
+// unfinished processing is different: it must remain retryable and provisional.
+export function folhaDaJanela(meses, mesesAtividade, carga) {
+  // Processamento mais recente de cada mês da janela (DAS-3): o criado_em
+  // dele decide se uma falha de envio já foi substituída (falhasVigentes).
+  const processamentoPorMes = new Map([...carga.porMes].filter(([ref]) => meses.has(ref)));
+  // Situação do processamento mais recente de cada mês da janela (DAS-3): é
+  // dela que sai o motivo do bloqueio. Mês ausente não aparece.
+  const situacaoMeses = new Map([...processamentoPorMes].map(([ref, p]) => [ref, p.status ?? "concluido"]));
+  if ([...situacaoMeses.values()].some((status) => status !== "concluido")) {
+    const mesesConcluidos = [...situacaoMeses].filter(([, status]) => status === "concluido").map(([ref]) => ref);
+    return { folha12: null, semDadosFolha: true, pendenteFolha: true, mesesConcluidos, mesesJanela: meses, situacaoMeses,
+      ultimoProcessamento: processamentoPorMes };
+  }
+
   // CPP effectively collected is not available in the current schema (DAS-6).
   // Annualize both bases by the same period, including the PA only on opening.
-  const soma = (calculos || []).reduce((total, linha) => total + Number(linha.base_calculo) + Number(linha.fgts), 0);
+  const centavos = [...processamentoPorMes.values()].reduce((total, p) => total + (carga.centavosPorId.get(p.id) || 0), 0);
+  const soma = centavos / 100;
   const divisor = mesesAtividade === 0 ? 1 : mesesAtividade;
   const folha12 = arredondar(divisor == null ? soma : (soma / divisor) * 12);
   return {
     folha12, semDadosFolha: false,
     folhaPeriodo: arredondar(soma),
-    pendenteFolha: processamentoPorMes.size < meses.size,
+    // Mês sem processamento é zero e não bloqueia a apuração (#726/#737).
+    pendenteFolha: false,
     mesesConcluidos: [...processamentoPorMes.keys()],
+    mesesJanela: meses,
+    ultimoProcessamento: processamentoPorMes,
   };
+}
+
+async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade = null, mes, ano) {
+  const meses = mesesDaJanela(janelaRbt12, mesesAtividade, mes, ano);
+  const carga = await carregarFolha(clienteId, [meses]);
+  return carga.erro ? carga : folhaDaJanela(meses, mesesAtividade, carga);
+}
+
+// Janela de folha de uma apuração já gravada, com o cadastro atual.
+function janelaDaApuracao(apuracao, cliente) {
+  const esperados = mesesFolhaEsperados(apuracao.periodo_mes, apuracao.periodo_ano, cliente.data_inicio_atividade);
+  const mesesAtividade = esperados.has(chaveMes(apuracao.periodo_ano, apuracao.periodo_mes)) ? 0 : esperados.size < 12 ? esperados.size : null;
+  const meses = mesesDaJanela(calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano),
+    mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
+  return { meses, mesesAtividade };
+}
+
+// Folha viva de uma apuração já gravada, com a janela do cadastro atual.
+async function coletarFolhaDaApuracao(apuracao, cliente) {
+  const { meses, mesesAtividade } = janelaDaApuracao(apuracao, cliente);
+  const carga = await carregarFolha(apuracao.cliente_id, [meses]);
+  return carga.erro ? carga : folhaDaJanela(meses, mesesAtividade, carga);
+}
+
+// Mesma folha viva, buscando o cadastro do cliente (aprovar, recalcular e PATCH).
+async function folhaVivaDaApuracao(apuracao) {
+  const { data: cliente, error } = await supabase.from("clientes")
+    .select("data_inicio_atividade").eq("id", apuracao.cliente_id).maybeSingle();
+  if (error) return { status: 500, erro: "Erro ao buscar dados do cliente" };
+  if (!cliente) return { status: 404, erro: "Cliente não encontrado" };
+  const folha = await coletarFolhaDaApuracao(apuracao, cliente);
+  return folha.erro ? { status: 500, erro: folha.erro } : { folha };
+}
+
+// Folha viva de todas as apurações de uma lista do mesmo cliente, com uma carga
+// só de processamentos e cálculos (DAS-3). Devolve Map(id da apuração → folha).
+// `cadastro` (com data_inicio_atividade) evita reler o cliente quando a rota
+// já o buscou; `opcoes` vai para carregarFolha.
+async function folhasVivasDoCliente(clienteId, apuracoes, cadastro = null, opcoes = {}) {
+  const alvo = apuracoes.filter((a) => a.fator_r != null && a.status === "rascunho");
+  if (!alvo.length) return { folhas: new Map() };
+  const { data: cliente, error } = cadastro ? { data: cadastro, error: null } : await supabase.from("clientes")
+    .select("data_inicio_atividade").eq("id", clienteId).maybeSingle();
+  if (error) return { erro: "Erro ao buscar dados do cliente" };
+  const janelas = alvo.map((a) => [a, janelaDaApuracao(a, cliente)]);
+  const carga = await carregarFolha(clienteId, janelas.map(([, j]) => j.meses), opcoes);
+  if (carga.erro) return carga;
+  return { folhas: new Map(janelas.map(([a, j]) => [a.id, folhaDaJanela(j.meses, j.mesesAtividade, carga)])) };
+}
+
+const refsDosMeses = (itens) => (itens || []).map((item) => chaveMes(item.ano, item.mes));
+const mesesDasRefs = (refs) => [...refs].sort().map((ref) => {
+  const [ano, mes] = ref.split("-").map(Number);
+  return { ano, mes };
+});
+
+// Meses da janela com falha de envio ainda vigente (DAS-3). É a fonte única do
+// estado gravado, da fila do agente, do 409 e do bloqueio_folha. Desde a DAS-3
+// o relatório traz `mesesComFalha`, e o estado gravado guarda o conjunto
+// acumulado no mesmo campo. Linha do agente antigo (sem o campo): todo mês
+// relatado conta como falho, porque não se sabe qual arquivo falhou (custa um
+// reenvio; aceitar a folha antiga do mês custaria um DAS errado).
+//
+// O mês sai da falha num relatório que o traga sem falha (avaliarEstadoFolha)
+// ou quando o processamento mais recente dele foi criado depois da falha: a
+// planilha nova, venha do agente, do watcher ou da tela, substitui a que
+// falhou, e o mês passa a valer pela situação dela (concluída, com erro ou em
+// processamento). `marcosFalha[mês]` é o criado_em do processamento mais
+// recente do mês na leitura do relatório que registrou a falha (null: não
+// havia nenhum), então a folha antiga do mês (cenário A) e a planilha boa do
+// mesmo ciclo (cenário B), criadas antes do relatório, não tiram o mês da
+// falha. Linha gravada antes do marco: vale o atualizado_em da apuração, que
+// nunca é anterior ao relatório que gravou a falha (toda gravação o avança).
+//
+// `semMes`: falha gravada sem nenhum mês da janela (linha do agente antigo que
+// só relatou o próprio PA). Não há mês a substituir; só um relatório a resolve.
+function falhasVigentes(apuracao, folha) {
+  const dados = apuracao.dados_folha;
+  if (!dados?.falhaUpload) return { marcos: {}, semMes: false };
+  const registradas = refsDosMeses(dados.mesesComFalha ?? dados.mesesEncontrados).filter((ref) => folha.mesesJanela.has(ref));
+  const marcos = {};
+  for (const ref of registradas) {
+    const marco = dados.marcosFalha && ref in dados.marcosFalha ? dados.marcosFalha[ref] : apuracao.atualizado_em;
+    const ultimo = folha.ultimoProcessamento.get(ref);
+    // Date.parse corta os microssegundos do banco: um processamento no mesmo
+    // milissegundo do marco não conta como posterior (o lado conservador), e
+    // um valor ilegível dá NaN, que nunca é posterior.
+    if (ultimo && (marco === null || Date.parse(ultimo.criado_em) > Date.parse(marco))) continue;
+    marcos[ref] = marco;
+  }
+  return { marcos, semMes: registradas.length === 0 };
 }
 
 function avaliarEstadoFolha(apuracao, folha, relatorio = null) {
   const anterior = apuracao.dados_folha;
-  if (!relatorio && !anterior) {
+  if (!relatorio && !anterior?.mesesEncontrados) {
+    // Sem relatório do agente, o estado vem só da folha viva: folha já
+    // recebida e ainda em processamento (ou com erro) deixa a apuração
+    // pendente. dados_folha é o relatório do agente e fica null; a fila
+    // (listarFolhaPendente), o 409 e a aprovação leem a situação de cada mês
+    // em processamentos_folha (DAS-3).
     return { folha_status: resolverFolhaStatus("V", folha.pendenteFolha), dados_folha: null };
   }
-  const dados = relatorio || anterior;
-  const referencias = new Set((dados.mesesEncontrados || []).map((item) => chaveMes(item.ano, item.mes)));
-  const anteriores = anterior?.mesesPendentes || [];
-  const falhaInformada = Boolean(dados.falhaUpload);
-  const falhaUpload = falhaInformada || Boolean(anterior?.falhaUpload && anteriores.some((ref) => !referencias.has(ref)));
+  // Relatório antigo pode trazer mês fora da janela (o agente varria o próprio
+  // PA). Esse mês nunca terá folha na janela e não pode bloquear para sempre.
+  const naJanela = (ref) => folha.mesesJanela.has(ref);
+  const vigentes = falhasVigentes(apuracao, folha);
+  let dados = anterior;
+  let { marcos, semMes } = vigentes;
+  // `marcosFalha` gravado guarda as falhas do último relatório, mesmo as que
+  // uma planilha nova já substituiu (só um relatório o reescreve).
+  let registro = { ...anterior?.marcosFalha, ...marcos };
+  if (relatorio) {
+    const relatados = refsDosMeses(relatorio.mesesEncontrados);
+    // Falha de envio: os meses que o agente diz que falharam; sem o campo
+    // (agente antigo), todos os relatados. O marco de cada uma sai da folha
+    // lida agora, do relógio do banco.
+    const falhasDoRelatorio = relatorio.falhaUpload ? refsDosMeses(relatorio.mesesComFalha ?? relatorio.mesesEncontrados) : [];
+    marcos = Object.fromEntries([
+      ...falhasDoRelatorio.map((ref) => [ref, folha.ultimoProcessamento.get(ref)?.criado_em ?? null]),
+      ...Object.entries(vigentes.marcos).filter(([ref]) => !relatados.includes(ref)),
+    ]);
+    semMes = false;
+    registro = marcos;
+    // Depois de uma falha, a fila só pediu os meses com falha. O relatório
+    // dessa nova tentativa soma-se aos meses já relatados, em vez de reduzir
+    // a janela relatada ao que foi pedido. Vale também quando a planilha que
+    // o agente acabou de reenviar já substituiu a falha antes deste relatório.
+    const emTentativa = anterior?.falhaUpload || Object.keys(anterior?.marcosFalha ?? {}).length > 0;
+    const encontrados = emTentativa
+      ? new Set([...refsDosMeses(anterior.mesesEncontrados).filter(naJanela), ...relatados])
+      : null;
+    dados = encontrados
+      ? { ...relatorio, temDozeMeses: encontrados.size === 12, mesesEncontrados: mesesDasRefs(encontrados), totalMesesEncontrados: encontrados.size }
+      : relatorio;
+  }
+  // Todo mês com falha é um mês relatado (a rota exige), então já está em
+  // `referencias` abaixo.
+  const emFalha = new Set(Object.keys(marcos));
+  const referencias = new Set(refsDosMeses(dados.mesesEncontrados).filter(naJanela));
+  const anteriores = (anterior?.mesesPendentes || []).filter(naJanela);
+  const falhaUpload = emFalha.size > 0 || semMes;
   const mesesPendentes = [...new Set([...referencias, ...anteriores])].filter((ref) =>
-    !folha.mesesConcluidos.includes(ref) || (falhaInformada && referencias.has(ref)) ||
-    (anterior?.falhaUpload && !referencias.has(ref)));
+    !folha.mesesConcluidos.includes(ref) || emFalha.has(ref)).sort();
   const processamentoPendente = folha.semDadosFolha || mesesPendentes.length > 0;
   const folhaStatus = falhaUpload || processamentoPendente ? FOLHA_STATUS.PENDENTE
     : referencias.size || anteriores.length ? FOLHA_STATUS.VERIFICADO : FOLHA_STATUS.SEM_DADOS;
   return {
     folha_status: folhaStatus,
-    dados_folha: { ...dados, falhaUpload, processamentoPendente, mesesPendentes },
+    dados_folha: {
+      ...dados, falhaUpload, processamentoPendente, mesesPendentes, mesesComFalha: mesesDasRefs(emFalha),
+      ...(Object.keys(registro).length ? { marcosFalha: registro } : {}),
+    },
   };
+}
+
+// Motivos do 409 FOLHA_PENDENTE (#738 e DAS-3), um para cada situação da folha.
+const MOTIVO_EM_PROCESSAMENTO = "A folha ainda aguarda confirmação ou processamento.";
+const MOTIVO_ERRO_PROCESSAMENTO = "Folha com erro no processamento; corrija a planilha e envie de novo pela tela de Folha.";
+const MOTIVO_NAO_RECEBIDA = "Folha encontrada pelo agente que não chegou ao sistema; envie a planilha pela tela de Folha.";
+const MOTIVO_RECALCULAR = "Este DAS foi calculado com outra folha; use Recalcular para refazê-lo (mês sem folha conta como zero).";
+
+// Falha de envio sai da pendência num relatório do agente que traga o mês sem
+// falha ou com uma planilha nova do mês, criada depois da falha (falhasVigentes):
+// o texto oferece os dois caminhos. Linha antiga com falha sem mês da janela:
+// não há mês a substituir pela tela, só o agente a resolve; texto sem pasta.
+function motivoFalhaEnvio(meses) {
+  if (!meses.length) {
+    return "O agente não conseguiu enviar arquivos de folha. Corrija ou recoloque os arquivos na pasta Folha do computador do escritório para o agente reenviá-los na próxima verificação.";
+  }
+  const pastas = meses.map((ref) => `Folha/${ref}`).join(", ");
+  return `O agente não conseguiu enviar a planilha destes meses. Corrija ou recoloque o arquivo ${meses.length > 1 ? "nas pastas" : "na pasta"} ${pastas} do computador do escritório, ou envie a planilha certa pela tela de Folha.`;
+}
+
+// 409 FOLHA_PENDENTE a partir do estado vivo da folha (`folha`, de
+// coletarFolha12): os meses da janela que barram a aprovação e o que fazer em
+// cada um. Cada situação entra com o seu texto e os seus meses, nesta ordem:
+// falha de envio, erro de processamento, processamento em andamento e
+// planilha relatada que não chegou. Sem nenhum mês, o DAS foi calculado com
+// outra folha e o caminho é recalcular.
+function respostaPendenciasFolha(apuracao, folha) {
+  const dados = apuracao.dados_folha || {};
+  // Meses que o agente relatou e ainda faltam, e os que estão com falha de
+  // envio, pela mesma regra que grava o estado e monta a fila
+  // (avaliarEstadoFolha), com a folha de agora.
+  const avaliado = dados.mesesEncontrados ? avaliarEstadoFolha(apuracao, folha).dados_folha : null;
+  const comFalha = new Set(refsDosMeses(avaliado?.mesesComFalha));
+  const situacao = folha.situacaoMeses ?? new Map();
+  const grupos = { falha: [], erro: [], processamento: [], naoRecebida: [] };
+  // Só há situação quando algum mês não concluiu (folhaDaJanela). Mês com
+  // falha de envio vigente fica no grupo da falha, mesmo com um processamento
+  // anterior à falha ainda em andamento: é uma planilha nova que o resolve.
+  for (const [ref, status] of situacao) {
+    if (status === "concluido" || comFalha.has(ref)) continue;
+    grupos[status === "erro" ? "erro" : "processamento"].push(ref);
+  }
+  for (const ref of avaliado?.mesesPendentes ?? []) {
+    if (comFalha.has(ref)) grupos.falha.push(ref);
+    else if (!situacao.has(ref)) grupos.naoRecebida.push(ref);
+  }
+  const segmentos = [];
+  if (avaliado?.falhaUpload) segmentos.push([motivoFalhaEnvio(grupos.falha), grupos.falha]);
+  if (grupos.erro.length) segmentos.push([MOTIVO_ERRO_PROCESSAMENTO, grupos.erro]);
+  if (grupos.processamento.length) segmentos.push([MOTIVO_EM_PROCESSAMENTO, grupos.processamento]);
+  if (grupos.naoRecebida.length) segmentos.push([MOTIVO_NAO_RECEBIDA, grupos.naoRecebida]);
+  if (!segmentos.length) segmentos.push([MOTIVO_RECALCULAR, []]);
+  return {
+    erro: "FOLHA_PENDENTE",
+    motivo: segmentos.map(([texto, meses]) => (meses.length ? `${texto} Meses pendentes: ${[...meses].sort().join(", ")}.` : texto)).join(" "),
+    mesesPendentes: [...new Set(segmentos.flatMap(([, meses]) => meses))].sort(),
+  };
+}
+
+// Regra única da aprovação (DAS-3): a mesma condição barra o PATCH /aprovar,
+// explica o 409 e impede que a API diga "verificado". Vale o estado da folha
+// de agora, pela mesma regra que o grava (avaliarEstadoFolha), e não o gravado,
+// que fica para trás quando um gancho da folha falha ou quando uma planilha
+// nova substitui uma falha de envio. Vale também a folha viva (`folha`)
+// diferente da do cálculo: mês em processamento ou com erro dá folha12 null;
+// folha concluída que mudou dá outra FS12.
+function folhaBarraAprovacao(apuracao, folha) {
+  if (apuracao.fator_r == null || apuracao.status === "aprovado") return false;
+  const vivo = avaliarEstadoFolha(apuracao, folha).dados_folha || {};
+  return Boolean(ehProvisorioSemFolha(apuracao) || vivo.falhaUpload || vivo.processamentoPendente ||
+    folha.folha12 !== Number(apuracao.folha12));
+}
+
+function bloqueioFolha(apuracao, folha) {
+  return folhaBarraAprovacao(apuracao, folha) ? respostaPendenciasFolha(apuracao, folha) : null;
+}
+
+// folha_status que a API devolve (DAS-3). Rascunho do Anexo V (`folha`, a folha
+// viva): o da folha de agora, pela regra que o grava, e nunca "verificado" com
+// a aprovação barrada. Sem relatório do agente, o gravado pode ser um "pendente"
+// que ficou para trás (o gancho do fim do pipeline falhou). "aprovado" nunca
+// sai como "pendente" (aprovação anterior ao status final).
+function comFolhaStatusCoerente(apuracao, folha) {
+  if (apuracao.status === "aprovado") {
+    return apuracao.fator_r != null && apuracao.folha_status === FOLHA_STATUS.PENDENTE
+      ? { ...apuracao, folha_status: FOLHA_STATUS.SEM_DADOS } : apuracao;
+  }
+  if (!folha || apuracao.fator_r == null) return apuracao;
+  const vivo = avaliarEstadoFolha(apuracao, folha).folha_status;
+  const folhaStatus = vivo === FOLHA_STATUS.VERIFICADO && folhaBarraAprovacao(apuracao, folha) ? FOLHA_STATUS.PENDENTE : vivo;
+  return folhaStatus === apuracao.folha_status ? apuracao : { ...apuracao, folha_status: folhaStatus };
 }
 
 async function prepararAtualizacaoFolha(apuracao, cliente, folha, estado) {
@@ -554,31 +820,34 @@ export async function atualizarApuracoesAposFolha(clienteId, mesReferencia) {
   for (const inicial of apuracoes) {
     if (!mesesFolhaEsperados(inicial.periodo_mes, inicial.periodo_ano, cliente.data_inicio_atividade)
       .has(mesReferencia.slice(0, 7))) continue;
-    let apuracao = inicial;
-    for (let tentativa = 0; tentativa < 5; tentativa += 1) {
-      if (!apuracao || apuracao.status !== "rascunho") break;
-      const meses = mesesFolhaEsperados(apuracao.periodo_mes, apuracao.periodo_ano, cliente.data_inicio_atividade);
-      const mesesAtividade = meses.has(chaveMes(apuracao.periodo_ano, apuracao.periodo_mes)) ? 0 : meses.size < 12 ? meses.size : null;
-      const folha = await coletarFolha12(clienteId,
-        calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano),
-        mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
-      if (folha.erro) throw new Error(folha.erro);
-      const preparado = await prepararAtualizacaoFolha(apuracao, cliente, folha, avaliarEstadoFolha(apuracao, folha));
-      if (preparado.erro) throw new Error(preparado.erro);
-      // Outros meses podem concluir juntos. Se outra chamada já aplicou o
-      // mesmo cálculo/estado, não grava de novo nem disputa seu histórico.
-      if (Object.entries(preparado.alteracoes).every(([campo, valor]) =>
-        isDeepStrictEqual(apuracao[campo] ?? null, valor ?? null))) break;
-      const { data, error: erroAtualizacao } = await supabase.from("apuracoes").update(preparado.alteracoes)
-        .eq("id", apuracao.id).eq("cliente_id", clienteId).eq("status", "rascunho").eq("atualizado_em", apuracao.atualizado_em).select().maybeSingle();
-      if (erroAtualizacao) throw new Error(erroAtualizacao.message);
-      if (data) break;
-      if (tentativa === 4) throw new Error("Apuração alterada durante atualização automática da folha");
-      const atualizado = await supabase.from("apuracoes").select("*").eq("id", apuracao.id).eq("cliente_id", clienteId).maybeSingle();
-      if (atualizado.error) throw new Error(atualizado.error.message);
-      apuracao = atualizado.data;
-    }
+    await reconciliarApuracao(inicial, cliente);
   }
+}
+
+// Aplica à apuração o estado e o cálculo da folha de agora, sem relatório
+// novo (gancho da folha e fim do relatório do agente). Devolve a linha final.
+async function reconciliarApuracao(inicial, cliente) {
+  let apuracao = inicial;
+  for (let tentativa = 0; tentativa < 5; tentativa += 1) {
+    if (!apuracao || apuracao.status !== "rascunho") break;
+    const folha = await coletarFolhaDaApuracao(apuracao, cliente);
+    if (folha.erro) throw new Error(folha.erro);
+    const preparado = await prepararAtualizacaoFolha(apuracao, cliente, folha, avaliarEstadoFolha(apuracao, folha));
+    if (preparado.erro) throw new Error(preparado.erro);
+    // Outros meses podem concluir juntos. Se outra chamada já aplicou o
+    // mesmo cálculo/estado, não grava de novo nem disputa seu histórico.
+    if (Object.entries(preparado.alteracoes).every(([campo, valor]) =>
+      isDeepStrictEqual(apuracao[campo] ?? null, valor ?? null))) break;
+    const { data, error: erroAtualizacao } = await supabase.from("apuracoes").update(preparado.alteracoes)
+      .eq("id", apuracao.id).eq("cliente_id", apuracao.cliente_id).eq("status", "rascunho").eq("atualizado_em", apuracao.atualizado_em).select().maybeSingle();
+    if (erroAtualizacao) throw new Error(erroAtualizacao.message);
+    if (data) return data;
+    if (tentativa === 4) throw new Error("Apuração alterada durante atualização automática da folha");
+    const atualizado = await supabase.from("apuracoes").select("*").eq("id", apuracao.id).eq("cliente_id", apuracao.cliente_id).maybeSingle();
+    if (atualizado.error) throw new Error(atualizado.error.message);
+    apuracao = atualizado.data;
+  }
+  return apuracao;
 }
 
 export async function dispararApuracao(req, res) {
@@ -692,9 +961,11 @@ export async function dispararApuracao(req, res) {
   let semDadosFolha = false;
   let pendenteFolha = false;
   let folhaPeriodo = null;
+  // Folha viva da criação: também dá o bloqueio_folha do 201 (DAS-3).
+  let insumosFolha = null;
 
   if (cliente.anexo_simples === "V") {
-    const insumosFolha = await coletarFolha12(clienteId, janelaRbt12, bases.mesesAtividade, mesNum, anoNum);
+    insumosFolha = await coletarFolha12(clienteId, janelaRbt12, bases.mesesAtividade, mesNum, anoNum);
     if (insumosFolha.erro) {
       return res.status(500).json({ erro: insumosFolha.erro });
     }
@@ -749,7 +1020,7 @@ export async function dispararApuracao(req, res) {
     return res.status(500).json({ erro: "Erro ao registrar apuração" });
   }
 
-  return res.status(201).json(enriquecerApuracao(data, resultado, bases, cliente.nome));
+  return res.status(201).json(enriquecerApuracao(data, resultado, bases, cliente.nome, insumosFolha));
 }
 
 export async function listarApuracoes(req, res) {
@@ -790,7 +1061,14 @@ export async function listarApuracoes(req, res) {
     return res.status(500).json({ erro: "Erro ao listar apurações" });
   }
 
-  return res.status(200).json((data || []).map((apuracao) => {
+  // A lista diz o mesmo que a aprovação acharia agora (DAS-3): folha viva das
+  // apurações em rascunho, numa carga só para o cliente.
+  const vivas = await folhasVivasDoCliente(clienteId, data || []);
+  if (vivas.erro) return res.status(500).json({ erro: vivas.erro });
+
+  return res.status(200).json((data || []).map((linha) => {
+    const folha = vivas.folhas.get(linha.id);
+    const apuracao = comFolhaStatusCoerente(linha, folha);
     const resultado = reconstruirCalculo(apuracao);
     return resultado.erro ? apuracao : { ...apuracao, aliquota_efetiva: resultado.aliquota_efetiva };
   }));
@@ -861,7 +1139,15 @@ export async function detalharApuracao(req, res) {
     return res.status(500).json({ erro: "Erro ao reconstruir cálculo da apuração" });
   }
 
-  return res.status(200).json(enriquecerApuracao(data, resultado, bases, cliente.nome));
+  // O detalhe mostra o mesmo bloqueio e o mesmo folha_status que a aprovação
+  // acharia agora (DAS-3).
+  let folha = null;
+  if (data.fator_r != null && data.status === "rascunho") {
+    folha = await coletarFolhaDaApuracao(data, cliente);
+    if (folha.erro) return res.status(500).json({ erro: folha.erro });
+  }
+
+  return res.status(200).json(enriquecerApuracao(data, resultado, bases, cliente.nome, folha));
 }
 
 export async function editarApuracao(req, res) {
@@ -890,7 +1176,7 @@ export async function editarApuracao(req, res) {
 
   const { data: apuracao, error: erroBusca } = await supabase
     .from("apuracoes")
-    .select("cliente_id, status, valor_editado, valor_calculado, historico_edicoes, atualizado_em, dados_folha")
+    .select("cliente_id, status, periodo_mes, periodo_ano, fator_r, folha12, valor_editado, valor_calculado, historico_edicoes, atualizado_em, dados_folha")
     .eq("id", id)
     .maybeSingle();
 
@@ -905,6 +1191,16 @@ export async function editarApuracao(req, res) {
 
   if (apuracao.status === "aprovado") {
     return res.status(409).json({ erro: "Apuração já aprovada não pode ser editada" });
+  }
+
+  // A folha viva é lida antes de gravar (DAS-3): uma falha aqui responde 500
+  // sem a edição salva, e a nova tentativa não duplica o historico_edicoes. A
+  // edição não muda a folha nem a FS12, então o que foi lido vale na resposta.
+  let folha = null;
+  if (apuracao.fator_r != null) {
+    const viva = await folhaVivaDaApuracao(apuracao);
+    if (viva.erro) return res.status(viva.status).json({ erro: viva.erro });
+    folha = viva.folha;
   }
 
   const valorAnterior = apuracao.valor_editado ?? apuracao.valor_calculado;
@@ -937,7 +1233,7 @@ export async function editarApuracao(req, res) {
     return res.status(409).json({ erro: "Apuração alterada por outra solicitação; atualize e tente novamente" });
   }
 
-  return res.status(200).json(data);
+  return res.status(200).json(comFolhaStatusCoerente(data, folha));
 }
 
 export async function aprovarApuracao(req, res) {
@@ -967,10 +1263,20 @@ export async function aprovarApuracao(req, res) {
     return res.status(409).json({ erro: "Apuração já está aprovada" });
   }
 
-  // Provisório legado ou arquivo com falha não pode ser aprovado. Ausência
-  // legítima já calculada como folha zero é aprovável (#726).
-  if (ehProvisorioSemFolha(apuracao) || apuracao.dados_folha?.falhaUpload || apuracao.dados_folha?.processamentoPendente) {
-    return res.status(409).json({ erro: "FOLHA_PENDENTE" });
+  // Provisório, arquivo com falha, folha em processamento ou mudada depois do
+  // cálculo não pode ser aprovado; o 409 diz qual folha e de quais meses
+  // (DAS-3). Ausência legítima já calculada como folha zero é aprovável (#726).
+  let folhaStatus = apuracao.folha_status;
+  if (apuracao.fator_r != null) {
+    const viva = await folhaVivaDaApuracao(apuracao);
+    if (viva.erro) return res.status(viva.status).json({ erro: viva.erro });
+    const bloqueio = bloqueioFolha(apuracao, viva.folha);
+    if (bloqueio) return res.status(409).json(bloqueio);
+    // A aprovação grava o folha_status da folha de agora (DAS-3), que nunca é
+    // "pendente" sem bloqueio. O gravado pode ter ficado "pendente" quando o
+    // gancho do fim do pipeline falhou, ou numa linha anterior ao #737 (mês sem
+    // folha deixava a apuração na fila do agente, hoje folha zero aprovável).
+    folhaStatus = comFolhaStatusCoerente(apuracao, viva.folha).folha_status;
   }
 
   // Aprovar é o que transforma o rascunho em número oficial do cliente, então
@@ -985,28 +1291,13 @@ export async function aprovarApuracao(req, res) {
     });
   }
 
-  if (apuracao.fator_r != null) {
-    const { data: cliente, error: erroCliente } = await supabase.from("clientes")
-      .select("data_inicio_atividade").eq("id", apuracao.cliente_id).maybeSingle();
-    if (erroCliente) return res.status(500).json({ erro: "Erro ao buscar dados do cliente" });
-    if (!cliente) return res.status(404).json({ erro: "Cliente não encontrado" });
-    const meses = mesesFolhaEsperados(apuracao.periodo_mes, apuracao.periodo_ano, cliente.data_inicio_atividade);
-    const mesesAtividade = meses.has(chaveMes(apuracao.periodo_ano, apuracao.periodo_mes)) ? 0 : meses.size < 12 ? meses.size : null;
-    const folha = await coletarFolha12(apuracao.cliente_id,
-      calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano),
-      mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
-    if (folha.erro) return res.status(500).json({ erro: folha.erro });
-    if (folha.semDadosFolha || folha.folha12 !== Number(apuracao.folha12)) {
-      return res.status(409).json({ erro: "FOLHA_PENDENTE", motivo: "A folha mudou ou está em processamento; aguarde a atualização do cálculo" });
-    }
-  }
-
   const { data, error } = await supabase
     .from("apuracoes")
     .update({
       status: "aprovado",
       aprovado_por: req.usuario?.email || req.usuario?.id,
       aprovado_em: new Date().toISOString(),
+      ...(folhaStatus !== apuracao.folha_status ? { folha_status: folhaStatus } : {}),
     })
     .eq("id", id)
     .eq("status", "rascunho")
@@ -1112,7 +1403,13 @@ export async function recalcularApuracao(req, res) {
   }
 
   if (apuracao.dados_folha?.falhaUpload) {
-    return res.status(409).json({ erro: "FOLHA_PENDENTE" });
+    // Mesmo corpo da aprovação, com a folha viva (DAS-3). Falha que uma
+    // planilha nova já substituiu não espera mais (falhasVigentes).
+    const viva = await folhaVivaDaApuracao(apuracao);
+    if (viva.erro) return res.status(viva.status).json({ erro: viva.erro });
+    if (avaliarEstadoFolha(apuracao, viva.folha).dados_folha.falhaUpload) {
+      return res.status(409).json(respostaPendenciasFolha(apuracao, viva.folha));
+    }
   }
 
   // Mesma regra da criação (#497): registros de competência futura criados
@@ -1172,6 +1469,7 @@ export async function recalcularApuracao(req, res) {
   let semDadosFolha = false;
   let pendenteFolha = false;
   let folhaPeriodo = null;
+  let dadosFolha = apuracao.dados_folha;
 
   if (anexoOriginal === "V") {
     const insumosFolha = await coletarFolha12(apuracao.cliente_id, janelaRbt12, bases.mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
@@ -1181,13 +1479,19 @@ export async function recalcularApuracao(req, res) {
     ({ folha12, semDadosFolha, pendenteFolha, folhaPeriodo } = insumosFolha);
     // A previously reported file is not an absent month. Recalculation must
     // wait for its successful processing, even with an older agent payload.
+    // Mês fora da janela (relatório antigo) nunca chega e não pode travar.
     const referenciasInformadas = [
       ...(apuracao.dados_folha?.mesesEncontrados || []).map((item) => chaveMes(item.ano, item.mes)),
       ...(apuracao.dados_folha?.mesesPendentes || []),
-    ];
-    if (referenciasInformadas.some((ref) => !insumosFolha.mesesConcluidos.includes(ref))) {
-      return res.status(409).json({ erro: "FOLHA_PENDENTE" });
+    ].filter((ref) => insumosFolha.mesesJanela.has(ref));
+    // Folha conhecida e não concluída também espera, com o mesmo corpo da
+    // aprovação, em vez do 422 FATOR_R_SEM_FOLHA sem explicação (DAS-3).
+    if (semDadosFolha || referenciasInformadas.some((ref) => !insumosFolha.mesesConcluidos.includes(ref))) {
+      return res.status(409).json(respostaPendenciasFolha(apuracao, insumosFolha));
     }
+    // O relatório gravado com o estado da folha de agora: sai a falha que uma
+    // planilha nova já substituiu (DAS-3).
+    if (dadosFolha?.mesesEncontrados) dadosFolha = avaliarEstadoFolha(apuracao, insumosFolha).dados_folha;
   }
 
   const resultado = calcularSimplesNacional({
@@ -1241,7 +1545,7 @@ export async function recalcularApuracao(req, res) {
       // números novos de folha, ele deixa de fazer sentido sem revisão.
       valor_editado: null,
       historico_edicoes: historicoAtualizado,
-      dados_folha: apuracao.dados_folha ? { ...apuracao.dados_folha, processamentoPendente: false, mesesPendentes: [] } : null,
+      dados_folha: dadosFolha ? { ...dadosFolha, processamentoPendente: false, mesesPendentes: [] } : null,
     })
     .eq("id", id)
     .eq("status", "rascunho")
@@ -1278,23 +1582,38 @@ export async function listarFolhaPendente(req, res) {
     return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
   }
 
-  const { data, error } = await supabase
+  // DAS-3 (causa 4): fica fora da fila a folha que o backend já recebeu e
+  // ainda processa (ou deu erro). O agente não move as planilhas e as
+  // reenviaria a cada poll. Falha de envio continua na fila para nova
+  // tentativa. O folha_status gravado só faz a pré-seleção: quem decide é a
+  // folha viva, pela regra que grava o estado (avaliarEstadoFolha). Como
+  // linhas saem depois da consulta, o limite vale para a fila, não para ela.
+  const { data: candidatas, error } = await coletarPaginas(() => supabase
     .from("apuracoes")
-    .select("id, cliente_id, periodo_mes, periodo_ano")
+    .select("id, cliente_id, periodo_mes, periodo_ano, status, fator_r, dados_folha, atualizado_em")
     .eq("cliente_id", licenca.cliente_id)
     .not("fator_r", "is", null)
     .eq("status", "rascunho")
     .eq("folha_status", FOLHA_STATUS.PENDENTE)
-    .limit(LIMITE_APURACOES_POR_POLLING);
+    .or("dados_folha->>processamentoPendente.is.null,dados_folha->>processamentoPendente.eq.false,dados_folha->>falhaUpload.eq.true")
+    .order("id"));
 
   if (error) {
     console.error("[apuracoes.controller] Erro ao listar apurações com folha pendente:", error.message);
     return res.status(500).json({ erro: "Erro ao listar apurações com folha pendente" });
   }
 
+  // Sem relatório do agente, a folha viva só deixa a apuração "pendente" com
+  // uma planilha que o backend já recebeu e que não concluiu; fora isso ela é
+  // "verificado" (mês sem folha vale zero, #737). Nos dois casos não há o que
+  // pedir ao agente, nem quando o gravado ficou "pendente" porque o gancho do
+  // fim do pipeline falhou (ou é anterior ao #737). Por isso essas linhas não
+  // entram, e a folha delas nem é lida.
+  let data = (candidatas || []).filter((apuracao) => apuracao.dados_folha?.mesesEncontrados);
   let nomeEmpresa = null;
   let dataInicioAtividade = null;
-  if ((data || []).length > 0) {
+  const vigentes = new Map();
+  if (data.length > 0) {
     const { data: cliente, error: erroCliente } = await supabase
       .from("clientes")
       .select("nome, data_inicio_atividade")
@@ -1308,17 +1627,46 @@ export async function listarFolhaPendente(req, res) {
 
     nomeEmpresa = cliente?.nome ?? null;
     dataInicioAtividade = cliente?.data_inicio_atividade ?? null;
+
+    // Falha de envio: a folha viva diz se uma planilha nova já a substituiu
+    // (falhasVigentes). Basta o criado_em e a situação dos processamentos: as
+    // linhas de folha_calculos não são lidas a cada poll.
+    const comFalha = data.filter((apuracao) => apuracao.dados_folha.falhaUpload);
+    const vivas = await folhasVivasDoCliente(licenca.cliente_id, comFalha,
+      { data_inicio_atividade: dataInicioAtividade }, { comCalculos: false });
+    if (vivas.erro) {
+      console.error("[apuracoes.controller] Erro ao conferir a folha das apurações pendentes:", vivas.erro);
+      return res.status(500).json({ erro: "Erro ao listar apurações com folha pendente" });
+    }
+    for (const apuracao of comFalha) {
+      const vivo = avaliarEstadoFolha(apuracao, vivas.folhas.get(apuracao.id)).dados_folha;
+      if (vivo.falhaUpload) vigentes.set(apuracao.id, refsDosMeses(vivo.mesesComFalha));
+    }
+    // Linha com relatório sem falha gravada: só a de antes do #738 (o
+    // relatório só trocava o status) passa pela consulta; segue pedindo a janela.
+    data = data.filter((apuracao) => !apuracao.dados_folha.falhaUpload || vigentes.has(apuracao.id))
+      .slice(0, LIMITE_APURACOES_POR_POLLING);
   }
 
-  const apuracoes = (data || []).map((apuracao) => ({
-    id: apuracao.id,
-    clienteId: apuracao.cliente_id,
-    nomeEmpresa,
-    mes: apuracao.periodo_mes,
-    ano: apuracao.periodo_ano,
-    mesesFolha: [...mesesFolhaEsperados(apuracao.periodo_mes, apuracao.periodo_ano, dataInicioAtividade)]
-      .map((ref) => { const [ano, mes] = ref.split("-").map(Number); return { ano, mes }; }),
-  }));
+  const apuracoes = data.map((apuracao) => {
+    const esperados = mesesFolhaEsperados(apuracao.periodo_mes, apuracao.periodo_ano, dataInicioAtividade);
+    // DAS-3 (causa 4): depois de uma falha de envio, a nova tentativa só
+    // procura os meses com falha vigente, a mesma lista do estado gravado e
+    // do 409 (falhasVigentes). Os meses enviados com sucesso não voltam a cada
+    // poll; o que falhou segue pedido, mesmo com folha antiga no sistema, até
+    // um relatório trazê-lo sem falha ou chegar uma planilha nova do mês. Falha
+    // gravada sem mês da janela (linha do agente antigo que só relatou o
+    // próprio PA) pede a janela inteira, para nunca mandar o agente procurar nada.
+    const comFalha = vigentes.get(apuracao.id) ?? [];
+    return {
+      id: apuracao.id,
+      clienteId: apuracao.cliente_id,
+      nomeEmpresa,
+      mes: apuracao.periodo_mes,
+      ano: apuracao.periodo_ano,
+      mesesFolha: mesesDasRefs(comFalha.length ? comFalha : esperados),
+    };
+  });
 
   return res.status(200).json(apuracoes);
 }
@@ -1344,7 +1692,7 @@ async function registrarResultadoFolhaTentativa(req, res, tentativa) {
     return res.status(404).json({ erro: "Apuração não encontrada" });
   }
 
-  const { temDozeMeses, mesesEncontrados, totalMesesEncontrados, falhaUpload = false } = req.body || {};
+  const { temDozeMeses, mesesEncontrados, totalMesesEncontrados, falhaUpload = false, mesesComFalha } = req.body || {};
 
   if (typeof temDozeMeses !== "boolean") {
     return res.status(400).json({ erro: "temDozeMeses deve ser booleano" });
@@ -1373,6 +1721,26 @@ async function registrarResultadoFolhaTentativa(req, res, tentativa) {
   if (referencias.size !== totalMesesEncontrados || totalMesesEncontrados > 12 ||
       temDozeMeses !== (totalMesesEncontrados === 12) || typeof falhaUpload !== "boolean") {
     return res.status(400).json({ erro: "Relatório de folha contraditório ou com meses repetidos" });
+  }
+
+  // DAS-3: `mesesComFalha` é opcional (o agente antigo não manda). Quando vem,
+  // são os meses com algum arquivo não enviado: cada um precisa ser um mês
+  // relatado (logo, da janela, conferida abaixo), sem repetição, e a lista só
+  // fica vazia sem falha de envio. Fora disso, 400, como o resto do relatório.
+  if (mesesComFalha !== undefined) {
+    if (!Array.isArray(mesesComFalha)) {
+      return res.status(400).json({ erro: "mesesComFalha deve ser uma lista" });
+    }
+    const comFalha = new Set();
+    for (const item of mesesComFalha) {
+      if (!item || !Number.isInteger(item.ano) || !Number.isInteger(item.mes) || !referencias.has(chaveMes(item.ano, item.mes))) {
+        return res.status(400).json({ erro: "mesesComFalha deve conter meses de mesesEncontrados" });
+      }
+      comFalha.add(chaveMes(item.ano, item.mes));
+    }
+    if (comFalha.size !== mesesComFalha.length || falhaUpload !== comFalha.size > 0) {
+      return res.status(400).json({ erro: "Relatório de folha contraditório ou com meses repetidos" });
+    }
   }
 
   const { data: apuracao, error: erroBusca } = await supabase
@@ -1418,7 +1786,10 @@ async function registrarResultadoFolhaTentativa(req, res, tentativa) {
     calcularJanela12MesesAnteriores(apuracao.periodo_mes, apuracao.periodo_ano),
     mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
   if (folha.erro) return res.status(500).json({ erro: folha.erro });
-  const estado = avaliarEstadoFolha(apuracao, folha, { temDozeMeses, mesesEncontrados, totalMesesEncontrados, falhaUpload });
+  const estado = avaliarEstadoFolha(apuracao, folha, {
+    temDozeMeses, mesesEncontrados, totalMesesEncontrados, falhaUpload,
+    ...(mesesComFalha !== undefined ? { mesesComFalha } : {}),
+  });
   const preparado = await prepararAtualizacaoFolha(apuracao, cliente, folha, estado);
   if (preparado.erro) return res.status(preparado.status).json({ erro: preparado.erro });
 
@@ -1443,5 +1814,16 @@ async function registrarResultadoFolhaTentativa(req, res, tentativa) {
     return res.status(409).json({ erro: "Apuração alterada por outra solicitação; atualize e tente novamente" });
   }
 
+  // A folha acima foi lida antes desta gravação. Se ainda havia mês em
+  // processamento, ele pode ter concluído no meio, com o gancho do pipeline
+  // lendo a apuração anterior a este relatório: reconcilia com a folha de
+  // agora (DAS-3). Falha aqui não desfaz o relatório já gravado.
+  if (data.dados_folha?.processamentoPendente) {
+    try {
+      return res.status(200).json(await reconciliarApuracao(data, cliente));
+    } catch (err) {
+      console.error("[apuracoes.controller] Erro ao reconciliar apuração após relatório de folha:", err.message);
+    }
+  }
   return res.status(200).json(data);
 }

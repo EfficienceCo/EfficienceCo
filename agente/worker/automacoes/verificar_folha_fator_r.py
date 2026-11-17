@@ -64,7 +64,9 @@ def _arquivos_folha_no_mes(pasta_cliente, mes, ano):
 def verificar_pastas_folha(nome_empresa, mes_ref, ano_ref, pasta_base=None, meses_esperados=None):
     """
     Varre Folha dos últimos 12 meses a partir de mes_ref/ano_ref (inclusive).
-    Retorna flags do report + lista de caminhos absolutos para o envio.
+    Retorna flags do report + lista de caminhos absolutos para o envio e o
+    mês ({"mes", "ano"}) de cada caminho, para o report dizer quais meses
+    tiveram falha de envio (DAS-3).
     """
     if pasta_base is None:
         pasta_base = obter_pasta_base() or ""
@@ -72,6 +74,7 @@ def verificar_pastas_folha(nome_empresa, mes_ref, ano_ref, pasta_base=None, mese
 
     meses_encontrados = []
     arquivos_encontrados = []
+    mes_por_arquivo = {}
 
     referencias = ([(item["ano"], item["mes"]) for item in meses_esperados]
                    if meses_esperados is not None else
@@ -81,13 +84,32 @@ def verificar_pastas_folha(nome_empresa, mes_ref, ano_ref, pasta_base=None, mese
         if arquivos_mes:
             meses_encontrados.append({"mes": mes_check, "ano": ano_check})
             arquivos_encontrados.extend(arquivos_mes)
+            for caminho in arquivos_mes:
+                mes_por_arquivo[caminho] = {"mes": mes_check, "ano": ano_check}
 
     return {
         "temDozeMeses": len(meses_encontrados) == 12,
         "mesesEncontrados": meses_encontrados,
         "totalMesesEncontrados": len(meses_encontrados),
         "arquivosEncontrados": arquivos_encontrados,
+        "mesPorArquivo": mes_por_arquivo,
     }
+
+
+def meses_com_falha(resultado, enviados):
+    """
+    Meses ({"mes", "ano"}) com pelo menos um arquivo encontrado que não foi
+    enviado, na ordem da varredura. O backend tira um mês da pendência por
+    falha quando um report posterior o traz sem falha ou quando chega uma
+    planilha nova do mês depois da falha, por este agente ou pela tela (DAS-3).
+    """
+    enviados = set(enviados)
+    meses = []
+    for caminho in resultado["arquivosEncontrados"]:
+        mes = resultado["mesPorArquivo"][caminho]
+        if caminho not in enviados and mes not in meses:
+            meses.append(mes)
+    return meses
 
 
 def _processar_item(item):
@@ -122,6 +144,7 @@ def _processar_item(item):
 
     enviados = enviar_arquivos_folha(resultado["arquivosEncontrados"])
     falha_upload = set(enviados) != set(resultado["arquivosEncontrados"])
+    com_falha = meses_com_falha(resultado, enviados)
 
     reportar_resultado_folha(
         apuracao_id,
@@ -130,6 +153,7 @@ def _processar_item(item):
             "mesesEncontrados": resultado["mesesEncontrados"],
             "totalMesesEncontrados": resultado["totalMesesEncontrados"],
             "falhaUpload": falha_upload,
+            "mesesComFalha": com_falha,
         },
     )
     print(

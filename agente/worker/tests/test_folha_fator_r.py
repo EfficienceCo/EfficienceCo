@@ -9,6 +9,7 @@ from comunicacao.apuracao_folha_agente import (
     reportar_resultado_folha,
 )
 from automacoes.verificar_folha_fator_r import (
+    _processar_item,
     _subtrair_meses,
     processar_folha_fator_r,
     resolver_nome_cliente,
@@ -187,4 +188,103 @@ def test_processar_folha_fator_r_fluxo_completo(tmp_path):
     payload = mock_report.call_args.args[1]
     assert payload["temDozeMeses"] is False
     assert payload["totalMesesEncontrados"] == 1
+    assert payload["falhaUpload"] is False
+    assert payload["mesesComFalha"] == []
     assert mock_report.call_args.args[0] == "apuracao-1"
+
+
+def test_verificar_pastas_folha_devolve_mes_de_cada_arquivo(tmp_path):
+    nome = "Empresa"
+    setembro = tmp_path / nome / "Folha" / "2026-09"
+    setembro.mkdir(parents=True)
+    (setembro / "folha.xlsx").write_bytes(b"x")
+    (setembro / "pro-labore.xlsx").write_bytes(b"x")
+    agosto = tmp_path / nome / "Folha" / "2026-08"
+    agosto.mkdir(parents=True)
+    (agosto / "folha.xlsx").write_bytes(b"x")
+
+    resultado = verificar_pastas_folha(nome, 9, 2026, pasta_base=str(tmp_path))
+
+    assert resultado["mesPorArquivo"] == {
+        str(setembro / "folha.xlsx"): {"mes": 9, "ano": 2026},
+        str(setembro / "pro-labore.xlsx"): {"mes": 9, "ano": 2026},
+        str(agosto / "folha.xlsx"): {"mes": 8, "ano": 2026},
+    }
+    assert sorted(resultado["arquivosEncontrados"]) == sorted(resultado["mesPorArquivo"])
+
+
+# DAS-3: Folha/2026-09 tem 2 planilhas e só a segunda falha no envio. O report
+# diz que 09/2026 falhou (mesmo com a outra planilha do mês enviada) e que
+# 08/2026, enviado inteiro, não falhou.
+def test_processar_item_meses_com_falha_duas_planilhas_no_mes_so_uma_falha(tmp_path):
+    nome = "Padaria"
+    setembro = tmp_path / nome / "Folha" / "2026-09"
+    setembro.mkdir(parents=True)
+    folha_set = setembro / "folha.xlsx"
+    pro_labore = setembro / "pro-labore.xlsx"
+    folha_set.write_bytes(b"x")
+    pro_labore.write_bytes(b"x")
+    agosto = tmp_path / nome / "Folha" / "2026-08"
+    agosto.mkdir(parents=True)
+    folha_ago = agosto / "folha.xlsx"
+    folha_ago.write_bytes(b"x")
+
+    item = {
+        "id": "apuracao-1",
+        "nomeEmpresa": nome,
+        "mes": 10,
+        "ano": 2026,
+        "mesesFolha": [{"ano": 2026, "mes": 8}, {"ano": 2026, "mes": 9}],
+    }
+
+    with patch(
+        "automacoes.verificar_folha_fator_r.obter_pasta_base",
+        return_value=str(tmp_path),
+    ), patch(
+        "automacoes.verificar_folha_fator_r.enviar_arquivos_folha",
+        return_value=[str(folha_ago), str(folha_set)],
+    ) as mock_upload, patch(
+        "automacoes.verificar_folha_fator_r.reportar_resultado_folha"
+    ) as mock_report:
+        _processar_item(item)
+
+    assert sorted(mock_upload.call_args.args[0]) == sorted([str(folha_ago), str(folha_set), str(pro_labore)])
+    payload = mock_report.call_args.args[1]
+    assert payload["falhaUpload"] is True
+    assert payload["mesesComFalha"] == [{"mes": 9, "ano": 2026}]
+    assert payload["mesesEncontrados"] == [{"mes": 8, "ano": 2026}, {"mes": 9, "ano": 2026}]
+    assert payload["totalMesesEncontrados"] == 2
+
+
+# DAS-3: Folha/2026-09 tem 2 planilhas e as duas são recusadas no envio. O
+# mês entra uma vez só em mesesComFalha (o backend recusa mês repetido com
+# 400, e o report inteiro se perderia).
+def test_processar_item_mes_com_duas_planilhas_recusadas_aparece_uma_vez(tmp_path):
+    nome = "Padaria"
+    setembro = tmp_path / nome / "Folha" / "2026-09"
+    setembro.mkdir(parents=True)
+    (setembro / "folha.xlsx").write_bytes(b"x")
+    (setembro / "pro-labore.xlsx").write_bytes(b"x")
+
+    item = {
+        "id": "apuracao-1",
+        "nomeEmpresa": nome,
+        "mes": 10,
+        "ano": 2026,
+        "mesesFolha": [{"ano": 2026, "mes": 9}],
+    }
+
+    with patch(
+        "automacoes.verificar_folha_fator_r.obter_pasta_base",
+        return_value=str(tmp_path),
+    ), patch(
+        "automacoes.verificar_folha_fator_r.enviar_arquivos_folha",
+        return_value=[],
+    ), patch(
+        "automacoes.verificar_folha_fator_r.reportar_resultado_folha"
+    ) as mock_report:
+        _processar_item(item)
+
+    payload = mock_report.call_args.args[1]
+    assert payload["falhaUpload"] is True
+    assert payload["mesesComFalha"] == [{"mes": 9, "ano": 2026}]
