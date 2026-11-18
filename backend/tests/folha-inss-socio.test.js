@@ -134,8 +134,11 @@ describe("calcularFolhaFuncionario — empregado inalterado (lote A do QA-B, 13/
     ["Ana", { salario_bruto: 1621 }, { inss: 121.58, ir: 0, liquido: 1499.42 }],
     ["Bruno", { salario_bruto: 3000, vale_transporte: true }, { inss: 248.6, ir: 0, liquido: 2571.4 }],
     ["Carla", { salario_bruto: 5000 }, { inss: 501.51, ir: 0, liquido: 4498.49 }],
+    // FOLHA-4 (#744): o QA-B anotou 29 dias como "30 menos a falta" e calculou o salário
+    // cheio. Desde a FOLHA-4, dias_trabalhados é proporcional e a falta é descontada à parte,
+    // então a entrada que corresponde ao oráculo do QA é 30 dias + 1 falta.
     ["Diego", {
-      salario_bruto: 6000, dias_trabalhados: 29, horas_extras: 5, faltas: 1, adiantamento: 500,
+      salario_bruto: 6000, dias_trabalhados: 30, horas_extras: 5, faltas: 1, adiantamento: 500,
       num_dependentes: 1, vale_transporte: true,
     }, { inss: 642.15, ir: 334.65, liquido: 4167.75 }],
     ["Elisa", { salario_bruto: 9000, num_dependentes: 2 }, { inss: 988.09, ir: 1190.27, liquido: 6821.64 }],
@@ -145,7 +148,8 @@ describe("calcularFolhaFuncionario — empregado inalterado (lote A do QA-B, 13/
     ["Iris", { salario_bruto: 2902.84 }, { inss: 236.94, ir: 0, liquido: 2665.9 }],
     ["Jorge", { salario_bruto: 8475.55 }, { inss: 988.09, ir: 1150.32, liquido: 6337.14 }],
     ["Lia", { salario_bruto: 10000, num_dependentes: 5 }, { inss: 988.09, ir: 1308.86, liquido: 7703.05 }],
-    ["Paulo", { salario_bruto: 3000, dias_trabalhados: 15 }, { inss: 248.6, ir: 0, liquido: 2751.4 }],
+    // FOLHA-4 (#744): 15 dias = salário do mês 1.500,00 (o QA-B anotou 2.751,40 como "igual ao app", P4).
+    ["Paulo", { salario_bruto: 3000, dias_trabalhados: 15 }, { inss: 112.5, ir: 0, liquido: 1387.5 }],
     ["Quesia", {
       salario_bruto: 2500.5, horas_extras: 2.5, num_dependentes: 1, vale_transporte: true,
     }, { inss: 204.57, ir: 0, liquido: 2188.52 }],
@@ -215,11 +219,11 @@ describe("holerite do sócio (montarLinhasVerbas / montarCelulasBases)", () => {
 describe("holerite do empregado inalterado", () => {
   it("Diego (HE, falta, adiantamento, VT): mesmas verbas e rótulos de antes", () => {
     const calculo = calcularFolhaFuncionario(linha({
-      funcionario: "Diego", salario_bruto: 6000, dias_trabalhados: 29, horas_extras: 5, faltas: 1,
+      funcionario: "Diego", salario_bruto: 6000, dias_trabalhados: 30, horas_extras: 5, faltas: 1,
       adiantamento: 500, num_dependentes: 1, vale_transporte: true,
     }), "2026-09");
     assert.deepEqual(montarLinhasVerbas(calculo), [
-      { verba: "0001", descricao: "SALARIO BASE", referencia: "29", proventos: "6000,00", descontos: "" },
+      { verba: "0001", descricao: "SALARIO BASE", referencia: "30", proventos: "6000,00", descontos: "" },
       { verba: "0002", descricao: "HORAS EXTRAS 50%", referencia: "5", proventos: "204,55", descontos: "" },
       { verba: "0010", descricao: "FALTAS", referencia: "1", proventos: "", descontos: "200,00" },
       { verba: "0011", descricao: "INSS", referencia: "6004,55", proventos: "", descontos: "642,15" },
