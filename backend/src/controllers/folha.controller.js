@@ -3,7 +3,9 @@ import {
   gerarTemplateFolha,
   validarColunasPlanilha,
   lerLinhasPlanilha,
-  calcularFolhaFuncionario,
+  calcularFolhaLinhas,
+  resolverTabelaFolha,
+  TabelaFolhaAusenteError,
   gerarHoleritePDF,
   gerarRelatorioFechamentoPDF,
   calcularTotaisEmpresa,
@@ -63,6 +65,17 @@ export async function baixarTemplate(req, res) {
   }
 }
 
+// Mensagem legível quando a competência não tem tabela fiscal cadastrada; null quando tem.
+function verificarTabelaCompetencia(mesReferencia) {
+  try {
+    resolverTabelaFolha(mesReferencia);
+    return null;
+  } catch (err) {
+    if (err instanceof TabelaFolhaAusenteError) return err.message;
+    throw err;
+  }
+}
+
 async function processarUploadFolha(req, res, clienteId) {
   if (!req.file) {
     return res.status(400).json({ erro: "Planilha é obrigatória" });
@@ -81,6 +94,14 @@ async function processarUploadFolha(req, res, clienteId) {
   const mesReferencia = `${mesReferenciaBruto.slice(0, 7)}-01`;
 
   try {
+    // Competência sem tabela INSS/IRRF é recusada aqui, antes do storage e do insert
+    // (#744): sem tabela não há folha possível, e o 400 faz o agente local mover o
+    // arquivo para rejeitados com o aviso do Windows.
+    const erroTabela = verificarTabelaCompetencia(mesReferencia);
+    if (erroTabela) {
+      return res.status(400).json({ erro: erroTabela });
+    }
+
     const { valido, faltando } = await validarColunasPlanilha(req.file.buffer);
 
     if (!valido) {
@@ -230,9 +251,18 @@ export async function calcularFolha(req, res) {
 
     // mes_referencia do processamento seleciona a tabela fiscal (INSS/IRRF) da
     // competência — recálculo de folha antiga usa a tabela da época (#437).
-    const calculos = linhas.map((linha) => ({
+    const resultado = calcularFolhaLinhas(linhas, processamento.mes_referencia);
+
+    // Líquido negativo (#744): o processamento inteiro é recusado, nenhuma linha gravada.
+    if (resultado.erros.length > 0) {
+      console.error("[folha.controller] Linhas com líquido negativo:", JSON.stringify(resultado.erros));
+      await marcarErro(processamentoId, `Planilha com ${resultado.erros.length} linha(s) inválida(s)`);
+      return res.status(422).json({ erro: "Planilha com linhas inválidas", detalhes: resultado.erros });
+    }
+
+    const calculos = resultado.calculos.map((calculo) => ({
       processamento_id: processamentoId,
-      ...calcularFolhaFuncionario(linha, processamento.mes_referencia),
+      ...calculo,
     }));
 
     const { error: erroInsert } = await supabase.from("folha_calculos").insert(calculos);
@@ -262,6 +292,12 @@ export async function calcularFolha(req, res) {
       totais,
     });
   } catch (err) {
+    // Processamento que já estava pendente com competência sem tabela (gravado antes
+    // da recusa no upload, #744): mensagem legível no lugar do erro genérico.
+    if (err instanceof TabelaFolhaAusenteError) {
+      await marcarErro(processamentoId, err.message);
+      return res.status(422).json({ erro: err.message });
+    }
     console.error("[folha.controller] Erro inesperado ao calcular folha:", err.message);
     await marcarErro(processamentoId, "Erro inesperado ao calcular folha");
     return res.status(500).json({ erro: "Erro ao calcular folha" });
@@ -334,7 +370,7 @@ async function gerarSaidaFolhaCore(req, res) {
     for (const calculo of calculos) {
       if (calculo.holerite_path) continue;
 
-      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado);
+      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado, processamento.mes_referencia);
       // id da linha de folha_calculos no nome (não o CPF): dois funcionários com o mesmo
       // nome na mesma empresa (comum: "Maria Silva") colidiriam no path e o segundo upload
       // falharia (upsert:false). O id garante unicidade sem expor o CPF no storage,

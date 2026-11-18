@@ -24,7 +24,7 @@ import { lerTabela, resetarBanco } from "./helpers/banco.js";
 import { gerarCpfSintetico } from "./fixtures/massa-680.js";
 import { alterarLicenca, cabecalhoLicenca, criarLicenca } from "./helpers/licenca-agente.js";
 import { conhecido } from "./helpers/bug-conhecido.js";
-import { COLUNAS_FOLHA } from "../src/services/folha.service.js";
+import { COLUNAS_FOLHA, COLUNA_CATEGORIA } from "../src/services/folha.service.js";
 
 const MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const CPF_MARIA = gerarCpfSintetico("689900011");
@@ -40,8 +40,9 @@ const LINHA_JOSE = {
   num_dependentes: 0, vale_transporte: false,
 };
 
-async function planilha(linhas, { semColuna } = {}) {
-  const colunas = COLUNAS_FOLHA.filter(coluna => coluna.key !== semColuna);
+async function planilha(linhas, { semColuna, comCategoria } = {}) {
+  const colunas = [...COLUNAS_FOLHA, ...(comCategoria ? [COLUNA_CATEGORIA] : [])]
+    .filter(coluna => coluna.key !== semColuna);
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Folha");
   ws.addRow(colunas.map(coluna => coluna.header));
@@ -343,6 +344,125 @@ describe("TEST-11: POST /folha/upload/agente (HTTP, licença e banco reais)", { 
       assert.deepEqual(await lerTabela(banco, "eventos"), []);
       assert.deepEqual(await lerTabela(banco, "notificacoes"), []);
       // Só a planilha original ficou no bucket (nenhum holerite).
+      assert.deepEqual([...memoria.arquivos.keys()], [final.arquivo_origem_path]);
+    });
+  });
+
+  describe("pró-labore de sócio (FOLHA-1, #741)", () => {
+    it("grava a categoria; sócio com INSS de 11% até o teto e HE/falta/VT gravados mas fora da conta", async () => {
+      // Conta à mão (09/2026, teto 8.475,55): INSS 8.475,55 × 11% = 932,31; base IR 10.000 − 932,3105
+      // = 9.067,69; IR 9.067,69 × 27,5% − 908,73 = 1.584,88; líquido 10.000 − 932,31 − 1.584,88 = 7.482,81.
+      const marcos = {
+        ...LINHA_MARIA, funcionario: "Marcos Sintetico", cpf: gerarCpfSintetico("689900013"), cargo: "Socio",
+        salario_bruto: 10000, horas_extras: 10, faltas: 2, vale_transporte: true, categoria: "SOCIO",
+      };
+      const arquivo = await planilha([marcos, LINHA_MARIA], { comCategoria: true });
+      const resposta = await enviar(formulario({ arquivo, mes: "2026-09" }), tokenA);
+      assert.equal(resposta.status, 201);
+      const final = await esperarPipeline(resposta.corpo.processamento_id);
+      assert.equal(final.status, "concluido");
+      assert.equal(final.saida_status, "ok");
+
+      const calculos = await lerTabela(banco, "folha_calculos", "funcionario");
+      assert.equal(calculos.length, 2);
+      const socio = calculos.find(calculo => calculo.funcionario === "Marcos Sintetico");
+      const maria = calculos.find(calculo => calculo.funcionario === "Maria Sintetica");
+      assert.deepEqual(
+        {
+          categoria: socio.categoria, salario_bruto: Number(socio.salario_bruto), base_calculo: Number(socio.base_calculo),
+          inss: Number(socio.inss), base_ir: Number(socio.base_ir), ir: Number(socio.ir), fgts: Number(socio.fgts),
+          liquido: Number(socio.liquido), valor_horas_extras: Number(socio.valor_horas_extras),
+          valor_faltas: Number(socio.valor_faltas), desconto_vt: Number(socio.desconto_vt),
+          horas_extras: Number(socio.horas_extras), faltas: Number(socio.faltas), vale_transporte: socio.vale_transporte,
+        },
+        {
+          categoria: "socio", salario_bruto: 10000, base_calculo: 10000, inss: 932.31, base_ir: 9067.69, ir: 1584.88,
+          fgts: 0, liquido: 7482.81, valor_horas_extras: 0, valor_faltas: 0, desconto_vt: 0,
+          horas_extras: 10, faltas: 2, vale_transporte: true,
+        },
+      );
+      // Célula de categoria vazia = empregado, com a conta de sempre.
+      assert.equal(maria.categoria, "empregado");
+      assert.equal(Number(maria.inss), 112.5);
+      for (const calculo of [maria, socio]) {
+        assert.equal(memoria.arquivos.get(calculo.holerite_path).subarray(0, 4).toString(), "%PDF");
+      }
+    });
+
+    it("o banco recusa categoria fora do domínio e grava 'empregado' quando o insert não informa", async () => {
+      const [processamento] = (await banco.from("processamentos_folha").insert({
+        cliente_id: A.id, mes_referencia: "2026-09-01", status: "concluido", arquivo_origem_path: "teste/folha.xlsx",
+      }).select()).data;
+      const linhaBase = {
+        processamento_id: processamento.id, empresa: "E", funcionario: "F", cpf: CPF_MARIA, cargo: "C",
+        salario_bruto: 1000, dias_trabalhados: 30, valor_horas_extras: 0, valor_faltas: 0, desconto_vt: 0,
+        base_calculo: 1000, inss: 75, fgts: 80, ir: 0, liquido: 925,
+      };
+      const invalida = await banco.from("folha_calculos").insert({ ...linhaBase, categoria: "estagiario" });
+      assert.match(invalida.error?.message ?? "", /folha_calculos_categoria_check/);
+      const { data, error } = await banco.from("folha_calculos").insert(linhaBase).select("categoria").single();
+      assert.equal(error, null);
+      assert.equal(data.categoria, "empregado");
+    });
+  });
+
+  // FOLHA-4 (#744). Não há tabela INSS/IRRF de 2027 nem anterior a 2024 (folha.service.js).
+  // A rota web divide o processarUploadFolha com a do agente, por isso entra aqui também.
+  describe("competência sem tabela fiscal e líquido negativo (FOLHA-4, #744)", () => {
+    const adminA = () => massa.tabelas.usuarios.find(usuario => usuario.cliente_id === A.id && usuario.perfil === "admin_cliente");
+    const enviarWeb = form => api.requisitar("/folha/upload", { metodo: "POST", formulario: form, usuario: adminA() });
+
+    for (const [mes, erro] of [
+      ["2027-01", "Sem tabela INSS/IRRF cadastrada para 01/2027"],
+      ["2023-12", "Sem tabela INSS/IRRF cadastrada para 12/2023"],
+    ]) {
+      it(`${mes}: 400 pelo agente e pela web, e nada vai para o storage nem para o banco`, async () => {
+        const arquivo = await planilha([LINHA_MARIA]);
+        const antes = await fotografar();
+
+        const agente = await enviar(formulario({ arquivo, mes }), tokenA);
+        assert.equal(agente.status, 400, JSON.stringify(agente.corpo));
+        assert.deepEqual(agente.corpo, { erro });
+
+        const web = await enviarWeb(formulario({ arquivo, mes }));
+        assert.equal(web.status, 400, JSON.stringify(web.corpo));
+        assert.deepEqual(web.corpo, { erro });
+
+        assert.deepEqual(await fotografar(), antes);
+        assert.equal(memoria.arquivos.size, 0);
+      });
+    }
+
+    it("processamento já pendente com competência sem tabela: 422 com a mensagem legível gravada", async () => {
+      // Linha gravada antes da recusa no upload existir: arquivo no bucket e processamento pendente.
+      const caminho = `clientes/${A.id}/2027-01-01/legado.xlsx`;
+      memoria.arquivos.set(caminho, await planilha([LINHA_MARIA]));
+      const { data: pendente, error } = await banco.from("processamentos_folha")
+        .insert({ cliente_id: A.id, mes_referencia: "2027-01-01", status: "pendente", arquivo_origem_path: caminho })
+        .select("id").single();
+      assert.equal(error, null);
+
+      const resposta = await api.requisitar(`/folha/${pendente.id}/calcular`, { metodo: "POST", usuario: adminA() });
+      assert.equal(resposta.status, 422, JSON.stringify(resposta.corpo));
+      assert.deepEqual(resposta.corpo, { erro: "Sem tabela INSS/IRRF cadastrada para 01/2027" });
+
+      const [processamento] = await lerTabela(banco, "processamentos_folha");
+      assert.equal(processamento.status, "erro");
+      assert.equal(processamento.motivo_erro, "Sem tabela INSS/IRRF cadastrada para 01/2027");
+      assert.deepEqual(await lerTabela(banco, "folha_calculos"), []);
+    });
+
+    it("adiantamento maior que o líquido: o processamento inteiro é recusado, nenhuma linha gravada", async () => {
+      // José: 3.000 − INSS 248,60 = 2.751,40 de líquido antes do adiantamento (tabela 2026).
+      const arquivo = await planilha([LINHA_MARIA, { ...LINHA_JOSE, adiantamento: 5000 }]);
+      const resposta = await enviar(formulario({ arquivo }), tokenA);
+      assert.equal(resposta.status, 201);
+      const final = await esperarPipeline(resposta.corpo.processamento_id);
+
+      assert.equal(final.status, "erro");
+      assert.equal(final.motivo_erro, "Planilha com 1 linha(s) inválida(s)");
+      assert.deepEqual(await lerTabela(banco, "folha_calculos"), []);
+      assert.deepEqual(await lerTabela(banco, "folha_relatorios"), []);
       assert.deepEqual([...memoria.arquivos.keys()], [final.arquivo_origem_path]);
     });
   });

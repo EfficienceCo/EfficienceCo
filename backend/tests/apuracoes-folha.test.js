@@ -800,7 +800,7 @@ describe("PATCH /apuracoes/:id/recalcular", () => {
   }
 
   const linhaFolha = (over) => ({
-    salario_bruto: 0, horas_extras: 0, faltas: 0, adiantamento: 0,
+    salario_bruto: 0, dias_trabalhados: 30, horas_extras: 0, faltas: 0, adiantamento: 0,
     num_dependentes: 0, vale_transporte: false, ...over,
   });
 
