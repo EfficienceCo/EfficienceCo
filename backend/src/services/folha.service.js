@@ -242,6 +242,28 @@ export function calcularINSS(baseCalculo, tabelaInss) {
   return inss;
 }
 
+// Teto salarial do INSS da competência: o `limite` da última faixa da tabela.
+// Não confundir com `tetoContribuicao`, que é a contribuição do EMPREGADO no teto.
+function tetoSalarialINSS(tabelaInss) {
+  return tabelaInss.faixas[tabelaInss.faixas.length - 1].limite;
+}
+
+// Pró-labore de sócio (#741): o sócio é contribuinte individual a serviço de
+// empresa. Alíquota de 20% (Lei 8.212/91, art. 21) com dedução de 9 pontos
+// (art. 30, §4º) = 11%, descontada pela empresa (Lei 10.666/2003, art. 4º), sem
+// faixas progressivas e limitada ao teto. Vale também para optante do Simples.
+// Não é o plano simplificado (11% sobre o salário mínimo, GPS 1163), que é
+// recolhimento por conta própria.
+//
+// Retorna o valor SEM arredondar, pelo mesmo motivo de calcularINSS: a base do
+// IRRF usa a precisão cheia.
+const ALIQUOTA_INSS_CONTRIBUINTE_INDIVIDUAL = 0.11;
+
+export function calcularINSSContribuinteIndividual(baseCalculo, tabelaInss) {
+  if (baseCalculo <= 0) return 0;
+  return Math.min(baseCalculo, tetoSalarialINSS(tabelaInss)) * ALIQUOTA_INSS_CONTRIBUINTE_INDIVIDUAL;
+}
+
 // A base do IRRF precisa ser persistida exatamente como foi usada no cálculo.
 // Em tabelas que oferecem desconto simplificado, escolhe a maior dedução entre
 // ele e as deduções legais (INSS + dependentes).
@@ -289,22 +311,30 @@ export function calcularIR(dados, tabelaIrrf) {
 // planilha. `competencia` ("YYYY-MM" ou "YYYY-MM-DD") seleciona a tabela fiscal
 // vigente — obrigatória, o cálculo não tem default de ano.
 // Fórmula do líquido: bruto − faltas + horas_extras − INSS − IR − adiantamento − desconto_vt.
+//
+// Sócio (`categoria = "socio"`, #612/#741): o salario_bruto é o pró-labore, que
+// não tem hora extra, falta nem vale-transporte da CLT. Os três saem 0 no cálculo
+// (os valores brutos da planilha seguem gravados como vieram, para auditoria), o
+// INSS é o do contribuinte individual e não há FGTS.
 export function calcularFolhaFuncionario(linha, competencia) {
   const { inss: tabelaInss, irrf: tabelaIrrf } = resolverTabelaFolha(competencia);
+  const categoria = linha.categoria === "socio" ? "socio" : "empregado";
+  const socio = categoria === "socio";
 
   const salarioBruto = linha.salario_bruto;
-  const valorHoraExtra = (salarioBruto / DIVISOR_HORA_EXTRA) * ADICIONAL_HORA_EXTRA * linha.horas_extras;
-  const valorDia = salarioBruto / 30;
-  const valorFaltas = valorDia * linha.faltas;
-  const descontoVt = linha.vale_transporte ? salarioBruto * ALIQUOTA_DESCONTO_VT : 0;
+  const valorHoraExtra = socio
+    ? 0
+    : (salarioBruto / DIVISOR_HORA_EXTRA) * ADICIONAL_HORA_EXTRA * linha.horas_extras;
+  const valorFaltas = socio ? 0 : (salarioBruto / 30) * linha.faltas;
+  const descontoVt = !socio && linha.vale_transporte ? salarioBruto * ALIQUOTA_DESCONTO_VT : 0;
 
   const baseCalculo = arredondar(salarioBruto - valorFaltas + valorHoraExtra);
 
-  const inssPreciso = calcularINSS(baseCalculo, tabelaInss);
+  const inssPreciso = socio
+    ? calcularINSSContribuinteIndividual(baseCalculo, tabelaInss)
+    : calcularINSS(baseCalculo, tabelaInss);
   const inss = arredondar(inssPreciso);
-  // Pró-labore de sócio não tem FGTS (#612). A categoria não é persistida
-  // (sem coluna em folha_calculos) — fgts = 0 já basta para a FS12.
-  const fgts = linha.categoria === "socio" ? 0 : arredondar(baseCalculo * ALIQUOTA_FGTS);
+  const fgts = socio ? 0 : arredondar(baseCalculo * ALIQUOTA_FGTS);
 
   const dadosIrrf = {
     baseCalculo,
@@ -328,6 +358,9 @@ export function calcularFolhaFuncionario(linha, competencia) {
     adiantamento: linha.adiantamento,
     num_dependentes: linha.num_dependentes,
     vale_transporte: linha.vale_transporte,
+    // Persistida em folha_calculos (migration 110): o holerite é gerado das linhas
+    // gravadas e precisa saber que é pró-labore.
+    categoria,
     valor_horas_extras: arredondar(valorHoraExtra),
     valor_faltas: arredondar(valorFaltas),
     desconto_vt: arredondar(descontoVt),
@@ -737,19 +770,25 @@ function fecharSegmentoTabelaVerbas(doc, x, yTopo, yFim, colunas) {
 // Linhas de verba (proventos/descontos) a partir dos campos já calculados em folha_calculos.
 // Códigos de verba são fictícios (não existe tabela de verbas real) — só servem pra imitar
 // o formato visual de um holerite de verdade. Linhas sem valor aplicável (ex: sem faltas,
-// sem adiantamento) são omitidas em vez de aparecer zeradas.
-function montarLinhasVerbas(calculo) {
+// sem adiantamento) são omitidas em vez de aparecer zeradas. HE e faltas entram pelo
+// valor CALCULADO, não pelo bruto da planilha: no pró-labore de sócio os brutos
+// ficam gravados, mas o cálculo os ignora (#741).
+//
+// `competencia` ("YYYY-MM" ou "YYYY-MM-DD") só é usada no sócio, para limitar a
+// referência do INSS ao teto da época.
+export function montarLinhasVerbas(calculo, competencia) {
+  const socio = calculo.categoria === "socio";
   const linhas = [
     {
       verba: "0001",
-      descricao: "SALARIO BASE",
+      descricao: socio ? "PRO-LABORE" : "SALARIO BASE",
       referencia: String(calculo.dias_trabalhados),
       proventos: formatarDecimalBR(calculo.salario_bruto),
       descontos: "",
     },
   ];
 
-  if (Number(calculo.horas_extras) > 0) {
+  if (Number(calculo.valor_horas_extras) > 0) {
     linhas.push({
       verba: "0002",
       descricao: "HORAS EXTRAS 50%",
@@ -759,7 +798,7 @@ function montarLinhasVerbas(calculo) {
     });
   }
 
-  if (Number(calculo.faltas) > 0) {
+  if (Number(calculo.valor_faltas) > 0) {
     linhas.push({
       verba: "0010",
       descricao: "FALTAS",
@@ -769,13 +808,24 @@ function montarLinhasVerbas(calculo) {
     });
   }
 
-  linhas.push({
-    verba: "0011",
-    descricao: "INSS",
-    referencia: formatarDecimalBR(calculo.base_calculo),
-    proventos: "",
-    descontos: formatarDecimalBR(calculo.inss),
-  });
+  linhas.push(socio
+    ? {
+      verba: "0011",
+      descricao: "INSS CONTRIB. INDIVIDUAL 11%",
+      referencia: formatarDecimalBR(Math.min(
+        Number(calculo.base_calculo),
+        tetoSalarialINSS(resolverTabelaFolha(competencia).inss),
+      )),
+      proventos: "",
+      descontos: formatarDecimalBR(calculo.inss),
+    }
+    : {
+      verba: "0011",
+      descricao: "INSS",
+      referencia: formatarDecimalBR(calculo.base_calculo),
+      proventos: "",
+      descontos: formatarDecimalBR(calculo.inss),
+    });
 
   linhas.push({
     verba: "0012",
@@ -823,7 +873,10 @@ export function montarCelulasBases(calculo) {
   const baseIrDisponivel = calculo.base_ir != null && Number.isFinite(Number(calculo.base_ir));
 
   return [
-    { rotulo: "SALAR. BASE", texto: formatarDecimalBR(calculo.salario_bruto) },
+    {
+      rotulo: calculo.categoria === "socio" ? "PRÓ-LABORE" : "SALAR. BASE",
+      texto: formatarDecimalBR(calculo.salario_bruto),
+    },
     { rotulo: "SAL. CONTR.", texto: formatarDecimalBR(calculo.base_calculo) },
     { rotulo: "BASE FGTS", texto: formatarDecimalBR(Number(calculo.fgts) > 0 ? calculo.base_calculo : 0) },
     { rotulo: "FGTS MES", texto: formatarDecimalBR(calculo.fgts) },
@@ -845,7 +898,9 @@ const COLUNAS_TABELA_VERBAS = (larguraUtil) => [
 // Holerite individual — 1 por funcionário, a partir da linha já calculada em folha_calculos.
 // Layout imita o padrão de holerite brasileiro (caixa com borda, grid de dados, tabela de
 // verbas, linha de bases/totais) — sem logo/identidade de empresa, só texto e bordas.
-export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
+// `competencia` (mes_referencia do processamento) só é exigida no holerite de sócio
+// (ver montarLinhasVerbas).
+export function gerarHoleritePDF(calculo, mesReferenciaFormatado, competencia) {
   return documentoParaBuffer((doc) => {
     const x0 = doc.page.margins.left;
     const larguraUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -886,7 +941,7 @@ export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
     desenharHeaderTabelaVerbas(doc, x0, y, colunasVerba);
     y += alturaHeaderTabela;
 
-    montarLinhasVerbas(calculo).forEach((linha) => {
+    montarLinhasVerbas(calculo, competencia).forEach((linha) => {
       if (y + alturaLinhaVerba > limiteInferior) {
         fecharSegmentoTabelaVerbas(doc, x0, yTabelaTopo, y, colunasVerba);
         doc.addPage();
