@@ -334,7 +334,7 @@ async function gerarSaidaFolhaCore(req, res) {
     for (const calculo of calculos) {
       if (calculo.holerite_path) continue;
 
-      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado);
+      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado, processamento.mes_referencia);
       // id da linha de folha_calculos no nome (não o CPF): dois funcionários com o mesmo
       // nome na mesma empresa (comum: "Maria Silva") colidiriam no path e o segundo upload
       // falharia (upsert:false). O id garante unicidade sem expor o CPF no storage,
