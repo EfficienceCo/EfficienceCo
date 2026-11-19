@@ -23,7 +23,6 @@ import { recriarMassa680 } from "./helpers/massa-680.js";
 import { lerTabela, resetarBanco } from "./helpers/banco.js";
 import { gerarCpfSintetico } from "./fixtures/massa-680.js";
 import { alterarLicenca, cabecalhoLicenca, criarLicenca } from "./helpers/licenca-agente.js";
-import { conhecido } from "./helpers/bug-conhecido.js";
 import { COLUNAS_FOLHA } from "../src/services/folha.service.js";
 
 const MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -372,15 +371,14 @@ describe("TEST-11: POST /folha/upload/agente (HTTP, licença e banco reais)", { 
     });
   });
 
-  describe("bugs conhecidos: o teste do comportamento certo fica com skip até a correção", () => {
-    it("sem token, o arquivo de tipo errado ou grande demais é recusado como 401, não 400 (PRB-E-44)",
-      conhecido("BUG (sem issue; precisa de issue `bug`, catálogo PRB-E-44): o multer roda antes da checagem do token; sem token, tipo errado ou arquivo acima de 10MB devolve 400 em vez de 401 e quem não tem licença chega ao parse do upload"), async () => {
-        const antes = await fotografar();
-        const errado = await enviar(formulario({ arquivo: Buffer.from("a,b"), nome: "folha.csv", tipo: "text/csv" }));
-        const grande = await enviar(formulario({ arquivo: Buffer.alloc(10 * 1024 * 1024 + 1) }));
-        assert.equal(errado.status, 401);
-        assert.equal(grande.status, 401);
-        assert.deepEqual(await fotografar(), antes);
-      });
+  describe("token antes do multer (FOLHA-7 / PRB-E-44)", () => {
+    it("sem token, o arquivo de tipo errado ou grande demais é recusado como 401, não 400", async () => {
+      const antes = await fotografar();
+      const errado = await enviar(formulario({ arquivo: Buffer.from("a,b"), nome: "folha.csv", tipo: "text/csv" }));
+      const grande = await enviar(formulario({ arquivo: Buffer.alloc(10 * 1024 * 1024 + 1) }));
+      assert.equal(errado.status, 401);
+      assert.equal(grande.status, 401);
+      assert.deepEqual(await fotografar(), antes);
+    });
   });
 });

@@ -2,6 +2,8 @@ import express from "express";
 import multer from "multer";
 import { exigirPerfil } from "../middlewares/permissao.middleware.js";
 import { exigirLicencaAtiva } from "../middlewares/licenca.middleware.js";
+import { exigirLicencaAgente } from "../middlewares/licenca-agente.middleware.js";
+import { validarUuidParams } from "../middlewares/uuid.middleware.js";
 import {
   baixarTemplate,
   uploadFolha,
@@ -15,6 +17,7 @@ import {
 const router = express.Router();
 
 const todos = exigirPerfil("admin_efficience", "admin_cliente", "funcionario");
+const validarProcessamentoId = validarUuidParams("processamento_id");
 
 const MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -50,18 +53,20 @@ router.get("/template", todos, exigirLicencaAtiva, baixarTemplate);
 // Web/dashboard — autenticado via JWT
 router.post("/upload", todos, exigirLicencaAtiva, uploadPlanilha, uploadFolha);
 
-// Agente — autenticado via x-licenca-token no controller (antes das rotas com param)
-router.post("/upload/agente", uploadPlanilha, uploadFolhaAgente);
+// Agente — autenticado via x-licenca-token ANTES do multer (sem licença, 401 sem ler o arquivo);
+// fica antes das rotas com param
+router.post("/upload/agente", exigirLicencaAgente, uploadPlanilha, uploadFolhaAgente);
 
-router.post("/:processamento_id/calcular", todos, exigirLicencaAtiva, calcularFolha);
-router.post("/:processamento_id/gerar-saida", todos, exigirLicencaAtiva, gerarSaidaFolha);
+router.post("/:processamento_id/calcular", todos, exigirLicencaAtiva, validarProcessamentoId, calcularFolha);
+router.post("/:processamento_id/gerar-saida", todos, exigirLicencaAtiva, validarProcessamentoId, gerarSaidaFolha);
 
 // Status e download — depois de /template e /upload* para não sombrear rotas estáticas
-router.get("/:processamento_id", todos, exigirLicencaAtiva, consultarStatusFolha);
+router.get("/:processamento_id", todos, exigirLicencaAtiva, validarProcessamentoId, consultarStatusFolha);
 router.get(
   "/:processamento_id/download/:arquivo",
   todos,
   exigirLicencaAtiva,
+  validarProcessamentoId,
   baixarArquivoFolha,
 );
 
