@@ -6,6 +6,7 @@ import {
   resolverArquivoDownload,
   calcularTotaisProcessamento,
   sanitizarNomeArquivo,
+  sufixoEmpresa,
 } from "../src/services/folha-status.helpers.js";
 import { PERFIS } from "../src/config/perfis.js";
 
@@ -158,6 +159,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
         resolverArquivoDownload,
         calcularTotaisProcessamento,
         sanitizarNomeArquivo,
+        sufixoEmpresa,
         registrarEventoConclusaoFolha: async () => ({ registrado: true, descricao: "ok" }),
       },
     });
