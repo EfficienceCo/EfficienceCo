@@ -1,16 +1,30 @@
 import supabase from "../config/database.js";
 
+// FOLHA-8 (#748): as 3 primeiras etapas da folha são concluídas pelo pipeline da folha
+// (folha-checklist.service.js), nunca por clique nem pelo agente local. A ordem do objeto
+// é a ordem dos marcos: um marco conclui também as ações anteriores (catch-up).
+export const ACOES_FOLHA = Object.freeze({
+  PLANILHA_RECEBIDA: "folha_planilha_recebida",
+  CALCULADA: "folha_calculada",
+  HOLERITES_GERADOS: "folha_holerites_gerados",
+});
+
 export const ETAPAS_PADRAO = {
   folha_pagamento: [
     {
-      descricao: "Inserir planilha Excel na pasta do mês",
-      tipo: "manual",
-      acao: null,
+      descricao: "Planilha da folha recebida",
+      tipo: "automatizada",
+      acao: ACOES_FOLHA.PLANILHA_RECEBIDA,
     },
     {
-      descricao: "Aguardar processamento automático pelo agente",
-      tipo: "manual",
-      acao: null,
+      descricao: "Folha calculada (INSS, IRRF e FGTS)",
+      tipo: "automatizada",
+      acao: ACOES_FOLHA.CALCULADA,
+    },
+    {
+      descricao: "Holerites e relatório de fechamento gerados",
+      tipo: "automatizada",
+      acao: ACOES_FOLHA.HOLERITES_GERADOS,
     },
     { descricao: "Revisar holerites gerados", tipo: "manual", acao: null },
     { descricao: "Enviar holerites às empresas", tipo: "manual", acao: null },
@@ -95,7 +109,9 @@ export async function criarProcessoComEtapas(clienteId, tipo, extra = {}) {
     .select()
     .single();
 
-  if (erroProcesso) return { erro: erroProcesso.message };
+  // `codigo` deixa quem chama distinguir 23505 (índice único da folha por cliente + mês,
+  // migration 111) de erro de verdade.
+  if (erroProcesso) return { erro: erroProcesso.message, codigo: erroProcesso.code };
 
   const etapasParaInserir = etapasPadrao.map(({ descricao, tipo: tipoEtapa, acao }, i) => ({
     processo_id: processo.id,
@@ -110,7 +126,51 @@ export async function criarProcessoComEtapas(clienteId, tipo, extra = {}) {
     .insert(etapasParaInserir)
     .select();
 
-  if (erroEtapas) return { erro: erroEtapas.message };
+  if (erroEtapas) {
+    // Os dois INSERT não estão numa transação. Processo sem etapas é órfão: com o índice
+    // único da folha, o job e o upload passariam a achar "já existe" e o mês nunca se
+    // recuperaria. Compensa apagando o processo (etapas vão junto pelo ON DELETE CASCADE).
+    const { error: erroCompensacao } = await supabase
+      .from("processos")
+      .delete()
+      .eq("id", processo.id);
+    if (erroCompensacao) {
+      console.error(
+        `[processos.service] Falha ao apagar o processo ${processo.id} sem etapas:`,
+        erroCompensacao.message,
+      );
+    }
+    return { erro: erroEtapas.message };
+  }
 
   return { processo, etapas };
+}
+
+/**
+ * Fecha o processo (status concluido) quando todas as etapas estão concluídas. Usado pela
+ * conclusão manual, pelo callback do agente e pelo checklist da folha.
+ * @param {string} processoId
+ * @returns {{ todasConcluidas: boolean, processo?: Object|null, erro?: string }}
+ */
+export async function concluirProcessoSeTodasEtapasConcluidas(processoId) {
+  const { data: etapas, error: erroEtapas } = await supabase
+    .from("etapas")
+    .select("concluida")
+    .eq("processo_id", processoId);
+
+  if (erroEtapas) return { todasConcluidas: false, erro: erroEtapas.message };
+  if (!etapas || etapas.length === 0 || !etapas.every((etapa) => etapa.concluida)) {
+    return { todasConcluidas: false };
+  }
+
+  const { data: processo, error: erroProcesso } = await supabase
+    .from("processos")
+    .update({ status: "concluido" })
+    .eq("id", processoId)
+    .eq("status", "em_andamento")
+    .select("tipo, nome_empresa, pasta_base")
+    .maybeSingle();
+
+  if (erroProcesso) return { todasConcluidas: true, processo: null, erro: erroProcesso.message };
+  return { todasConcluidas: true, processo };
 }

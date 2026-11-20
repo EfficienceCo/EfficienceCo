@@ -16,6 +16,7 @@ import {
   registrarEventoConclusaoFolha,
   sanitizarNomeArquivo,
 } from "../services/folha-status.service.js";
+import { avancarChecklistFolha, MARCOS_FOLHA } from "../services/folha-checklist.service.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { PERFIS } from "../config/perfis.js";
@@ -128,6 +129,11 @@ async function processarUploadFolha(req, res, clienteId) {
 
       return res.status(500).json({ erro: "Erro ao registrar processamento da folha" });
     }
+
+    // FOLHA-8 (#748): upload aceito conclui "Planilha da folha recebida" e cria o processo
+    // do mês se faltar. Antes do pipeline, para o processo já existir nos marcos seguintes.
+    // Nunca lança; falha vai para o log e o próximo marco recupera (catch-up).
+    await avancarChecklistFolha(data.id, MARCOS_FOLHA.RECEBIDA);
 
     // BK-FOLHA-AUTO-PIPELINE: dispara cálculo + geração de saída em background — não
     // espera o pipeline terminar pra responder o upload (a tela de status já faz
@@ -243,7 +249,16 @@ export async function calcularFolha(req, res) {
       return res.status(500).json({ erro: "Erro ao salvar cálculos da folha" });
     }
 
-    await supabase.from("processamentos_folha").update({ status: "concluido" }).eq("id", processamentoId);
+    const { error: erroConcluir } = await supabase
+      .from("processamentos_folha")
+      .update({ status: "concluido" })
+      .eq("id", processamentoId);
+
+    // FOLHA-8 (#748): "Folha calculada" só conclui se o status concluido foi gravado. O
+    // resto do comportamento sem esse UPDATE segue como era (fora do escopo).
+    if (!erroConcluir) {
+      await avancarChecklistFolha(processamentoId, MARCOS_FOLHA.CALCULADA);
+    }
 
     const totais = calculos.reduce(
       (acc, calculo) => ({
@@ -474,7 +489,12 @@ async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
         "[folha.controller] Falha ao registrar sucesso da geração de saída:",
         error.message,
       );
+      return;
     }
+
+    // FOLHA-8 (#748): "Holerites e relatório de fechamento gerados". Cobre o pipeline
+    // automático e o retry POST /:id/gerar-saida, que passam os dois por aqui.
+    await avancarChecklistFolha(processamentoId, MARCOS_FOLHA.HOLERITES);
     return;
   }
 
