@@ -132,6 +132,7 @@ function processamentosDosDozeMeses() {
       id: `proc-${indice + 1}`,
       mes_referencia: `${ano}-${String(mes).padStart(2, "0")}-01`,
       criado_em: `${ano}-${String(mes).padStart(2, "0")}-02T00:00:00.000Z`,
+      status: "concluido",
     };
   });
 }
@@ -173,6 +174,27 @@ describe("POST /apuracoes", () => {
     assert.equal(insert.payload.folha_status, null);
   });
 
+  // PRB-AP-08 / BUG-APUR-11 / #611 — o POST de Anexo II, III e IV também grava
+  // folha_status null (não o DEFAULT 'pendente' da coluna).
+  for (const anexo of ["II", "III", "IV"]) {
+    it(`PRB-AP-08: POST Anexo ${anexo} grava folha_status null`, async () => {
+      queueSemDuplicata();
+      queueCliente(anexo, { nome: "Cliente Teste" });
+      queueNotas([
+        { valor_total: 40000, data_emissao: "2025-09-15", status: "ativa" },
+        { valor_total: 45000, data_emissao: "2026-08-10", status: "ativa" },
+      ]);
+      queue("apuracoes", "single", { data: { id: "nova-apuracao", status: "rascunho" }, error: null });
+
+      const res = criarResposta();
+      await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
+
+      assert.equal(res.statusCode, 201);
+      const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+      assert.equal(insert.payload.folha_status, null);
+    });
+  }
+
   it("422 quando regime não é simples_nacional", async () => {
     const res = criarResposta();
     await dispararApuracao(reqAdmin({ body: payloadValido({ regime: "lucro_presumido" }) }), res);
@@ -199,12 +221,15 @@ describe("POST /apuracoes", () => {
     assert.equal(res.statusCode, 404);
   });
 
-  // #726: ausência vale zero; a fila ainda permite localizar arquivos locais.
-  it("201 pendente quando Anexo V sem processamentos de folha no período", async () => {
+  // #619 / BUG-APUR-19 opção A — folha que existe mas falhou cria rascunho pendente (fila do agente).
+  it("201 pendente quando o processamento de folha mais recente de um mês está em erro (DAS-2)", async () => {
     queueSemDuplicata();
     queueCliente("V");
     queueNotas([{ valor_total: 50000, data_emissao: "2026-08-10" }]);
-    queue("processamentos_folha", "await", { data: [], error: null });
+    queue("processamentos_folha", "await", {
+      data: processamentosDosDozeMeses().map((p, i) => (i === 10 ? { ...p, status: "erro" } : p)),
+      error: null,
+    });
     queue("apuracoes", "single", {
       data: { id: "nova-apuracao-v-pendente", anexo: "V", folha_status: "pendente", fator_r: 0 },
       error: null,
@@ -217,8 +242,29 @@ describe("POST /apuracoes", () => {
     const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
     assert.equal(insert.payload.folha_status, "pendente");
     assert.equal(insert.payload.anexo, "V");
-    assert.equal(insert.payload.fator_r, 0.01);
+    assert.equal(insert.payload.fator_r, 0);
     assert.ok(insert.payload.valor_calculado > 0);
+  });
+
+  // #726/#737: mês sem processamento conta como zero e não deixa a apuração pendente.
+  it("201 verificado quando Anexo V não tem processamentos de folha", async () => {
+    queueSemDuplicata();
+    queueCliente("V");
+    queueNotas([{ valor_total: 50000, data_emissao: "2026-08-10" }]);
+    queue("processamentos_folha", "await", { data: [], error: null });
+    queue("apuracoes", "single", {
+      data: { id: "nova-apuracao-v-sem-folha", anexo: "V", folha_status: "verificado", fator_r: 0.01 },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
+
+    assert.equal(res.statusCode, 201);
+    const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+    assert.equal(insert.payload.folha_status, "verificado");
+    assert.equal(insert.payload.folha12, 0);
+    assert.equal(insert.payload.fator_r, 0.01);
   });
 
   it("201 quando Anexo V com folha suficiente para cair no Fator R (Anexo III efetivo)", async () => {
@@ -477,7 +523,7 @@ describe("POST /apuracoes", () => {
     assert.match(excluida.motivo, /data de emissão futura/i);
   });
 
-  it("201 pendente quando faltam meses de folha na janela completa do Fator R", async () => {
+  it("201 verificado quando falta um mês de folha: o mês sem folha conta como zero (DAS-2)", async () => {
     queueSemDuplicata();
     queueCliente("V");
     queueNotas([
@@ -489,7 +535,7 @@ describe("POST /apuracoes", () => {
       error: null,
     });
     queue("apuracoes", "single", {
-      data: { id: "nova-apuracao-v-parcial", anexo: "V", folha_status: "pendente", fator_r: 0 },
+      data: { id: "nova-apuracao-v-parcial", anexo: "V", folha_status: "verificado", fator_r: 0.01 },
       error: null,
     });
 
@@ -498,8 +544,8 @@ describe("POST /apuracoes", () => {
 
     assert.equal(res.statusCode, 201);
     const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
-    assert.equal(insert.payload.folha_status, "pendente");
-    assert.equal(insert.payload.fator_r, 0.01);
+    assert.equal(insert.payload.folha_status, "verificado");
+    assert.notEqual(insert.payload.folha12, null);
     assert.equal(insert.payload.anexo, "V");
   });
 
@@ -1206,6 +1252,7 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
         folha_status: "pendente",
         fator_r: 0,
         folha12: null,
+        dados_folha: { mesesPendentes: ["2026-07"] },
       },
       error: null,
     });
@@ -1215,6 +1262,8 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
 
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.erro, "FOLHA_PENDENTE");
+    assert.deepEqual(res.body.mesesPendentes, ["2026-07"]);
+    assert.match(res.body.motivo, /2026-07/);
     assert.deepEqual(operacoes, []);
   });
 

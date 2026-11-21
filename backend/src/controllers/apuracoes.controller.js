@@ -474,7 +474,8 @@ async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade = null, mes
   return {
     folha12, semDadosFolha: false,
     folhaPeriodo: arredondar(soma),
-    pendenteFolha: processamentoPorMes.size < meses.size,
+    // Mês sem processamento é zero e não bloqueia a apuração (#726/#737).
+    pendenteFolha: false,
     mesesConcluidos: [...processamentoPorMes.keys()],
   };
 }
@@ -499,6 +500,15 @@ function avaliarEstadoFolha(apuracao, folha, relatorio = null) {
     folha_status: folhaStatus,
     dados_folha: { ...dados, falhaUpload, processamentoPendente, mesesPendentes },
   };
+}
+
+function respostaFolhaPendente(apuracao, mesesPendentes = null, motivo = null) {
+  const meses = [...new Set(mesesPendentes ?? apuracao.dados_folha?.mesesPendentes ?? [])];
+  const motivoBase = motivo || (apuracao.dados_folha?.falhaUpload
+    ? "Falha no envio dos arquivos de folha; reenvie-os ou aguarde uma nova tentativa."
+    : "A folha ainda aguarda confirmação ou processamento.");
+  const detalheMeses = meses.length ? ` Meses pendentes: ${meses.join(", ")}.` : "";
+  return { erro: "FOLHA_PENDENTE", motivo: `${motivoBase}${detalheMeses}`, mesesPendentes: meses };
 }
 
 async function prepararAtualizacaoFolha(apuracao, cliente, folha, estado) {
@@ -971,7 +981,7 @@ export async function aprovarApuracao(req, res) {
   // Provisório legado ou arquivo com falha não pode ser aprovado. Ausência
   // legítima já calculada como folha zero é aprovável (#726).
   if (ehProvisorioSemFolha(apuracao) || apuracao.dados_folha?.falhaUpload || apuracao.dados_folha?.processamentoPendente) {
-    return res.status(409).json({ erro: "FOLHA_PENDENTE" });
+    return res.status(409).json(respostaFolhaPendente(apuracao));
   }
 
   // Aprovar é o que transforma o rascunho em número oficial do cliente, então
@@ -998,7 +1008,12 @@ export async function aprovarApuracao(req, res) {
       mesesAtividade, apuracao.periodo_mes, apuracao.periodo_ano);
     if (folha.erro) return res.status(500).json({ erro: folha.erro });
     if (folha.semDadosFolha || folha.folha12 !== Number(apuracao.folha12)) {
-      return res.status(409).json({ erro: "FOLHA_PENDENTE", motivo: "A folha mudou ou está em processamento; aguarde a atualização do cálculo" });
+      const mesesPendentes = [...meses].filter((ref) => !folha.mesesConcluidos.includes(ref));
+      return res.status(409).json(respostaFolhaPendente(
+        apuracao,
+        mesesPendentes,
+        "A folha mudou ou está em processamento; aguarde a atualização do cálculo.",
+      ));
     }
   }
 
@@ -1113,7 +1128,7 @@ export async function recalcularApuracao(req, res) {
   }
 
   if (apuracao.dados_folha?.falhaUpload) {
-    return res.status(409).json({ erro: "FOLHA_PENDENTE" });
+    return res.status(409).json(respostaFolhaPendente(apuracao));
   }
 
   // Mesma regra da criação (#497): registros de competência futura criados
@@ -1186,8 +1201,9 @@ export async function recalcularApuracao(req, res) {
       ...(apuracao.dados_folha?.mesesEncontrados || []).map((item) => chaveMes(item.ano, item.mes)),
       ...(apuracao.dados_folha?.mesesPendentes || []),
     ];
-    if (referenciasInformadas.some((ref) => !insumosFolha.mesesConcluidos.includes(ref))) {
-      return res.status(409).json({ erro: "FOLHA_PENDENTE" });
+    const mesesPendentes = referenciasInformadas.filter((ref) => !insumosFolha.mesesConcluidos.includes(ref));
+    if (mesesPendentes.length) {
+      return res.status(409).json(respostaFolhaPendente(apuracao, mesesPendentes));
     }
   }
 
