@@ -13,6 +13,8 @@ import {
   arquivosParaResposta,
   resolverArquivoDownload,
   calcularTotaisProcessamento,
+  statusPublicoProcessamento,
+  totalArquivosEsperados,
   registrarEventoConclusaoFolha,
   sanitizarNomeArquivo,
 } from "../services/folha-status.service.js";
@@ -243,7 +245,9 @@ export async function calcularFolha(req, res) {
       return res.status(500).json({ erro: "Erro ao salvar cálculos da folha" });
     }
 
-    await supabase.from("processamentos_folha").update({ status: "concluido" }).eq("id", processamentoId);
+    // "calculado", não "concluido": os PDFs ainda vão ser gerados. Quem vira concluido é
+    // finalizarGeracaoSaida, quando a geração de saída termina sem falha (#743).
+    await supabase.from("processamentos_folha").update({ status: "calculado" }).eq("id", processamentoId);
 
     const totais = calculos.reduce(
       (acc, calculo) => ({
@@ -299,7 +303,8 @@ async function gerarSaidaFolhaCore(req, res) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
   }
 
-  if (processamento.status !== "concluido") {
+  // Aceita calculado (primeira geração e retry após falha) e concluido (reexecução idempotente).
+  if (!["calculado", "concluido"].includes(processamento.status)) {
     return res.status(409).json({ erro: "Cálculo da folha ainda não foi concluído para este processamento" });
   }
 
@@ -466,7 +471,7 @@ async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
   if (respostaInterna.statusCode === 200) {
     const { error } = await supabase
       .from("processamentos_folha")
-      .update({ saida_status: "ok", motivo_erro: null })
+      .update({ status: "concluido", saida_status: "ok", motivo_erro: null })
       .eq("id", processamentoId);
 
     if (error) {
@@ -528,16 +533,16 @@ function criarRespostaInterna() {
 
 // Registra motivo + saida_status = 'erro' de uma falha na geração de saída SEM mudar
 // `status` pra "erro" (#440). gerarSaidaFolhaCore só reprocessa (idempotente: pula
-// holerite/relatório já gerado) quando o processamento ainda está "concluido" — se
+// holerite/relatório já gerado) quando o processamento está "calculado"/"concluido" — se
 // `status` virasse "erro" aqui, o retry via POST /:id/gerar-saida ficaria bloqueado pelo
 // próprio guard de status, e a única saída seria recalcular do zero em POST /:id/calcular,
 // que duplicaria as linhas já inseridas em folha_calculos (esse insert não é idempotente).
-// `status` continua "concluido" de propósito — o cálculo realmente terminou, só a geração
-// de arquivos que falhou; `saida_status` é quem carrega esse sinal pra tela.
+// `status` volta a "calculado" (#743): o cálculo terminou, mas o processamento não está
+// concluído enquanto os arquivos falham. Só um retry bem-sucedido o leva a "concluido".
 async function registrarFalhaGeracaoSaida(processamentoId, motivo) {
   const { error } = await supabase
     .from("processamentos_folha")
-    .update({ motivo_erro: motivo, saida_status: "erro" })
+    .update({ status: "calculado", motivo_erro: motivo, saida_status: "erro" })
     .eq("id", processamentoId);
 
   if (error) {
@@ -637,12 +642,16 @@ export async function consultarStatusFolha(req, res) {
 
   return res.status(200).json({
     processamento_id: processamento.id,
-    status: processamento.status,
+    // Só "concluido" quando cálculo e arquivos terminaram (#743).
+    status: statusPublicoProcessamento(processamento.status, processamento.saida_status),
     mes_referencia: processamento.mes_referencia,
     motivo_erro: processamento.motivo_erro,
     saida_status: processamento.saida_status,
     total_funcionarios: totais.total_funcionarios,
     total_empresas: totais.total_empresas,
+    // `arquivos` pode estar incompleto enquanto os PDFs são gerados: compare com o esperado.
+    total_arquivos_esperado: totalArquivosEsperados(calculos || []),
+    arquivos_gerados: arquivos.length,
     arquivos: arquivosParaResposta(arquivos),
   });
 }

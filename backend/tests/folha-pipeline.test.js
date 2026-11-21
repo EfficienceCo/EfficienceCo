@@ -5,6 +5,8 @@ import {
   arquivosParaResposta,
   resolverArquivoDownload,
   calcularTotaisProcessamento,
+  statusPublicoProcessamento,
+  totalArquivosEsperados,
   sanitizarNomeArquivo,
 } from "../src/services/folha-status.helpers.js";
 import { PERFIS } from "../src/config/perfis.js";
@@ -157,6 +159,8 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
         arquivosParaResposta,
         resolverArquivoDownload,
         calcularTotaisProcessamento,
+        statusPublicoProcessamento,
+        totalArquivosEsperados,
         sanitizarNomeArquivo,
         registrarEventoConclusaoFolha: async () => ({ registrado: true, descricao: "ok" }),
       },
@@ -218,6 +222,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
     assert.equal(ultimoUpdate.saida_status, "ok");
     assert.equal(ultimoUpdate.motivo_erro, null);
+    assert.equal(ultimoUpdate.status, "concluido", "só vira concluido quando os arquivos terminam (#743)");
   });
 
   it("cálculo falha → geração de saída não roda e falha fica registrada", async () => {
@@ -248,7 +253,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     assert.match(logsDoPipeline[0].arguments[0], /Cálculo automático não concluído/);
   });
 
-  it("geração de saída falha → status continua concluido (retry idempotente continua possível), motivo fica registrado e saida_status vira erro", async () => {
+  it("geração de saída falha → status fica calculado, não concluido (retry idempotente continua possível), motivo fica registrado e saida_status vira erro", async () => {
     // calcularFolha: sucesso completo (mesma sequência do caminho feliz)
     mockDb.queue("processamentos_folha", "maybeSingle", {
       data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "pendente", arquivo_origem_path: "x.xlsx" },
@@ -281,7 +286,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
 
     const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
     assert.ok(ultimoUpdate, "deveria ter chamado update em processamentos_folha");
-    assert.equal(ultimoUpdate.status, undefined, "status não pode ser sobrescrito — senão o retry via /gerar-saida fica bloqueado pelo guard de status");
+    assert.equal(ultimoUpdate.status, "calculado", "falha de arquivo deixa calculado (nem concluido, nem erro: erro bloquearia o retry via /gerar-saida, #743)");
     assert.match(ultimoUpdate.motivo_erro, /holerite/);
     assert.equal(ultimoUpdate.saida_status, "erro", "saida_status precisa distinguir a falha independente de status (#440)");
 
@@ -334,7 +339,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     assert.equal(ultimoUpdate.motivo_erro, null);
   });
 
-  it("retry manual (POST /:id/gerar-saida) falha → grava saida_status erro sem mudar status", async () => {
+  it("retry manual (POST /:id/gerar-saida) falha → grava saida_status erro e mantém status calculado", async () => {
     mockDb.queue("processamentos_folha", "maybeSingle", {
       data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "concluido", mes_referencia: "2026-07-01" },
       error: null,
@@ -355,7 +360,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     assert.equal(mockDb.restantes(), 0);
 
     const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
-    assert.equal(ultimoUpdate.status, undefined);
+    assert.equal(ultimoUpdate.status, "calculado");
     assert.equal(ultimoUpdate.saida_status, "erro");
     assert.match(ultimoUpdate.motivo_erro, /holerite/);
   });

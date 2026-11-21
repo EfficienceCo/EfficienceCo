@@ -83,6 +83,22 @@ export function montarDescricaoConclusao(totalFuncionarios, totalEmpresas) {
   return `Folha processada — ${totalFuncionarios} funcionários, ${totalEmpresas} empresas`;
 }
 
+/**
+ * Status que a API mostra. No banco, `calculado` = cálculo salvo e arquivos ainda não
+ * prontos (#743): enquanto os PDFs são gerados aparece `processando`, e se a geração
+ * falhou aparece `erro`. Só `concluido` (cálculo e arquivos terminados) sai como concluído.
+ */
+export function statusPublicoProcessamento(status, saidaStatus) {
+  if (status !== "calculado") return status;
+  return saidaStatus === "erro" ? "erro" : "processando";
+}
+
+/** Arquivos que a geração de saída vai produzir: 1 holerite por funcionário + 1 relatório por empresa. */
+export function totalArquivosEsperados(calculos = []) {
+  const empresas = new Set(calculos.map((c) => c.empresa).filter(Boolean));
+  return calculos.length + empresas.size;
+}
+
 export function calcularTotaisProcessamento(calculos = []) {
   const empresas = new Set(calculos.map((c) => c.empresa).filter(Boolean));
   return {
