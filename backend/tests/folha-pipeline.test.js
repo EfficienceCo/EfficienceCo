@@ -141,10 +141,12 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
         gerarRelatorioFechamentoPDF: async () => Buffer.from("relatorio"),
         calcularTotaisEmpresa: () => ({
           totalFuncionarios: 1,
-          totalBruto: 3000,
-          totalEncargos: 640,
+          totalProventos: 3000,
+          totalDescontos: 400,
+          totalFgts: 240,
           totalLiquido: 2600,
         }),
+        resolverCnpjsEmpresas: () => new Map(),
       },
     });
 

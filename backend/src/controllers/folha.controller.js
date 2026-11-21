@@ -7,6 +7,7 @@ import {
   gerarHoleritePDF,
   gerarRelatorioFechamentoPDF,
   calcularTotaisEmpresa,
+  resolverCnpjsEmpresas,
 } from "../services/folha.service.js";
 import {
   montarListaArquivos,
@@ -329,12 +330,29 @@ async function gerarSaidaFolhaCore(req, res) {
     const mesReferenciaArquivo = processamento.mes_referencia.slice(0, 7);
     const mesReferenciaFormatado = formatarMesReferencia(processamento.mes_referencia);
 
+    // CNPJ do empregador (#745): o da planilha; sem ele, o do cadastro do cliente quando a
+    // empresa se liga a ele (ver resolverCnpjsEmpresas). Falha na consulta não trava a folha.
+    let clienteCadastro = null;
+    if (calculos.some((calculo) => !calculo.cnpj_empresa)) {
+      const { data, error: erroCliente } = await supabase
+        .from("clientes")
+        .select("nome, cnpj")
+        .eq("id", processamento.cliente_id)
+        .maybeSingle();
+      if (erroCliente) {
+        console.error("[folha.controller] Erro ao buscar CNPJ do cliente:", erroCliente.message);
+      } else {
+        clienteCadastro = data;
+      }
+    }
+    const cnpjPorEmpresa = resolverCnpjsEmpresas(calculos, clienteCadastro);
+
     let holeritesGerados = 0;
 
     for (const calculo of calculos) {
       if (calculo.holerite_path) continue;
 
-      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado);
+      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado, cnpjPorEmpresa.get(calculo.empresa));
       // id da linha de folha_calculos no nome (não o CPF): dois funcionários com o mesmo
       // nome na mesma empresa (comum: "Maria Silva") colidiriam no path e o segundo upload
       // falharia (upsert:false). O id garante unicidade sem expor o CPF no storage,
@@ -392,6 +410,7 @@ async function gerarSaidaFolhaCore(req, res) {
       const totais = calcularTotaisEmpresa(calculosDaEmpresa);
       const buffer = await gerarRelatorioFechamentoPDF({
         empresa,
+        cnpjEmpresa: cnpjPorEmpresa.get(empresa),
         mesReferenciaFormatado,
         calculos: calculosDaEmpresa,
         totais,
@@ -413,8 +432,10 @@ async function gerarSaidaFolhaCore(req, res) {
         processamento_id: processamentoId,
         empresa,
         total_funcionarios: totais.totalFuncionarios,
-        total_bruto: totais.totalBruto,
-        total_encargos: totais.totalEncargos,
+        // total_bruto guarda os proventos (salário + HE) e total_encargos só o FGTS do
+        // empregador (#745); INSS/IRRF são descontos do funcionário, não encargo.
+        total_bruto: totais.totalProventos,
+        total_encargos: totais.totalFgts,
         total_liquido: totais.totalLiquido,
         arquivo_path: caminhoStorage,
       });
