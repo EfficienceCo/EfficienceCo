@@ -81,11 +81,12 @@ async function processarUploadFolha(req, res, clienteId) {
   const mesReferencia = `${mesReferenciaBruto.slice(0, 7)}-01`;
 
   try {
-    const { valido, faltando } = await validarColunasPlanilha(req.file.buffer);
+    const { valido, faltando, motivo } = await validarColunasPlanilha(req.file.buffer);
 
     if (!valido) {
+      // `motivo` só existe quando o problema não é coluna faltando (arquivo inválido, planilha vazia).
       return res.status(400).json({
-        erro: "Planilha com colunas obrigatórias faltando",
+        erro: motivo || "Planilha com colunas obrigatórias faltando",
         faltando,
       });
     }
@@ -224,7 +225,14 @@ export async function calcularFolha(req, res) {
 
     if (erros.length > 0) {
       console.error("[folha.controller] Planilha com linhas inválidas:", JSON.stringify(erros));
-      await marcarErro(processamentoId, `Planilha com ${erros.length} linha(s) inválida(s)`);
+      // Erro sem linha (planilha vazia) já é a mensagem completa; senão fica a contagem e o
+      // detalhe por linha vai para erros_planilha, que o GET /folha/:id devolve ao contador.
+      const motivoUnico = erros.length === 1 && erros[0].linha === null ? erros[0].motivos[0] : null;
+      await marcarErro(
+        processamentoId,
+        motivoUnico || `Planilha com ${erros.length} linha(s) inválida(s)`,
+        erros,
+      );
       return res.status(422).json({ erro: "Planilha com linhas inválidas", detalhes: erros });
     }
 
@@ -243,7 +251,7 @@ export async function calcularFolha(req, res) {
       return res.status(500).json({ erro: "Erro ao salvar cálculos da folha" });
     }
 
-    await supabase.from("processamentos_folha").update({ status: "concluido" }).eq("id", processamentoId);
+    await supabase.from("processamentos_folha").update({ status: "concluido", erros_planilha: null }).eq("id", processamentoId);
 
     const totais = calculos.reduce(
       (acc, calculo) => ({
@@ -596,7 +604,7 @@ export async function consultarStatusFolha(req, res) {
 
   let queryBusca = supabase
     .from("processamentos_folha")
-    .select("id, cliente_id, status, mes_referencia, motivo_erro, saida_status")
+    .select("id, cliente_id, status, mes_referencia, motivo_erro, saida_status, erros_planilha")
     .eq("id", processamentoId);
   queryBusca = aplicarIsolamentoCliente(queryBusca, req);
 
@@ -641,6 +649,7 @@ export async function consultarStatusFolha(req, res) {
     mes_referencia: processamento.mes_referencia,
     motivo_erro: processamento.motivo_erro,
     saida_status: processamento.saida_status,
+    erros_planilha: processamento.erros_planilha ?? [],
     total_funcionarios: totais.total_funcionarios,
     total_empresas: totais.total_empresas,
     arquivos: arquivosParaResposta(arquivos),
@@ -730,10 +739,10 @@ export async function baixarArquivoFolha(req, res) {
   }
 }
 
-async function marcarErro(processamentoId, motivo) {
+async function marcarErro(processamentoId, motivo, errosPlanilha = null) {
   const { error } = await supabase
     .from("processamentos_folha")
-    .update({ status: "erro", motivo_erro: motivo })
+    .update({ status: "erro", motivo_erro: motivo, erros_planilha: errosPlanilha })
     .eq("id", processamentoId);
 
   if (error) {
