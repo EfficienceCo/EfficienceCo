@@ -630,19 +630,23 @@ export async function gerarTemplateFolha() {
 
 // Confere se a planilha enviada tem todas as colunas do contrato no cabeçalho (linha 1).
 // Não valida ordem nem células de dado — só que o cabeçalho não foi alterado/incompleto.
+export const MOTIVO_NAO_XLSX = "arquivo não é uma planilha .xlsx válida";
+export const MOTIVO_SEM_LINHAS = "Planilha não tem nenhuma linha de dado preenchida";
+
+// `motivo` só vem quando o problema não é "coluna faltando" (arquivo inválido, planilha vazia).
 export async function validarColunasPlanilha(buffer) {
   const workbook = new ExcelJS.Workbook();
 
   try {
     await workbook.xlsx.load(buffer);
   } catch {
-    return { valido: false, faltando: COLUNAS_FOLHA.map((coluna) => coluna.header) };
+    return { valido: false, faltando: [], motivo: MOTIVO_NAO_XLSX };
   }
 
   const sheet = workbook.worksheets[0];
 
   if (!sheet) {
-    return { valido: false, faltando: COLUNAS_FOLHA.map((coluna) => coluna.header) };
+    return { valido: false, faltando: [], motivo: MOTIVO_NAO_XLSX };
   }
 
   const headersPresentes = new Set();
@@ -656,7 +660,22 @@ export async function validarColunasPlanilha(buffer) {
     .map((coluna) => coluna.header)
     .filter((header) => !headersPresentes.has(header.toLowerCase()));
 
-  return { valido: faltando.length === 0, faltando };
+  if (faltando.length > 0) {
+    return { valido: false, faltando };
+  }
+
+  // Modelo baixado e enviado sem preencher: recusa já no upload, em vez de virar
+  // "1 linha(s) inválida(s)" no pipeline (o template tem linhas formatadas mas sem valor).
+  let temLinhaDeDado = false;
+  sheet.eachRow((linha, numeroLinha) => {
+    if (numeroLinha > 1 && linha.hasValues) temLinhaDeDado = true;
+  });
+
+  if (!temLinhaDeDado) {
+    return { valido: false, faltando: [], motivo: MOTIVO_SEM_LINHAS };
+  }
+
+  return { valido: true, faltando: [] };
 }
 
 function formatarDecimalBR(valor) {
