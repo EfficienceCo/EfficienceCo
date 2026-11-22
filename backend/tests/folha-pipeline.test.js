@@ -32,6 +32,7 @@ function criarRes() {
 function criarMockSupabase() {
   const filas = new Map();
   const ultimosUpdates = new Map();
+  const ultimosNeq = new Map();
 
   function chave(tabela, metodo) {
     return `${tabela}:${metodo}`;
@@ -41,9 +42,13 @@ function criarMockSupabase() {
     clear() {
       filas.clear();
       ultimosUpdates.clear();
+      ultimosNeq.clear();
     },
     ultimoUpdate(tabela) {
       return ultimosUpdates.get(tabela);
+    },
+    ultimoNeq(tabela) {
+      return ultimosNeq.get(tabela);
     },
     queue(tabela, metodo, resultado) {
       const k = chave(tabela, metodo);
@@ -78,6 +83,10 @@ function criarMockSupabase() {
           return builder;
         },
         in() {
+          return builder;
+        },
+        neq(coluna, valor) {
+          ultimosNeq.set(tabela, [coluna, valor]);
           return builder;
         },
         maybeSingle() {
@@ -311,6 +320,57 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
       ...overrides,
     };
   }
+
+  const CALCULO_PENDENTE = { id: "calc-1", empresa: "Padaria", funcionario: "João", cpf: "111.111.111-11", holerite_path: null };
+
+  it("retry manual: PDFs gerados mas a gravação do concluido falha → 500 (não 200 com a folha presa), e um novo retry fecha (#743)", async () => {
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "calculado", mes_referencia: "2026-07-01" },
+      error: null,
+    });
+    mockDb.queue("folha_calculos", "await", { data: [CALCULO_PENDENTE], error: null });
+    mockDb.queue("folha_calculos", "await", { data: null, error: null });
+    mockDb.queue("folha_relatorios", "maybeSingle", { data: null, error: null });
+    mockDb.queue("folha_relatorios", "await", { data: null, error: null });
+    mockDb.queue("processamentos_folha", "await", { data: null, error: { message: "update falhou" } });
+
+    const res = criarRes();
+    await gerarSaidaFolha(reqRetry(), res);
+
+    assert.equal(res.statusCode, 500);
+    assert.match(res.body.erro, /Tente gerar novamente/);
+    assert.equal(mockDb.restantes(), 0);
+    assert.equal(mockDb.ultimoUpdate("processamentos_folha").status, "concluido", "tentou gravar a conclusão");
+
+    // Novo retry: o holerite e o relatório já existem (idempotente), só a gravação se repete.
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "calculado", mes_referencia: "2026-07-01" },
+      error: null,
+    });
+    mockDb.queue("folha_calculos", "await", { data: [{ ...CALCULO_PENDENTE, holerite_path: "p/h.pdf" }], error: null });
+    mockDb.queue("folha_relatorios", "maybeSingle", { data: { id: "rel-1" }, error: null });
+    mockDb.queue("processamentos_folha", "await", { data: null, error: null });
+
+    const res2 = criarRes();
+    await gerarSaidaFolha(reqRetry(), res2);
+    assert.equal(res2.statusCode, 200);
+    assert.equal(mockDb.ultimoUpdate("processamentos_folha").status, "concluido");
+  });
+
+  it("retry numa folha já concluída que falha por causa passageira: o update de erro exclui 'concluido' (não bloqueia o download) (#743)", async () => {
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "concluido", mes_referencia: "2026-07-01" },
+      error: null,
+    });
+    mockDb.queue("folha_calculos", "await", { data: null, error: { message: "timeout transitório" } });
+    mockDb.queue("processamentos_folha", "await", { data: null, error: null });
+
+    const res = criarRes();
+    await gerarSaidaFolha(reqRetry(), res);
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(mockDb.ultimoNeq("processamentos_folha"), ["status", "concluido"]);
+  });
 
   it("retry manual (POST /:id/gerar-saida) tem sucesso → grava saida_status ok", async () => {
     mockDb.queue("processamentos_folha", "maybeSingle", {

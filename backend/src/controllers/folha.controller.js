@@ -463,9 +463,10 @@ async function gerarSaidaFolhaCore(req, res) {
 
 // Pipeline automático e retry manual registram o mesmo resultado, somente depois
 // de passar pelos guards de identidade, autorização e estado (#440).
+// Devolve false só quando a geração deu certo mas a conclusão não pôde ser gravada.
 async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
   if (!respostaInterna.geracaoIniciada) {
-    return;
+    return true;
   }
 
   if (respostaInterna.statusCode === 200) {
@@ -479,20 +480,33 @@ async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
         "[folha.controller] Falha ao registrar sucesso da geração de saída:",
         error.message,
       );
+      return false;
     }
-    return;
+    return true;
   }
 
   await registrarFalhaGeracaoSaida(
     processamentoId,
     respostaInterna.body?.erro || "Falha ao gerar holerites/relatórios da folha",
   );
+  return true;
 }
 
 async function executarEFinalizarSaida(req) {
   const respostaInterna = criarRespostaInterna();
   await gerarSaidaFolhaCore(req, respostaInterna);
-  await finalizarGeracaoSaida(req.params.processamento_id, respostaInterna);
+  const conclusaoGravada = await finalizarGeracaoSaida(req.params.processamento_id, respostaInterna);
+
+  if (!conclusaoGravada) {
+    // Os PDFs existem, mas o status não virou concluido: responder 200 esconderia uma folha
+    // presa em "processando" com download bloqueado. O retry é seguro (gerar-saida aceita
+    // "calculado" e pula o que já foi gerado) e só repete a gravação do status.
+    respostaInterna.statusCode = 500;
+    respostaInterna.body = {
+      erro: "Arquivos gerados, mas não foi possível registrar a conclusão da folha. Tente gerar novamente.",
+    };
+  }
+
   return respostaInterna;
 }
 
@@ -539,11 +553,14 @@ function criarRespostaInterna() {
 // que duplicaria as linhas já inseridas em folha_calculos (esse insert não é idempotente).
 // `status` volta a "calculado" (#743): o cálculo terminou, mas o processamento não está
 // concluído enquanto os arquivos falham. Só um retry bem-sucedido o leva a "concluido".
+// Folha que JÁ está "concluido" nunca é rebaixada: uma nova tentativa que falha por causa
+// passageira (ex.: leitura dos cálculos) não pode bloquear o download de arquivos prontos.
 async function registrarFalhaGeracaoSaida(processamentoId, motivo) {
   const { error } = await supabase
     .from("processamentos_folha")
     .update({ status: "calculado", motivo_erro: motivo, saida_status: "erro" })
-    .eq("id", processamentoId);
+    .eq("id", processamentoId)
+    .neq("status", "concluido");
 
   if (error) {
     console.error(

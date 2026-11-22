@@ -270,28 +270,27 @@ describe("POST /apuracoes", () => {
     assert.equal(insert.payload.folha_status, "verificado");
   });
 
-  // #743: "calculado" = cálculo salvo e PDFs pendentes/com falha. A FS12 só precisa do cálculo,
-  // então esse processamento continua valendo (não vira "folha pendente" para o agente).
-  it("FS12 lê processamento 'calculado' (cálculo pronto, PDFs ainda não): Fator R aplicado, folha verificada", async () => {
+  // #743: "calculado" = cálculo salvo e PDFs pendentes/com falha. O aceite pede que a FS12 leia
+  // só folhas realmente concluídas, então esse processamento deixa a apuração pendente.
+  it("201 pendente quando o processamento do mês está 'calculado' (PDFs ainda não prontos)", async () => {
     queueSemDuplicata();
     queueCliente("V");
-    queueNotas([
-      { valor_total: 50000, data_emissao: "2026-07-10" },
-      { valor_total: 50000, data_emissao: "2026-08-10" },
-    ]);
+    queueNotas([{ valor_total: 50000, data_emissao: "2026-08-10" }]);
     queue("processamentos_folha", "await", {
       data: processamentosDosDozeMeses().map((p, i) => (i === 10 ? { ...p, status: "calculado" } : p)),
       error: null,
     });
-    queue("folha_calculos", "await", { data: [{ base_calculo: 19000, fgts: 1000 }], error: null });
-    queue("apuracoes", "single", { data: { id: "nova-apuracao-v-calculado", anexo: "III" }, error: null });
+    queue("apuracoes", "single", {
+      data: { id: "nova-apuracao-v-calculado", anexo: "V", folha_status: "pendente", fator_r: 0 },
+      error: null,
+    });
 
     const res = criarResposta();
     await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
 
     assert.equal(res.statusCode, 201);
     const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
-    assert.equal(insert.payload.folha_status, "verificado");
+    assert.equal(insert.payload.folha_status, "pendente");
   });
 
   it("422 quando o cliente cadastrado não pertence ao Simples Nacional", async () => {

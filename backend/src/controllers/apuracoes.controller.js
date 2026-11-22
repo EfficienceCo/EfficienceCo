@@ -395,9 +395,9 @@ async function coletarFolha12(clienteId, janelaRbt12, mesesAtividade, mes, ano) 
     }
   }
 
-  // "calculado" (cálculo salvo, PDFs pendentes ou com falha, #743) já tem folha_calculos
-  // confiável; a FS12 só precisa do cálculo, não dos arquivos.
-  if ([...processamentoPorMes.values()].some((processamento) => !["concluido", "calculado"].includes(processamento.status))) {
+  // Só folha realmente concluída (cálculo e arquivos, #743). "calculado" (PDFs pendentes ou
+  // com falha) deixa a apuração provisória até a geração terminar.
+  if ([...processamentoPorMes.values()].some((processamento) => processamento.status !== "concluido")) {
     return { folha12: null, semDadosFolha: true };
   }
 
