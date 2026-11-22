@@ -352,7 +352,11 @@ async function gerarSaidaFolhaCore(req, res) {
     for (const calculo of calculos) {
       if (calculo.holerite_path) continue;
 
-      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado, cnpjPorEmpresa.get(calculo.empresa));
+      // CNPJ resolvido vai dentro do calculo (não como 3º argumento: o #753/#754 usam esse lugar para a competência).
+      const buffer = await gerarHoleritePDF(
+        { ...calculo, cnpj_empresa: cnpjPorEmpresa.get(calculo.empresa) ?? null },
+        mesReferenciaFormatado,
+      );
       // id da linha de folha_calculos no nome (não o CPF): dois funcionários com o mesmo
       // nome na mesma empresa (comum: "Maria Silva") colidiriam no path e o segundo upload
       // falharia (upsert:false). O id garante unicidade sem expor o CPF no storage,

@@ -110,6 +110,8 @@ function criarMockSupabase() {
   };
 }
 
+const chamadasHolerite = [];
+
 describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
   const mockDb = criarMockSupabase();
   let dispararPipelineAutomatico;
@@ -137,7 +139,10 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
           ir: 100,
           liquido: 2600,
         }),
-        gerarHoleritePDF: async () => Buffer.from("holerite"),
+        gerarHoleritePDF: async (...args) => {
+          chamadasHolerite.push(args);
+          return Buffer.from("holerite");
+        },
         gerarRelatorioFechamentoPDF: async () => Buffer.from("relatorio"),
         calcularTotaisEmpresa: () => ({
           totalFuncionarios: 1,
@@ -146,7 +151,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
           totalFgts: 240,
           totalLiquido: 2600,
         }),
-        resolverCnpjsEmpresas: () => new Map(),
+        resolverCnpjsEmpresas: () => new Map([["Padaria", "11222333000181"]]),
       },
     });
 
@@ -171,6 +176,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
 
   beforeEach(() => {
     mockDb.clear();
+    chamadasHolerite.length = 0;
     erroLog = mock.method(console, "error", () => {});
   });
 
@@ -308,6 +314,30 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
       ...overrides,
     };
   }
+
+  it("holerite recebe só (calculo, mês) e leva o CNPJ resolvido dentro do calculo — o 3º argumento é da competência no #753/#754 (#745)", async () => {
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "concluido", mes_referencia: "2026-07-01" },
+      error: null,
+    });
+    mockDb.queue("folha_calculos", "await", {
+      data: [{ id: "calc-1", empresa: "Padaria", funcionario: "João", cpf: "111.111.111-11", holerite_path: null }],
+      error: null,
+    });
+    mockDb.queue("clientes", "maybeSingle", { data: { nome: "Padaria", cnpj: "11222333000181" }, error: null });
+    mockDb.queue("folha_calculos", "await", { data: null, error: null });
+    mockDb.queue("folha_relatorios", "maybeSingle", { data: null, error: null });
+    mockDb.queue("folha_relatorios", "await", { data: null, error: null });
+    mockDb.queue("processamentos_folha", "await", { data: null, error: null });
+
+    const res = criarRes();
+    await gerarSaidaFolha(reqRetry(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(chamadasHolerite.length, 1);
+    assert.equal(chamadasHolerite[0].length, 2, "sem 3º argumento posicional");
+    assert.equal(chamadasHolerite[0][0].cnpj_empresa, "11222333000181");
+  });
 
   it("retry manual (POST /:id/gerar-saida) tem sucesso → grava saida_status ok", async () => {
     mockDb.queue("processamentos_folha", "maybeSingle", {

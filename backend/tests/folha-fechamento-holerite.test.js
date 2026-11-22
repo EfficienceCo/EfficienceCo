@@ -50,7 +50,7 @@ describe("formatos pt-BR do holerite", () => {
       num_dependentes: 0, vale_transporte: false, categoria: "empregado", cnpj_empresa: CNPJ_A,
     }, COMPETENCIA);
     for (const cnpj of [CNPJ_A, null]) {
-      const holerite = await gerarHoleritePDF(calculo, "10/2026", cnpj);
+      const holerite = await gerarHoleritePDF({ ...calculo, cnpj_empresa: cnpj }, "10/2026");
       assert.equal(holerite.subarray(0, 4).toString(), "%PDF");
       const relatorio = await gerarRelatorioFechamentoPDF({
         empresa: "Alfa", cnpjEmpresa: cnpj, mesReferenciaFormatado: "10/2026",
@@ -88,7 +88,21 @@ describe("totais do relatório de fechamento fecham entre si", () => {
     assert.ok(t.totalDescontos >= diego.valor_faltas + diego.inss + diego.ir - 0.001);
   });
 
-  it("200 linhas variadas: proventos − descontos = líquido, sem diferença de centavo", () => {
+  // Caso real do review do #760: o motor arredonda a base depois de combinar salário, falta e HE
+  // (2.951,22), mas as rubricas somadas dariam 2.951,23. O fechamento tem que bater com o líquido gravado.
+  it("subcentavo: salário 3.000,09, 2,5 HE e 1 falta → 3.051,23 − 342,76 = 2.708,47 (o líquido do holerite)", () => {
+    const calculo = calcularFolhaFuncionario({
+      ...linhaDiego, salario_bruto: 3000.09, horas_extras: 2.5, faltas: 1,
+    }, COMPETENCIA);
+    assert.equal(calculo.liquido, 2708.47);
+    const t = calcularTotaisEmpresa([calculo]);
+    assert.equal(formatarDecimalBR(t.totalProventos), "3.051,23");
+    assert.equal(formatarDecimalBR(t.totalDescontos), "342,76");
+    assert.equal(formatarDecimalBR(t.totalLiquido), "2.708,47");
+    assert.equal(Math.round((t.totalProventos - t.totalDescontos) * 100), Math.round(t.totalLiquido * 100));
+  });
+
+  it("200 linhas variadas: cada linha fecha sozinha (diferenças de sinal oposto não se compensam no lote)", () => {
     let semente = 12345;
     const sorteio = (max) => { semente = (semente * 1103515245 + 12345) % 2147483648; return semente % max; };
     const calculos = Array.from({ length: 200 }, (_, i) => calcularFolhaFuncionario({
@@ -101,9 +115,13 @@ describe("totais do relatório de fechamento fecham entre si", () => {
       num_dependentes: sorteio(4),
       vale_transporte: sorteio(2) === 1,
     }, COMPETENCIA));
-    const t = calcularTotaisEmpresa(calculos);
-    const diferenca = Math.round((t.totalProventos - t.totalDescontos) * 100) - Math.round(t.totalLiquido * 100);
-    assert.equal(diferenca, 0, `diferença de ${diferenca} centavos em 200 linhas`);
+    for (const calculo of calculos) {
+      const t = calcularTotaisEmpresa([calculo]);
+      const diferenca = Math.round((t.totalProventos - t.totalDescontos) * 100) - Math.round(t.totalLiquido * 100);
+      assert.equal(diferenca, 0, `${calculo.funcionario}: diferença de ${diferenca} centavos`);
+    }
+    const lote = calcularTotaisEmpresa(calculos);
+    assert.equal(Math.round((lote.totalProventos - lote.totalDescontos) * 100), Math.round(lote.totalLiquido * 100));
   });
 
   it("FGTS não entra nos descontos do empregado (sem falta, HE, VT nem adiantamento: descontos = INSS + IRRF)", () => {
@@ -189,9 +207,14 @@ describe("resolverCnpjsEmpresas", () => {
     const m = resolverCnpjsEmpresas([{ empresa: "Alfa", cnpj_empresa: CNPJ_A }], cliente);
     assert.equal(m.get("Alfa"), CNPJ_A);
   });
-  it("planilha de uma empresa só sem CNPJ: usa o do cadastro", () => {
-    const m = resolverCnpjsEmpresas([{ empresa: "Qualquer nome", cnpj_empresa: null }], cliente);
-    assert.equal(m.get("Qualquer nome"), CNPJ_B);
+  it("uma empresa só na planilha NÃO prova vínculo: nome diferente do cadastro fica sem CNPJ (nada de CNPJ da Alfa na Beta)", () => {
+    const alfa = { nome: "Escritório Alfa", cnpj: CNPJ_A };
+    const m = resolverCnpjsEmpresas([{ empresa: "Empregadora Beta", cnpj_empresa: null }], alfa);
+    assert.equal(m.get("Empregadora Beta"), null);
+  });
+  it("uma empresa só, com o nome do cadastro (sem acento/caixa): usa o CNPJ do cadastro", () => {
+    const m = resolverCnpjsEmpresas([{ empresa: "padaria pao quente ltda", cnpj_empresa: null }], cliente);
+    assert.equal(m.get("padaria pao quente ltda"), CNPJ_B);
   });
   it("várias empresas: só a que tem o nome do cadastro (sem acento/caixa) usa o CNPJ dele", () => {
     const m = resolverCnpjsEmpresas([

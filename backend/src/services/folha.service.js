@@ -745,8 +745,9 @@ export function normalizarNomeEmpresa(nome) {
 }
 
 // CNPJ do empregador de cada empresa da planilha: o da própria planilha (cnpj_empresa);
-// sem ele, o do cadastro do cliente quando a planilha tem uma empresa só ou o nome bate
-// com o do cadastro. Empresa que não se liga a nenhum CNPJ fica com null (sai sem CNPJ).
+// sem ele, o do cadastro do cliente SÓ quando o nome da empresa bate com o do cadastro
+// (vínculo verificável). Planilha com uma empresa só não prova que ela é a cadastrada: o
+// escritório pode processar a folha de outra empresa. Sem vínculo, null (sai "CNPJ não informado").
 export function resolverCnpjsEmpresas(calculos, cliente) {
   const porEmpresa = new Map();
   for (const calculo of calculos) {
@@ -756,7 +757,7 @@ export function resolverCnpjsEmpresas(calculos, cliente) {
   const cnpjCadastro = cliente?.cnpj && /^\d{14}$/.test(cliente.cnpj) ? cliente.cnpj : null;
   for (const [empresa, cnpj] of porEmpresa) {
     if (cnpj || !cnpjCadastro) continue;
-    if (porEmpresa.size === 1 || normalizarNomeEmpresa(empresa) === normalizarNomeEmpresa(cliente.nome)) {
+    if (normalizarNomeEmpresa(empresa) === normalizarNomeEmpresa(cliente.nome)) {
       porEmpresa.set(empresa, cnpjCadastro);
     }
   }
@@ -945,7 +946,10 @@ const COLUNAS_TABELA_VERBAS = (larguraUtil) => [
 // Holerite individual — 1 por funcionário, a partir da linha já calculada em folha_calculos.
 // Layout imita o padrão de holerite brasileiro (caixa com borda, grid de dados, tabela de
 // verbas, linha de bases/totais) — sem logo/identidade de empresa, só texto e bordas.
-export function gerarHoleritePDF(calculo, mesReferenciaFormatado, cnpjEmpresa = null) {
+// O CNPJ do empregador vem em `calculo.cnpj_empresa` (o controller o resolve antes): não é
+// argumento posicional para não colidir com a competência que o #753/#754 passam como 3º.
+export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
+  const cnpjEmpresa = calculo.cnpj_empresa ?? null;
   return documentoParaBuffer((doc) => {
     const x0 = doc.page.margins.left;
     const larguraUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -1041,22 +1045,22 @@ export function gerarHoleritePDF(calculo, mesReferenciaFormatado, cnpjEmpresa = 
 // Totais agregados de uma empresa dentro de um processamento — uma planilha pode ter
 // funcionários de mais de uma empresa-cliente da Souza, então isto roda por grupo.
 export function calcularTotaisEmpresa(calculosDaEmpresa) {
-  // Mesmos grupos do holerite: proventos (salário + horas extras) menos descontos do
-  // empregado (INSS, IRRF, faltas, adiantamento, vale-transporte) dá o líquido. O FGTS é
-  // encargo do empregador, fora dessa conta (#745).
-  return calculosDaEmpresa.reduce(
-    (acc, calculo) => ({
+  // Proventos (salário + horas extras) menos descontos do empregado dá o líquido GRAVADO, linha
+  // a linha. Os descontos de cada linha são proventos − líquido: o motor arredonda a base depois
+  // de combinar salário, faltas e HE, então somar as rubricas já arredondadas pode errar 1
+  // centavo (ex.: 3.000,09 + 2,5 h extras − 1 falta). O centavo de arredondamento fica no
+  // desconto e o fechamento bate com o líquido de cada holerite. O FGTS é encargo do
+  // empregador, fora dessa conta (#745).
+  return calculosDaEmpresa.reduce((acc, calculo) => {
+    const proventos = Number(calculo.salario_bruto) + Number(calculo.valor_horas_extras ?? 0);
+    return {
       totalFuncionarios: acc.totalFuncionarios + 1,
-      totalProventos: arredondar(acc.totalProventos + Number(calculo.salario_bruto) + Number(calculo.valor_horas_extras ?? 0)),
-      totalDescontos: arredondar(
-        acc.totalDescontos + Number(calculo.inss) + Number(calculo.ir) + Number(calculo.valor_faltas ?? 0) +
-        Number(calculo.adiantamento ?? 0) + Number(calculo.desconto_vt ?? 0),
-      ),
+      totalProventos: arredondar(acc.totalProventos + proventos),
+      totalDescontos: arredondar(acc.totalDescontos + (proventos - Number(calculo.liquido))),
       totalFgts: arredondar(acc.totalFgts + Number(calculo.fgts)),
       totalLiquido: arredondar(acc.totalLiquido + Number(calculo.liquido)),
-    }),
-    { totalFuncionarios: 0, totalProventos: 0, totalDescontos: 0, totalFgts: 0, totalLiquido: 0 },
-  );
+    };
+  }, { totalFuncionarios: 0, totalProventos: 0, totalDescontos: 0, totalFgts: 0, totalLiquido: 0 });
 }
 
 const COLUNAS_TABELA_FUNCIONARIOS = (larguraUtil) => [
