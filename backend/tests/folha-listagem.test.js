@@ -77,6 +77,20 @@ describe("listarProcessamentosFolha", () => {
     assert.equal(p2.enviado_por, undefined, "id do usuário não vaza na resposta");
   });
 
+  it("status da lista é o mesmo do GET /:id: calculado vira processando ou erro", async () => {
+    tabelas.processamentos_folha = {
+      data: [
+        { id: "p3", cliente_id: CLIENTE_A, mes_referencia: "2026-09-01", status: "calculado", saida_status: "erro", origem: "web", enviado_por: null, criado_em: "2026-10-03" },
+        { id: "p2", cliente_id: CLIENTE_A, mes_referencia: "2026-08-01", status: "calculado", saida_status: "pendente", origem: "web", enviado_por: null, criado_em: "2026-10-02" },
+        { id: "p1", cliente_id: CLIENTE_A, mes_referencia: "2026-07-01", status: "concluido", saida_status: "ok", origem: "web", enviado_por: null, criado_em: "2026-10-01" },
+      ],
+      error: null,
+    };
+    const r = res();
+    await listarProcessamentosFolha({ usuario, query: {} }, r);
+    assert.deepEqual(r.body.processamentos.map((p) => p.status), ["erro", "processando", "concluido"]);
+  });
+
   it("outro escritório com dado presente: não aparece na lista nem some do dono", async () => {
     const CLIENTE_B = "22222222-2222-2222-2222-222222222222";
     tabelas.processamentos_folha = {

@@ -663,8 +663,10 @@ export async function listarProcessamentosFolha(req, res) {
     for (const usuario of usuarios || []) nomes.set(usuario.id, usuario.nome);
   }
 
+  // Mesmo status público do GET /:id: "calculado" (PDFs pendentes ou com falha) não vaza.
   const lista = marcarVigentes(processamentos || []).map(({ enviado_por: enviadoPor, ...resto }) => ({
     ...resto,
+    status: statusPublicoProcessamento(resto.status, resto.saida_status),
     enviado_por_nome: nomes.get(enviadoPor) ?? null,
   }));
 
