@@ -36,6 +36,8 @@ export function montarListaArquivos(calculos = [], relatorios = []) {
       id: String(calculo.id),
       nome: nomeExibicaoHolerite(calculo),
       tipo: "holerite",
+      empresa: calculo.empresa ?? null,
+      funcionario: calculo.funcionario ?? null,
       path: calculo.holerite_path,
     });
   }
@@ -47,6 +49,8 @@ export function montarListaArquivos(calculos = [], relatorios = []) {
       // O nome do relatório de fechamento não carrega dado pessoal (empresa + mês).
       nome: nomeArquivoDePath(relatorio.arquivo_path),
       tipo: "relatorio",
+      empresa: relatorio.empresa ?? null,
+      funcionario: null,
       path: relatorio.arquivo_path,
     });
   }
@@ -54,9 +58,15 @@ export function montarListaArquivos(calculos = [], relatorios = []) {
   return arquivos;
 }
 
-/** Resposta pública: só id opaco, nome de exibição e tipo — sem path de storage. */
+/** Resposta pública: id opaco, nome de exibição, tipo, empresa e funcionário — sem path de storage nem CPF. */
 export function arquivosParaResposta(arquivos) {
-  return arquivos.map(({ id, nome, tipo }) => ({ id, nome, tipo }));
+  return arquivos.map(({ id, nome, tipo, empresa, funcionario }) => ({
+    id,
+    nome,
+    tipo,
+    empresa,
+    funcionario,
+  }));
 }
 
 /**

@@ -92,6 +92,7 @@ export const MATRIZ = {
   "PATCH /notificacoes/:id/lida": jwt(TODOS),
 
   // --- folha: exige licença ativa do escritório ---
+  "GET /folha": jwt(TODOS, { licenca: true }),
   "GET /folha/template": jwt(TODOS, { licenca: true }),
   "POST /folha/upload": jwt(TODOS, { licenca: true }),
   "POST /folha/:processamento_id/calcular": jwt(TODOS, { licenca: true }),
