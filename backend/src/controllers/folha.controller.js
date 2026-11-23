@@ -1,4 +1,5 @@
 import supabase from "../config/database.js";
+import { contextoDb, servicoDb } from "../config/db-usuario.js";
 import {
   gerarTemplateFolha,
   validarColunasPlanilha,
@@ -22,6 +23,7 @@ import { marcarVigentes } from "../services/folha-listagem.service.js";
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { PERFIS } from "../config/perfis.js";
+import { atualizarApuracoesAposFolha } from "./apuracoes.controller.js";
 
 const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/;
 
@@ -316,7 +318,7 @@ async function gerarSaidaFolhaCore(req, res) {
 
   // Só persiste o resultado após confirmar existência, dono e cálculo concluído.
   // Uma falha na busca inicial não autoriza escrever no ID recebido na URL.
-  res.geracaoIniciada = true;
+  res.processamentoAutorizado = processamento;
 
   const { data: calculos, error: erroCalculos } = await supabase
     .from("folha_calculos")
@@ -471,7 +473,8 @@ async function gerarSaidaFolhaCore(req, res) {
 // de passar pelos guards de identidade, autorização e estado (#440).
 // Devolve false só quando a geração deu certo mas a conclusão não pôde ser gravada.
 async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
-  if (!respostaInterna.geracaoIniciada) {
+  const { processamentoAutorizado: processamento } = respostaInterna;
+  if (!processamento) {
     return true;
   }
 
@@ -487,6 +490,15 @@ async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
         error.message,
       );
       return false;
+    }
+
+    // Se o agente reportou antes da conclusão, a FS12 só pode ser atualizada
+    // depois de gravar a geração dos arquivos. O processamento já foi autorizado.
+    try {
+      await contextoDb.run(servicoDb, () =>
+        atualizarApuracoesAposFolha(processamento.cliente_id, processamento.mes_referencia));
+    } catch (err) {
+      console.error("[folha.controller] Erro ao atualizar apuração após folha:", err.message);
     }
     return true;
   }
