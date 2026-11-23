@@ -1,4 +1,5 @@
 import supabase from "../config/database.js";
+import { contextoDb, servicoDb } from "../config/db-usuario.js";
 import {
   gerarTemplateFolha,
   validarColunasPlanilha,
@@ -19,6 +20,7 @@ import {
 import { validarTokenLicenca } from "../services/licenca.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { PERFIS } from "../config/perfis.js";
+import { atualizarApuracoesAposFolha } from "./apuracoes.controller.js";
 
 const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/;
 
@@ -244,6 +246,19 @@ export async function calcularFolha(req, res) {
     }
 
     await supabase.from("processamentos_folha").update({ status: "concluido" }).eq("id", processamentoId);
+
+    // O cálculo pode terminar após o report do agente. Atualiza o DAS assim
+    // que a folha está disponível, sem depender da geração de PDFs.
+    try {
+      // Somente esta reconciliação interna usa a identidade do sistema. O
+      // processamento e seu cliente já foram autorizados com o JWT da rota.
+      await contextoDb.run(servicoDb, () =>
+        atualizarApuracoesAposFolha(processamento.cliente_id, processamento.mes_referencia));
+    } catch (err) {
+      // A folha foi calculada; uma falha na apuração não transforma esse
+      // processamento concluído em erro nem duplica salários num retry.
+      console.error("[folha.controller] Erro ao atualizar apuração após folha:", err.message);
+    }
 
     const totais = calculos.reduce(
       (acc, calculo) => ({
