@@ -232,10 +232,16 @@ describe("TEST-11: POST /folha/upload/agente (HTTP, licença e banco reais)", { 
       await recusada(formulario({ arquivo }), { erro: "Planilha com colunas obrigatórias faltando", faltando: ["cpf"] });
     });
 
-    it("bytes que não são planilha, mesmo com o tipo xlsx: todas as colunas faltam", async () => {
+    it("bytes que não são planilha, mesmo com o tipo xlsx: diz que o arquivo não é um xlsx válido (#742)", async () => {
       await recusada(formulario({ arquivo: Buffer.from("isto nao e um xlsx") }), {
-        erro: "Planilha com colunas obrigatórias faltando",
-        faltando: COLUNAS_FOLHA.map(coluna => coluna.header),
+        erro: "arquivo não é uma planilha .xlsx válida",
+        faltando: [],
+      });
+    });
+
+    it("planilha só com o cabeçalho, sem nenhuma linha de dado (#742)", async () => {
+      await recusada(formulario({ arquivo: await planilha([]) }), {
+        erro: "Planilha não tem nenhuma linha de dado preenchida",
       });
     });
   });

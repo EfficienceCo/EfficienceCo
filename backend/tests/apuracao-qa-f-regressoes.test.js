@@ -304,14 +304,20 @@ test("QA-F R5 callback autorizado,perfis,RLS,escopo e restauração do contexto"
     const c = await s.cliente(); await s.notas(c); const a = await s.criar(c), usuario = await s.usuario(c, perfil), p = await s.pendente(c, "2026-09-01", 60000);
     assert.equal((await s.reportar(c, a, relatorio([{ ano: 2026, mes: 9 }]))).status, 200);
     assert.equal((await s.chamar(`/folha/${procEstrangeiro.id}/calcular`, { usuario, metodo: "POST", corpo: {} })).status, 404);
+    assert.equal((await s.chamar(`/folha/${procEstrangeiro.id}/gerar-saida`, { usuario, metodo: "POST", corpo: {} })).status, 404);
+    const antesDosPdfs = await s.estado(a);
     assert.equal((await s.chamar(`/folha/${p.id}/calcular`, { usuario, metodo: "POST", corpo: {} })).status, 200);
+    assert.deepEqual(await s.estado(a), antesDosPdfs, "o cálculo sozinho não atualiza a apuração");
+    assert.equal((await s.chamar(`/folha/${p.id}/gerar-saida`, { usuario, metodo: "POST", corpo: {} })).status, 200);
     const linha = await s.estado(a); conferirCalculo(linha, { fs: 64800, fr: .54, anexo: "III", das: 600 }); assert.equal(linha.historico_edicoes.length, 1, "R5 ambos perfis geram evento automático");
     assert.deepEqual(await s.estado(apEstrangeira), fotoEstrangeira);
     const procFoto = await s.banco.from("processamentos_folha").select("status").eq("id", procEstrangeiro.id).single(); assert.ifError(procFoto.error); assert.equal(procFoto.data.status, "pendente");
     assert.equal((await s.chamar(caminho(a), { usuario, metodo: "PATCH", corpo: { valor_editado: 999, motivo: "R5 permissão manual" } })).status, perfil === "funcionario" ? 403 : 200);
     if (perfil === "funcionario") for (const acao of ["aprovar", "recalcular"]) assert.equal((await s.chamar(`${caminho(a)}/${acao}`, { usuario, metodo: "PATCH", corpo: {} })).status, 403);
     assert.equal((await atualizar(s, a, "aprovar")).status, 200); const aprovado = await s.estado(a), outro = await s.pendente(c, "2026-09-01", 70000);
-    assert.equal((await s.chamar(`/folha/${outro.id}/calcular`, { usuario, metodo: "POST", corpo: {} })).status, 200); assert.deepEqual(await s.estado(a), aprovado);
+    assert.equal((await s.chamar(`/folha/${outro.id}/calcular`, { usuario, metodo: "POST", corpo: {} })).status, 200);
+    assert.equal((await s.chamar(`/folha/${outro.id}/gerar-saida`, { usuario, metodo: "POST", corpo: {} })).status, 200);
+    assert.deepEqual(await s.estado(a), aprovado);
     // SELECTs e UPDATEs abaixo usam JWTs assinados para usuários reais, não mocks.
     const count = async id => { const q = await dbContextual.from("apuracoes").select("id").eq("cliente_id", id); assert.ifError(q.error); return q.data.length; };
     await executarComDbDoUsuario(usuario, async () => {

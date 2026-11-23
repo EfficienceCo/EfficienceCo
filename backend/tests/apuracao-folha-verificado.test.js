@@ -113,6 +113,13 @@ async function enviarPlanilha(s, c, mes, arquivo) {
   return r.corpo.processamento_id;
 }
 
+// O upload dispara o pipeline em segundo plano. A conclusão dos PDFs é
+// persistida antes de a Apuração terminar a reconciliação.
+const aguardarFolhaVerificada = (s, a, folha12) => aguardar(async () => {
+  const atual = await s.estado(a);
+  return atual.folha_status === "verificado" && Number(atual.folha12) === folha12;
+}, "reconciliação da Apuração depois dos PDFs");
+
 const lerProcessamento = async (s, id) => {
   const r = await s.banco.from("processamentos_folha").select("status, saida_status").eq("id", id).single();
   assert.ifError(r.error);
@@ -236,6 +243,7 @@ test("DAS-3 folha nova enviada pela rota de upload, antes de o pipeline pegar a 
   portoes.download.liberar();
   await aguardar(async () => { const p = await lerProcessamento(s, id); return p.status === "concluido" && p.saida_status !== "pendente"; }, "fim do pipeline");
   portoes.restaurar();
+  await aguardarFolhaVerificada(s, a, 61480);
   const get = await s.chamar(caminho(a));
   // Sem relatório do agente, dados_folha volta a null e a apuração segue a regra
   // do #737 (mês ausente vale zero e é aprovável).
@@ -276,6 +284,7 @@ test("DAS-3 sem relatório do agente, a 1ª planilha pela tela em processamento:
   // 120.000 = 0,045 < 0,28 → Anexo V, 1ª faixa, 15,5% → R$ 1.550,00.
   portoes.restaurar();
   await aguardar(async () => { const p = await lerProcessamento(s, envio.corpo.processamento_id); return p.status === "concluido" && p.saida_status !== "pendente"; }, "fim do pipeline");
+  await aguardarFolhaVerificada(s, a, 5400);
   const concluido = await s.chamar(caminho(a));
   for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 5400, anexo: "V", valor_calculado: 1550, bloqueio_folha: null, dados_folha: null })) {
     assert.deepEqual(concluido.corpo[campo], valor, `após o pipeline: ${campo}`);
@@ -314,6 +323,7 @@ test("DAS-3 upload responde 201 mesmo com a reconciliação da apuração falhan
   assert.equal(processos.length, 13, "um processamento novo, sem duplicar");
   await aguardar(async () => { const p = await lerProcessamento(s, id); return p.status === "concluido" && p.saida_status !== "pendente"; }, "fim do pipeline");
   // O gancho do fim do pipeline reconcilia: FS12 = 11 × 5.000 + 6.480 = 61.480.
+  await aguardarFolhaVerificada(s, a, 61480);
   const get = await s.chamar(caminho(a));
   for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 61480, fator_r: .51, anexo: "III", valor_calculado: 600 })) {
     assert.deepEqual(get.corpo[campo], valor, `após o pipeline: ${campo}`);
@@ -727,6 +737,7 @@ test("DAS-3 causa 4: depois de falha de envio, cada novo ciclo do agente real s�
   await s.worker(c);
   await s.concluidos(c);
   assert.deepEqual(await porMes(), Object.fromEntries(REFERENCIAS.map(r => [refISO(r).slice(0, 7), 1])));
+  await aguardarFolhaVerificada(s, a, 64800);
   const get = await s.chamar(caminho(a));
   for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 64800, fator_r: .54, anexo: "III", valor_calculado: 600, bloqueio_folha: null })) {
     assert.deepEqual(get.corpo[campo], valor, `após a correção: ${campo}`);
@@ -782,6 +793,7 @@ test("DAS-3 cenário A: folha dos 12 meses no sistema e planilha nova de 09/2026
   await s.worker(c);
   await aguardar(() => pipelineTerminou(s, c), "pipeline da planilha corrigida");
   assert.deepEqual(await contarPorMes(s, c), { ...umPorMes(REFERENCIAS), "2026-09": 2 }, "só 09/2026 foi reenviado");
+  await aguardarFolhaVerificada(s, a, 60400);
   const get = await s.chamar(caminho(a));
   for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 60400, fator_r: .5, anexo: "III", valor_calculado: 600, bloqueio_folha: null })) {
     assert.deepEqual(get.corpo[campo], valor, `após a correção: ${campo}`);
@@ -832,6 +844,7 @@ test("DAS-3 cenário B: duas planilhas em 09/2026 e só o pró-labore falha no e
   await s.worker(c);
   await s.concluidos(c);
   assert.deepEqual(await contarPorMes(s, c), { ...umPorMes(REFERENCIAS), "2026-09": 4 });
+  await aguardarFolhaVerificada(s, a, 64800);
   const get = await s.chamar(caminho(a));
   for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 64800, fator_r: .54, anexo: "III", valor_calculado: 600, bloqueio_folha: null })) {
     assert.deepEqual(get.corpo[campo], valor, `após a correção: ${campo}`);
@@ -1053,6 +1066,7 @@ test("DAS-3 falha de envio de 09/2026 e depois uma planilha parcial pela tela: o
   // + 43.200 = 65.200; Fator R 0,54 ≥ 0,28 → Anexo III, 1ª faixa 6% → R$ 600,00.
   await s.worker(c, { arquivosMes: [falho], salario: 40000 });
   await aguardar(() => pipelineTerminou(s, c), "pipeline do envio completo");
+  await aguardarFolhaVerificada(s, a, 65200);
   const get = await s.chamar(caminho(a));
   for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 65200, anexo: "III", valor_calculado: 600, bloqueio_folha: null })) {
     assert.deepEqual(get.corpo[campo], valor, `após o envio completo: ${campo}`);

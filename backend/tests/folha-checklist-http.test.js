@@ -118,7 +118,7 @@ describe("FOLHA-8: o pipeline da folha avança o checklist do processo (HTTP e b
 
   const esperarPipeline = id => esperar(`pipeline de ${id}`,
     async () => (await banco.from("processamentos_folha").select("*").eq("id", id).single()).data,
-    p => p.status === "erro" || (p.status === "concluido" && p.saida_status !== "pendente"));
+    p => p.status === "erro" || ["ok", "erro"].includes(p.saida_status));
 
   async function processosFolha(clienteId = A.id) {
     return lerTabela(banco, "processos", "criado_em", { cliente_id: clienteId, tipo: "folha_pagamento" });
