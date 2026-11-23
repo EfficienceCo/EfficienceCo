@@ -53,8 +53,8 @@ test("resolverTabelaFolha: competência de 2026 usa a tabela 2026-01", () => {
 });
 
 test("resolverTabelaFolha: não reutiliza silenciosamente a última tabela em anos futuros", () => {
-  assert.throws(() => resolverTabelaFolha("2027-01"), /Nenhuma tabela de folha cadastrada/);
-  assert.throws(() => resolverTabelaFolha("2030-06"), /Nenhuma tabela de folha cadastrada/);
+  assert.throws(() => resolverTabelaFolha("2027-01"), /Sem tabela INSS\/IRRF cadastrada para 01\/2027/);
+  assert.throws(() => resolverTabelaFolha("2030-06"), /Sem tabela INSS\/IRRF cadastrada para 06\/2030/);
 });
 
 test("resolverTabelaFolha: aceita 'YYYY-MM' e 'YYYY-MM-DD'", () => {
@@ -62,7 +62,7 @@ test("resolverTabelaFolha: aceita 'YYYY-MM' e 'YYYY-MM-DD'", () => {
 });
 
 test("resolverTabelaFolha: competência anterior à tabela mais antiga lança", () => {
-  assert.throws(() => resolverTabelaFolha("2023-12"), /Nenhuma tabela de folha cadastrada/);
+  assert.throws(() => resolverTabelaFolha("2023-12"), /Sem tabela INSS\/IRRF cadastrada para 12\/2023/);
 });
 
 test("resolverTabelaFolha: competência ausente ou malformada lança", () => {

@@ -17,6 +17,7 @@ import {
   gerarTemplateFolha,
   lerLinhasPlanilha,
   mascararCnpj,
+  montarLinhasVerbas,
   mascararCpf,
   resolverCnpjsEmpresas,
 } from "../src/services/folha.service.js";
@@ -122,6 +123,26 @@ describe("totais do relatório de fechamento fecham entre si", () => {
     }
     const lote = calcularTotaisEmpresa(calculos);
     assert.equal(Math.round((lote.totalProventos - lote.totalDescontos) * 100), Math.round(lote.totalLiquido * 100));
+  });
+
+  it("usa o mesmo salário proporcional que o holerite em um mês com 15 dias trabalhados", () => {
+    const calculo = calcularFolhaFuncionario({
+      ...linhaDiego, dias_trabalhados: 15, horas_extras: 0, faltas: 0,
+    }, COMPETENCIA);
+    const totais = calcularTotaisEmpresa([calculo]);
+    assert.equal(totais.totalProventos, 3000);
+    assert.equal(totais.totalDescontos, calculo.inss + calculo.ir);
+    assert.equal(totais.totalLiquido, calculo.liquido);
+  });
+
+  it("preserva o salário cheio de um cálculo legado com dias parciais", () => {
+    const gravado = calcularFolhaFuncionario({ ...linhaDiego, horas_extras: 0, faltas: 0 }, COMPETENCIA);
+    const legado = { ...gravado, dias_trabalhados: 15 };
+    const totais = calcularTotaisEmpresa([legado]);
+    assert.equal(montarLinhasVerbas(legado)[0].proventos, "6.000,00");
+    assert.equal(totais.totalProventos, 6000);
+    assert.equal(totais.totalDescontos, Math.round((legado.inss + legado.ir) * 100) / 100);
+    assert.equal(totais.totalLiquido, legado.liquido);
   });
 
   it("FGTS não entra nos descontos do empregado (sem falta, HE, VT nem adiantamento: descontos = INSS + IRRF)", () => {

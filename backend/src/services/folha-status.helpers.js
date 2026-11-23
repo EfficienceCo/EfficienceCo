@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { sanitizarNomeArquivo } from "../utils/comum.util.js";
 
 export { sanitizarNomeArquivo };
@@ -21,13 +22,32 @@ export function nomeExibicaoHolerite(calculo = {}) {
 }
 
 /**
+ * Nome de exibição do relatório de fechamento: empresa + mês, sem o hash do caminho.
+ * Sem empresa ou sem mês (processamento antigo/dado incompleto), cai no basename do path.
+ */
+export function nomeExibicaoRelatorio(relatorio = {}, mesReferencia) {
+  const empresa = sanitizarNomeArquivo(relatorio.empresa);
+  const mes = typeof mesReferencia === "string" ? mesReferencia.slice(0, 7) : "";
+  if (!empresa || !mes) return nomeArquivoDePath(relatorio.arquivo_path);
+  return `relatorio_fechamento_${empresa}_${mes}.pdf`;
+}
+
+/**
+ * 8 primeiros hex do sha256 do nome BRUTO da empresa. Entra no caminho do relatório no
+ * storage para nomes que sanitizam igual ("Pão" x "Pao") não dividirem o mesmo arquivo.
+ */
+export function sufixoEmpresa(empresa) {
+  return createHash("sha256").update(String(empresa ?? "")).digest("hex").slice(0, 8);
+}
+
+/**
  * Monta a lista de arquivos gerados a partir dos paths persistidos.
  * Cada item tem:
  *  - `id`: identificador opaco (id da linha em folha_calculos / folha_relatorios) usado na URL de download;
  *  - `nome`: nome de exibição SEM CPF;
  *  - `path`: caminho de storage, uso interno (download) — a API pública deve omitir esse campo.
  */
-export function montarListaArquivos(calculos = [], relatorios = []) {
+export function montarListaArquivos(calculos = [], relatorios = [], { mesReferencia } = {}) {
   const arquivos = [];
 
   for (const calculo of calculos) {
@@ -45,7 +65,7 @@ export function montarListaArquivos(calculos = [], relatorios = []) {
     arquivos.push({
       id: String(relatorio.id),
       // O nome do relatório de fechamento não carrega dado pessoal (empresa + mês).
-      nome: nomeArquivoDePath(relatorio.arquivo_path),
+      nome: nomeExibicaoRelatorio(relatorio, mesReferencia),
       tipo: "relatorio",
       path: relatorio.arquivo_path,
     });

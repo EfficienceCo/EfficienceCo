@@ -129,8 +129,11 @@ describe("DAS-2 (#726): Fator R com menos de 12 meses de folha pela rota", { tim
       assert.deepEqual(numerosGravados(await buscarApuracao(banco, criado.corpo.id)), provisorio);
 
       const recalculado = await recalcular(A, criado.corpo.id);
-      assert.equal(recalculado.status, 422, JSON.stringify(recalculado.corpo));
-      assert.equal(recalculado.corpo.erro, "FATOR_R_SEM_FOLHA");
+      // DAS-3 (D2): o recálculo espera a folha com o 409 da aprovação, dizendo
+      // o mês, em vez do 422 FATOR_R_SEM_FOLHA.
+      assert.equal(recalculado.status, 409, JSON.stringify(recalculado.corpo));
+      assert.equal(recalculado.corpo.erro, "FOLHA_PENDENTE");
+      assert.deepEqual(recalculado.corpo.mesesPendentes, ["2026-07"]);
 
       const bloqueado = await aprovar(A, criado.corpo.id);
       assert.equal(bloqueado.status, 409, JSON.stringify(bloqueado.corpo));

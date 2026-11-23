@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import supabase from "../src/config/database.js";
 import { criarProcesso } from "../src/controllers/processos.controller.js";
 import {
+  ACOES_FOLHA,
   criarProcessoComEtapas,
   ETAPAS_PADRAO,
 } from "../src/services/processos.service.js";
@@ -11,14 +12,26 @@ const CLIENTE_ID = "11111111-1111-1111-1111-111111111111";
 const PROCESSO_ID = "22222222-2222-2222-2222-222222222222";
 const originalFrom = supabase.from;
 const insercoes = [];
+const exclusoes = [];
+let falharInsertEtapas = false;
 
 supabase.from = function (tabela) {
   let payloadInserido;
+  let exclusao;
 
   const builder = {
     insert(payload) {
       payloadInserido = payload;
       insercoes.push({ tabela, payload });
+      return builder;
+    },
+    delete() {
+      exclusao = { tabela, filtros: [] };
+      exclusoes.push(exclusao);
+      return builder;
+    },
+    eq(coluna, valor) {
+      exclusao?.filtros.push([coluna, valor]);
       return builder;
     },
     select() {
@@ -31,6 +44,9 @@ supabase.from = function (tabela) {
       });
     },
     then(resolve, reject) {
+      if (tabela === "etapas" && falharInsertEtapas) {
+        return Promise.resolve({ data: null, error: { message: "falha nas etapas (teste)" } }).then(resolve, reject);
+      }
       const data = Array.isArray(payloadInserido)
         ? payloadInserido.map((etapa, indice) => ({ id: `etapa-${indice + 1}`, ...etapa }))
         : payloadInserido;
@@ -48,6 +64,8 @@ after(() => {
 
 beforeEach(() => {
   insercoes.length = 0;
+  exclusoes.length = 0;
+  falharInsertEtapas = false;
 });
 
 function obterInsercao(tabela) {
@@ -105,20 +123,21 @@ describe("ETAPAS_PADRAO", () => {
     }
   });
 
-  it("mantém as cinco etapas de folha como manuais", () => {
-    const etapas = ETAPAS_PADRAO.folha_pagamento;
-
+  // FOLHA-8 (#748): reescrito de propósito. Antes exigia 5 etapas manuais; a decisão de
+  // 2026-11-20 troca por 6 etapas, as 3 primeiras concluídas pelo pipeline da folha.
+  it("define as seis etapas de folha: três automáticas do pipeline e três manuais", () => {
+    assert.deepEqual(ETAPAS_PADRAO.folha_pagamento, [
+      { descricao: "Planilha da folha recebida", tipo: "automatizada", acao: "folha_planilha_recebida" },
+      { descricao: "Folha calculada (INSS, IRRF e FGTS)", tipo: "automatizada", acao: "folha_calculada" },
+      { descricao: "Holerites e relatório de fechamento gerados", tipo: "automatizada", acao: "folha_holerites_gerados" },
+      { descricao: "Revisar holerites gerados", tipo: "manual", acao: null },
+      { descricao: "Enviar holerites às empresas", tipo: "manual", acao: null },
+      { descricao: "Arquivar documentação do mês", tipo: "manual", acao: null },
+    ]);
     assert.deepEqual(
-      etapas.map((etapa) => etapa.descricao),
-      [
-        "Inserir planilha Excel na pasta do mês",
-        "Aguardar processamento automático pelo agente",
-        "Revisar holerites gerados",
-        "Enviar holerites às empresas",
-        "Arquivar documentação do mês",
-      ],
+      ETAPAS_PADRAO.folha_pagamento.filter((etapa) => etapa.acao).map((etapa) => etapa.acao),
+      Object.values(ACOES_FOLHA),
     );
-    assert.equal(etapas.every((etapa) => etapa.tipo === "manual" && etapa.acao === null), true);
   });
 });
 
@@ -164,6 +183,16 @@ describe("criarProcessoComEtapas", () => {
       etapasEsperadas(PROCESSO_ID, ETAPAS_PADRAO.folha_pagamento),
     );
     assert.equal(obterInsercao("processos").mes_referencia, "2026-08");
+  });
+
+  it("FOLHA-8: falha ao inserir as etapas apaga o processo criado (sem processo órfão)", async () => {
+    falharInsertEtapas = true;
+    const resultado = await criarProcessoComEtapas(CLIENTE_ID, "folha_pagamento", {
+      mes_referencia: "2026-08-01",
+    });
+
+    assert.deepEqual(resultado, { erro: "falha nas etapas (teste)" });
+    assert.deepEqual(exclusoes, [{ tabela: "processos", filtros: [["id", PROCESSO_ID]] }]);
   });
 
   it("recusa tipo desconhecido sem inserir dados", async () => {
