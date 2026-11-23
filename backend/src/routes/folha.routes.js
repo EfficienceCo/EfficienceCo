@@ -11,6 +11,7 @@ import {
   calcularFolha,
   gerarSaidaFolha,
   consultarStatusFolha,
+  listarProcessamentosFolha,
   baixarArquivoFolha,
 } from "../controllers/folha.controller.js";
 
@@ -49,6 +50,9 @@ function uploadPlanilha(req, res, next) {
 }
 
 router.get("/template", todos, exigirLicencaAtiva, baixarTemplate);
+
+// Listagem do escritório — antes de /:processamento_id
+router.get("/", todos, exigirLicencaAtiva, listarProcessamentosFolha);
 
 // Web/dashboard — autenticado via JWT
 router.post("/upload", todos, exigirLicencaAtiva, uploadPlanilha, uploadFolha);

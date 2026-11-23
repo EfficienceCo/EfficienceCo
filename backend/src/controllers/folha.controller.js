@@ -24,6 +24,7 @@ import {
   sufixoEmpresa,
 } from "../services/folha-status.service.js";
 import { avancarChecklistFolha, MARCOS_FOLHA } from "../services/folha-checklist.service.js";
+import { marcarVigentes } from "../services/folha-listagem.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { PERFIS } from "../config/perfis.js";
 import { atualizarApuracoesAposFolha } from "./apuracoes.controller.js";
@@ -82,7 +83,7 @@ function verificarTabelaCompetencia(mesReferencia) {
   }
 }
 
-async function processarUploadFolha(req, res, clienteId) {
+async function processarUploadFolha(req, res, clienteId, { origem, enviadoPor }) {
   if (!req.file) {
     return res.status(400).json({ erro: "Planilha é obrigatória" });
   }
@@ -140,6 +141,8 @@ async function processarUploadFolha(req, res, clienteId) {
         mes_referencia: mesReferencia,
         status: "pendente",
         arquivo_origem_path: caminhoStorage,
+        origem,
+        enviado_por: enviadoPor,
       })
       .select("id")
       .single();
@@ -188,13 +191,16 @@ async function processarUploadFolha(req, res, clienteId) {
 // Upload via web/dashboard — JWT + perfil.
 export async function uploadFolha(req, res) {
   const clienteId = resolverClienteId(req);
-  return processarUploadFolha(req, res, clienteId);
+  return processarUploadFolha(req, res, clienteId, {
+    origem: "web",
+    enviadoPor: req.usuario?.id ?? null,
+  });
 }
 
 // Upload via agente local — x-licenca-token.
 export async function uploadFolhaAgente(req, res) {
   // Token já validado por exigirLicencaAgente (antes do multer).
-  return processarUploadFolha(req, res, req.licenca.cliente_id);
+  return processarUploadFolha(req, res, req.licenca.cliente_id, { origem: "agente", enviadoPor: null });
 }
 
 // Lê a planilha salva em BK-FOLHA-UPLOAD, calcula INSS/FGTS/IR/líquido por funcionário
@@ -713,6 +719,62 @@ export async function dispararPipelineAutomatico(processamentoId) {
     );
     await marcarErro(processamentoId, "Erro inesperado no pipeline automático");
   }
+}
+
+// Listagem dos processamentos do escritório, mais recentes primeiro (FOLHA-6). Traz
+// uploads web e do agente; `vigente` marca o que a Apuração lê em cada competência.
+export async function listarProcessamentosFolha(req, res) {
+  const clienteId = resolverClienteId(req);
+
+  if (!clienteId) {
+    return res.status(400).json({ erro: "cliente_id é obrigatório" });
+  }
+
+  const { mes_referencia: mesBruto } = req.query;
+  if (mesBruto !== undefined && !REGEX_MES_REFERENCIA.test(mesBruto)) {
+    return res.status(400).json({ erro: "mes_referencia deve estar no formato YYYY-MM" });
+  }
+
+  let query = supabase
+    .from("processamentos_folha")
+    .select("id, mes_referencia, status, saida_status, origem, enviado_por, criado_em")
+    .eq("cliente_id", clienteId)
+    .order("criado_em", { ascending: false })
+    .order("id")
+    .limit(200);
+  if (mesBruto) {
+    query = query.eq("mes_referencia", `${mesBruto.slice(0, 7)}-01`);
+  }
+
+  const { data: processamentos, error } = await query;
+
+  if (error) {
+    console.error("[folha.controller] Erro ao listar processamentos:", error.message);
+    return res.status(500).json({ erro: "Erro ao listar processamentos da folha" });
+  }
+
+  const idsEnvio = [...new Set((processamentos || []).map((p) => p.enviado_por).filter(Boolean))];
+  const nomes = new Map();
+  if (idsEnvio.length > 0) {
+    const { data: usuarios, error: erroUsuarios } = await supabase
+      .from("usuarios")
+      .select("id, nome")
+      .in("id", idsEnvio);
+    if (erroUsuarios) {
+      console.error("[folha.controller] Erro ao buscar remetentes:", erroUsuarios.message);
+      return res.status(500).json({ erro: "Erro ao listar processamentos da folha" });
+    }
+    for (const usuario of usuarios || []) nomes.set(usuario.id, usuario.nome);
+  }
+
+  // Mesmo status público do GET /:id: "calculado" (PDFs pendentes ou com falha) não vaza.
+  const lista = marcarVigentes(processamentos || []).map(({ enviado_por: enviadoPor, ...resto }) => ({
+    ...resto,
+    status: statusPublicoProcessamento(resto.status, resto.saida_status),
+    enviado_por_nome: nomes.get(enviadoPor) ?? null,
+  }));
+
+  return res.status(200).json({ processamentos: lista });
 }
 
 // Status do processamento + lista de arquivos gerados (holerites e relatórios).

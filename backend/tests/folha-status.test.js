@@ -170,8 +170,14 @@ describe("folha-status helpers", () => {
     const resposta = arquivosParaResposta(arquivos);
 
     assert.deepEqual(resposta, [
-      { id: "calc-1", nome: "holerite_padaria_joao.pdf", tipo: "holerite" },
-      { id: "rel-1", nome: "relatorio_fechamento_padaria_2026-07.pdf", tipo: "relatorio" },
+      { id: "calc-1", nome: "holerite_padaria_joao.pdf", tipo: "holerite", empresa: "Padaria", funcionario: "João" },
+      {
+        id: "rel-1",
+        nome: "relatorio_fechamento_padaria_2026-07.pdf",
+        tipo: "relatorio",
+        empresa: null,
+        funcionario: null,
+      },
     ]);
     // Nada na resposta pública pode conter CPF nem o path de storage.
     assert.doesNotMatch(JSON.stringify(resposta), REGEX_CPF);
@@ -189,6 +195,8 @@ describe("folha-status helpers", () => {
       id: "calc-1",
       nome: "holerite_padaria_joao.pdf",
       tipo: "holerite",
+      empresa: "Padaria",
+      funcionario: "João",
       path,
     });
     // O nome do arquivo / CPF não são mais aceitos como identificador.
