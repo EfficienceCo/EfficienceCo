@@ -182,9 +182,21 @@ const TABELAS_FOLHA = [
   TABELA_FOLHA_2026,
 ];
 
+// Competência bem formada, mas fora de todas as vigências cadastradas (anterior à
+// tabela mais antiga ou ainda sem a tabela do ano, #744). Erro próprio para o
+// controller recusar com a mensagem legível, sem cair no 500 genérico.
+export class TabelaFolhaAusenteError extends Error {
+  constructor(chave) {
+    const [ano, mes] = chave.split("-");
+    super(`Sem tabela INSS/IRRF cadastrada para ${mes}/${ano}`);
+    this.name = "TabelaFolhaAusenteError";
+    this.competencia = chave;
+  }
+}
+
 // Resolve o conjunto de tabelas vigente para a competência (aceita "YYYY-MM" ou
-// "YYYY-MM-DD"). Lança se a competência for anterior à tabela mais antiga — falhar
-// explícito é melhor do que aplicar a tabela errada em silêncio.
+// "YYYY-MM-DD"). Lança TabelaFolhaAusenteError se nenhuma vigência cobre a
+// competência — falhar explícito é melhor do que aplicar a tabela errada em silêncio.
 export function resolverTabelaFolha(competencia) {
   const chave = String(competencia ?? "").slice(0, 7);
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(chave)) {
@@ -200,7 +212,7 @@ export function resolverTabelaFolha(competencia) {
     .at(-1);
 
   if (!vigente) {
-    throw new Error(`Nenhuma tabela de folha cadastrada para a competência ${chave}`);
+    throw new TabelaFolhaAusenteError(chave);
   }
 
   return vigente;
@@ -210,6 +222,20 @@ const ALIQUOTA_FGTS = 0.08;
 const ALIQUOTA_DESCONTO_VT = 0.06;
 const DIVISOR_HORA_EXTRA = 220;
 const ADICIONAL_HORA_EXTRA = 1.5;
+
+// Convenção do sistema: mês comercial de 30 dias (a falta já desconta salário ÷ 30).
+// 30 dias_trabalhados = mês completo.
+const DIAS_MES_COMERCIAL = 30;
+// Teto de horas extras por dia: jornada de até 12 h (8 h + 4 h) da CLT art. 61 §2º,
+// o limite mais alto que a lei admite. Acima disso é erro de digitação.
+const MAX_HORAS_EXTRAS_POR_DIA = 4;
+
+// Salário do mês, proporcional aos dias trabalhados (#744): admissão ou demissão no
+// meio do mês recebe salário × dias ÷ 30. Usado no cálculo e no holerite, para os
+// dois mostrarem o mesmo número.
+export function calcularSalarioMes(salarioContratual, diasTrabalhados) {
+  return arredondar((Number(salarioContratual) * Number(diasTrabalhados)) / DIAS_MES_COMERCIAL);
+}
 
 // INSS é calculado por faixas marginais: cada pedaço da base paga a alíquota da sua
 // própria faixa, não a alíquota da faixa final sobre o total. Acima do teto salarial,
@@ -240,6 +266,28 @@ export function calcularINSS(baseCalculo, tabelaInss) {
   }
 
   return inss;
+}
+
+// Teto salarial do INSS da competência: o `limite` da última faixa da tabela.
+// Não confundir com `tetoContribuicao`, que é a contribuição do EMPREGADO no teto.
+function tetoSalarialINSS(tabelaInss) {
+  return tabelaInss.faixas[tabelaInss.faixas.length - 1].limite;
+}
+
+// Pró-labore de sócio (#741): o sócio é contribuinte individual a serviço de
+// empresa. Alíquota de 20% (Lei 8.212/91, art. 21) com dedução de 9 pontos
+// (art. 30, §4º) = 11%, descontada pela empresa (Lei 10.666/2003, art. 4º), sem
+// faixas progressivas e limitada ao teto. Vale também para optante do Simples.
+// Não é o plano simplificado (11% sobre o salário mínimo, GPS 1163), que é
+// recolhimento por conta própria.
+//
+// Retorna o valor SEM arredondar, pelo mesmo motivo de calcularINSS: a base do
+// IRRF usa a precisão cheia.
+const ALIQUOTA_INSS_CONTRIBUINTE_INDIVIDUAL = 0.11;
+
+export function calcularINSSContribuinteIndividual(baseCalculo, tabelaInss) {
+  if (baseCalculo <= 0) return 0;
+  return Math.min(baseCalculo, tetoSalarialINSS(tabelaInss)) * ALIQUOTA_INSS_CONTRIBUINTE_INDIVIDUAL;
 }
 
 // A base do IRRF precisa ser persistida exatamente como foi usada no cálculo.
@@ -288,23 +336,37 @@ export function calcularIR(dados, tabelaIrrf) {
 // Calcula todos os valores de folha de um funcionário a partir da linha lida da
 // planilha. `competencia` ("YYYY-MM" ou "YYYY-MM-DD") seleciona a tabela fiscal
 // vigente — obrigatória, o cálculo não tem default de ano.
-// Fórmula do líquido: bruto − faltas + horas_extras − INSS − IR − adiantamento − desconto_vt.
+// Fórmula do líquido: salário do mês − faltas + horas_extras − INSS − IR − adiantamento − desconto_vt.
+//
+// `salario_bruto` é o salário CONTRATUAL. O salário do mês é proporcional a
+// `dias_trabalhados` (calcularSalarioMes); hora extra e falta continuam sobre o
+// contratual (valor da hora e do dia não muda com a admissão no meio do mês). O
+// desconto de 6% do vale-transporte sai do salário do mês.
+//
+// Sócio (`categoria = "socio"`, #612/#741): o salario_bruto é o pró-labore, que
+// não tem hora extra, falta nem vale-transporte da CLT. Os três saem 0 no cálculo
+// (os valores brutos da planilha seguem gravados como vieram, para auditoria), o
+// INSS é o do contribuinte individual e não há FGTS. A regra dos dias vale igual.
 export function calcularFolhaFuncionario(linha, competencia) {
   const { inss: tabelaInss, irrf: tabelaIrrf } = resolverTabelaFolha(competencia);
+  const categoria = linha.categoria === "socio" ? "socio" : "empregado";
+  const socio = categoria === "socio";
 
   const salarioBruto = linha.salario_bruto;
-  const valorHoraExtra = (salarioBruto / DIVISOR_HORA_EXTRA) * ADICIONAL_HORA_EXTRA * linha.horas_extras;
-  const valorDia = salarioBruto / 30;
-  const valorFaltas = valorDia * linha.faltas;
-  const descontoVt = linha.vale_transporte ? salarioBruto * ALIQUOTA_DESCONTO_VT : 0;
+  const salarioMes = calcularSalarioMes(salarioBruto, linha.dias_trabalhados);
+  const valorHoraExtra = socio
+    ? 0
+    : (salarioBruto / DIVISOR_HORA_EXTRA) * ADICIONAL_HORA_EXTRA * linha.horas_extras;
+  const valorFaltas = socio ? 0 : (salarioBruto / DIAS_MES_COMERCIAL) * linha.faltas;
+  const descontoVt = !socio && linha.vale_transporte ? salarioMes * ALIQUOTA_DESCONTO_VT : 0;
 
-  const baseCalculo = arredondar(salarioBruto - valorFaltas + valorHoraExtra);
+  const baseCalculo = arredondar(salarioMes - valorFaltas + valorHoraExtra);
 
-  const inssPreciso = calcularINSS(baseCalculo, tabelaInss);
+  const inssPreciso = socio
+    ? calcularINSSContribuinteIndividual(baseCalculo, tabelaInss)
+    : calcularINSS(baseCalculo, tabelaInss);
   const inss = arredondar(inssPreciso);
-  // Pró-labore de sócio não tem FGTS (#612). A categoria não é persistida
-  // (sem coluna em folha_calculos) — fgts = 0 já basta para a FS12.
-  const fgts = linha.categoria === "socio" ? 0 : arredondar(baseCalculo * ALIQUOTA_FGTS);
+  const fgts = socio ? 0 : arredondar(baseCalculo * ALIQUOTA_FGTS);
 
   const dadosIrrf = {
     baseCalculo,
@@ -328,6 +390,9 @@ export function calcularFolhaFuncionario(linha, competencia) {
     adiantamento: linha.adiantamento,
     num_dependentes: linha.num_dependentes,
     vale_transporte: linha.vale_transporte,
+    // Persistida em folha_calculos (migration 110): o holerite é gerado das linhas
+    // gravadas e precisa saber que é pró-labore.
+    categoria,
     valor_horas_extras: arredondar(valorHoraExtra),
     valor_faltas: arredondar(valorFaltas),
     desconto_vt: arredondar(descontoVt),
@@ -338,6 +403,42 @@ export function calcularFolhaFuncionario(linha, competencia) {
     ir,
     liquido,
   };
+}
+
+// "5.000,00": valor com milhar, para mensagem de erro lida pelo contador.
+function formatarValorMensagem(valor) {
+  return Number(valor).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Motivo de um líquido negativo. Quando o adiantamento sozinho é o que passa do
+// líquido, a mensagem diz isso; senão, os descontos fixos já passam dos proventos.
+function motivoLiquidoNegativo(calculo) {
+  const adiantamento = Number(calculo.adiantamento);
+  const liquidoSemAdiantamento = arredondar(calculo.liquido + adiantamento);
+  if (adiantamento > 0 && liquidoSemAdiantamento >= 0) {
+    return `adiantamento de ${formatarValorMensagem(adiantamento)} maior que o líquido de ${formatarValorMensagem(liquidoSemAdiantamento)}`;
+  }
+  return `líquido negativo de ${formatarValorMensagem(calculo.liquido)}: os descontos passam dos proventos`;
+}
+
+// Calcula a folha de todas as linhas lidas da planilha (#744). Líquido negativo é
+// erro de linha no mesmo formato de lerLinhasPlanilha ({ linha, motivos }) e recusa
+// o processamento inteiro: se houver erro, `calculos` vem vazio (sem persistência
+// parcial). Líquido zero é aceito.
+export function calcularFolhaLinhas(linhas, competencia) {
+  const calculos = [];
+  const erros = [];
+
+  for (const linha of linhas) {
+    const calculo = calcularFolhaFuncionario(linha, competencia);
+    if (calculo.liquido < 0) {
+      erros.push({ linha: linha.linha ?? null, motivos: [motivoLiquidoNegativo(calculo)] });
+    } else {
+      calculos.push(calculo);
+    }
+  }
+
+  return erros.length > 0 ? { calculos: [], erros } : { calculos, erros };
 }
 
 const CAMPOS_NUMERICOS = [
@@ -414,6 +515,45 @@ function valorCelulaParaTextoCpf(valorBruto) {
   if (typeof valor === "number" && Number.isFinite(valor)) return String(Math.trunc(valor));
   if (typeof valor === "string") return valor.trim();
   return "";
+}
+
+const formatarNumeroMensagem = (numero) => String(numero).replace(".", ",");
+
+// Faixas de valor de uma linha já convertida (#744). Só confere o campo que passou
+// na checagem de formato (`numeroValido`), para não repetir motivo; faltas e horas
+// extras dependem de dias_trabalhados válido.
+function validarFaixasLinha(linha, numeroValido) {
+  const motivos = [];
+  const { dias_trabalhados: dias, faltas, horas_extras: horasExtras } = linha;
+
+  const diasValido = numeroValido.has("dias_trabalhados")
+    && Number.isInteger(dias) && dias >= 1 && dias <= DIAS_MES_COMERCIAL;
+  if (numeroValido.has("dias_trabalhados") && !diasValido) {
+    motivos.push(
+      `dias_trabalhados deve ser um número inteiro de 1 a ${DIAS_MES_COMERCIAL} (${DIAS_MES_COMERCIAL} = mês completo); recebido ${formatarNumeroMensagem(dias)}`,
+    );
+  }
+
+  if (diasValido && numeroValido.has("faltas") && faltas > dias) {
+    motivos.push(
+      `faltas (${formatarNumeroMensagem(faltas)}) maior que dias_trabalhados (${dias})`,
+    );
+  }
+
+  const limiteHorasExtras = dias * MAX_HORAS_EXTRAS_POR_DIA;
+  if (diasValido && numeroValido.has("horas_extras") && horasExtras > limiteHorasExtras) {
+    motivos.push(
+      `horas_extras (${formatarNumeroMensagem(horasExtras)}) acima do limite de ${limiteHorasExtras} para ${dias} dias trabalhados (até ${MAX_HORAS_EXTRAS_POR_DIA} h por dia, CLT art. 61)`,
+    );
+  }
+
+  if (numeroValido.has("num_dependentes") && !Number.isInteger(linha.num_dependentes)) {
+    motivos.push(
+      `num_dependentes deve ser um número inteiro; recebido ${formatarNumeroMensagem(linha.num_dependentes)}`,
+    );
+  }
+
+  return motivos;
 }
 
 // Lê as linhas de dado da planilha (a partir da linha 2) e valida cada campo.
@@ -499,19 +639,22 @@ export async function lerLinhasPlanilha(buffer) {
       linhaConvertida.cpf = cpfDigitos;
     }
 
+    const numeroValido = new Set();
     CAMPOS_NUMERICOS.forEach((campo) => {
       const numero = paraNumero(bruta[campo]);
       if (Number.isNaN(numero) || numero < 0) {
         errosDaLinha.push(`${campo} deve ser um número não-negativo`);
+      } else {
+        numeroValido.add(campo);
       }
       linhaConvertida[campo] = numero;
     });
 
-    if (!Number.isNaN(linhaConvertida.salario_bruto) && linhaConvertida.salario_bruto <= 0) {
+    if (numeroValido.has("salario_bruto") && linhaConvertida.salario_bruto <= 0) {
       errosDaLinha.push("salario_bruto deve ser maior que zero");
     }
 
-    linhaConvertida.num_dependentes = Math.round(linhaConvertida.num_dependentes) || 0;
+    errosDaLinha.push(...validarFaixasLinha(linhaConvertida, numeroValido));
 
     const vt = paraBooleano(bruta.vale_transporte);
     if (!vt.ok) {
@@ -570,6 +713,38 @@ export async function lerLinhasPlanilha(buffer) {
   return { linhas, erros };
 }
 
+// Validação de faixa nas células de dado do modelo (#744): o Excel avisa na hora da
+// digitação as mesmas regras que lerLinhasPlanilha confere no servidor. Não substitui
+// a validação do servidor (colar valores passa por cima da validação do Excel).
+function aplicarValidacoesFaixa(linha, indiceColuna) {
+  const celula = (chave) => linha.getCell(indiceColuna(chave));
+  const dias = celula("dias_trabalhados").address;
+  const validar = (chave, regra, titulo, erro) => {
+    celula(chave).dataValidation = {
+      allowBlank: true,
+      showErrorMessage: true,
+      errorTitle: titulo,
+      error: erro,
+      ...regra,
+    };
+  };
+
+  validar("salario_bruto", { type: "decimal", operator: "greaterThan", formulae: [0] },
+    "Salário", "Salário contratual do mês completo, maior que zero.");
+  validar("dias_trabalhados", { type: "whole", operator: "between", formulae: [1, DIAS_MES_COMERCIAL] },
+    "Dias trabalhados", `Inteiro de 1 a ${DIAS_MES_COMERCIAL} (${DIAS_MES_COMERCIAL} = mês completo).`);
+  validar("faltas", { type: "custom", formulae: [`AND(${celula("faltas").address}>=0,${celula("faltas").address}<=${dias})`] },
+    "Faltas", "Faltas de 0 até os dias trabalhados.");
+  validar("horas_extras", {
+    type: "custom",
+    formulae: [`AND(${celula("horas_extras").address}>=0,${celula("horas_extras").address}<=${MAX_HORAS_EXTRAS_POR_DIA}*${dias})`],
+  }, "Horas extras", `Até ${MAX_HORAS_EXTRAS_POR_DIA} h por dia trabalhado (CLT art. 61).`);
+  validar("adiantamento", { type: "decimal", operator: "greaterThanOrEqual", formulae: [0] },
+    "Adiantamento", "Adiantamento não pode ser negativo.");
+  validar("num_dependentes", { type: "whole", operator: "greaterThanOrEqual", formulae: [0] },
+    "Dependentes", "Número inteiro de dependentes, 0 ou mais.");
+}
+
 // Gera o .xlsx modelo: cabeçalho travado (estrutura/ordem das colunas protegida)
 // e células de dado destravadas, pra usuário preencher sem mexer nas colunas.
 export async function gerarTemplateFolha() {
@@ -585,11 +760,19 @@ export async function gerarTemplateFolha() {
     cell.protection = { locked: true };
   });
 
+  const indiceColuna = (chave) => COLUNAS_FOLHA.findIndex((c) => c.key === chave) + 1;
+  linhaCabecalho.getCell(indiceColuna("dias_trabalhados")).note =
+    `Dias trabalhados no mês, inteiro de 1 a ${DIAS_MES_COMERCIAL} (${DIAS_MES_COMERCIAL} = mês completo). ` +
+    "O salário do mês sai proporcional: salario_bruto × dias ÷ 30. " +
+    "Não desconte as faltas aqui: falta vai na coluna faltas.";
+
   for (let numeroLinha = 2; numeroLinha <= LINHAS_DE_DADOS + 1; numeroLinha++) {
     const linha = sheet.getRow(numeroLinha);
     colunasTemplate.forEach((_, indice) => {
       linha.getCell(indice + 1).protection = { locked: false };
     });
+
+    aplicarValidacoesFaixa(linha, indiceColuna);
 
     linha.getCell(colunasTemplate.length).dataValidation = {
       type: "list",
@@ -737,19 +920,26 @@ function fecharSegmentoTabelaVerbas(doc, x, yTopo, yFim, colunas) {
 // Linhas de verba (proventos/descontos) a partir dos campos já calculados em folha_calculos.
 // Códigos de verba são fictícios (não existe tabela de verbas real) — só servem pra imitar
 // o formato visual de um holerite de verdade. Linhas sem valor aplicável (ex: sem faltas,
-// sem adiantamento) são omitidas em vez de aparecer zeradas.
-function montarLinhasVerbas(calculo) {
+// sem adiantamento) são omitidas em vez de aparecer zeradas. HE e faltas entram pelo
+// valor CALCULADO, não pelo bruto da planilha: no pró-labore de sócio os brutos
+// ficam gravados, mas o cálculo os ignora (#741).
+//
+// `competencia` ("YYYY-MM" ou "YYYY-MM-DD") só é usada no sócio, para limitar a
+// referência do INSS ao teto da época.
+export function montarLinhasVerbas(calculo, competencia) {
+  const socio = calculo.categoria === "socio";
   const linhas = [
     {
       verba: "0001",
-      descricao: "SALARIO BASE",
+      descricao: socio ? "PRO-LABORE" : "SALARIO BASE",
+      // Referência = dias; provento = salário do mês (#744): 15 dias → metade.
       referencia: String(calculo.dias_trabalhados),
-      proventos: formatarDecimalBR(calculo.salario_bruto),
+      proventos: formatarDecimalBR(calcularSalarioMes(calculo.salario_bruto, calculo.dias_trabalhados)),
       descontos: "",
     },
   ];
 
-  if (Number(calculo.horas_extras) > 0) {
+  if (Number(calculo.valor_horas_extras) > 0) {
     linhas.push({
       verba: "0002",
       descricao: "HORAS EXTRAS 50%",
@@ -759,7 +949,7 @@ function montarLinhasVerbas(calculo) {
     });
   }
 
-  if (Number(calculo.faltas) > 0) {
+  if (Number(calculo.valor_faltas) > 0) {
     linhas.push({
       verba: "0010",
       descricao: "FALTAS",
@@ -769,13 +959,24 @@ function montarLinhasVerbas(calculo) {
     });
   }
 
-  linhas.push({
-    verba: "0011",
-    descricao: "INSS",
-    referencia: formatarDecimalBR(calculo.base_calculo),
-    proventos: "",
-    descontos: formatarDecimalBR(calculo.inss),
-  });
+  linhas.push(socio
+    ? {
+      verba: "0011",
+      descricao: "INSS CONTRIB. INDIVIDUAL 11%",
+      referencia: formatarDecimalBR(Math.min(
+        Number(calculo.base_calculo),
+        tetoSalarialINSS(resolverTabelaFolha(competencia).inss),
+      )),
+      proventos: "",
+      descontos: formatarDecimalBR(calculo.inss),
+    }
+    : {
+      verba: "0011",
+      descricao: "INSS",
+      referencia: formatarDecimalBR(calculo.base_calculo),
+      proventos: "",
+      descontos: formatarDecimalBR(calculo.inss),
+    });
 
   linhas.push({
     verba: "0012",
@@ -814,8 +1015,11 @@ function montarLinhasVerbas(calculo) {
 // persistida em folha_calculos; só cai para "-" quando não há imposto retido
 // (IRRF genuinamente 0) ou quando a base não foi persistida — caso de linhas
 // anteriores à migration 89.sql, onde exibir "0,00" seria um número falso.
+// SALAR. BASE mostra o salário contratual; o total de proventos usa o salário do
+// mês, o mesmo da linha SALARIO BASE da tabela de verbas (#744).
 export function montarCelulasBases(calculo) {
-  const totalProventos = Number(calculo.salario_bruto) + Number(calculo.valor_horas_extras);
+  const totalProventos =
+    calcularSalarioMes(calculo.salario_bruto, calculo.dias_trabalhados) + Number(calculo.valor_horas_extras);
   const totalDescontos =
     Number(calculo.inss) + Number(calculo.ir) + Number(calculo.valor_faltas) +
     Number(calculo.adiantamento) + Number(calculo.desconto_vt);
@@ -823,7 +1027,10 @@ export function montarCelulasBases(calculo) {
   const baseIrDisponivel = calculo.base_ir != null && Number.isFinite(Number(calculo.base_ir));
 
   return [
-    { rotulo: "SALAR. BASE", texto: formatarDecimalBR(calculo.salario_bruto) },
+    {
+      rotulo: calculo.categoria === "socio" ? "PRÓ-LABORE" : "SALAR. BASE",
+      texto: formatarDecimalBR(calculo.salario_bruto),
+    },
     { rotulo: "SAL. CONTR.", texto: formatarDecimalBR(calculo.base_calculo) },
     { rotulo: "BASE FGTS", texto: formatarDecimalBR(Number(calculo.fgts) > 0 ? calculo.base_calculo : 0) },
     { rotulo: "FGTS MES", texto: formatarDecimalBR(calculo.fgts) },
@@ -845,7 +1052,9 @@ const COLUNAS_TABELA_VERBAS = (larguraUtil) => [
 // Holerite individual — 1 por funcionário, a partir da linha já calculada em folha_calculos.
 // Layout imita o padrão de holerite brasileiro (caixa com borda, grid de dados, tabela de
 // verbas, linha de bases/totais) — sem logo/identidade de empresa, só texto e bordas.
-export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
+// `competencia` (mes_referencia do processamento) só é exigida no holerite de sócio
+// (ver montarLinhasVerbas).
+export function gerarHoleritePDF(calculo, mesReferenciaFormatado, competencia) {
   return documentoParaBuffer((doc) => {
     const x0 = doc.page.margins.left;
     const larguraUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -886,7 +1095,7 @@ export function gerarHoleritePDF(calculo, mesReferenciaFormatado) {
     desenharHeaderTabelaVerbas(doc, x0, y, colunasVerba);
     y += alturaHeaderTabela;
 
-    montarLinhasVerbas(calculo).forEach((linha) => {
+    montarLinhasVerbas(calculo, competencia).forEach((linha) => {
       if (y + alturaLinhaVerba > limiteInferior) {
         fecharSegmentoTabelaVerbas(doc, x0, yTabelaTopo, y, colunasVerba);
         doc.addPage();

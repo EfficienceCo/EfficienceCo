@@ -6,6 +6,7 @@ import {
   resolverArquivoDownload,
   calcularTotaisProcessamento,
   sanitizarNomeArquivo,
+  sufixoEmpresa,
 } from "../src/services/folha-status.helpers.js";
 import { PERFIS } from "../src/config/perfis.js";
 
@@ -131,16 +132,21 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
           linhas: [{ empresa: "Padaria", funcionario: "João", cpf: "111.111.111-11" }],
           erros: [],
         }),
-        calcularFolhaFuncionario: (linha) => ({
-          empresa: linha.empresa,
-          funcionario: linha.funcionario,
-          cpf: linha.cpf,
-          salario_bruto: 3000,
-          inss: 300,
-          fgts: 240,
-          ir: 100,
-          liquido: 2600,
+        calcularFolhaLinhas: (linhas) => ({
+          calculos: linhas.map((linha) => ({
+            empresa: linha.empresa,
+            funcionario: linha.funcionario,
+            cpf: linha.cpf,
+            salario_bruto: 3000,
+            inss: 300,
+            fgts: 240,
+            ir: 100,
+            liquido: 2600,
+          })),
+          erros: [],
         }),
+        resolverTabelaFolha: () => ({}),
+        TabelaFolhaAusenteError: class TabelaFolhaAusenteError extends Error {},
         gerarHoleritePDF: async () => Buffer.from("holerite"),
         gerarRelatorioFechamentoPDF: async () => Buffer.from("relatorio"),
         calcularTotaisEmpresa: () => ({
@@ -162,6 +168,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
         resolverArquivoDownload,
         calcularTotaisProcessamento,
         sanitizarNomeArquivo,
+        sufixoEmpresa,
         registrarEventoConclusaoFolha: async () => ({ registrado: true, descricao: "ok" }),
       },
     });
@@ -230,14 +237,15 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
 
     await dispararPipelineAutomatico(PROC_ID);
 
+    // FOLHA-8: cálculo concluído e saída com 200 avançam o checklist, nessa ordem.
+    assert.deepEqual(marcosChamados, [[PROC_ID, "calculada"], [PROC_ID, "holerites"]]);
+
     assert.equal(erroLog.mock.callCount(), 0, "não deveria logar erro no caminho feliz");
     assert.equal(mockDb.restantes(), 0, "todas as etapas do pipeline (calc + saída) devem ter sido consumidas");
 
     const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
     assert.equal(ultimoUpdate.saida_status, "ok");
     assert.equal(ultimoUpdate.motivo_erro, null);
-    // FOLHA-8: cálculo concluído e saída com 200 avançam o checklist, nessa ordem.
-    assert.deepEqual(marcosChamados, [[PROC_ID, "calculada"], [PROC_ID, "holerites"]]);
   });
 
   it("cálculo falha → geração de saída não roda e falha fica registrada", async () => {

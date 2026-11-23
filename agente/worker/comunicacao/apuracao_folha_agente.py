@@ -33,7 +33,8 @@ def buscar_folha_pendente():
 def reportar_resultado_folha(apuracao_id, payload):
     """
     POST /apuracoes/{id}/resultado-folha
-    payload: { temDozeMeses, mesesEncontrados, totalMesesEncontrados }
+    payload: { temDozeMeses, mesesEncontrados, totalMesesEncontrados, falhaUpload,
+               mesesComFalha }  (mesesComFalha: meses com arquivo não enviado, DAS-3)
     Retorna o JSON da resposta. Levanta ApiError/RuntimeError em falha HTTP.
     """
     response = client.post(
