@@ -46,9 +46,9 @@ export async function iniciarApiTeste() {
         signal: AbortSignal.timeout(10_000),
       });
       const tipo = resposta.headers.get("content-type") ?? "";
-      // PDF volta como Buffer (como texto os bytes se corromperiam); o resto, JSON ou texto.
+      // PDF e xlsx voltam como Buffer (como texto os bytes se corromperiam); o resto, JSON ou texto.
       const corpoLido = tipo.includes("application/json") ? await resposta.json()
-        : tipo.includes("application/pdf") ? Buffer.from(await resposta.arrayBuffer())
+        : (tipo.includes("application/pdf") || tipo.includes("spreadsheetml")) ? Buffer.from(await resposta.arrayBuffer())
           : await resposta.text();
       return { status: resposta.status, headers: resposta.headers, corpo: corpoLido };
     },
