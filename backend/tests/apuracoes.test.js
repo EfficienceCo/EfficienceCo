@@ -9,6 +9,7 @@ import {
   montarBasesCalculo,
   listarApuracoes,
   excluirApuracao,
+  editarApuracao,
 } from "../src/controllers/apuracoes.controller.js";
 
 const CLIENTE_A = "11111111-1111-1111-1111-111111111111";
@@ -445,5 +446,23 @@ describe("Unidade: falha do adaptador e custo de consultas (não prova banco/iso
     await excluirApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
     assert.equal(res.statusCode, 500);
+  });
+
+  // DAS-3: a folha viva do PATCH de edição é lida antes de gravar. Uma falha
+  // nessa leitura responde 500 sem a edição salva; se a gravação viesse antes,
+  // a nova tentativa do contador duplicaria o historico_edicoes.
+  it("500 sem gravar a edição quando a leitura da folha falha no PATCH", async () => {
+    const linha = { id: APURACAO_ID, cliente_id: CLIENTE_A, status: "rascunho", periodo_mes: 10, periodo_ano: 2026, fator_r: 0.5, folha12: 60000, valor_editado: null, valor_calculado: 600, historico_edicoes: [], atualizado_em: "2026-11-01T00:00:00Z", dados_folha: null };
+    queue("apuracoes", "maybeSingle", { data: linha, error: null });
+    queue("clientes", "maybeSingle", { data: { data_inicio_atividade: null }, error: null });
+    queue("processamentos_folha", "await", { data: null, error: { message: "timeout" } });
+    // Resposta do UPDATE, caso a edição fosse gravada antes da leitura.
+    queue("apuracoes", "maybeSingle", { data: { ...linha, valor_editado: 500 }, error: null });
+
+    const res = criarResposta();
+    await editarApuracao(reqAdmin({ params: { id: APURACAO_ID }, body: { valor_editado: 500, motivo: "Conferência" } }), res);
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(operacoes.filter((op) => op.tabela === "apuracoes" && op.metodo === "update"), []);
   });
 });

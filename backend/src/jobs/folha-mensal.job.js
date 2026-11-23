@@ -1,10 +1,14 @@
 import cron from "node-cron";
 import supabase from "../config/database.js";
 import { criarProcessoComEtapas } from "../services/processos.service.js";
+import { mesReferenciaAtual } from "../services/folha-checklist.service.js";
 
-async function gerarFolhaMensal() {
-  const agora = new Date();
-  const mesReferencia = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-01`;
+// 23505: o índice único da migration 111 (cliente + mês da folha). Um upload do mesmo
+// cliente e mês criou o processo entre o SELECT abaixo e o INSERT (FOLHA-8, #748).
+const CODIGO_VIOLACAO_UNICA = "23505";
+
+export async function gerarFolhaMensal(agora = new Date()) {
+  const mesReferencia = mesReferenciaAtual(agora);
 
   console.log(`[folha-mensal.job] Iniciando geração para mês ${mesReferencia}`);
 
@@ -35,10 +39,13 @@ async function gerarFolhaMensal() {
 
   let criados = 0;
   let erros = 0;
+  let jaExistiam = clientes.length - clientesSemProcesso.length;
 
   for (const cliente of clientesSemProcesso) {
     const resultado = await criarProcessoComEtapas(cliente.id, "folha_pagamento", { mes_referencia: mesReferencia });
-    if (resultado.erro) {
+    if (resultado.codigo === CODIGO_VIOLACAO_UNICA) {
+      jaExistiam++;
+    } else if (resultado.erro) {
       console.error(`[folha-mensal.job] Erro ao criar processo para cliente ${cliente.nome}:`, resultado.erro);
       erros++;
     } else {
@@ -47,8 +54,10 @@ async function gerarFolhaMensal() {
   }
 
   console.log(
-    `[folha-mensal.job] Concluído — ${criados} processo(s) criado(s), ${erros} erro(s), ${clientesComProcesso.size} já existiam.`
+    `[folha-mensal.job] Concluído — ${criados} processo(s) criado(s), ${erros} erro(s), ${jaExistiam} já existiam.`
   );
+
+  return { criados, erros, jaExistiam };
 }
 
 export function iniciarJobFolhaMensal() {

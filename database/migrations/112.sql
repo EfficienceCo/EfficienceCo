@@ -1,6 +1,6 @@
 -- FOLHA-3 (#743): o status só vira 'concluido' depois dos PDFs prontos.
 -- 'calculado' = cálculo salvo em folha_calculos, arquivos de saída ainda pendentes ou com falha.
--- A FS12 da Apuração lê 'calculado' e 'concluido' (só precisa do cálculo); o download só libera 'concluido'.
+-- A FS12 da Apuração e o download usam apenas 'concluido'.
 -- 109 é do PR da #742, 110 dos PRs #741/#744 e 111 do #748; esta é a 112.
 -- Aplicar ANTES de publicar o backend que grava 'calculado'.
 ALTER TABLE processamentos_folha DROP CONSTRAINT IF EXISTS processamentos_folha_status_check;

@@ -4,7 +4,9 @@ import {
   gerarTemplateFolha,
   validarColunasPlanilha,
   lerLinhasPlanilha,
-  calcularFolhaFuncionario,
+  calcularFolhaLinhas,
+  resolverTabelaFolha,
+  TabelaFolhaAusenteError,
   gerarHoleritePDF,
   gerarRelatorioFechamentoPDF,
   calcularTotaisEmpresa,
@@ -18,9 +20,10 @@ import {
   totalArquivosEsperados,
   registrarEventoConclusaoFolha,
   sanitizarNomeArquivo,
+  sufixoEmpresa,
 } from "../services/folha-status.service.js";
+import { avancarChecklistFolha, MARCOS_FOLHA } from "../services/folha-checklist.service.js";
 import { marcarVigentes } from "../services/folha-listagem.service.js";
-import { validarTokenLicenca } from "../services/licenca.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { PERFIS } from "../config/perfis.js";
 import { atualizarApuracoesAposFolha } from "./apuracoes.controller.js";
@@ -68,6 +71,17 @@ export async function baixarTemplate(req, res) {
   }
 }
 
+// Mensagem legível quando a competência não tem tabela fiscal cadastrada; null quando tem.
+function verificarTabelaCompetencia(mesReferencia) {
+  try {
+    resolverTabelaFolha(mesReferencia);
+    return null;
+  } catch (err) {
+    if (err instanceof TabelaFolhaAusenteError) return err.message;
+    throw err;
+  }
+}
+
 async function processarUploadFolha(req, res, clienteId, { origem, enviadoPor }) {
   if (!req.file) {
     return res.status(400).json({ erro: "Planilha é obrigatória" });
@@ -86,6 +100,14 @@ async function processarUploadFolha(req, res, clienteId, { origem, enviadoPor })
   const mesReferencia = `${mesReferenciaBruto.slice(0, 7)}-01`;
 
   try {
+    // Competência sem tabela INSS/IRRF é recusada aqui, antes do storage e do insert
+    // (#744): sem tabela não há folha possível, e o 400 faz o agente local mover o
+    // arquivo para rejeitados com o aviso do Windows.
+    const erroTabela = verificarTabelaCompetencia(mesReferencia);
+    if (erroTabela) {
+      return res.status(400).json({ erro: erroTabela });
+    }
+
     const { valido, faltando } = await validarColunasPlanilha(req.file.buffer);
 
     if (!valido) {
@@ -136,6 +158,16 @@ async function processarUploadFolha(req, res, clienteId, { origem, enviadoPor })
       return res.status(500).json({ erro: "Erro ao registrar processamento da folha" });
     }
 
+    // DAS-3: a folha nova vale para a apuração desde que é gravada. Enquanto
+    // não conclui (pendente, processando ou erro), o DAS do mês não fica
+    // "verificado", nem se o pipeline não chegar a pegar a linha.
+    await sincronizarApuracoes({ cliente_id: clienteId, mes_referencia: mesReferencia });
+
+    // FOLHA-8 (#748): upload aceito conclui "Planilha da folha recebida" e cria o processo
+    // do mês se faltar. Antes do pipeline, para o processo já existir nos marcos seguintes.
+    // Nunca lança; falha vai para o log e o próximo marco recupera (catch-up).
+    await avancarChecklistFolha(data.id, MARCOS_FOLHA.RECEBIDA);
+
     // BK-FOLHA-AUTO-PIPELINE: dispara cálculo + geração de saída em background — não
     // espera o pipeline terminar pra responder o upload (a tela de status já faz
     // polling a cada 5s). Erros do pipeline em si ficam registrados no próprio
@@ -165,14 +197,8 @@ export async function uploadFolha(req, res) {
 
 // Upload via agente local — x-licenca-token.
 export async function uploadFolhaAgente(req, res) {
-  const token = req.headers["x-licenca-token"];
-  const licenca = await validarTokenLicenca(token);
-
-  if (!licenca) {
-    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
-  }
-
-  return processarUploadFolha(req, res, licenca.cliente_id, { origem: "agente", enviadoPor: null });
+  // Token já validado por exigirLicencaAgente (antes do multer).
+  return processarUploadFolha(req, res, req.licenca.cliente_id, { origem: "agente", enviadoPor: null });
 }
 
 // Lê a planilha salva em BK-FOLHA-UPLOAD, calcula INSS/FGTS/IR/líquido por funcionário
@@ -240,9 +266,18 @@ export async function calcularFolha(req, res) {
 
     // mes_referencia do processamento seleciona a tabela fiscal (INSS/IRRF) da
     // competência — recálculo de folha antiga usa a tabela da época (#437).
-    const calculos = linhas.map((linha) => ({
+    const resultado = calcularFolhaLinhas(linhas, processamento.mes_referencia);
+
+    // Líquido negativo (#744): o processamento inteiro é recusado, nenhuma linha gravada.
+    if (resultado.erros.length > 0) {
+      console.error("[folha.controller] Linhas com líquido negativo:", JSON.stringify(resultado.erros));
+      await marcarErro(processamentoId, `Planilha com ${resultado.erros.length} linha(s) inválida(s)`);
+      return res.status(422).json({ erro: "Planilha com linhas inválidas", detalhes: resultado.erros });
+    }
+
+    const calculos = resultado.calculos.map((calculo) => ({
       processamento_id: processamentoId,
-      ...calcularFolhaFuncionario(linha, processamento.mes_referencia),
+      ...calculo,
     }));
 
     const { error: erroInsert } = await supabase.from("folha_calculos").insert(calculos);
@@ -253,9 +288,15 @@ export async function calcularFolha(req, res) {
       return res.status(500).json({ erro: "Erro ao salvar cálculos da folha" });
     }
 
-    // "calculado", não "concluido": os PDFs ainda vão ser gerados. Quem vira concluido é
-    // finalizarGeracaoSaida, quando a geração de saída termina sem falha (#743).
-    await supabase.from("processamentos_folha").update({ status: "calculado" }).eq("id", processamentoId);
+    const { error: erroConcluir } = await supabase
+      .from("processamentos_folha")
+      .update({ status: "calculado" })
+      .eq("id", processamentoId);
+
+    // O checklist registra a conclusão do cálculo após gravar o status. Os PDFs ainda estão pendentes.
+    if (!erroConcluir) {
+      await avancarChecklistFolha(processamentoId, MARCOS_FOLHA.CALCULADA);
+    }
 
     const totais = calculos.reduce(
       (acc, calculo) => ({
@@ -274,6 +315,12 @@ export async function calcularFolha(req, res) {
       totais,
     });
   } catch (err) {
+    // Processamento que já estava pendente com competência sem tabela (gravado antes
+    // da recusa no upload, #744): mensagem legível no lugar do erro genérico.
+    if (err instanceof TabelaFolhaAusenteError) {
+      await marcarErro(processamentoId, err.message);
+      return res.status(422).json({ erro: err.message });
+    }
     console.error("[folha.controller] Erro inesperado ao calcular folha:", err.message);
     await marcarErro(processamentoId, "Erro inesperado ao calcular folha");
     return res.status(500).json({ erro: "Erro ao calcular folha" });
@@ -347,11 +394,13 @@ async function gerarSaidaFolhaCore(req, res) {
     for (const calculo of calculos) {
       if (calculo.holerite_path) continue;
 
-      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado);
+      const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado, processamento.mes_referencia);
       // id da linha de folha_calculos no nome (não o CPF): dois funcionários com o mesmo
-      // nome na mesma empresa (comum: "Maria Silva") colidiriam no path e o segundo upload
-      // falharia (upsert:false). O id garante unicidade sem expor o CPF no storage,
-      // na URL de download ou em log HTTP (LGPD / BUG-FOLHA-07).
+      // nome na mesma empresa (comum: "Maria Silva") colidiriam no path. O id garante
+      // unicidade sem expor o CPF no storage, na URL de download ou em log HTTP
+      // (LGPD / BUG-FOLHA-07). Com o caminho único por cálculo e o PDF saindo do mesmo
+      // cálculo, upsert:true torna o retry idempotente: se o upload deu certo mas o UPDATE
+      // de holerite_path se perdeu, regravar o mesmo arquivo não pode falhar para sempre.
       const nomeArquivo = `holerite_${sanitizarNomeArquivo(calculo.empresa)}_${sanitizarNomeArquivo(calculo.funcionario)}_${calculo.id}_${mesReferenciaArquivo}.pdf`;
       // processamento_id no caminho evita colisão entre processamentos diferentes do
       // mesmo cliente/mês (ex: planilha reenviada e recalculada após correção).
@@ -359,11 +408,13 @@ async function gerarSaidaFolhaCore(req, res) {
 
       const { error: erroUpload } = await supabase.storage
         .from("folhas-pagamento")
-        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: false });
+        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: true });
 
       if (erroUpload) {
         console.error("[folha.controller] Erro ao salvar holerite:", erroUpload.message);
-        return res.status(500).json({ erro: `Erro ao gerar holerite de ${calculo.funcionario}` });
+        return res.status(500).json({
+          erro: `Não foi possível gerar o holerite de ${calculo.funcionario}. Clique em Tentar novamente; se continuar, fale com o suporte.`,
+        });
       }
 
       const { error: erroUpdate } = await supabase
@@ -373,7 +424,9 @@ async function gerarSaidaFolhaCore(req, res) {
 
       if (erroUpdate) {
         console.error("[folha.controller] Erro ao registrar holerite gerado:", erroUpdate.message);
-        return res.status(500).json({ erro: "Erro ao registrar holerite gerado" });
+        return res.status(500).json({
+          erro: `Não foi possível registrar o holerite de ${calculo.funcionario}. Clique em Tentar novamente; se continuar, fale com o suporte.`,
+        });
       }
 
       holeritesGerados++;
@@ -410,16 +463,21 @@ async function gerarSaidaFolhaCore(req, res) {
         totais,
       });
 
-      const nomeArquivo = `relatorio_fechamento_${sanitizarNomeArquivo(empresa)}_${mesReferenciaArquivo}.pdf`;
+      // Hash do nome bruto no caminho: "Padaria Pão Quente" e "Padaria Pao Quente"
+      // sanitizam igual e, com upsert:true, uma sobrescreveria o PDF da outra. O nome que o
+      // contador vê no download não tem o hash (nomeExibicaoRelatorio).
+      const nomeArquivo = `relatorio_fechamento_${sanitizarNomeArquivo(empresa)}_${sufixoEmpresa(empresa)}_${mesReferenciaArquivo}.pdf`;
       const caminhoStorage = `clientes/${processamento.cliente_id}/${mesReferenciaArquivo}/${processamentoId}/relatorios/${nomeArquivo}`;
 
       const { error: erroUpload } = await supabase.storage
         .from("folhas-pagamento")
-        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: false });
+        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: true });
 
       if (erroUpload) {
         console.error("[folha.controller] Erro ao salvar relatório:", erroUpload.message);
-        return res.status(500).json({ erro: `Erro ao gerar relatório de ${empresa}` });
+        return res.status(500).json({
+          erro: `Não foi possível gerar o relatório de ${empresa}. Clique em Tentar novamente; se continuar, fale com o suporte.`,
+        });
       }
 
       const { error: erroInsert } = await supabase.from("folha_relatorios").insert({
@@ -432,12 +490,16 @@ async function gerarSaidaFolhaCore(req, res) {
         arquivo_path: caminhoStorage,
       });
 
-      if (erroInsert) {
+      // 23505 (UNIQUE processamento_id + empresa): outra chamada de gerar-saida já registrou
+      // este relatório (o PDF é o mesmo, upsert). Não é erro e não conta como gerado aqui.
+      if (erroInsert && erroInsert.code !== "23505") {
         console.error("[folha.controller] Erro ao registrar relatório gerado:", erroInsert.message);
-        return res.status(500).json({ erro: "Erro ao registrar relatório gerado" });
+        return res.status(500).json({
+          erro: `Não foi possível registrar o relatório de ${empresa}. Clique em Tentar novamente; se continuar, fale com o suporte.`,
+        });
       }
 
-      relatoriosGerados++;
+      if (!erroInsert) relatoriosGerados++;
     }
 
     const empresas = Array.from(calculosPorEmpresa.keys());
@@ -492,14 +554,10 @@ async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
       return false;
     }
 
-    // Se o agente reportou antes da conclusão, a FS12 só pode ser atualizada
-    // depois de gravar a geração dos arquivos. O processamento já foi autorizado.
-    try {
-      await contextoDb.run(servicoDb, () =>
-        atualizarApuracoesAposFolha(processamento.cliente_id, processamento.mes_referencia));
-    } catch (err) {
-      console.error("[folha.controller] Erro ao atualizar apuração após folha:", err.message);
-    }
+    // FOLHA-8 (#748): "Holerites e relatório de fechamento gerados". Cobre o pipeline
+    // automático e o retry POST /:id/gerar-saida, que passam os dois por aqui.
+    await sincronizarApuracoes(processamento);
+    await avancarChecklistFolha(processamentoId, MARCOS_FOLHA.HOLERITES);
     return true;
   }
 
@@ -649,6 +707,7 @@ export async function listarProcessamentosFolha(req, res) {
     .select("id, mes_referencia, status, saida_status, origem, enviado_por, criado_em")
     .eq("cliente_id", clienteId)
     .order("criado_em", { ascending: false })
+    .order("id")
     .limit(200);
   if (mesBruto) {
     query = query.eq("mes_referencia", `${mesBruto.slice(0, 7)}-01`);
@@ -727,7 +786,9 @@ export async function consultarStatusFolha(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar arquivos do processamento" });
   }
 
-  const arquivos = montarListaArquivos(calculos || [], relatorios || []);
+  const arquivos = montarListaArquivos(calculos || [], relatorios || [], {
+    mesReferencia: processamento.mes_referencia,
+  });
   const totais = calcularTotaisProcessamento(calculos || []);
 
   return res.status(200).json({
@@ -754,7 +815,7 @@ export async function baixarArquivoFolha(req, res) {
 
   let queryBusca = supabase
     .from("processamentos_folha")
-    .select("id, cliente_id, status")
+    .select("id, cliente_id, status, mes_referencia")
     .eq("id", processamentoId);
   queryBusca = aplicarIsolamentoCliente(queryBusca, req);
 
@@ -788,7 +849,7 @@ export async function baixarArquivoFolha(req, res) {
 
   const { data: relatorios, error: erroRelatorios } = await supabase
     .from("folha_relatorios")
-    .select("id, arquivo_path")
+    .select("id, empresa, arquivo_path")
     .eq("processamento_id", processamentoId);
 
   if (erroRelatorios) {
@@ -796,7 +857,9 @@ export async function baixarArquivoFolha(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar arquivo" });
   }
 
-  const arquivos = montarListaArquivos(calculos || [], relatorios || []);
+  const arquivos = montarListaArquivos(calculos || [], relatorios || [], {
+    mesReferencia: processamento.mes_referencia,
+  });
   const arquivoAlvo = resolverArquivoDownload(arquivoId, arquivos);
 
   if (!arquivoAlvo) {
@@ -837,5 +900,20 @@ async function marcarErro(processamentoId, motivo) {
 
   if (error) {
     console.error("[folha.controller] Falha ao marcar processamento como erro:", error.message);
+  }
+}
+
+// Reflete o estado da folha (recebida ou concluída) nas apurações
+// em rascunho do cliente (DAS-3). Somente esta reconciliação interna usa a
+// identidade do sistema: o processamento e seu cliente já foram autorizados
+// com o JWT ou a licença da rota.
+async function sincronizarApuracoes(processamento) {
+  try {
+    await contextoDb.run(servicoDb, () =>
+      atualizarApuracoesAposFolha(processamento.cliente_id, processamento.mes_referencia));
+  } catch (err) {
+    // Uma falha na apuração não muda o resultado da folha nem duplica
+    // salários num retry; a aprovação confere a folha viva de novo.
+    console.error("[folha.controller] Erro ao atualizar apuração após folha:", err.message);
   }
 }
