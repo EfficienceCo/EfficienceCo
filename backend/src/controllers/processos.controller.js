@@ -5,9 +5,16 @@ import { PERFIS } from "../config/perfis.js";
 import { normalizarCpf, cpfValido } from "../utils/comum.util.js";
 import { ehUuidV4 } from "../utils/uuid.util.js";
 import {
+  concluirProcessoSeTodasEtapasConcluidas,
   criarProcessoComEtapas,
   ETAPAS_PADRAO,
 } from "../services/processos.service.js";
+import {
+  garantirProcessoFolha,
+  mesReferenciaAtual,
+} from "../services/folha-checklist.service.js";
+
+const REGEX_MES_REFERENCIA = /^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/;
 import { caminhoWindowsAbsolutoValido } from "../utils/caminho-windows.util.js";
 
 const ACOES_AUTOMATIZADAS = ["gerar_contrato_social", "criar_pastas"];
@@ -198,11 +205,45 @@ export async function criarProcesso(req, res) {
     return _criarAberturaEmpresa(req, res, clienteId);
   }
 
+  if (tipo === "folha_pagamento") {
+    return _criarFolhaPagamento(req, res, clienteId);
+  }
+
   const resultado = await criarProcessoComEtapas(clienteId, tipo, { nome_empresa, pasta_base });
 
   if (resultado.erro) {
     console.error("[processos.controller] Erro ao criar processo:", resultado.erro);
     return res.status(500).json({ erro: "Erro ao criar processo" });
+  }
+
+  return res.status(201).json({ ...resultado.processo, etapas: resultado.etapas });
+}
+
+// FOLHA-8 (#748): folha sem mês nunca fecharia (as 3 etapas automáticas só avançam pelo
+// pipeline do mesmo cliente + mês). Passa pelo mesmo find-or-create do upload e do job;
+// um processo por cliente e mês (índice único da migration 111).
+async function _criarFolhaPagamento(req, res, clienteId) {
+  const mesBruto = req.body.mes_referencia;
+  let mesReferencia = mesReferenciaAtual();
+
+  if (mesBruto !== undefined && mesBruto !== null && mesBruto !== "") {
+    const mesTexto = typeof mesBruto === "string" ? mesBruto.trim() : "";
+    if (!REGEX_MES_REFERENCIA.test(mesTexto)) {
+      return res.status(400).json({ erro: "mes_referencia deve estar no formato YYYY-MM" });
+    }
+    mesReferencia = `${mesTexto.slice(0, 7)}-01`;
+  }
+
+  const resultado = await garantirProcessoFolha(clienteId, mesReferencia);
+
+  if (resultado.erro) {
+    console.error("[processos.controller] Erro ao criar folha_pagamento:", resultado.erro);
+    return res.status(500).json({ erro: "Erro ao criar processo" });
+  }
+
+  if (!resultado.criado) {
+    const [ano, mes] = mesReferencia.split("-");
+    return res.status(409).json({ erro: `Já existe o processo da folha de ${mes}/${ano}` });
   }
 
   return res.status(201).json({ ...resultado.processo, etapas: resultado.etapas });
@@ -333,19 +374,13 @@ async function _concluirEtapa(processoId, etapaId, clienteId) {
     return { status: 409, body: { erro: "Etapa foi alterada por outra solicitação" } };
   }
 
-  const { data: todasEtapas, error: erroTodasEtapas } = await supabase
-    .from("etapas")
-    .select("concluida")
-    .eq("processo_id", processoId);
+  const fechamento = await concluirProcessoSeTodasEtapasConcluidas(processoId);
+  if (fechamento.erro) {
+    console.error("[processos.controller] Erro ao concluir processo:", fechamento.erro);
+  }
 
-  if (!erroTodasEtapas && todasEtapas.every((e) => e.concluida)) {
-    const { data: processoFinalizado } = await supabase
-      .from("processos")
-      .update({ status: "concluido" })
-      .eq("id", processoId)
-      .select("tipo, nome_empresa, pasta_base")
-      .single();
-
+  if (fechamento.todasConcluidas) {
+    const processoFinalizado = fechamento.processo;
     return {
       status: 200,
       body: {
@@ -830,29 +865,9 @@ export async function concluirExecucaoEtapaAgente(req, res) {
       }
     }
 
-    const { data: todasEtapas, error: erroTodasEtapas } = await supabase
-      .from("etapas")
-      .select("concluida")
-      .eq("processo_id", etapa.processo_id);
-
-    if (erroTodasEtapas) {
-      console.error(
-        "[processos.controller] Erro ao verificar conclusão do processo:",
-        erroTodasEtapas.message,
-      );
-    } else if (todasEtapas.length > 0 && todasEtapas.every((e) => e.concluida)) {
-      const { error: erroProcesso } = await supabase
-        .from("processos")
-        .update({ status: "concluido" })
-        .eq("id", etapa.processo_id)
-        .eq("status", "em_andamento");
-
-      if (erroProcesso) {
-        console.error(
-          "[processos.controller] Erro ao concluir processo:",
-          erroProcesso.message,
-        );
-      }
+    const fechamento = await concluirProcessoSeTodasEtapasConcluidas(etapa.processo_id);
+    if (fechamento.erro) {
+      console.error("[processos.controller] Erro ao concluir processo:", fechamento.erro);
     }
 
     return res.status(200).json(etapaAtualizada);

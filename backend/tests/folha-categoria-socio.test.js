@@ -80,9 +80,10 @@ describe("calcularFolhaFuncionario — pró-labore de sócio", () => {
     assert.equal(calcularFolhaFuncionario({ ...LINHA_BASE, salario_bruto: 5000 }, "2026-08").fgts, 400);
   });
 
-  it("não devolve categoria (folha_calculos não tem a coluna — o insert não pode quebrar)", () => {
-    const calculo = calcularFolhaFuncionario({ ...LINHA_BASE, categoria: "socio" }, "2026-08");
-    assert.equal("categoria" in calculo, false);
+  it("devolve a categoria, que vai para folha_calculos (migration 110, #741)", () => {
+    assert.equal(calcularFolhaFuncionario({ ...LINHA_BASE, categoria: "socio" }, "2026-08").categoria, "socio");
+    assert.equal(calcularFolhaFuncionario({ ...LINHA_BASE, categoria: "empregado" }, "2026-08").categoria, "empregado");
+    assert.equal(calcularFolhaFuncionario({ ...LINHA_BASE }, "2026-08").categoria, "empregado");
   });
 
   it("holerite do sócio mostra BASE FGTS 0,00", () => {

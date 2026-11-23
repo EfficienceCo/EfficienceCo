@@ -6,6 +6,7 @@ import {
   resolverArquivoDownload,
   calcularTotaisProcessamento,
   sanitizarNomeArquivo,
+  sufixoEmpresa,
 } from "../src/services/folha-status.helpers.js";
 import { PERFIS } from "../src/config/perfis.js";
 
@@ -118,6 +119,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
   let dispararPipelineAutomatico;
   let gerarSaidaFolha;
   let erroLog;
+  const marcosChamados = [];
 
   before(async () => {
     mock.module("../src/config/database.js", { defaultExport: mockDb });
@@ -130,16 +132,21 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
           linhas: [{ empresa: "Padaria", funcionario: "João", cpf: "111.111.111-11" }],
           erros: [],
         }),
-        calcularFolhaFuncionario: (linha) => ({
-          empresa: linha.empresa,
-          funcionario: linha.funcionario,
-          cpf: linha.cpf,
-          salario_bruto: 3000,
-          inss: 300,
-          fgts: 240,
-          ir: 100,
-          liquido: 2600,
+        calcularFolhaLinhas: (linhas) => ({
+          calculos: linhas.map((linha) => ({
+            empresa: linha.empresa,
+            funcionario: linha.funcionario,
+            cpf: linha.cpf,
+            salario_bruto: 3000,
+            inss: 300,
+            fgts: 240,
+            ir: 100,
+            liquido: 2600,
+          })),
+          erros: [],
         }),
+        resolverTabelaFolha: () => ({}),
+        TabelaFolhaAusenteError: class TabelaFolhaAusenteError extends Error {},
         gerarHoleritePDF: async () => Buffer.from("holerite"),
         gerarRelatorioFechamentoPDF: async () => Buffer.from("relatorio"),
         calcularTotaisEmpresa: () => ({
@@ -161,7 +168,21 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
         resolverArquivoDownload,
         calcularTotaisProcessamento,
         sanitizarNomeArquivo,
+        sufixoEmpresa,
         registrarEventoConclusaoFolha: async () => ({ registrado: true, descricao: "ok" }),
+      },
+    });
+
+    // FOLHA-8 (#748): o checklist tem suíte própria (folha-checklist*.test.js). Aqui só
+    // importa EM QUE PONTO do pipeline cada marco é chamado; as consultas dele não podem
+    // consumir as filas deste mock.
+    mock.module("../src/services/folha-checklist.service.js", {
+      namedExports: {
+        MARCOS_FOLHA: { RECEBIDA: "recebida", CALCULADA: "calculada", HOLERITES: "holerites" },
+        avancarChecklistFolha: async (processamentoId, marco) => {
+          marcosChamados.push([processamentoId, marco]);
+          return { etapasConcluidas: 0, processoConcluido: false };
+        },
       },
     });
 
@@ -172,6 +193,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
 
   beforeEach(() => {
     mockDb.clear();
+    marcosChamados.length = 0;
     erroLog = mock.method(console, "error", () => {});
   });
 
@@ -215,6 +237,9 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
 
     await dispararPipelineAutomatico(PROC_ID);
 
+    // FOLHA-8: cálculo concluído e saída com 200 avançam o checklist, nessa ordem.
+    assert.deepEqual(marcosChamados, [[PROC_ID, "calculada"], [PROC_ID, "holerites"]]);
+
     assert.equal(erroLog.mock.callCount(), 0, "não deveria logar erro no caminho feliz");
     assert.equal(mockDb.restantes(), 0, "todas as etapas do pipeline (calc + saída) devem ter sido consumidas");
 
@@ -249,6 +274,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     );
     assert.equal(logsDoPipeline.length, 1);
     assert.match(logsDoPipeline[0].arguments[0], /Cálculo automático não concluído/);
+    assert.deepEqual(marcosChamados, [], "falha no cálculo não conclui etapa (FOLHA-8)");
   });
 
   it("geração de saída falha → status continua concluido (retry idempotente continua possível), motivo fica registrado e saida_status vira erro", async () => {
@@ -293,6 +319,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     );
     assert.equal(logsDoPipeline.length, 1);
     assert.match(logsDoPipeline[0].arguments[0], /Geração de saída automática não concluída/);
+    assert.deepEqual(marcosChamados, [[PROC_ID, "calculada"]], "falha na geração não conclui a etapa dos holerites (FOLHA-8)");
   });
 
   // Cobre o caminho HTTP direto (POST /:id/gerar-saida) — o retry manual que o usuário
@@ -335,6 +362,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     const ultimoUpdate = mockDb.ultimoUpdate("processamentos_folha");
     assert.equal(ultimoUpdate.saida_status, "ok");
     assert.equal(ultimoUpdate.motivo_erro, null);
+    assert.deepEqual(marcosChamados, [[PROC_ID, "holerites"]], "o retry com 200 conclui a etapa dos holerites (FOLHA-8)");
   });
 
   it("retry manual (POST /:id/gerar-saida) falha → grava saida_status erro sem mudar status", async () => {
@@ -361,6 +389,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     assert.equal(ultimoUpdate.status, undefined);
     assert.equal(ultimoUpdate.saida_status, "erro");
     assert.match(ultimoUpdate.motivo_erro, /holerite/);
+    assert.deepEqual(marcosChamados, []);
   });
 
   it("retry manual bloqueado por guard (cálculo ainda não concluído) não mexe em saida_status", async () => {

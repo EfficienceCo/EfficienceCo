@@ -269,7 +269,7 @@ test("DAS HTTP agente: licença real, fila isolada, report e persistência", asy
   }
   const report = await s.reportar(a, ap, relatorio([])); assert.equal(report.status, 200);
   const linha = await s.estado(ap); assert.deepEqual(report.corpo, linha); assert.equal(linha.folha_status, "sem_dados"); assert.equal(linha.folha12, 0); assert.equal(linha.valor_calculado, 1550); assert.equal(linha.dados_folha.totalMesesEncontrados, 0);
-  assert.deepEqual(linha.dados_folha, { temDozeMeses: false, mesesEncontrados: [], totalMesesEncontrados: 0, falhaUpload: false, processamentoPendente: false, mesesPendentes: [] });
+  assert.deepEqual(linha.dados_folha, { temDozeMeses: false, mesesEncontrados: [], totalMesesEncontrados: 0, falhaUpload: false, processamentoPendente: false, mesesPendentes: [], mesesComFalha: [] });
   assert.deepEqual((await fila(a.licenca)).corpo, []); assert.deepEqual(await s.estado(bp), antes[1]);
   assert.equal((await s.chamar(`/apuracoes/${ap.id}/aprovar`, { metodo: "PATCH" })).status, 200);
   const aprovado = await s.estado(ap); assert.equal((await s.reportar(a, ap, relatorio([]))).status, 409); assert.deepEqual(await s.estado(ap), aprovado);
@@ -324,8 +324,8 @@ test("DAS HTTP aprovação bloqueada informa o motivo e os meses pendentes", asy
   assert.equal(resposta.status, 409);
   assert.deepEqual(resposta.corpo, {
     erro: "FOLHA_PENDENTE",
-    motivo: "A folha ainda aguarda confirmação ou processamento.",
-    mesesPendentes: [],
+    motivo: "Folha com erro no processamento; corrija a planilha e envie de novo pela tela de Folha. Meses pendentes: 2025-10.",
+    mesesPendentes: ["2025-10"],
   });
   assert.deepEqual(await s.estado(apuracao), antes, "bloqueio não altera a apuração");
 });
