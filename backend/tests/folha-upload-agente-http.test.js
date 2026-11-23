@@ -406,6 +406,67 @@ describe("TEST-11: POST /folha/upload/agente (HTTP, licença e banco reais)", { 
     });
   });
 
+  // FOLHA-4 (#744). Não há tabela INSS/IRRF de 2027 nem anterior a 2024 (folha.service.js).
+  // A rota web divide o processarUploadFolha com a do agente, por isso entra aqui também.
+  describe("competência sem tabela fiscal e líquido negativo (FOLHA-4, #744)", () => {
+    const adminA = () => massa.tabelas.usuarios.find(usuario => usuario.cliente_id === A.id && usuario.perfil === "admin_cliente");
+    const enviarWeb = form => api.requisitar("/folha/upload", { metodo: "POST", formulario: form, usuario: adminA() });
+
+    for (const [mes, erro] of [
+      ["2027-01", "Sem tabela INSS/IRRF cadastrada para 01/2027"],
+      ["2023-12", "Sem tabela INSS/IRRF cadastrada para 12/2023"],
+    ]) {
+      it(`${mes}: 400 pelo agente e pela web, e nada vai para o storage nem para o banco`, async () => {
+        const arquivo = await planilha([LINHA_MARIA]);
+        const antes = await fotografar();
+
+        const agente = await enviar(formulario({ arquivo, mes }), tokenA);
+        assert.equal(agente.status, 400, JSON.stringify(agente.corpo));
+        assert.deepEqual(agente.corpo, { erro });
+
+        const web = await enviarWeb(formulario({ arquivo, mes }));
+        assert.equal(web.status, 400, JSON.stringify(web.corpo));
+        assert.deepEqual(web.corpo, { erro });
+
+        assert.deepEqual(await fotografar(), antes);
+        assert.equal(memoria.arquivos.size, 0);
+      });
+    }
+
+    it("processamento já pendente com competência sem tabela: 422 com a mensagem legível gravada", async () => {
+      // Linha gravada antes da recusa no upload existir: arquivo no bucket e processamento pendente.
+      const caminho = `clientes/${A.id}/2027-01-01/legado.xlsx`;
+      memoria.arquivos.set(caminho, await planilha([LINHA_MARIA]));
+      const { data: pendente, error } = await banco.from("processamentos_folha")
+        .insert({ cliente_id: A.id, mes_referencia: "2027-01-01", status: "pendente", arquivo_origem_path: caminho })
+        .select("id").single();
+      assert.equal(error, null);
+
+      const resposta = await api.requisitar(`/folha/${pendente.id}/calcular`, { metodo: "POST", usuario: adminA() });
+      assert.equal(resposta.status, 422, JSON.stringify(resposta.corpo));
+      assert.deepEqual(resposta.corpo, { erro: "Sem tabela INSS/IRRF cadastrada para 01/2027" });
+
+      const [processamento] = await lerTabela(banco, "processamentos_folha");
+      assert.equal(processamento.status, "erro");
+      assert.equal(processamento.motivo_erro, "Sem tabela INSS/IRRF cadastrada para 01/2027");
+      assert.deepEqual(await lerTabela(banco, "folha_calculos"), []);
+    });
+
+    it("adiantamento maior que o líquido: o processamento inteiro é recusado, nenhuma linha gravada", async () => {
+      // José: 3.000 − INSS 248,60 = 2.751,40 de líquido antes do adiantamento (tabela 2026).
+      const arquivo = await planilha([LINHA_MARIA, { ...LINHA_JOSE, adiantamento: 5000 }]);
+      const resposta = await enviar(formulario({ arquivo }), tokenA);
+      assert.equal(resposta.status, 201);
+      const final = await esperarPipeline(resposta.corpo.processamento_id);
+
+      assert.equal(final.status, "erro");
+      assert.equal(final.motivo_erro, "Planilha com 1 linha(s) inválida(s)");
+      assert.deepEqual(await lerTabela(banco, "folha_calculos"), []);
+      assert.deepEqual(await lerTabela(banco, "folha_relatorios"), []);
+      assert.deepEqual([...memoria.arquivos.keys()], [final.arquivo_origem_path]);
+    });
+  });
+
   describe("arquivo repetido", () => {
     // Caracterização do comportamento atual, não regra confirmada: se a regra mudar (409 ou
     // substituição por cliente + competência), é este teste que muda.
