@@ -18,8 +18,8 @@ import {
   calcularTotaisProcessamento,
   registrarEventoConclusaoFolha,
   sanitizarNomeArquivo,
+  sufixoEmpresa,
 } from "../services/folha-status.service.js";
-import { validarTokenLicenca } from "../services/licenca.service.js";
 import { resolverClienteId } from "../middlewares/permissao.middleware.js";
 import { PERFIS } from "../config/perfis.js";
 import { atualizarApuracoesAposFolha } from "./apuracoes.controller.js";
@@ -183,14 +183,8 @@ export async function uploadFolha(req, res) {
 
 // Upload via agente local — x-licenca-token.
 export async function uploadFolhaAgente(req, res) {
-  const token = req.headers["x-licenca-token"];
-  const licenca = await validarTokenLicenca(token);
-
-  if (!licenca) {
-    return res.status(401).json({ erro: "Token de licença inválido ou expirado" });
-  }
-
-  return processarUploadFolha(req, res, licenca.cliente_id);
+  // Token já validado por exigirLicencaAgente (antes do multer).
+  return processarUploadFolha(req, res, req.licenca.cliente_id);
 }
 
 // Lê a planilha salva em BK-FOLHA-UPLOAD, calcula INSS/FGTS/IR/líquido por funcionário
@@ -383,9 +377,11 @@ async function gerarSaidaFolhaCore(req, res) {
 
       const buffer = await gerarHoleritePDF(calculo, mesReferenciaFormatado, processamento.mes_referencia);
       // id da linha de folha_calculos no nome (não o CPF): dois funcionários com o mesmo
-      // nome na mesma empresa (comum: "Maria Silva") colidiriam no path e o segundo upload
-      // falharia (upsert:false). O id garante unicidade sem expor o CPF no storage,
-      // na URL de download ou em log HTTP (LGPD / BUG-FOLHA-07).
+      // nome na mesma empresa (comum: "Maria Silva") colidiriam no path. O id garante
+      // unicidade sem expor o CPF no storage, na URL de download ou em log HTTP
+      // (LGPD / BUG-FOLHA-07). Com o caminho único por cálculo e o PDF saindo do mesmo
+      // cálculo, upsert:true torna o retry idempotente: se o upload deu certo mas o UPDATE
+      // de holerite_path se perdeu, regravar o mesmo arquivo não pode falhar para sempre.
       const nomeArquivo = `holerite_${sanitizarNomeArquivo(calculo.empresa)}_${sanitizarNomeArquivo(calculo.funcionario)}_${calculo.id}_${mesReferenciaArquivo}.pdf`;
       // processamento_id no caminho evita colisão entre processamentos diferentes do
       // mesmo cliente/mês (ex: planilha reenviada e recalculada após correção).
@@ -393,11 +389,13 @@ async function gerarSaidaFolhaCore(req, res) {
 
       const { error: erroUpload } = await supabase.storage
         .from("folhas-pagamento")
-        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: false });
+        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: true });
 
       if (erroUpload) {
         console.error("[folha.controller] Erro ao salvar holerite:", erroUpload.message);
-        return res.status(500).json({ erro: `Erro ao gerar holerite de ${calculo.funcionario}` });
+        return res.status(500).json({
+          erro: `Não foi possível gerar o holerite de ${calculo.funcionario}. Clique em Tentar novamente; se continuar, fale com o suporte.`,
+        });
       }
 
       const { error: erroUpdate } = await supabase
@@ -407,7 +405,9 @@ async function gerarSaidaFolhaCore(req, res) {
 
       if (erroUpdate) {
         console.error("[folha.controller] Erro ao registrar holerite gerado:", erroUpdate.message);
-        return res.status(500).json({ erro: "Erro ao registrar holerite gerado" });
+        return res.status(500).json({
+          erro: `Não foi possível registrar o holerite de ${calculo.funcionario}. Clique em Tentar novamente; se continuar, fale com o suporte.`,
+        });
       }
 
       holeritesGerados++;
@@ -444,16 +444,21 @@ async function gerarSaidaFolhaCore(req, res) {
         totais,
       });
 
-      const nomeArquivo = `relatorio_fechamento_${sanitizarNomeArquivo(empresa)}_${mesReferenciaArquivo}.pdf`;
+      // Hash do nome bruto no caminho: "Padaria Pão Quente" e "Padaria Pao Quente"
+      // sanitizam igual e, com upsert:true, uma sobrescreveria o PDF da outra. O nome que o
+      // contador vê no download não tem o hash (nomeExibicaoRelatorio).
+      const nomeArquivo = `relatorio_fechamento_${sanitizarNomeArquivo(empresa)}_${sufixoEmpresa(empresa)}_${mesReferenciaArquivo}.pdf`;
       const caminhoStorage = `clientes/${processamento.cliente_id}/${mesReferenciaArquivo}/${processamentoId}/relatorios/${nomeArquivo}`;
 
       const { error: erroUpload } = await supabase.storage
         .from("folhas-pagamento")
-        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: false });
+        .upload(caminhoStorage, buffer, { contentType: "application/pdf", upsert: true });
 
       if (erroUpload) {
         console.error("[folha.controller] Erro ao salvar relatório:", erroUpload.message);
-        return res.status(500).json({ erro: `Erro ao gerar relatório de ${empresa}` });
+        return res.status(500).json({
+          erro: `Não foi possível gerar o relatório de ${empresa}. Clique em Tentar novamente; se continuar, fale com o suporte.`,
+        });
       }
 
       const { error: erroInsert } = await supabase.from("folha_relatorios").insert({
@@ -466,12 +471,16 @@ async function gerarSaidaFolhaCore(req, res) {
         arquivo_path: caminhoStorage,
       });
 
-      if (erroInsert) {
+      // 23505 (UNIQUE processamento_id + empresa): outra chamada de gerar-saida já registrou
+      // este relatório (o PDF é o mesmo, upsert). Não é erro e não conta como gerado aqui.
+      if (erroInsert && erroInsert.code !== "23505") {
         console.error("[folha.controller] Erro ao registrar relatório gerado:", erroInsert.message);
-        return res.status(500).json({ erro: "Erro ao registrar relatório gerado" });
+        return res.status(500).json({
+          erro: `Não foi possível registrar o relatório de ${empresa}. Clique em Tentar novamente; se continuar, fale com o suporte.`,
+        });
       }
 
-      relatoriosGerados++;
+      if (!erroInsert) relatoriosGerados++;
     }
 
     const empresas = Array.from(calculosPorEmpresa.keys());
@@ -671,7 +680,7 @@ export async function consultarStatusFolha(req, res) {
 
   const { data: relatorios, error: erroRelatorios } = await supabase
     .from("folha_relatorios")
-    .select("id, arquivo_path")
+    .select("id, empresa, arquivo_path")
     .eq("processamento_id", processamentoId);
 
   if (erroRelatorios) {
@@ -679,7 +688,9 @@ export async function consultarStatusFolha(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar arquivos do processamento" });
   }
 
-  const arquivos = montarListaArquivos(calculos || [], relatorios || []);
+  const arquivos = montarListaArquivos(calculos || [], relatorios || [], {
+    mesReferencia: processamento.mes_referencia,
+  });
   const totais = calcularTotaisProcessamento(calculos || []);
 
   return res.status(200).json({
@@ -702,7 +713,7 @@ export async function baixarArquivoFolha(req, res) {
 
   let queryBusca = supabase
     .from("processamentos_folha")
-    .select("id, cliente_id, status")
+    .select("id, cliente_id, status, mes_referencia")
     .eq("id", processamentoId);
   queryBusca = aplicarIsolamentoCliente(queryBusca, req);
 
@@ -736,7 +747,7 @@ export async function baixarArquivoFolha(req, res) {
 
   const { data: relatorios, error: erroRelatorios } = await supabase
     .from("folha_relatorios")
-    .select("id, arquivo_path")
+    .select("id, empresa, arquivo_path")
     .eq("processamento_id", processamentoId);
 
   if (erroRelatorios) {
@@ -744,7 +755,9 @@ export async function baixarArquivoFolha(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar arquivo" });
   }
 
-  const arquivos = montarListaArquivos(calculos || [], relatorios || []);
+  const arquivos = montarListaArquivos(calculos || [], relatorios || [], {
+    mesReferencia: processamento.mes_referencia,
+  });
   const arquivoAlvo = resolverArquivoDownload(arquivoId, arquivos);
 
   if (!arquivoAlvo) {

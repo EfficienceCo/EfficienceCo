@@ -6,6 +6,9 @@ import {
   arquivosParaResposta,
   resolverArquivoDownload,
   nomeExibicaoHolerite,
+  nomeExibicaoRelatorio,
+  sanitizarNomeArquivo,
+  sufixoEmpresa,
   montarDescricaoConclusao,
   calcularTotaisProcessamento,
 } from "../src/services/folha-status.helpers.js";
@@ -133,6 +136,21 @@ describe("folha-status helpers", () => {
 
     assert.equal(nome, "holerite_padaria_do_ze_joao_da_silva.pdf");
     assert.doesNotMatch(nome, REGEX_CPF);
+  });
+
+  it("sufixoEmpresa: 8 hex determinísticos, diferente para nomes que sanitizam igual", () => {
+    assert.match(sufixoEmpresa("Padaria Pão Quente"), /^[0-9a-f]{8}$/);
+    assert.equal(sufixoEmpresa("Padaria Pão Quente"), sufixoEmpresa("Padaria Pão Quente"));
+    assert.equal(sanitizarNomeArquivo("Padaria Pão Quente"), sanitizarNomeArquivo("Padaria Pao Quente"));
+    assert.notEqual(sufixoEmpresa("Padaria Pão Quente"), sufixoEmpresa("Padaria Pao Quente"));
+  });
+
+  it("nomeExibicaoRelatorio: empresa + mês sem hash; sem empresa ou sem mês cai no basename do path", () => {
+    const relatorio = { empresa: "Padaria Pão Quente", arquivo_path: "a/relatorios/relatorio_fechamento_padaria_pao_quente_1a2b3c4d_2026-07.pdf" };
+    assert.equal(nomeExibicaoRelatorio(relatorio, "2026-07-01"), "relatorio_fechamento_padaria_pao_quente_2026-07.pdf");
+    const fallback = "relatorio_fechamento_padaria_pao_quente_1a2b3c4d_2026-07.pdf";
+    assert.equal(nomeExibicaoRelatorio(relatorio, undefined), fallback);
+    assert.equal(nomeExibicaoRelatorio({ ...relatorio, empresa: null }, "2026-07-01"), fallback);
   });
 
   it("monta lista com id opaco + nome sem CPF e omite path na resposta pública", () => {
