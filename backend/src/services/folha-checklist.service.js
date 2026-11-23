@@ -13,6 +13,7 @@ import {
   ACOES_FOLHA,
   concluirProcessoSeTodasEtapasConcluidas,
   criarProcessoComEtapas,
+  recuperarEtapasPadraoFolha,
 } from "./processos.service.js";
 
 const CODIGO_VIOLACAO_UNICA = "23505";
@@ -48,18 +49,30 @@ async function buscarProcessoFolha(clienteId, mesReferencia) {
     .maybeSingle();
 }
 
+// Processo achado em andamento sem nenhuma etapa (criador antigo que gravou o processo e
+// falhou nas etapas) recebe as 6 etapas padrão; o que já tem checklist não é tocado. Processo
+// concluído ou cancelado não é reaberto.
+async function comChecklistRecuperado(processo) {
+  if (processo.status !== "em_andamento") return { processo, criado: false };
+
+  const { recuperado, erro } = await recuperarEtapasPadraoFolha(processo.id);
+  if (erro) return { erro };
+  return { processo, criado: false, recuperado };
+}
+
 /**
  * Busca o processo folha_pagamento do cliente no mês; cria (com as etapas padrão) se não
- * existir. A corrida com outro upload ou com o job do dia 1 é fechada pelo índice único
- * parcial da migration 111: quem perde recebe 23505 e busca de novo.
+ * existir e recupera as etapas se ele existir sem nenhuma. A corrida com outro upload ou com
+ * o job do dia 1 é fechada pelo índice único parcial da migration 111: quem perde recebe
+ * 23505 e busca de novo.
  * @param {string} clienteId
  * @param {string} mesReferencia - YYYY-MM-01
- * @returns {{ processo, etapas?, criado: boolean } | { erro: string }}
+ * @returns {{ processo, etapas?, criado: boolean, recuperado?: boolean } | { erro: string }}
  */
 export async function garantirProcessoFolha(clienteId, mesReferencia) {
   const { data: existente, error: erroBusca } = await buscarProcessoFolha(clienteId, mesReferencia);
   if (erroBusca) return { erro: erroBusca.message };
-  if (existente) return { processo: existente, criado: false };
+  if (existente) return comChecklistRecuperado(existente);
 
   const resultado = await criarProcessoComEtapas(clienteId, "folha_pagamento", {
     mes_referencia: mesReferencia,
@@ -74,7 +87,7 @@ export async function garantirProcessoFolha(clienteId, mesReferencia) {
   const { data: vencedor, error: erroRebusca } = await buscarProcessoFolha(clienteId, mesReferencia);
   if (erroRebusca) return { erro: erroRebusca.message };
   if (!vencedor) return { erro: "processo da folha não encontrado após violação de unicidade" };
-  return { processo: vencedor, criado: false };
+  return comChecklistRecuperado(vencedor);
 }
 
 /**

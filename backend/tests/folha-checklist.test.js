@@ -36,6 +36,8 @@ supabase.from = function (tabela) {
   const builder = {
     select: registrar("select"),
     insert: registrar("insert"),
+    upsert: registrar("upsert"),
+    limit: registrar("limit"),
     update: registrar("update"),
     delete: registrar("delete"),
     eq: registrar("eq"),
@@ -59,6 +61,8 @@ function processoExistente(status = "em_andamento") {
     data: { id: PROCESSO_ID, cliente_id: CLIENTE_A, tipo: "folha_pagamento", status, mes_referencia: "2026-10-01" },
     error: null,
   });
+  // Processo em andamento passa pela checagem "tem etapa?" (recuperação); aqui já tem checklist.
+  if (status === "em_andamento") queue("etapas", "await", { data: [{ id: "e1" }], error: null });
 }
 
 function filtros(tabela, metodo) {
@@ -104,7 +108,8 @@ describe("avancarChecklistFolha", () => {
       assert.equal(update[0].concluida, true);
       assert.equal(update[0].status, "concluida");
       const eqEtapas = filtros("etapas", "eq");
-      assert.deepEqual(eqEtapas.slice(0, 3), [
+      // eqEtapas[0] é a checagem "tem etapa?" da recuperação; o UPDATE vem depois.
+      assert.deepEqual(eqEtapas.slice(1, 4), [
         ["processo_id", PROCESSO_ID],
         ["tipo", "automatizada"],
         ["concluida", false],
@@ -189,11 +194,67 @@ describe("garantirProcessoFolha", () => {
     queue("processos", "maybeSingle", { data: null, error: null });
     queue("processos", "single", { data: null, error: { message: "duplicate key", code: "23505" } });
     queue("processos", "maybeSingle", { data: { id: PROCESSO_ID, status: "em_andamento" }, error: null });
+    queue("etapas", "await", { data: [{ id: "e1" }], error: null });
 
     const resultado = await garantirProcessoFolha(CLIENTE_A, "2026-10-01");
 
-    assert.deepEqual(resultado, { processo: { id: PROCESSO_ID, status: "em_andamento" }, criado: false });
+    assert.deepEqual(resultado, { processo: { id: PROCESSO_ID, status: "em_andamento" }, criado: false, recuperado: false });
     assert.deepEqual(filtros("etapas", "insert"), []);
+    assert.deepEqual(filtros("etapas", "upsert"), []);
+  });
+
+  it("processo existente com etapas: não insere nada (preserva o checklist)", async () => {
+    processoExistente();
+
+    const resultado = await garantirProcessoFolha(CLIENTE_A, "2026-10-01");
+
+    assert.equal(resultado.criado, false);
+    assert.equal(resultado.recuperado, false);
+    assert.deepEqual(filtros("etapas", "upsert"), []);
+    assert.deepEqual(filtros("etapas", "insert"), []);
+  });
+
+  it("processo existente SEM etapa (legado): insere as 6 padrão, idempotente por (processo_id, ordem)", async () => {
+    processoExistente();
+    // A checagem "tem etapa?" devolve vazio (sobrescreve o etapa que processoExistente enfileirou).
+    filas.get("etapas:await").length = 0;
+    queue("etapas", "await", { data: [], error: null });
+    queue("etapas", "await", { data: null, error: null });
+
+    const resultado = await garantirProcessoFolha(CLIENTE_A, "2026-10-01");
+
+    assert.equal(resultado.criado, false);
+    assert.equal(resultado.recuperado, true);
+    assert.equal(resultado.processo.id, PROCESSO_ID);
+    const [[linhas, opcoes]] = filtros("etapas", "upsert");
+    assert.deepEqual(linhas.map((l) => l.ordem), [1, 2, 3, 4, 5, 6]);
+    assert.ok(linhas.every((l) => l.processo_id === PROCESSO_ID));
+    assert.deepEqual(linhas.map((l) => l.acao), [
+      "folha_planilha_recebida", "folha_calculada", "folha_holerites_gerados", null, null, null,
+    ]);
+    assert.deepEqual(opcoes, { onConflict: "processo_id,ordem", ignoreDuplicates: true });
+    assert.deepEqual(filtros("processos", "insert"), []);
+  });
+
+  it("processo existente concluído ou cancelado sem etapa: não é reaberto nem recebe etapa", async () => {
+    for (const status of ["concluido", "cancelado"]) {
+      chamadas.length = 0;
+      processoExistente(status);
+
+      const resultado = await garantirProcessoFolha(CLIENTE_A, "2026-10-01");
+
+      assert.deepEqual(resultado.criado, false);
+      assert.deepEqual(filtros("etapas", "upsert"), [], status);
+    }
+  });
+
+  it("falha ao recuperar as etapas: devolve o erro (não finge que o checklist existe)", async () => {
+    processoExistente();
+    filas.get("etapas:await").length = 0;
+    queue("etapas", "await", { data: [], error: null });
+    queue("etapas", "await", { data: null, error: { message: "insert falhou (teste)" } });
+
+    assert.deepEqual(await garantirProcessoFolha(CLIENTE_A, "2026-10-01"), { erro: "insert falhou (teste)" });
   });
 
   it("outro erro na criação: devolve o erro", async () => {

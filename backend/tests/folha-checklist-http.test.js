@@ -334,6 +334,75 @@ describe("FOLHA-8: o pipeline da folha avança o checklist do processo (HTTP e b
     assert.equal(processos[0].mes_referencia, atual);
   });
 
+  // Estado que o criador antigo podia deixar: o processo gravado e o INSERT das etapas falhado.
+  async function criarProcessoLegadoSemEtapas(mes) {
+    const { data, error } = await banco.from("processos")
+      .insert({ cliente_id: A.id, tipo: "folha_pagamento", mes_referencia: mes })
+      .select().single();
+    assert.equal(error, null, error?.message);
+    assert.deepEqual(await etapas(data.id), []);
+    return data;
+  }
+
+  it("T13: processo legado do mês sem etapas: o upload recupera as 6, conclui 1, 2 e 3 e segue 1 só processo no mês", async () => {
+    const legado = await criarProcessoLegadoSemEtapas("2026-10-01");
+    const outroMes = await criarProcessoLegadoSemEtapas("2026-09-01");
+
+    await esperarPipeline(await enviar(tokenA));
+    await esperarEstado(legado.id, [true, true, true, false, false, false]);
+
+    const processo = await processoDoMes(A.id, "2026-10-01");
+    assert.equal(processo.id, legado.id);
+    assert.equal((await processosFolha()).length, 2);
+    const recuperadas = await etapas(legado.id);
+    assert.deepEqual(recuperadas.map(e => e.ordem), [1, 2, 3, 4, 5, 6]);
+    assert.deepEqual(recuperadas.map(e => e.tipo), [
+      "automatizada", "automatizada", "automatizada", "manual", "manual", "manual",
+    ]);
+    // Outro mês, mesmo escritório: o upload de outubro não mexe nele.
+    assert.deepEqual(await etapas(outroMes.id), []);
+
+    // Reenvio: não duplica etapa nem processo e não retrocede.
+    await esperarPipeline(await enviar(tokenA));
+    assert.deepEqual((await etapas(legado.id)).map(e => [e.id, e.concluida]),
+      recuperadas.map((e, i) => [e.id, i < 3]));
+    assert.equal((await processosFolha()).length, 2);
+  });
+
+  it("T14: uploads em paralelo sobre o processo legado sem etapas recuperam 6 etapas, sem duplicar", async () => {
+    const legado = await criarProcessoLegadoSemEtapas("2026-10-01");
+
+    const ids = await Promise.all([enviar(tokenA), enviar(tokenA), enviar(tokenA)]);
+    await Promise.all(ids.map(esperarPipeline));
+
+    await esperarEstado(legado.id, [true, true, true, false, false, false]);
+    assert.deepEqual((await etapas(legado.id)).map(e => e.ordem), [1, 2, 3, 4, 5, 6]);
+    assert.equal((await processosFolha()).length, 1);
+  });
+
+  it("T15: POST /processos de folha sobre o processo legado sem etapas devolve 409 e recupera as 6 etapas", async () => {
+    const legado = await criarProcessoLegadoSemEtapas("2026-10-01");
+
+    const resposta = await api.requisitar("/processos", {
+      usuario: usuarioA, metodo: "POST", corpo: { tipo: "folha_pagamento", mes_referencia: "2026-10" },
+    });
+
+    assert.equal(resposta.status, 409, JSON.stringify(resposta.corpo));
+    assert.deepEqual(await concluidas(legado.id), ESTADO_INICIAL);
+    assert.equal((await processosFolha()).length, 1);
+  });
+
+  it("T16: o job do dia 1 não cria processo novo sobre o legado sem etapas; o upload do mês o recupera", async () => {
+    const legado = await criarProcessoLegadoSemEtapas("2026-10-01");
+
+    assert.deepEqual(await gerarFolhaMensal(new Date(2026, 9, 1, 3, 0, 0)), { criados: 1, erros: 0, jaExistiam: 1 });
+    assert.equal((await processosFolha()).length, 1);
+    assert.deepEqual(await etapas(legado.id), []);
+
+    await esperarPipeline(await enviar(tokenA));
+    await esperarEstado(legado.id, [true, true, true, false, false, false]);
+  });
+
   it("T12: o job do dia 1 rodado duas vezes e depois de um upload não duplica e conta \"já existia\"", async () => {
     const outubro = new Date(2026, 9, 1, 3, 0, 0);
     assert.deepEqual(await gerarFolhaMensal(outubro), { criados: 2, erros: 0, jaExistiam: 0 });

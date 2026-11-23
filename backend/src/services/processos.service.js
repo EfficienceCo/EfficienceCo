@@ -81,6 +81,16 @@ function obterEtapasPadrao(tipo, cenario) {
   return ETAPAS_PADRAO[tipo];
 }
 
+function montarEtapasParaInserir(processoId, etapasPadrao) {
+  return etapasPadrao.map(({ descricao, tipo, acao }, i) => ({
+    processo_id: processoId,
+    descricao,
+    tipo,
+    acao,
+    ordem: i + 1,
+  }));
+}
+
 /**
  * Cria um processo e suas etapas padrão no banco.
  * @param {string} clienteId
@@ -113,17 +123,9 @@ export async function criarProcessoComEtapas(clienteId, tipo, extra = {}) {
   // migration 111) de erro de verdade.
   if (erroProcesso) return { erro: erroProcesso.message, codigo: erroProcesso.code };
 
-  const etapasParaInserir = etapasPadrao.map(({ descricao, tipo: tipoEtapa, acao }, i) => ({
-    processo_id: processo.id,
-    descricao,
-    tipo: tipoEtapa,
-    acao,
-    ordem: i + 1,
-  }));
-
   const { data: etapas, error: erroEtapas } = await supabase
     .from("etapas")
-    .insert(etapasParaInserir)
+    .insert(montarEtapasParaInserir(processo.id, etapasPadrao))
     .select();
 
   if (erroEtapas) {
@@ -144,6 +146,36 @@ export async function criarProcessoComEtapas(clienteId, tipo, extra = {}) {
   }
 
   return { processo, etapas };
+}
+
+/**
+ * FOLHA-8 (#748): recupera o processo de folha que ficou sem nenhuma etapa (o criador antigo
+ * gravava o processo e o INSERT das etapas podia falhar). Só age em processo sem etapa
+ * alguma: nunca mexe em checklist já existente, concluído ou não. Idempotente e segura
+ * contra chamadas concorrentes: o índice único (processo_id, ordem) da migration 111 e o
+ * ignoreDuplicates fazem quem chega depois não inserir nada.
+ * @param {string} processoId
+ * @returns {Promise<{ recuperado: boolean, erro?: string }>}
+ */
+export async function recuperarEtapasPadraoFolha(processoId) {
+  const { data: existentes, error: erroBusca } = await supabase
+    .from("etapas")
+    .select("id")
+    .eq("processo_id", processoId)
+    .limit(1);
+
+  if (erroBusca) return { recuperado: false, erro: erroBusca.message };
+  if (existentes?.length > 0) return { recuperado: false };
+
+  const { error: erroInsert } = await supabase
+    .from("etapas")
+    .upsert(montarEtapasParaInserir(processoId, ETAPAS_PADRAO.folha_pagamento), {
+      onConflict: "processo_id,ordem",
+      ignoreDuplicates: true,
+    });
+
+  if (erroInsert) return { recuperado: false, erro: erroInsert.message };
+  return { recuperado: true };
 }
 
 /**
