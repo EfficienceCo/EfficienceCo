@@ -79,6 +79,9 @@ function criarMockSupabase() {
         in() {
           return builder;
         },
+        not() { return builder; },
+        order() { return builder; },
+        range() { return builder; },
         maybeSingle() {
           return Promise.resolve(consumir("maybeSingle"));
         },
@@ -128,16 +131,21 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
           linhas: [{ empresa: "Padaria", funcionario: "João", cpf: "111.111.111-11" }],
           erros: [],
         }),
-        calcularFolhaFuncionario: (linha) => ({
-          empresa: linha.empresa,
-          funcionario: linha.funcionario,
-          cpf: linha.cpf,
-          salario_bruto: 3000,
-          inss: 300,
-          fgts: 240,
-          ir: 100,
-          liquido: 2600,
+        calcularFolhaLinhas: (linhas) => ({
+          calculos: linhas.map((linha) => ({
+            empresa: linha.empresa,
+            funcionario: linha.funcionario,
+            cpf: linha.cpf,
+            salario_bruto: 3000,
+            inss: 300,
+            fgts: 240,
+            ir: 100,
+            liquido: 2600,
+          })),
+          erros: [],
         }),
+        resolverTabelaFolha: () => ({}),
+        TabelaFolhaAusenteError: class TabelaFolhaAusenteError extends Error {},
         gerarHoleritePDF: async () => Buffer.from("holerite"),
         gerarRelatorioFechamentoPDF: async () => Buffer.from("relatorio"),
         calcularTotaisEmpresa: () => ({
