@@ -207,7 +207,7 @@ test("QA-F QA11 report valida contradição,calendário,duplicata e janela", asy
   for (const ref of REFERENCIAS.filter(r => r.mes !== 9)) await s.processo(c, refISO(ref));
   const completo = await s.reportar(c, a, relatorio()); assert.equal(completo.status, 200);
   const gravado = await s.estado(a); assert.equal(gravado.folha_status, "verificado"); assert.deepEqual(completo.corpo, gravado);
-  assert.deepEqual(gravado.dados_folha, { temDozeMeses: true, mesesEncontrados: REFERENCIAS, totalMesesEncontrados: 12, falhaUpload: false, processamentoPendente: false, mesesPendentes: [] });
+  assert.deepEqual(gravado.dados_folha, { temDozeMeses: true, mesesEncontrados: REFERENCIAS, totalMesesEncontrados: 12, falhaUpload: false, processamentoPendente: false, mesesPendentes: [], mesesComFalha: [] });
 });
 
 test("QA-F QA12 worker real respeita janela explícita e fallback na virada doano", { timeout: 120_000 }, async t => {

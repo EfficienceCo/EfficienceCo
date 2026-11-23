@@ -139,11 +139,11 @@ export async function iniciarCenarioApuracao(t) {
     await comStorageDescartavel(async () => { const up = await banco.storage.from("folhas-pagamento").upload(arquivo, await planilha(c, salario), { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }); assert.ifError(up.error); });
     return processo(c, ref, 0, { status: "pendente", arquivo_origem_path: arquivo });
   }
-  async function worker(c, { item, arquivosMes = REFERENCIAS, invalido } = {}) {
+  async function worker(c, { item, arquivosMes = REFERENCIAS, invalido, salario } = {}) {
     await prepararStorage();
     for (const r of arquivosMes) {
       const pastaMes = path.join(pasta, c.nome, "Folha", refISO(r).slice(0, 7)); await mkdir(pastaMes, { recursive: true });
-      await writeFile(path.join(pastaMes, "folha.xlsx"), r.ano === invalido?.ano && r.mes === invalido?.mes ? Buffer.from("xlsx inválido QA-F") : await planilha(c));
+      await writeFile(path.join(pastaMes, "folha.xlsx"), r.ano === invalido?.ano && r.mes === invalido?.mes ? Buffer.from("xlsx inválido QA-F") : await planilha(c, salario));
     }
     const repo = fileURLToPath(new URL("../../../", import.meta.url));
     const python = path.join(repo, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
@@ -156,7 +156,7 @@ export async function iniciarCenarioApuracao(t) {
     for (const p of processos) if (p.arquivo_origem_path !== "fixture-qa-f-sem-arquivo") uploads.add(p.id);
     assert.equal(code, 0, log); return log;
   }
-  return { banco, api, cliente, criar, chamar, estado, reportar, notas, processo, pendente, worker, prepararStorage,
+  return { banco, api, pasta, cliente, criar, chamar, estado, reportar, notas, processo, pendente, worker, prepararStorage,
     usuario: (c, perfil) => massa.criarUsuario({ clienteId: c.id, perfil }),
     async concluidos(c) {
       return aguardar(async () => {
