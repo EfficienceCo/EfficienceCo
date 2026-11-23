@@ -50,6 +50,7 @@ supabase.from = function (tabela) {
     lte() { return builder; },
     in() { return builder; },
     order() { return builder; },
+    range() { return builder; },
     maybeSingle() { return Promise.resolve(consumir("maybeSingle", { data: null, error: null })); },
     single() { return Promise.resolve(consumir("single", { data: null, error: null })); },
     then(resolve, reject) {
@@ -245,6 +246,27 @@ describe("POST /apuracoes", () => {
     assert.ok(insert.payload.valor_calculado > 0);
   });
 
+  // #726/#737: mês sem processamento conta como zero e não deixa a apuração pendente.
+  it("201 verificado quando Anexo V não tem processamentos de folha", async () => {
+    queueSemDuplicata();
+    queueCliente("V");
+    queueNotas([{ valor_total: 50000, data_emissao: "2026-08-10" }]);
+    queue("processamentos_folha", "await", { data: [], error: null });
+    queue("apuracoes", "single", {
+      data: { id: "nova-apuracao-v-sem-folha", anexo: "V", folha_status: "verificado", fator_r: 0.01 },
+      error: null,
+    });
+
+    const res = criarResposta();
+    await dispararApuracao(reqAdmin({ body: payloadValido() }), res);
+
+    assert.equal(res.statusCode, 201);
+    const insert = operacoes.find((operacao) => operacao.tabela === "apuracoes" && operacao.metodo === "insert");
+    assert.equal(insert.payload.folha_status, "verificado");
+    assert.equal(insert.payload.folha12, 0);
+    assert.equal(insert.payload.fator_r, 0.01);
+  });
+
   it("201 quando Anexo V com folha suficiente para cair no Fator R (Anexo III efetivo)", async () => {
     queueSemDuplicata();
     queueCliente("V");
@@ -436,6 +458,31 @@ describe("POST /apuracoes", () => {
     assert.equal(bases.receitaMes, 250);
   });
 
+  // DAS-4 (#728): as rotas, a data de cancelamento e a saída cancelada legada sem data estão em
+  // apuracao-qa-f-regressoes.test.js (QA05 e G1, versão do #739). Só este teste cobre a
+  // cancelada de entrada aparecendo uma vez só.
+  it("cancelada de entrada aparece uma vez só, com o motivo de cancelada", () => {
+    const bases = montarBasesCalculo({
+      notas: [
+        { id: "ativa", tipo: "saida", valor_total: 1000, data_emissao: "2026-07-10", status: "ativa" },
+        { id: "entrada", tipo: "entrada", valor_total: 300, data_emissao: "2026-07-12", status: "cancelada", cancelado_em: null },
+      ],
+      historicoReceita: [],
+      mes: 7,
+      ano: 2026,
+      hojeISO: "2026-09-25",
+    });
+
+    assert.equal(bases.receitaMes, 1000);
+    assert.deepEqual(bases.notasFiscais.consideradas.map((nota) => nota.id), ["ativa"]);
+    assert.deepEqual(
+      bases.notasFiscais.excluidas.map(({ id, tipo, motivo, cancelado_em }) => ({ id, tipo, motivo, cancelado_em })),
+      [
+        { id: "entrada", tipo: "entrada", motivo: "NF-e cancelada — não compõe a receita bruta.", cancelado_em: null },
+      ],
+    );
+  });
+
   it("exclui NF-e com data de emissão futura da RBT12 e da receita (BUG-APUR-08)", async () => {
     const agora = new Date();
     const amanha = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1);
@@ -515,7 +562,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 0 }) }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   // #497 — competência futura ou mês corrente ainda aberto não podem ser
@@ -567,7 +614,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ mes: 15 }) }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   it("400 quando ano é anterior a 2020", async () => {
@@ -575,7 +622,7 @@ describe("POST /apuracoes", () => {
     await dispararApuracao(reqAdmin({ body: payloadValido({ ano: 1999 }) }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   it("400 quando mes contém sufixo não numérico", async () => {
@@ -1182,6 +1229,10 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
       error: null,
     });
 
+    queueCliente("V");
+    queue("processamentos_folha", "await", { data: processamentosDosDozeMeses(), error: null });
+    queue("folha_calculos", "await", { data: [{ base_calculo: 120000, fgts: 0 }], error: null });
+
     const res = criarResposta();
     await aprovarApuracao(reqAdmin({ params: { id: APURACAO_ID } }), res);
 
@@ -1201,6 +1252,7 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
         folha_status: "pendente",
         fator_r: 0,
         folha12: null,
+        dados_folha: { mesesPendentes: ["2026-07"] },
       },
       error: null,
     });
@@ -1210,6 +1262,8 @@ describe("PATCH /apuracoes/:id/aprovar", () => {
 
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.erro, "FOLHA_PENDENTE");
+    assert.deepEqual(res.body.mesesPendentes, ["2026-07"]);
+    assert.match(res.body.motivo, /2026-07/);
     assert.deepEqual(operacoes, []);
   });
 
@@ -1423,7 +1477,7 @@ describe("validação de UUID em /apuracoes (BUG-APUR-13)", () => {
     await listarApuracoes(reqAdmin({ query: { mes: "abc" } }), res);
 
     assert.equal(res.statusCode, 400);
-    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser >= 2020");
+    assert.equal(res.body.erro, "mes deve ser um inteiro entre 1 e 12, e ano deve ser entre 2020 e 2147483647");
   });
 
   for (const [nome, handler] of [
