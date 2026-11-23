@@ -561,6 +561,22 @@ test("DAS HTTP POST normal origem V já efetivo III persiste folha completa ante
   assert.equal(fila.status, 200); assert.deepEqual(fila.corpo, [], "POST V→III completo não entra na fila");
 });
 
+test("DAS HTTP POST mantém a FS12 pendente enquanto a folha está calculada e aguarda os PDFs (#743)", async t => {
+  const s = await iniciarCenarioApuracao(t);
+  const c = await s.cliente();
+  await s.notas(c);
+  for (const ref of REFERENCIAS.slice(0, -1)) {
+    await s.processo(c, refISO(ref), 5000);
+  }
+  await s.processo(c, refISO(REFERENCIAS.at(-1)), 5000, { status: "calculado" });
+
+  const a = await s.criar(c);
+  const gravado = await s.estado(a);
+  assert.equal(a.folha_status, "pendente");
+  assert.equal(gravado.folha_status, "pendente");
+  assert.equal(gravado.folha12, null);
+});
+
 test("DAS HTTP POST normal V com onze meses concluídos e um ausente trata o mês como zero", async t => {
   const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
   for (const ref of REFERENCIAS.slice(0, 11)) await s.processo(c, refISO(ref));

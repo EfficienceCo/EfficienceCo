@@ -155,8 +155,8 @@ describe("erros por linha chegam ao GET /folha/:id (#742)", () => {
   it("recálculo bem-sucedido limpa os erros antigos", async () => {
     const res = await calcularCom([LINHA_OK]);
     assert.equal(res.statusCode, 200);
-    const concluido = banco.updates.find((u) => u.payload.status === "concluido").payload;
-    assert.equal(concluido.erros_planilha, null);
+    const calculado = banco.updates.find((u) => u.payload.status === "calculado").payload;
+    assert.equal(calculado.erros_planilha, null);
   });
 
   it("consultarStatusFolha devolve erros_planilha (e [] quando não há)", async () => {

@@ -16,6 +16,8 @@ import {
   arquivosParaResposta,
   resolverArquivoDownload,
   calcularTotaisProcessamento,
+  statusPublicoProcessamento,
+  totalArquivosEsperados,
   registrarEventoConclusaoFolha,
   sanitizarNomeArquivo,
   sufixoEmpresa,
@@ -290,18 +292,13 @@ export async function calcularFolha(req, res) {
 
     const { error: erroConcluir } = await supabase
       .from("processamentos_folha")
-      .update({ status: "concluido", erros_planilha: null })
+      .update({ status: "calculado", erros_planilha: null })
       .eq("id", processamentoId);
 
-    // FOLHA-8 (#748): "Folha calculada" só conclui se o status concluido foi gravado. O
-    // resto do comportamento sem esse UPDATE segue como era (fora do escopo).
+    // O checklist registra a conclusão do cálculo após gravar o status. Os PDFs ainda estão pendentes.
     if (!erroConcluir) {
       await avancarChecklistFolha(processamentoId, MARCOS_FOLHA.CALCULADA);
     }
-
-    // O cálculo pode terminar após o report do agente. Atualiza o DAS assim
-    // que a folha está disponível, sem depender da geração de PDFs.
-    await sincronizarApuracoes(processamento);
 
     const totais = calculos.reduce(
       (acc, calculo) => ({
@@ -363,13 +360,14 @@ async function gerarSaidaFolhaCore(req, res) {
     return res.status(404).json({ erro: "Processamento não encontrado" });
   }
 
-  if (processamento.status !== "concluido") {
+  // Aceita calculado (primeira geração e retry após falha) e concluido (reexecução idempotente).
+  if (!["calculado", "concluido"].includes(processamento.status)) {
     return res.status(409).json({ erro: "Cálculo da folha ainda não foi concluído para este processamento" });
   }
 
   // Só persiste o resultado após confirmar existência, dono e cálculo concluído.
   // Uma falha na busca inicial não autoriza escrever no ID recebido na URL.
-  res.geracaoIniciada = true;
+  res.processamentoAutorizado = processamento;
 
   const { data: calculos, error: erroCalculos } = await supabase
     .from("folha_calculos")
@@ -537,15 +535,17 @@ async function gerarSaidaFolhaCore(req, res) {
 
 // Pipeline automático e retry manual registram o mesmo resultado, somente depois
 // de passar pelos guards de identidade, autorização e estado (#440).
+// Devolve false só quando a geração deu certo mas a conclusão não pôde ser gravada.
 async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
-  if (!respostaInterna.geracaoIniciada) {
-    return;
+  const { processamentoAutorizado: processamento } = respostaInterna;
+  if (!processamento) {
+    return true;
   }
 
   if (respostaInterna.statusCode === 200) {
     const { error } = await supabase
       .from("processamentos_folha")
-      .update({ saida_status: "ok", motivo_erro: null })
+      .update({ status: "concluido", saida_status: "ok", motivo_erro: null })
       .eq("id", processamentoId);
 
     if (error) {
@@ -553,25 +553,38 @@ async function finalizarGeracaoSaida(processamentoId, respostaInterna) {
         "[folha.controller] Falha ao registrar sucesso da geração de saída:",
         error.message,
       );
-      return;
+      return false;
     }
 
     // FOLHA-8 (#748): "Holerites e relatório de fechamento gerados". Cobre o pipeline
     // automático e o retry POST /:id/gerar-saida, que passam os dois por aqui.
+    await sincronizarApuracoes(processamento);
     await avancarChecklistFolha(processamentoId, MARCOS_FOLHA.HOLERITES);
-    return;
+    return true;
   }
 
   await registrarFalhaGeracaoSaida(
     processamentoId,
     respostaInterna.body?.erro || "Falha ao gerar holerites/relatórios da folha",
   );
+  return true;
 }
 
 async function executarEFinalizarSaida(req) {
   const respostaInterna = criarRespostaInterna();
   await gerarSaidaFolhaCore(req, respostaInterna);
-  await finalizarGeracaoSaida(req.params.processamento_id, respostaInterna);
+  const conclusaoGravada = await finalizarGeracaoSaida(req.params.processamento_id, respostaInterna);
+
+  if (!conclusaoGravada) {
+    // Os PDFs existem, mas o status não virou concluido: responder 200 esconderia uma folha
+    // presa em "processando" com download bloqueado. O retry é seguro (gerar-saida aceita
+    // "calculado" e pula o que já foi gerado) e só repete a gravação do status.
+    respostaInterna.statusCode = 500;
+    respostaInterna.body = {
+      erro: "Arquivos gerados, mas não foi possível registrar a conclusão da folha. Tente gerar novamente.",
+    };
+  }
+
   return respostaInterna;
 }
 
@@ -612,17 +625,20 @@ function criarRespostaInterna() {
 
 // Registra motivo + saida_status = 'erro' de uma falha na geração de saída SEM mudar
 // `status` pra "erro" (#440). gerarSaidaFolhaCore só reprocessa (idempotente: pula
-// holerite/relatório já gerado) quando o processamento ainda está "concluido" — se
+// holerite/relatório já gerado) quando o processamento está "calculado"/"concluido" — se
 // `status` virasse "erro" aqui, o retry via POST /:id/gerar-saida ficaria bloqueado pelo
 // próprio guard de status, e a única saída seria recalcular do zero em POST /:id/calcular,
 // que duplicaria as linhas já inseridas em folha_calculos (esse insert não é idempotente).
-// `status` continua "concluido" de propósito — o cálculo realmente terminou, só a geração
-// de arquivos que falhou; `saida_status` é quem carrega esse sinal pra tela.
+// `status` volta a "calculado" (#743): o cálculo terminou, mas o processamento não está
+// concluído enquanto os arquivos falham. Só um retry bem-sucedido o leva a "concluido".
+// Folha que JÁ está "concluido" nunca é rebaixada: uma nova tentativa que falha por causa
+// passageira (ex.: leitura dos cálculos) não pode bloquear o download de arquivos prontos.
 async function registrarFalhaGeracaoSaida(processamentoId, motivo) {
   const { error } = await supabase
     .from("processamentos_folha")
-    .update({ motivo_erro: motivo, saida_status: "erro" })
-    .eq("id", processamentoId);
+    .update({ status: "calculado", motivo_erro: motivo, saida_status: "erro" })
+    .eq("id", processamentoId)
+    .neq("status", "concluido");
 
   if (error) {
     console.error(
@@ -723,13 +739,17 @@ export async function consultarStatusFolha(req, res) {
 
   return res.status(200).json({
     processamento_id: processamento.id,
-    status: processamento.status,
+    // Só "concluido" quando cálculo e arquivos terminaram (#743).
+    status: statusPublicoProcessamento(processamento.status, processamento.saida_status),
     mes_referencia: processamento.mes_referencia,
     motivo_erro: processamento.motivo_erro,
     saida_status: processamento.saida_status,
     erros_planilha: processamento.erros_planilha ?? [],
     total_funcionarios: totais.total_funcionarios,
     total_empresas: totais.total_empresas,
+    // `arquivos` pode estar incompleto enquanto os PDFs são gerados: compare com o esperado.
+    total_arquivos_esperado: totalArquivosEsperados(calculos || []),
+    arquivos_gerados: arquivos.length,
     arquivos: arquivosParaResposta(arquivos),
   });
 }
