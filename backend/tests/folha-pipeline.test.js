@@ -89,6 +89,9 @@ function criarMockSupabase() {
           ultimosNeq.set(tabela, [coluna, valor]);
           return builder;
         },
+        not() { return builder; },
+        order() { return builder; },
+        range() { return builder; },
         maybeSingle() {
           return Promise.resolve(consumir("maybeSingle"));
         },

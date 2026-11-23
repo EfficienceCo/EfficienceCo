@@ -3,9 +3,19 @@ import https from "node:https";
 import net from "node:net";
 import { syncBuiltinESMExports } from "node:module";
 import { urlToHttpOptions } from "node:url";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { validarBancoDescartavel } from "./banco.js";
 
 const tentativas = [];
 let instalado = false;
+const storageDescartavel = new AsyncLocalStorage();
+
+// Opt-in apenas para testes de pipeline real. Não libera outros destinos ou
+// outros testes: a identidade do banco é conferida pelo guard canônico da #678.
+export function comStorageDescartavel(fn) {
+  const { url } = validarBancoDescartavel();
+  return storageDescartavel.run(url, fn);
+}
 
 export class ErroServicoExternoBloqueado extends Error {
   constructor(tentativa) {
@@ -28,7 +38,10 @@ function verificar(url, transporte, metodo = "GET") {
   const host = url.hostname.toLowerCase();
   const porta = Number(url.port);
   let servico;
-  if (/^\/storage\/v1(?:\/|$)/.test(url.pathname)) servico = "storage";
+  if (/^\/storage\/v1(?:\/|$)/.test(url.pathname)) {
+    if (url.origin === storageDescartavel.getStore()) return true;
+    servico = "storage";
+  }
   else if (/(^|\.)esocial(\.|$)/.test(host)) servico = "eSocial";
   else if (/(^|\.)(sefaz|nfe|nfce)(\.|$)/.test(host) || host.endsWith(".fazenda.gov.br")) servico = "SEFAZ";
   else if ([25, 465, 587, 2525].includes(porta) || /(^|\.)(smtp|sendgrid|mailgun|resend)(\.|$)/.test(host)) servico = "e-mail";
@@ -70,8 +83,8 @@ export function instalarProtecaoServicosExternos() {
   const fetchOriginal = globalThis.fetch;
   globalThis.fetch = async function (entrada, opcoes) {
     const url = new URL(entrada instanceof Request ? entrada.url : entrada);
-    verificar(url, "fetch", opcoes?.method ?? (entrada instanceof Request ? entrada.method : "GET"));
-    return fetchOriginal.call(this, entrada, opcoes);
+    const storagePermitido = verificar(url, "fetch", opcoes?.method ?? (entrada instanceof Request ? entrada.method : "GET"));
+    return fetchOriginal.call(this, entrada, storagePermitido ? { ...opcoes, redirect: "error" } : opcoes);
   };
 
   for (const [modulo, protocolo] of [[http, "http:"], [https, "https:"]]) {
