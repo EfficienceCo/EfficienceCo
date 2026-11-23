@@ -26,12 +26,12 @@ import { COLUNAS_FOLHA, COLUNA_CATEGORIA } from "../src/services/folha.service.j
 
 // Motivos do 409 FOLHA_PENDENTE (#738 e DAS-3), copiados do contrato.
 const EM_PROCESSAMENTO = "A folha ainda aguarda confirmação ou processamento.";
-// Falha de envio: sai num relatório do agente que traga o mês sem falha ou com
-// uma planilha nova do mês, criada depois da falha (do agente, do watcher ou da
-// tela), então o motivo oferece os dois caminhos. Falha sem mês da janela (linha
-// antiga): não há mês a substituir pela tela, só o agente a resolve.
+// Falha de envio: só sai num relatório do agente que traga o mês sem falha (só
+// a varredura da pasta confirma o envio completo do mês; revisão do #752), e o
+// motivo diz que a planilha pela tela não basta. Falha sem mês da janela (linha
+// antiga): texto sem o mês da pasta.
 const falhaEnvio = meses => meses.length
-  ? `O agente não conseguiu enviar a planilha destes meses. Corrija ou recoloque o arquivo ${meses.length > 1 ? "nas pastas" : "na pasta"} ${meses.map(m => `Folha/${m}`).join(", ")} do computador do escritório, ou envie a planilha certa pela tela de Folha.`
+  ? `O agente não conseguiu enviar a planilha destes meses. Corrija ou recoloque o arquivo ${meses.length > 1 ? "nas pastas" : "na pasta"} ${meses.map(m => `Folha/${m}`).join(", ")} do computador do escritório: o agente confirma o envio completo do mês na próxima verificação. Planilha enviada pela tela de Folha não substitui essa confirmação.`
   : "O agente não conseguiu enviar arquivos de folha. Corrija ou recoloque os arquivos na pasta Folha do computador do escritório para o agente reenviá-los na próxima verificação.";
 const ERRO_PROCESSAMENTO = "Folha com erro no processamento; corrija a planilha e envie de novo pela tela de Folha.";
 const NAO_RECEBIDA = "Folha encontrada pelo agente que não chegou ao sistema; envie a planilha pela tela de Folha.";
@@ -475,15 +475,15 @@ test("DAS-3 motivo legível também para falha de envio e folha não recebida", 
     assert.deepEqual(await mesesDaFila(s, misto, am), [{ ano: 2026, mes: 9 }], `${status}: a fila só pede o mês com falha de envio`);
   }
   // O próprio 09/2026 com falha de envio e uma planilha nova do mês, criada
-  // depois da falha, ainda em processamento: ela substitui a que falhou, então
-  // o mês vale pela situação dela, e o agente não é mais chamado.
+  // depois da falha, ainda em processamento: ela não confirma o envio completo
+  // do mês, então o motivo segue a falha de envio e o agente segue chamado.
   const mesmoMes = await s.cliente(); await s.notas(mesmoMes);
   for (const r of REFERENCIAS) await s.processo(mesmoMes, refISO(r), 5000);
   const amm = await s.criar(mesmoMes);
   assert.equal((await s.reportar(mesmoMes, amm, relatorio([{ ano: 2026, mes: 9 }], { falhaUpload: true }))).status, 200);
   await s.processo(mesmoMes, "2026-09-01", 0, { status: "processando", criado_em: new Date(Date.now() + 60_000).toISOString() });
-  await conferirBloqueio(s, mesmoMes, amm, folhaPendente(EM_PROCESSAMENTO, ["2026-09"]), "falha de envio e uma planilha nova do mesmo mês em processamento", { recalculo: true });
-  assert.equal(await naFila(s, mesmoMes, amm), false, "a planilha nova já está no backend");
+  await conferirBloqueio(s, mesmoMes, amm, folhaPendente(falhaEnvio(["2026-09"]), ["2026-09"]), "falha de envio e uma planilha nova do mesmo mês em processamento", { recalculo: true });
+  assert.deepEqual(await mesesDaFila(s, mesmoMes, amm), [{ ano: 2026, mes: 9 }], "a fila segue pedindo o mês com falha");
 
   // Relatório dos 12 meses com folha concluída e uma planilha nova de 03/2026
   // em processamento: só 03/2026 falta, e o motivo é o processamento.
@@ -895,13 +895,11 @@ test("DAS-3 FS12 em centavos: com as apurações de 09/2026 e 10/2026 do mesmo c
   assert.equal((await acao(s, setembro, "aprovar")).status, 200);
 });
 
-// Linha gravada antes do campo mesesComFalha e do marco da falha (relatório do
-// agente antigo com falha de 09/2026, folha antiga do mês no sistema): o mês
-// relatado conta como falho na fila, no 409 e no recálculo, sem depender de um
-// relatório novo. Sem o marco, a planilha nova só tira o mês da falha se for
-// posterior ao atualizado_em da apuração, que nunca é anterior ao relatório que
-// gravou a falha.
-test("DAS-3 linha gravada antes de mesesComFalha e do marco, com falha de envio: o mês relatado segue pedido até chegar uma planilha posterior à gravação", async t => {
+// Linha gravada antes do campo mesesComFalha (relatório do agente antigo com
+// falha de 09/2026, folha antiga do mês no sistema): o mês relatado conta como
+// falho na fila, no 409 e no recálculo, sem depender de um relatório novo. Uma
+// planilha nova do mês não tira a falha; o relatório seguinte sem falha tira.
+test("DAS-3 linha gravada antes de mesesComFalha, com falha de envio: o mês relatado segue pedido, nem a planilha nova o tira, e o relatório sem falha verifica", async t => {
   const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
   for (const r of REFERENCIAS) await s.processo(c, refISO(r), 5000);
   const a = await s.criar(c);
@@ -914,17 +912,20 @@ test("DAS-3 linha gravada antes de mesesComFalha e do marco, com falha de envio:
   await conferirBloqueio(s, c, a, folhaPendente(falhaEnvio(["2026-09"]), ["2026-09"]), "linha antiga com falha", { recalculo: true });
 
   // Planilha nova de 09/2026, criada depois da gravação (sem passar pelos
-  // ganchos): substitui a falha. FS12 = 12 × 5.000 = 60.000 (fixture sem
+  // ganchos): não confirma o envio completo do mês, e a falha segue.
+  await s.processo(c, refISO(falho), 5000);
+  assert.deepEqual(await mesesDaFila(s, c, a), [falho], "a fila segue pedindo o mês relatado");
+  await conferirBloqueio(s, c, a, folhaPendente(falhaEnvio(["2026-09"]), ["2026-09"]), "linha antiga com falha e planilha nova", { recalculo: true });
+
+  // Relatório do agente antigo (sem mesesComFalha) com 09/2026 sem falha: o
+  // envio do mês está confirmado. FS12 = 12 × 5.000 = 60.000 (fixture sem
   // FGTS), a mesma do cálculo; Fator R 0,50 → Anexo III → R$ 600,00.
-  const { atualizado_em: gravadoEm } = await s.estado(a);
-  const nova = await s.processo(c, refISO(falho), 5000);
-  assert.ok(Date.parse(nova.criado_em) > Date.parse(gravadoEm), "a planilha nova é posterior à gravação da falha");
+  assert.equal((await s.reportar(c, a, relatorio([falho], { falhaUpload: false }))).status, 200);
   assert.equal(await naFila(s, c, a), false, "a fila não pede mais 09/2026");
   const get = await s.chamar(caminho(a));
   for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 60000, fator_r: .5, anexo: "III", valor_calculado: 600, bloqueio_folha: null })) {
-    assert.deepEqual(get.corpo[campo], valor, `após a planilha nova: ${campo}`);
+    assert.deepEqual(get.corpo[campo], valor, `após o relatório sem falha: ${campo}`);
   }
-  // O recálculo não espera mais e grava o relatório sem a falha substituída.
   const recalc = await acao(s, a, "recalcular");
   assert.equal(recalc.status, 200, JSON.stringify(recalc.corpo));
   for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 60000, valor_calculado: 600 })) {
@@ -938,8 +939,8 @@ test("DAS-3 linha gravada antes de mesesComFalha e do marco, com falha de envio:
 
 // Corrida entre o relatório e o pipeline: o relatório lê a folha com 09/2026
 // ainda pendente e, antes de gravar, o pipeline conclui; o gancho dele lê a
-// apuração anterior ao relatório e não acha o que mudar (a planilha de 09/2026
-// já existia quando a falha foi registrada, então não a substitui). Sem
+// apuração anterior ao relatório e não acha o que mudar (nela, 09/2026 ainda
+// está com falha de envio, que só um relatório tira). Sem
 // reconciliar depois da gravação, o "pendente" do relatório ficava para sempre.
 test("DAS-3 relatório gravado depois de a folha concluir no meio: a apuração reconcilia com a folha de agora e verifica", { timeout: 120_000 }, async t => {
   const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
@@ -992,11 +993,11 @@ test("DAS-3 relatório gravado depois de a folha concluir no meio: a apuração 
   assert.equal((await acao(s, a, "aprovar")).status, 200);
 });
 
-// Critério (b) da falha de envio (decisão do Gerente, 17/11): o mês sai da
-// falha quando chega uma planilha nova dele, criada depois da falha, e o
-// pipeline conclui. O watcher do agente envia o arquivo recolocado na pasta e o
-// move para enviados/, e o verificador não olha subpastas: sem este critério,
-// nenhum relatório novo traria o mês sem falha e ele ficava preso para sempre.
+// Saída da falha de envio (revisão do #752): o mês só sai da falha num
+// relatório do agente que o traga sem falha. Uma planilha nova do mês, pela
+// tela ou pela rota do agente (watcher), não basta: só o processamento mais
+// recente do mês entra na FS12, e uma planilha parcial substituiria o mês
+// inteiro.
 const enviarPelaTela = async (s, c, mes, arquivo) => {
   await s.prepararStorage();
   const formulario = new FormData();
@@ -1011,90 +1012,96 @@ const fimDoPipeline = (s, id) => aguardar(async () => {
   return p.status === "concluido" && p.saida_status !== "pendente";
 }, "fim do pipeline");
 
-test("DAS-3 critério (b): falha de envio de 09/2026 e depois a planilha certa pela tela, com o pipeline concluído: o 409 sai, a fila não pede 09/2026 e a apuração verifica", { timeout: 240_000 }, async t => {
+// Reprodução do Vitinho no #752: a folha de 09/2026 contribui R$ 40.000,00 à
+// FS12, o agente relata falha de envio desse mês e depois chega pela tela só
+// uma planilha parcial de R$ 1.000,00. Se a parcial valesse, o DAS iria de
+// R$ 600,00 (Anexo III) a R$ 1.550,00 (Anexo V) e a aprovação passaria.
+test("DAS-3 falha de envio de 09/2026 e depois uma planilha parcial pela tela: o 409 continua; o envio completo pelo agente libera o cálculo e a aprovação", { timeout: 240_000 }, async t => {
   const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
-  for (const r of REFERENCIAS) await s.processo(c, refISO(r), 5000);
-  const a = await s.criar(c);
   const falho = REFERENCIAS[11];
+  for (const r of REFERENCIAS.slice(0, 11)) await s.processo(c, refISO(r), 2000);
+  await s.processo(c, refISO(falho), 40000);
+  // FS12 = 11 × 2.000 + 40.000 = 62.000 (fixture sem FGTS); Fator R 62.000 /
+  // 120.000 = 0,52 ≥ 0,28 → Anexo III, 1ª faixa 6% → 10.000,00 × 6% = R$ 600,00.
+  const a = await s.criar(c);
+  for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 62000, anexo: "III", valor_calculado: 600 })) {
+    assert.deepEqual(a[campo], valor, `POST: ${campo}`);
+  }
 
-  // 1. Arquivo local de 09/2026 inválido: o envio do agente real falha.
+  // 1. O arquivo local de 09/2026 é inválido: o envio do agente real falha.
   await s.worker(c, { item: itemDaFila(c, a), arquivosMes: [falho], invalido: falho });
   assert.deepEqual((await s.estado(a)).dados_folha.mesesComFalha, [falho]);
-  await conferirBloqueio(s, c, a, folhaPendente(falhaEnvio(["2026-09"]), ["2026-09"]), "falha de envio", { recalculo: true });
-  assert.match((await acao(s, a, "aprovar")).corpo.motivo, /pasta Folha\/2026-09 do computador do escritório, ou envie a planilha certa pela tela de Folha\./);
+  const esperado = folhaPendente(falhaEnvio(["2026-09"]), ["2026-09"]);
+  await conferirBloqueio(s, c, a, esperado, "falha de envio", { recalculo: true });
 
-  // 2. A planilha certa de 09/2026 chega pela tela de Folha e o pipeline conclui.
-  await fimDoPipeline(s, await enviarPelaTela(s, c, ref(falho), await planilha(c)));
-
-  // 3. Sem relatório novo do agente: FS12 = 11 × 5.000 (fixture sem FGTS) +
-  // (5.000 + FGTS 8% de 400) = 60.400 (Res. CGSN 140/2018, art. 26 §1º); Fator R
-  // 60.400 / 120.000 = 0,503 → 0,50 ≥ 0,28 → Anexo III, 1ª faixa 6% (LC
-  // 123/2006, art. 18 §5º-J) → 10.000,00 × 6% = R$ 600,00.
-  const get = await s.chamar(caminho(a)), lista = await s.chamar(`/apuracoes?clienteId=${c.id}`);
-  for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 60400, fator_r: .5, anexo: "III", valor_calculado: 600, bloqueio_folha: null })) {
-    assert.deepEqual(get.corpo[campo], valor, `após a planilha da tela: ${campo}`);
-  }
-  assert.equal(lista.corpo.find(x => x.id === a.id).folha_status, "verificado");
+  // 2. Planilha parcial de 09/2026 (R$ 1.000,00 + FGTS 80,00) pela tela, com o
+  // pipeline concluído. Se valesse: FS12 = 22.000 + 1.080 = 23.080; Fator R
+  // 0,19 < 0,28 → Anexo V, 1ª faixa 15,5% → R$ 1.550,00 (LC 123/2006, art. 18
+  // §5º-J e §5º-M; Res. CGSN 140/2018, art. 26).
+  await fimDoPipeline(s, await enviarPelaTela(s, c, ref(falho), await planilha(c, { salario: 1000 })));
+  await conferirBloqueio(s, c, a, esperado, "planilha parcial pela tela", { recalculo: true });
   const gravado = await s.estado(a);
-  assert.equal(gravado.dados_folha.falhaUpload, false);
-  assert.deepEqual(gravado.dados_folha.mesesComFalha, []);
-  assert.equal(await naFila(s, c, a), false, "a fila não pede mais 09/2026");
+  assert.equal(gravado.folha_status, "pendente");
+  for (const [campo, valor] of Object.entries({ folha12: 62000, valor_calculado: 600 })) {
+    assert.equal(Number(gravado[campo]), valor, `a parcial não muda o DAS gravado: ${campo}`);
+  }
+  assert.equal(gravado.anexo, "III");
+  assert.deepEqual(await mesesDaFila(s, c, a), [falho], "a fila segue pedindo 09/2026");
 
-  // 4. O agente não é mais chamado: um ciclo não envia nada, mesmo com o
-  // arquivo inválido ainda na pasta.
-  const antes = (await lerTodos(s.banco, "processamentos_folha", { cliente_id: c.id })).length;
-  await s.worker(c, { arquivosMes: [] });
-  assert.equal((await lerTodos(s.banco, "processamentos_folha", { cliente_id: c.id })).length, antes);
-  assert.equal((await acao(s, a, "aprovar")).status, 200);
+  // 3. A planilha completa de 09/2026 (R$ 40.000,00 + FGTS 3.200,00) volta à
+  // pasta: o agente real envia o mês inteiro e relata sem falha. FS12 = 22.000
+  // + 43.200 = 65.200; Fator R 0,54 ≥ 0,28 → Anexo III, 1ª faixa 6% → R$ 600,00.
+  await s.worker(c, { arquivosMes: [falho], salario: 40000 });
+  await aguardar(() => pipelineTerminou(s, c), "pipeline do envio completo");
+  const get = await s.chamar(caminho(a));
+  for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 65200, anexo: "III", valor_calculado: 600, bloqueio_folha: null })) {
+    assert.deepEqual(get.corpo[campo], valor, `após o envio completo: ${campo}`);
+  }
+  assert.equal(await naFila(s, c, a), false);
+  const aprovado = await acao(s, a, "aprovar");
+  assert.equal(aprovado.status, 200, JSON.stringify(aprovado.corpo));
+  assert.equal((await s.estado(a)).status, "aprovado");
 });
 
-test("DAS-3 critério (b): falha de envio de 09/2026 e depois o arquivo enviado pela rota do agente (watcher), sem relatório novo: a apuração verifica", { timeout: 120_000 }, async t => {
+// Watcher upload_folha: o arquivo corrigido de 09/2026, recolocado na pasta, é
+// enviado pela rota do agente e arquivado em Folha/2026-09/enviados/. O envio
+// sozinho não tira a falha. O ciclo seguinte do verificador acha o mês em
+// enviados/ (sem nada a reenviar) e o relata sem falha: aí verifica.
+test("DAS-3 falha de envio de 09/2026 e o arquivo corrigido enviado pelo watcher: só o ciclo seguinte do agente, que acha o mês em enviados/, verifica", { timeout: 180_000 }, async t => {
   const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
   for (const r of REFERENCIAS) await s.processo(c, refISO(r), 5000);
   const a = await s.criar(c);
   const falho = REFERENCIAS[11];
   assert.equal((await s.reportar(c, a, relatorio([falho], { falhaUpload: true, mesesComFalha: [falho] }))).status, 200);
+
+  // O watcher envia o arquivo corrigido (R$ 6.000,00) pela rota do agente.
+  const arquivo = await planilha(c, { salario: 6000 });
+  await fimDoPipeline(s, await enviarPlanilha(s, c, ref(falho), arquivo));
+  await conferirBloqueio(s, c, a, folhaPendente(falhaEnvio(["2026-09"]), ["2026-09"]), "envio do watcher sem relatório", { recalculo: true });
   assert.deepEqual(await mesesDaFila(s, c, a), [falho]);
 
-  // O watcher envia o arquivo corrigido de 09/2026 (R$ 6.000,00) pela mesma
-  // rota do agente; o verificador não relata nada de novo.
-  await fimDoPipeline(s, await enviarPlanilha(s, c, ref(falho), await planilha(c, { salario: 6000 })));
+  // E o arquiva em enviados/; a raiz de Folha/2026-09 fica sem planilha.
+  const enviados = path.join(s.pasta, c.nome, "Folha", ref(falho), "enviados");
+  await mkdir(enviados, { recursive: true });
+  await writeFile(path.join(enviados, "folha.xlsx"), arquivo);
+  const antes = (await lerTodos(s.banco, "processamentos_folha", { cliente_id: c.id })).length;
+  await s.worker(c, { arquivosMes: [] });
+  assert.equal((await lerTodos(s.banco, "processamentos_folha", { cliente_id: c.id })).length, antes, "nada é reenviado");
 
   // FS12 = 11 × 5.000 + (6.000 + FGTS 480) = 61.480; Fator R 61.480 / 120.000 =
-  // 0,5123 → 0,51 ≥ 0,28 → Anexo III, 1ª faixa 6% → R$ 600,00.
+  // 0,51 ≥ 0,28 → Anexo III, 1ª faixa 6% → R$ 600,00.
   const get = await s.chamar(caminho(a));
   for (const [campo, valor] of Object.entries({ folha_status: "verificado", folha12: 61480, fator_r: .51, anexo: "III", valor_calculado: 600, bloqueio_folha: null })) {
-    assert.deepEqual(get.corpo[campo], valor, `após o envio do watcher: ${campo}`);
+    assert.deepEqual(get.corpo[campo], valor, `após o ciclo do agente: ${campo}`);
   }
   assert.equal(await naFila(s, c, a), false);
   assert.equal((await acao(s, a, "aprovar")).status, 200);
 });
 
-// Cenário A da decisão de 16/11: a folha antiga de 09/2026 foi criada antes da
-// falha e não a tira. O marco é o criado_em gravado pelo banco: aqui o relógio
-// do banco está 5 minutos à frente do Node, e o marco tirado do relógio do Node
-// daria a folha antiga por posterior à falha.
-test("DAS-3 critério (b), cenário A: a folha antiga de 09/2026, anterior à falha, não a tira, nem com o relógio do banco à frente do Node", async t => {
-  const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
-  const falho = REFERENCIAS[11];
-  for (const r of REFERENCIAS.slice(0, 11)) await s.processo(c, refISO(r), 5000);
-  const antiga = await s.processo(c, refISO(falho), 5000, { criado_em: new Date(Date.now() + 5 * 60_000).toISOString() });
-  const a = await s.criar(c);
-  assert.equal((await s.reportar(c, a, relatorio([falho], { falhaUpload: true, mesesComFalha: [falho] }))).status, 200);
-  assert.deepEqual((await s.estado(a)).dados_folha.marcosFalha, { "2026-09": antiga.criado_em }, "o marco é o criado_em do banco");
-
-  for (const rotulo of ["cenário A", "cenário A depois do relatório vazio"]) {
-    assert.deepEqual(await mesesDaFila(s, c, a), [falho], `${rotulo}: a fila segue pedindo 09/2026`);
-    await conferirBloqueio(s, c, a, folhaPendente(falhaEnvio(["2026-09"]), ["2026-09"]), rotulo, { recalculo: true });
-    assert.equal((await s.reportar(c, a, relatorio([]))).status, 200);
-  }
-  assert.equal((await s.estado(a)).folha_status, "pendente");
-});
-
 // Cenário B da decisão de 16/11: a planilha boa de 09/2026 do mesmo ciclo foi
 // enviada antes do relatório que registrou a falha do pró-labore. Mesmo
 // concluída, ela não tira o mês da falha.
-test("DAS-3 critério (b), cenário B: a planilha boa do mesmo ciclo, enviada antes do relatório da falha, não a tira", { timeout: 120_000 }, async t => {
+test("DAS-3 cenário B: a planilha boa do mesmo ciclo, enviada antes do relatório da falha, não a tira", { timeout: 120_000 }, async t => {
   const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
   for (const r of REFERENCIAS) await s.processo(c, refISO(r), 5000);
   const a = await s.criar(c);
@@ -1107,7 +1114,10 @@ test("DAS-3 critério (b), cenário B: a planilha boa do mesmo ciclo, enviada an
   await conferirBloqueio(s, c, a, folhaPendente(falhaEnvio(["2026-09"]), ["2026-09"]), "cenário B", { recalculo: true });
 });
 
-test("DAS-3 critério (b): planilha nova de 09/2026 depois da falha, com erro no pipeline, não destrava e o motivo passa a ser o erro", { timeout: 120_000 }, async t => {
+// Planilha nova de 09/2026 com erro no pipeline depois da falha: o mês segue
+// com a falha de envio (o grupo da falha vem antes e leva o mês), e o agente
+// segue chamado para ele.
+test("DAS-3 planilha nova de 09/2026 depois da falha, com erro no pipeline: não destrava e o motivo segue a falha de envio", { timeout: 120_000 }, async t => {
   const s = await iniciarCenarioApuracao(t), c = await s.cliente(); await s.notas(c);
   for (const r of REFERENCIAS) await s.processo(c, refISO(r), 5000);
   const a = await s.criar(c);
@@ -1117,8 +1127,8 @@ test("DAS-3 critério (b): planilha nova de 09/2026 depois da falha, com erro no
   // A planilha nova de 09/2026 tem "cargo" vazio: o cálculo a reprova.
   const ruim = await enviarPlanilha(s, c, ref(falho), await planilha(c, { cargo: "" }));
   await aguardar(async () => (await lerProcessamento(s, ruim)).status === "erro", "erro do pipeline");
-  await conferirBloqueio(s, c, a, folhaPendente(ERRO_PROCESSAMENTO, ["2026-09"]), "planilha nova com erro", { recalculo: true });
-  assert.equal(await naFila(s, c, a), false, "a planilha já está no backend: o agente não é chamado");
+  await conferirBloqueio(s, c, a, folhaPendente(falhaEnvio(["2026-09"]), ["2026-09"]), "planilha nova com erro", { recalculo: true });
+  assert.deepEqual(await mesesDaFila(s, c, a), [falho], "a fila segue pedindo 09/2026");
 });
 
 // Revisor 5, item 2: sem relatório do agente, o gancho do upload grava

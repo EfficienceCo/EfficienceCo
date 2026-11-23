@@ -234,32 +234,33 @@ describe("Unidade: falha do adaptador e custo de consultas (não prova banco/iso
     assert.equal(res.statusCode, 500);
   });
 
-  // DAS-3: a falha de envio que uma planilha nova já substituiu sai da fila
-  // pela folha viva, depois da consulta. O limite da fila vale depois desse
-  // filtro: as linhas que saem não tomam o lugar da que o agente precisa ver.
-  it("fila: o limite vale depois de tirar as linhas cuja falha uma planilha nova já substituiu", async () => {
+  // DAS-3 (revisão do #752): a falha de envio só sai por um relatório do
+  // agente. Uma planilha nova do mês, concluída ou não, não a tira (só o
+  // agente sabe se o envio do mês está completo), então a fila pede os meses
+  // da falha gravada sem ler a folha. Linha do agente antigo (sem
+  // mesesComFalha): todos os meses relatados.
+  it("fila: com falha de envio, pede os meses da falha gravada sem ler a folha", async () => {
     tokenLicencaValido(CLIENTE_A);
-    const falha = (marco) => ({ temDozeMeses: false, mesesEncontrados: [{ ano: 2026, mes: 9 }], totalMesesEncontrados: 1, falhaUpload: true,
-      mesesComFalha: [{ ano: 2026, mes: 9 }], marcosFalha: { "2026-09": marco }, processamentoPendente: true, mesesPendentes: ["2026-09"] });
-    // A planilha de 09/2026 em processamento foi criada depois destas 50 falhas.
-    const substituidas = Array.from({ length: 50 }, (_, i) => ({
-      id: `apuracao-${String(i + 1).padStart(2, "0")}`, cliente_id: CLIENTE_A, periodo_mes: 10, periodo_ano: 2026,
-      status: "rascunho", fator_r: 0.1, atualizado_em: "2026-10-20T00:00:05Z", dados_folha: falha("2026-10-20T00:00:00Z"),
-    }));
-    // Nesta, ela já existia quando a falha foi registrada (marco): não a substitui.
-    const comFalha = {
-      id: "apuracao-51", cliente_id: CLIENTE_A, periodo_mes: 10, periodo_ano: 2026, status: "rascunho", fator_r: 0.1,
-      atualizado_em: "2026-11-01T00:00:05Z", dados_folha: falha("2026-11-01T00:00:00Z"),
-    };
-    queue("apuracoes", "await", { data: [...substituidas, comFalha], error: null });
+    const base = { cliente_id: CLIENTE_A, periodo_mes: 10, periodo_ano: 2026, status: "rascunho", fator_r: 0.1, atualizado_em: "2026-11-01T00:00:05Z" };
+    const comFalha = { ...base, id: "apuracao-nova", dados_folha: {
+      temDozeMeses: false, mesesEncontrados: [{ ano: 2026, mes: 8 }, { ano: 2026, mes: 9 }], totalMesesEncontrados: 2, falhaUpload: true,
+      mesesComFalha: [{ ano: 2026, mes: 9 }], processamentoPendente: true, mesesPendentes: ["2026-09"] } };
+    const agenteAntigo = { ...base, id: "apuracao-antiga", dados_folha: {
+      temDozeMeses: false, mesesEncontrados: [{ ano: 2026, mes: 8 }, { ano: 2026, mes: 9 }], totalMesesEncontrados: 2, falhaUpload: true,
+      processamentoPendente: true, mesesPendentes: ["2026-08", "2026-09"] } };
+    queue("apuracoes", "await", { data: [comFalha, agenteAntigo], error: null });
     queue("clientes", "maybeSingle", { data: { nome: "Souza Contabilidade", data_inicio_atividade: null }, error: null });
-    queue("processamentos_folha", "await", { data: [{ id: "proc-09", mes_referencia: "2026-09-01", criado_em: "2026-11-01T00:00:00Z", status: "pendente" }], error: null });
 
     const res = criarResposta();
     await listarFolhaPendente(reqAgente({ headers: { "x-licenca-token": "token-valido" } }), res);
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.body.map((item) => [item.id, item.mesesFolha]), [["apuracao-51", [{ ano: 2026, mes: 9 }]]]);
+    assert.deepEqual(res.body.map((item) => [item.id, item.mesesFolha]), [
+      ["apuracao-nova", [{ ano: 2026, mes: 9 }]],
+      ["apuracao-antiga", [{ ano: 2026, mes: 8 }, { ano: 2026, mes: 9 }]],
+    ]);
+    assert.equal(chamadasTabela("processamentos_folha"), 0);
+    assert.equal(chamadasTabela("folha_calculos"), 0);
   });
 
   // DAS-3: o agente faz poll a cada 30 s. Sem relatório do agente, a folha
@@ -306,18 +307,15 @@ describe("Unidade: falha do adaptador e custo de consultas (não prova banco/iso
     const comFalha = {
       id: "apuracao-segunda-pagina", cliente_id: CLIENTE_A, periodo_mes: 10, periodo_ano: 2026, status: "rascunho", fator_r: 0.1,
       atualizado_em: "2026-11-01T00:00:05Z",
-      // A folha de 09/2026 no sistema é a do marco (anterior à falha): a falha
-      // continua vigente.
       dados_folha: {
         temDozeMeses: true, mesesEncontrados: JANELA_10_2026.map((ref) => ({ ano: Number(ref.slice(0, 4)), mes: Number(ref.slice(5)) })),
         totalMesesEncontrados: 12, falhaUpload: true, mesesComFalha: [{ ano: 2026, mes: 9 }],
-        marcosFalha: { "2026-09": "2026-10-12T00:00:00Z" }, processamentoPendente: true, mesesPendentes: ["2026-09"],
+        processamentoPendente: true, mesesPendentes: ["2026-09"],
       },
     };
     queue("apuracoes", "await", { data: primeiraPagina, error: null });
     queue("apuracoes", "await", { data: [comFalha], error: null });
     queue("clientes", "maybeSingle", { data: { nome: "Souza Contabilidade", data_inicio_atividade: null }, error: null });
-    queue("processamentos_folha", "await", { data: processamentosJanela("concluido"), error: null });
 
     const res = criarResposta();
     await listarFolhaPendente(reqAgente({ headers: { "x-licenca-token": "token-valido" } }), res);
@@ -325,8 +323,8 @@ describe("Unidade: falha do adaptador e custo de consultas (não prova banco/iso
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body.map((item) => [item.id, item.mesesFolha]), [["apuracao-segunda-pagina", [{ ano: 2026, mes: 9 }]]]);
     assert.deepEqual(intervalos.filter(([tabela]) => tabela === "apuracoes"), [["apuracoes", 0, 999], ["apuracoes", 1000, 1999]]);
-    // A falha de envio sai do criado_em e da situação dos processamentos: as
-    // linhas de folha_calculos não são lidas a cada poll.
+    // A falha de envio só sai por um relatório: a folha não é lida a cada poll.
+    assert.equal(chamadasTabela("processamentos_folha"), 0);
     assert.equal(chamadasTabela("folha_calculos"), 0);
   });
 

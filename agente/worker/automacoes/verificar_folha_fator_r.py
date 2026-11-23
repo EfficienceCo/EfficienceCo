@@ -9,7 +9,7 @@ from comunicacao.apuracao_folha_agente import (
 )
 from comunicacao.api_client import ApiError
 from core.configuracao import obter_pasta_base
-from automacoes.upload_folha import _esta_em_pasta_arquivamento
+from automacoes.upload_folha import PASTA_ENVIADOS, _esta_em_pasta_arquivamento
 
 
 def _subtrair_meses(ano, mes, n):
@@ -61,6 +61,27 @@ def _arquivos_folha_no_mes(pasta_cliente, mes, ano):
     return encontrados
 
 
+def _tem_folha_enviada(pasta_cliente, mes, ano):
+    """
+    True se Folha/{YYYY-MM}/enviados/ tem planilha .xlsx: o watcher
+    upload_folha só arquiva ali depois de o servidor aceitar o envio. Essas
+    planilhas não são reenviadas, mas o mês conta como encontrado e enviado
+    (DAS-3): sem isso, o mês com falha de envio cujo arquivo o contador
+    recolocou na pasta, e que o watcher enviou e arquivou, nunca seria
+    confirmado. Pasta de destino personalizada na regra não é vista.
+    """
+    pasta = os.path.join(pasta_cliente, "Folha", f"{ano}-{mes:02d}", PASTA_ENVIADOS)
+    try:
+        nomes = os.listdir(pasta)
+    except OSError:
+        return False
+    return any(
+        nome.lower().endswith(".xlsx") and not nome.startswith("~$")
+        and os.path.isfile(os.path.join(pasta, nome))
+        for nome in nomes
+    )
+
+
 def verificar_pastas_folha(nome_empresa, mes_ref, ano_ref, pasta_base=None, meses_esperados=None):
     """
     Varre Folha dos últimos 12 meses a partir de mes_ref/ano_ref (inclusive).
@@ -86,6 +107,8 @@ def verificar_pastas_folha(nome_empresa, mes_ref, ano_ref, pasta_base=None, mese
             arquivos_encontrados.extend(arquivos_mes)
             for caminho in arquivos_mes:
                 mes_por_arquivo[caminho] = {"mes": mes_check, "ano": ano_check}
+        elif _tem_folha_enviada(pasta_cliente, mes_check, ano_check):
+            meses_encontrados.append({"mes": mes_check, "ano": ano_check})
 
     return {
         "temDozeMeses": len(meses_encontrados) == 12,
@@ -99,9 +122,9 @@ def verificar_pastas_folha(nome_empresa, mes_ref, ano_ref, pasta_base=None, mese
 def meses_com_falha(resultado, enviados):
     """
     Meses ({"mes", "ano"}) com pelo menos um arquivo encontrado que não foi
-    enviado, na ordem da varredura. O backend tira um mês da pendência por
-    falha quando um report posterior o traz sem falha ou quando chega uma
-    planilha nova do mês depois da falha, por este agente ou pela tela (DAS-3).
+    enviado, na ordem da varredura. O backend só tira um mês da pendência por
+    falha quando um report posterior o traz sem falha (DAS-3): só a varredura
+    da pasta confirma que o envio do mês está completo.
     """
     enviados = set(enviados)
     meses = []

@@ -288,3 +288,95 @@ def test_processar_item_mes_com_duas_planilhas_recusadas_aparece_uma_vez(tmp_pat
     payload = mock_report.call_args.args[1]
     assert payload["falhaUpload"] is True
     assert payload["mesesComFalha"] == [{"mes": 9, "ano": 2026}]
+
+
+# DAS-3 (revisão do #752): o backend só tira um mês da falha de envio num
+# report que o traga sem falha. O watcher upload_folha envia o arquivo
+# recolocado em Folha/YYYY-MM e o arquiva em enviados/ só depois de o servidor
+# aceitar. Esse mês conta como encontrado (sem reenvio), senão nunca seria
+# confirmado. rejeitados/ não conta: o servidor recusou o arquivo.
+def test_verificar_pastas_folha_conta_mes_so_com_planilha_em_enviados(tmp_path):
+    nome = "Padaria"
+    setembro = tmp_path / nome / "Folha" / "2026-09" / "enviados"
+    setembro.mkdir(parents=True)
+    (setembro / "folha.xlsx").write_bytes(b"x")
+    agosto = tmp_path / nome / "Folha" / "2026-08" / "rejeitados"
+    agosto.mkdir(parents=True)
+    (agosto / "folha.xlsx").write_bytes(b"x")
+    julho = tmp_path / nome / "Folha" / "2026-07" / "enviados"
+    julho.mkdir(parents=True)
+    (julho / "~$folha.xlsx").write_bytes(b"x")
+    (julho / "folha.pdf").write_bytes(b"x")
+
+    resultado = verificar_pastas_folha(nome, 9, 2026, pasta_base=str(tmp_path))
+
+    assert resultado["mesesEncontrados"] == [{"mes": 9, "ano": 2026}]
+    assert resultado["arquivosEncontrados"] == []
+    assert resultado["mesPorArquivo"] == {}
+
+
+def test_processar_item_mes_com_falha_arquivado_pelo_watcher_relata_sem_falha(tmp_path):
+    nome = "Padaria"
+    enviados = tmp_path / nome / "Folha" / "2026-09" / "enviados"
+    enviados.mkdir(parents=True)
+    (enviados / "folha.xlsx").write_bytes(b"x")
+
+    item = {
+        "id": "apuracao-1",
+        "nomeEmpresa": nome,
+        "mes": 10,
+        "ano": 2026,
+        "mesesFolha": [{"ano": 2026, "mes": 9}],
+    }
+
+    with patch(
+        "automacoes.verificar_folha_fator_r.obter_pasta_base",
+        return_value=str(tmp_path),
+    ), patch(
+        "automacoes.verificar_folha_fator_r.enviar_arquivos_folha",
+        return_value=[],
+    ) as mock_upload, patch(
+        "automacoes.verificar_folha_fator_r.reportar_resultado_folha"
+    ) as mock_report:
+        _processar_item(item)
+
+    assert mock_upload.call_args.args[0] == []
+    payload = mock_report.call_args.args[1]
+    assert payload["mesesEncontrados"] == [{"mes": 9, "ano": 2026}]
+    assert payload["totalMesesEncontrados"] == 1
+    assert payload["falhaUpload"] is False
+    assert payload["mesesComFalha"] == []
+
+
+# Arquivo ainda na raiz do mês, com uma cópia antiga em enviados/: o da raiz é
+# enviado e, se falhar, o mês segue com falha (enviados/ não confirma o mês).
+def test_processar_item_falha_na_raiz_prevalece_sobre_enviados(tmp_path):
+    nome = "Padaria"
+    setembro = tmp_path / nome / "Folha" / "2026-09"
+    (setembro / "enviados").mkdir(parents=True)
+    (setembro / "enviados" / "folha.xlsx").write_bytes(b"x")
+    (setembro / "pro-labore.xlsx").write_bytes(b"x")
+
+    item = {
+        "id": "apuracao-1",
+        "nomeEmpresa": nome,
+        "mes": 10,
+        "ano": 2026,
+        "mesesFolha": [{"ano": 2026, "mes": 9}],
+    }
+
+    with patch(
+        "automacoes.verificar_folha_fator_r.obter_pasta_base",
+        return_value=str(tmp_path),
+    ), patch(
+        "automacoes.verificar_folha_fator_r.enviar_arquivos_folha",
+        return_value=[],
+    ) as mock_upload, patch(
+        "automacoes.verificar_folha_fator_r.reportar_resultado_folha"
+    ) as mock_report:
+        _processar_item(item)
+
+    assert mock_upload.call_args.args[0] == [str(setembro / "pro-labore.xlsx")]
+    payload = mock_report.call_args.args[1]
+    assert payload["falhaUpload"] is True
+    assert payload["mesesComFalha"] == [{"mes": 9, "ano": 2026}]

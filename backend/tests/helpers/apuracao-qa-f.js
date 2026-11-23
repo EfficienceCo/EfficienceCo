@@ -139,11 +139,11 @@ export async function iniciarCenarioApuracao(t) {
     await comStorageDescartavel(async () => { const up = await banco.storage.from("folhas-pagamento").upload(arquivo, await planilha(c, salario), { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }); assert.ifError(up.error); });
     return processo(c, ref, 0, { status: "pendente", arquivo_origem_path: arquivo });
   }
-  async function worker(c, { item, arquivosMes = REFERENCIAS, invalido } = {}) {
+  async function worker(c, { item, arquivosMes = REFERENCIAS, invalido, salario } = {}) {
     await prepararStorage();
     for (const r of arquivosMes) {
       const pastaMes = path.join(pasta, c.nome, "Folha", refISO(r).slice(0, 7)); await mkdir(pastaMes, { recursive: true });
-      await writeFile(path.join(pastaMes, "folha.xlsx"), r.ano === invalido?.ano && r.mes === invalido?.mes ? Buffer.from("xlsx inválido QA-F") : await planilha(c));
+      await writeFile(path.join(pastaMes, "folha.xlsx"), r.ano === invalido?.ano && r.mes === invalido?.mes ? Buffer.from("xlsx inválido QA-F") : await planilha(c, salario));
     }
     const repo = fileURLToPath(new URL("../../../", import.meta.url));
     const python = path.join(repo, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
