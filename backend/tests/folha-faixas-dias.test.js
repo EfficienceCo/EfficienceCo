@@ -15,6 +15,7 @@ import ExcelJS from "exceljs";
 import {
   COLUNAS_FOLHA,
   COLUNA_CATEGORIA,
+  COLUNA_CNPJ,
   TabelaFolhaAusenteError,
   calcularFolhaFuncionario,
   calcularFolhaLinhas,
@@ -274,14 +275,14 @@ describe("holerite de Paulo (15 dias)", () => {
 
   it("SALARIO BASE: ref. 15 → 1.500,00", () => {
     assert.deepEqual(montarLinhasVerbas(calculo)[0], {
-      verba: "0001", descricao: "SALARIO BASE", referencia: "15", proventos: "1500,00", descontos: "",
+      verba: "0001", descricao: "SALARIO BASE", referencia: "15", proventos: "1.500,00", descontos: "",
     });
   });
 
   it("total de proventos usa o salário do mês; SALAR. BASE continua com o contratual", () => {
     const celulas = Object.fromEntries(montarCelulasBases(calculo).map((c) => [c.rotulo, c.texto]));
-    assert.equal(celulas["SALAR. BASE"], "3000,00");
-    assert.equal(celulas["TOT. PROVENTOS"], "1500,00");
+    assert.equal(celulas["SALAR. BASE"], "3.000,00");
+    assert.equal(celulas["TOT. PROVENTOS"], "1.500,00");
     assert.equal(celulas["TOT. DESCONTOS"], "112,50");
   });
 });
@@ -321,11 +322,11 @@ describe("gerarTemplateFolha — validação de faixa no modelo", () => {
   }
   const coluna = (chave) => COLUNAS_FOLHA.findIndex((c) => c.key === chave) + 1;
 
-  it("as colunas não mudam", async () => {
+  it("mantém as colunas existentes e acrescenta o CNPJ opcional no final", async () => {
     const sheet = await abrirModelo();
     const cabecalho = [];
     sheet.getRow(1).eachCell((cell) => cabecalho.push(cell.value));
-    assert.deepEqual(cabecalho, [...COLUNAS_FOLHA, COLUNA_CATEGORIA].map((c) => c.header));
+    assert.deepEqual(cabecalho, [...COLUNAS_FOLHA, COLUNA_CATEGORIA, COLUNA_CNPJ].map((c) => c.header));
   });
 
   it("cabeçalho de dias_trabalhados tem nota com a faixa e o mês completo", async () => {

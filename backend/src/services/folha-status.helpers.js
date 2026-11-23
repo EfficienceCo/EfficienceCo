@@ -100,7 +100,9 @@ export function resolverArquivoDownload(idSolicitado, arquivos) {
 }
 
 export function montarDescricaoConclusao(totalFuncionarios, totalEmpresas) {
-  return `Folha processada — ${totalFuncionarios} funcionários, ${totalEmpresas} empresas`;
+  const funcionarios = `${totalFuncionarios} ${totalFuncionarios === 1 ? "funcionário" : "funcionários"}`;
+  const empresas = `${totalEmpresas} ${totalEmpresas === 1 ? "empresa" : "empresas"}`;
+  return `Folha processada — ${funcionarios}, ${empresas}`;
 }
 
 /**

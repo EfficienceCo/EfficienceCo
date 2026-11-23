@@ -18,6 +18,7 @@ import {
   resolverTabelaFolha,
   montarCelulasBases,
   gerarHoleritePDF,
+  formatarDecimalBR,
 } from "../src/services/folha.service.js";
 
 const COMPETENCIA = "2026-07";
@@ -43,9 +44,8 @@ function celulaBaseIrrf(calculo) {
   return montarCelulasBases(calculo).find((c) => c.rotulo === "BASE IRRF");
 }
 
-function formatarMoeda(valor) {
-  return Number(valor).toFixed(2).replace(".", ",");
-}
+// Formato pt-BR com milhar (#745): 5358.49 -> "5.358,49".
+const formatarMoeda = formatarDecimalBR;
 
 describe("BUG-FOLHA-02 — base de cálculo do IRRF no holerite", () => {
   it("calcularFolhaFuncionario retorna a base_ir efetivamente usada pelo IRRF", () => {
@@ -106,7 +106,7 @@ describe("BUG-FOLHA-02 — base de cálculo do IRRF no holerite", () => {
       num_dependentes: 1,
     };
 
-    assert.equal(celulaBaseIrrf(calculoPersistido).texto, "4310,81");
+    assert.equal(celulaBaseIrrf(calculoPersistido).texto, "4.310,81");
   });
 
   it("linha legada sem base_ir persistido (pré-migration 89) mostra '-', não '0,00'", () => {

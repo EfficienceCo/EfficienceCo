@@ -125,6 +125,8 @@ function criarMockSupabase() {
   };
 }
 
+const chamadasHolerite = [];
+
 describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
   const mockDb = criarMockSupabase();
   let dispararPipelineAutomatico;
@@ -158,14 +160,19 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
         }),
         resolverTabelaFolha: () => ({}),
         TabelaFolhaAusenteError: class TabelaFolhaAusenteError extends Error {},
-        gerarHoleritePDF: async () => Buffer.from("holerite"),
+        gerarHoleritePDF: async (...args) => {
+          chamadasHolerite.push(args);
+          return Buffer.from("holerite");
+        },
         gerarRelatorioFechamentoPDF: async () => Buffer.from("relatorio"),
         calcularTotaisEmpresa: () => ({
           totalFuncionarios: 1,
-          totalBruto: 3000,
-          totalEncargos: 640,
+          totalProventos: 3000,
+          totalDescontos: 400,
+          totalFgts: 240,
           totalLiquido: 2600,
         }),
+        resolverCnpjsEmpresas: () => new Map([["Padaria", "11222333000181"]]),
       },
     });
 
@@ -207,6 +214,7 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
   beforeEach(() => {
     mockDb.clear();
     marcosChamados.length = 0;
+    chamadasHolerite.length = 0;
     erroLog = mock.method(console, "error", () => {});
   });
 
@@ -515,5 +523,30 @@ describe("dispararPipelineAutomatico (BK-FOLHA-AUTO-PIPELINE)", () => {
     assert.equal(res.statusCode, 500);
     assert.equal(mockDb.restantes(), 0);
     assert.equal(mockDb.ultimoUpdate("processamentos_folha").saida_status, "erro");
+  });
+
+  it("holerite recebe o CNPJ dentro do cálculo e a competência como terceiro argumento (#745)", async () => {
+    mockDb.queue("processamentos_folha", "maybeSingle", {
+      data: { id: PROC_ID, cliente_id: CLIENTE_A, status: "concluido", mes_referencia: "2026-07-01" },
+      error: null,
+    });
+    mockDb.queue("folha_calculos", "await", {
+      data: [{ id: "calc-1", empresa: "Padaria", funcionario: "João", cpf: "111.111.111-11", holerite_path: null }],
+      error: null,
+    });
+    mockDb.queue("clientes", "maybeSingle", { data: { nome: "Padaria", cnpj: "11222333000181" }, error: null });
+    mockDb.queue("folha_calculos", "await", { data: null, error: null });
+    mockDb.queue("folha_relatorios", "maybeSingle", { data: null, error: null });
+    mockDb.queue("folha_relatorios", "await", { data: null, error: null });
+    mockDb.queue("processamentos_folha", "await", { data: null, error: null });
+
+    const res = criarRes();
+    await gerarSaidaFolha(reqRetry(), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(chamadasHolerite.length, 1);
+    assert.equal(chamadasHolerite[0].length, 3);
+    assert.equal(chamadasHolerite[0][2], "2026-07-01");
+    assert.equal(chamadasHolerite[0][0].cnpj_empresa, "11222333000181");
   });
 });

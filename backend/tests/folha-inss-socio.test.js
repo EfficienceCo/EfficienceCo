@@ -169,21 +169,21 @@ describe("holerite do sócio (montarLinhasVerbas / montarCelulasBases)", () => {
     const calculo = calcularFolhaFuncionario(MARCOS, "2026-09");
     const linhas = montarLinhasVerbas(calculo, "2026-09-01");
     assert.deepEqual(linhas, [
-      { verba: "0001", descricao: "PRO-LABORE", referencia: "30", proventos: "10000,00", descontos: "" },
-      { verba: "0011", descricao: "INSS CONTRIB. INDIVIDUAL 11%", referencia: "8475,55", proventos: "", descontos: "932,31" },
-      { verba: "0012", descricao: "IRRF", referencia: "", proventos: "", descontos: "1584,88" },
+      { verba: "0001", descricao: "PRO-LABORE", referencia: "30", proventos: "10.000,00", descontos: "" },
+      { verba: "0011", descricao: "INSS CONTRIB. INDIVIDUAL 11%", referencia: "8.475,55", proventos: "", descontos: "932,31" },
+      { verba: "0012", descricao: "IRRF", referencia: "", proventos: "", descontos: "1.584,88" },
     ]);
   });
 
   it("Olga: referência do INSS é o próprio pró-labore (abaixo do teto)", () => {
     const linhas = montarLinhasVerbas(calcularFolhaFuncionario(OLGA, "2026-09"), "2026-09-01");
     const inss = linhas.find((l) => l.verba === "0011");
-    assert.deepEqual(inss, { verba: "0011", descricao: "INSS CONTRIB. INDIVIDUAL 11%", referencia: "3000,00", proventos: "", descontos: "330,00" });
+    assert.deepEqual(inss, { verba: "0011", descricao: "INSS CONTRIB. INDIVIDUAL 11%", referencia: "3.000,00", proventos: "", descontos: "330,00" });
   });
 
   it("referência do INSS usa o teto da competência do holerite (2024: 7.786,02)", () => {
     const linhas = montarLinhasVerbas(calcularFolhaFuncionario(MARCOS, "2024-09"), "2024-09-01");
-    assert.equal(linhas.find((l) => l.verba === "0011").referencia, "7786,02");
+    assert.equal(linhas.find((l) => l.verba === "0011").referencia, "7.786,02");
   });
 
   it("sócio com HE, faltas e VT na planilha: o holerite não mostra essas verbas (decide pelo calculado)", () => {
@@ -191,19 +191,19 @@ describe("holerite do sócio (montarLinhasVerbas / montarCelulasBases)", () => {
     const descricoes = montarLinhasVerbas(calculo, "2026-09-01").map((l) => l.descricao);
     assert.deepEqual(descricoes, ["PRO-LABORE", "INSS CONTRIB. INDIVIDUAL 11%", "IRRF"]);
     const bases = Object.fromEntries(montarCelulasBases(calculo).map((c) => [c.rotulo, c.texto]));
-    assert.equal(bases["TOT. PROVENTOS"], "10000,00");
-    assert.equal(bases["TOT. DESCONTOS"], "2517,19"); // 932,31 + 1.584,88
+    assert.equal(bases["TOT. PROVENTOS"], "10.000,00");
+    assert.equal(bases["TOT. DESCONTOS"], "2.517,19"); // 932,31 + 1.584,88
   });
 
   it("rodapé: 'SALAR. BASE' vira 'PRÓ-LABORE'; sem FGTS", () => {
     const bases = Object.fromEntries(
       montarCelulasBases(calcularFolhaFuncionario(MARCOS, "2026-09")).map((c) => [c.rotulo, c.texto]),
     );
-    assert.equal(bases["PRÓ-LABORE"], "10000,00");
+    assert.equal(bases["PRÓ-LABORE"], "10.000,00");
     assert.equal("SALAR. BASE" in bases, false);
     assert.equal(bases["BASE FGTS"], "0,00");
     assert.equal(bases["FGTS MES"], "0,00");
-    assert.equal(bases["BASE IRRF"], "9067,69");
+    assert.equal(bases["BASE IRRF"], "9.067,69");
   });
 
   it("holerite de sócio sem competência falha explícito (não usa teto de outro ano)", () => {
@@ -223,10 +223,10 @@ describe("holerite do empregado inalterado", () => {
       adiantamento: 500, num_dependentes: 1, vale_transporte: true,
     }), "2026-09");
     assert.deepEqual(montarLinhasVerbas(calculo), [
-      { verba: "0001", descricao: "SALARIO BASE", referencia: "30", proventos: "6000,00", descontos: "" },
+      { verba: "0001", descricao: "SALARIO BASE", referencia: "30", proventos: "6.000,00", descontos: "" },
       { verba: "0002", descricao: "HORAS EXTRAS 50%", referencia: "5", proventos: "204,55", descontos: "" },
       { verba: "0010", descricao: "FALTAS", referencia: "1", proventos: "", descontos: "200,00" },
-      { verba: "0011", descricao: "INSS", referencia: "6004,55", proventos: "", descontos: "642,15" },
+      { verba: "0011", descricao: "INSS", referencia: "6.004,55", proventos: "", descontos: "642,15" },
       { verba: "0012", descricao: "IRRF", referencia: "", proventos: "", descontos: "334,65" },
       { verba: "0013", descricao: "ADIANTAMENTO SALARIAL", referencia: "", proventos: "", descontos: "500,00" },
       { verba: "0014", descricao: "VALE-TRANSPORTE (6%)", referencia: "", proventos: "", descontos: "360,00" },

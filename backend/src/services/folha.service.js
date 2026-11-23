@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
-import { arredondar, cpfValido, normalizarCpf } from "../utils/comum.util.js";
+import { arredondar, cnpjValido, cpfValido, normalizarCpf } from "../utils/comum.util.js";
 
 // Spec de colunas da planilha de folha de pagamento — contrato entre
 // BK-FOLHA-TEMPLATE (gera) e BK-FOLHA-UPLOAD (valida). Ordem e nomes fixos.
@@ -29,6 +29,10 @@ const CATEGORIA_POR_TEXTO = new Map([
   ["socio", "socio"],
   ["sócio", "socio"],
 ]);
+
+// Coluna opcional (#745): CNPJ do empregador, impresso no holerite e no relatório de
+// fechamento. Vazia = usa o cadastro do cliente quando dá para ligar a empresa a ele.
+export const COLUNA_CNPJ = { header: "cnpj_empresa", key: "cnpj_empresa", width: 20 };
 
 const LINHAS_DE_DADOS = 500;
 
@@ -237,6 +241,21 @@ export function calcularSalarioMes(salarioContratual, diasTrabalhados) {
   return arredondar((Number(salarioContratual) * Number(diasTrabalhados)) / DIAS_MES_COMERCIAL);
 }
 
+// As linhas antigas podem ter sido calculadas com o salário cheio, mesmo
+// com dias parciais. A base persistida identifica qual valor entrou no cálculo.
+function salarioGravadoParaSaida(calculo) {
+  const contratual = Number(calculo.salario_bruto);
+  const proporcional = calcularSalarioMes(contratual, calculo.dias_trabalhados ?? DIAS_MES_COMERCIAL);
+  if (calculo.base_calculo == null || contratual === proporcional) return proporcional;
+
+  const ajuste = Number(calculo.valor_horas_extras ?? 0) - Number(calculo.valor_faltas ?? 0);
+  const base = Number(calculo.base_calculo);
+  const difIntegral = Math.abs(base - (contratual + ajuste));
+  const difProporcional = Math.abs(base - (proporcional + ajuste));
+  // Horas extras e faltas foram gravadas com arredondamento de centavos.
+  return arredondar(difIntegral) <= 0.01 && difIntegral < difProporcional ? contratual : proporcional;
+}
+
 // INSS é calculado por faixas marginais: cada pedaço da base paga a alíquota da sua
 // própria faixa, não a alíquota da faixa final sobre o total. Acima do teto salarial,
 // a contribuição é fixa.
@@ -383,6 +402,7 @@ export function calcularFolhaFuncionario(linha, competencia) {
     funcionario: linha.funcionario,
     cpf: linha.cpf,
     cargo: linha.cargo,
+    cnpj_empresa: linha.cnpj_empresa ?? null,
     salario_bruto: salarioBruto,
     dias_trabalhados: linha.dias_trabalhados,
     horas_extras: linha.horas_extras,
@@ -570,10 +590,12 @@ export async function lerLinhasPlanilha(buffer) {
   // fixa de COLUNAS_FOLHA — validarColunasPlanilha garante presença, não ordem.
   const indicePorChave = new Map();
   let indiceCategoria = null;
+  let indiceCnpj = null;
   sheetInicial.getRow(1).eachCell((cell, indiceColuna) => {
     if (typeof cell.value !== "string") return;
     const header = cell.value.trim().toLowerCase();
     if (header === COLUNA_CATEGORIA.header) indiceCategoria = indiceColuna;
+    if (header === COLUNA_CNPJ.header) indiceCnpj = indiceColuna;
     const chave = headerPorNome.get(header);
     if (chave) indicePorChave.set(chave, indiceColuna);
   });
@@ -681,6 +703,22 @@ export async function lerLinhasPlanilha(buffer) {
       }
     }
 
+    linhaConvertida.cnpj_empresa = null;
+    const cnpjBruto = indiceCnpj == null
+      ? null
+      : desembrulharValorCelula(linhaExcel.getCell(indiceCnpj).value);
+    if (cnpjBruto !== null && cnpjBruto !== undefined && String(cnpjBruto).trim() !== "") {
+      // Célula numérica perde o zero à esquerda: o DV confere o CNPJ de qualquer forma.
+      const digitos = typeof cnpjBruto === "number"
+        ? String(Math.trunc(cnpjBruto)).padStart(14, "0")
+        : String(cnpjBruto).replace(/\D/g, "");
+      if (cnpjValido(digitos)) {
+        linhaConvertida.cnpj_empresa = digitos;
+      } else {
+        errosDaLinha.push("cnpj_empresa inválido (14 dígitos com dígito verificador correto)");
+      }
+    }
+
     if (errosDaLinha.length > 0) {
       erros.push({ linha: numeroLinha, motivos: errosDaLinha });
     } else {
@@ -699,6 +737,29 @@ export async function lerLinhasPlanilha(buffer) {
     const motivo = `cpf duplicado nas linhas ${listaLinhas}`;
     for (const numeroLinha of numerosLinha) {
       erros.push({ linha: numeroLinha, motivos: [motivo] });
+    }
+  }
+
+  // CNPJ por empresa: uma empresa não pode ter dois CNPJs na mesma planilha; linha da
+  // empresa sem CNPJ herda o das outras linhas dela.
+  const cnpjsPorEmpresa = new Map();
+  for (const linha of linhas) {
+    if (!linha.cnpj_empresa) continue;
+    const chaveEmpresa = normalizarNomeEmpresa(linha.empresa);
+    const conhecidos = cnpjsPorEmpresa.get(chaveEmpresa) ?? new Set();
+    conhecidos.add(linha.cnpj_empresa);
+    cnpjsPorEmpresa.set(chaveEmpresa, conhecidos);
+  }
+  for (const linha of linhas) {
+    const conhecidos = cnpjsPorEmpresa.get(normalizarNomeEmpresa(linha.empresa));
+    if (!conhecidos) continue;
+    if (conhecidos.size > 1) {
+      erros.push({
+        linha: linha.linha,
+        motivos: [`empresa '${linha.empresa}' com mais de um cnpj_empresa na planilha`],
+      });
+    } else if (!linha.cnpj_empresa) {
+      linha.cnpj_empresa = [...conhecidos][0];
     }
   }
 
@@ -751,7 +812,7 @@ export async function gerarTemplateFolha() {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Folha de Pagamento");
 
-  const colunasTemplate = [...COLUNAS_FOLHA, COLUNA_CATEGORIA];
+  const colunasTemplate = [...COLUNAS_FOLHA, COLUNA_CATEGORIA, COLUNA_CNPJ];
   sheet.columns = colunasTemplate;
 
   const linhaCabecalho = sheet.getRow(1);
@@ -774,7 +835,7 @@ export async function gerarTemplateFolha() {
 
     aplicarValidacoesFaixa(linha, indiceColuna);
 
-    linha.getCell(colunasTemplate.length).dataValidation = {
+    linha.getCell(COLUNAS_FOLHA.length + 1).dataValidation = {
       type: "list",
       allowBlank: true,
       formulae: ['"EMPREGADO,SOCIO"'],
@@ -861,8 +922,63 @@ export async function validarColunasPlanilha(buffer) {
   return { valido: true, faltando: [] };
 }
 
-function formatarDecimalBR(valor) {
-  return Number(valor).toFixed(2).replace(".", ",");
+const FORMATO_DECIMAL_BR = new Intl.NumberFormat("pt-BR", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+// 6000 -> "6.000,00" (milhar com ponto, centavos com vírgula).
+export function formatarDecimalBR(valor) {
+  return FORMATO_DECIMAL_BR.format(Number(valor));
+}
+
+// 10003167690 -> "100.031.676-90". Valor que não tem 11 dígitos sai como veio.
+export function mascararCpf(cpf) {
+  const digitos = String(cpf ?? "").replace(/\D/g, "");
+  if (digitos.length !== 11) return String(cpf ?? "");
+  return `${digitos.slice(0, 3)}.${digitos.slice(3, 6)}.${digitos.slice(6, 9)}-${digitos.slice(9)}`;
+}
+
+// 11222333000181 -> "11.222.333/0001-81".
+export function mascararCnpj(cnpj) {
+  const digitos = String(cnpj ?? "").replace(/\D/g, "");
+  if (digitos.length !== 14) return String(cnpj ?? "");
+  return `${digitos.slice(0, 2)}.${digitos.slice(2, 5)}.${digitos.slice(5, 8)}/${digitos.slice(8, 12)}-${digitos.slice(12)}`;
+}
+
+// Referência de hora extra/falta: 2.5 -> "2,5".
+export function formatarReferencia(valor) {
+  return String(valor).replace(".", ",");
+}
+
+// Nome de empresa comparável: sem acento, caixa e espaços repetidos.
+export function normalizarNomeEmpresa(nome) {
+  return String(nome ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// CNPJ do empregador de cada empresa da planilha: o da própria planilha (cnpj_empresa);
+// sem ele, o do cadastro do cliente SÓ quando o nome da empresa bate com o do cadastro
+// (vínculo verificável). Planilha com uma empresa só não prova que ela é a cadastrada: o
+// escritório pode processar a folha de outra empresa. Sem vínculo, null (sai "CNPJ não informado").
+export function resolverCnpjsEmpresas(calculos, cliente) {
+  const porEmpresa = new Map();
+  for (const calculo of calculos) {
+    if (!porEmpresa.has(calculo.empresa)) porEmpresa.set(calculo.empresa, null);
+    if (calculo.cnpj_empresa) porEmpresa.set(calculo.empresa, calculo.cnpj_empresa);
+  }
+  const cnpjCadastro = cliente?.cnpj && /^\d{14}$/.test(cliente.cnpj) ? cliente.cnpj : null;
+  for (const [empresa, cnpj] of porEmpresa) {
+    if (cnpj || !cnpjCadastro) continue;
+    if (normalizarNomeEmpresa(empresa) === normalizarNomeEmpresa(cliente.nome)) {
+      porEmpresa.set(empresa, cnpjCadastro);
+    }
+  }
+  return porEmpresa;
 }
 
 function documentoParaBuffer(montarConteudo) {
@@ -953,7 +1069,7 @@ export function montarLinhasVerbas(calculo, competencia) {
       descricao: socio ? "PRO-LABORE" : "SALARIO BASE",
       // Referência = dias; provento = salário do mês (#744): 15 dias → metade.
       referencia: String(calculo.dias_trabalhados),
-      proventos: formatarDecimalBR(calcularSalarioMes(calculo.salario_bruto, calculo.dias_trabalhados)),
+      proventos: formatarDecimalBR(salarioGravadoParaSaida(calculo)),
       descontos: "",
     },
   ];
@@ -962,7 +1078,7 @@ export function montarLinhasVerbas(calculo, competencia) {
     linhas.push({
       verba: "0002",
       descricao: "HORAS EXTRAS 50%",
-      referencia: String(calculo.horas_extras),
+      referencia: formatarReferencia(calculo.horas_extras),
       proventos: formatarDecimalBR(calculo.valor_horas_extras),
       descontos: "",
     });
@@ -972,7 +1088,7 @@ export function montarLinhasVerbas(calculo, competencia) {
     linhas.push({
       verba: "0010",
       descricao: "FALTAS",
-      referencia: String(calculo.faltas),
+      referencia: formatarReferencia(calculo.faltas),
       proventos: "",
       descontos: formatarDecimalBR(calculo.valor_faltas),
     });
@@ -1038,7 +1154,7 @@ export function montarLinhasVerbas(calculo, competencia) {
 // mês, o mesmo da linha SALARIO BASE da tabela de verbas (#744).
 export function montarCelulasBases(calculo) {
   const totalProventos =
-    calcularSalarioMes(calculo.salario_bruto, calculo.dias_trabalhados) + Number(calculo.valor_horas_extras);
+    salarioGravadoParaSaida(calculo) + Number(calculo.valor_horas_extras);
   const totalDescontos =
     Number(calculo.inss) + Number(calculo.ir) + Number(calculo.valor_faltas) +
     Number(calculo.adiantamento) + Number(calculo.desconto_vt);
@@ -1074,6 +1190,7 @@ const COLUNAS_TABELA_VERBAS = (larguraUtil) => [
 // `competencia` (mes_referencia do processamento) só é exigida no holerite de sócio
 // (ver montarLinhasVerbas).
 export function gerarHoleritePDF(calculo, mesReferenciaFormatado, competencia) {
+  const cnpjEmpresa = calculo.cnpj_empresa ?? null;
   return documentoParaBuffer((doc) => {
     const x0 = doc.page.margins.left;
     const larguraUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -1088,19 +1205,23 @@ export function gerarHoleritePDF(calculo, mesReferenciaFormatado, competencia) {
     doc.lineWidth(0.5).moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 
     doc.font("Helvetica-Bold").fontSize(11).fillColor("black")
-      .text(calculo.empresa, x0 + 6, y + 8, { width: larguraUtil * 0.6 });
+      .text(calculo.empresa, x0 + 6, y + 6, { width: larguraUtil * 0.6 });
+    doc.font("Helvetica").fontSize(8)
+      .text(cnpjEmpresa ? `CNPJ: ${mascararCnpj(cnpjEmpresa)}` : "CNPJ não informado", x0 + 6, y + 22, {
+        width: larguraUtil * 0.6,
+      });
     doc.font("Helvetica").fontSize(9)
       .text(`Referência: ${mesReferenciaFormatado}`, x0 + larguraUtil * 0.6, y + 10, {
         width: larguraUtil * 0.4 - 6,
         align: "right",
       });
-    y += 26;
+    y += 36;
     doc.moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 
     const alturaInfo = 24;
     desenharLinhaCelulas(doc, x0, y, alturaInfo, [
       { largura: larguraUtil * 0.4, rotulo: "TRABALHADOR", texto: calculo.funcionario },
-      { largura: larguraUtil * 0.2, rotulo: "CPF", texto: calculo.cpf },
+      { largura: larguraUtil * 0.2, rotulo: "CPF", texto: mascararCpf(calculo.cpf) },
       { largura: larguraUtil * 0.25, rotulo: "CARGO", texto: calculo.cargo },
       { largura: larguraUtil * 0.15, rotulo: "DIAS TRAB.", texto: String(calculo.dias_trabalhados) },
     ]);
@@ -1165,15 +1286,22 @@ export function gerarHoleritePDF(calculo, mesReferenciaFormatado, competencia) {
 // Totais agregados de uma empresa dentro de um processamento — uma planilha pode ter
 // funcionários de mais de uma empresa-cliente da Souza, então isto roda por grupo.
 export function calcularTotaisEmpresa(calculosDaEmpresa) {
-  return calculosDaEmpresa.reduce(
-    (acc, calculo) => ({
+  // Proventos (salário + horas extras) menos descontos do empregado dá o líquido GRAVADO, linha
+  // a linha. Os descontos de cada linha são proventos − líquido: o motor arredonda a base depois
+  // de combinar salário, faltas e HE, então somar as rubricas já arredondadas pode errar 1
+  // centavo (ex.: 3.000,09 + 2,5 h extras − 1 falta). O centavo de arredondamento fica no
+  // desconto e o fechamento bate com o líquido de cada holerite. O FGTS é encargo do
+  // empregador, fora dessa conta (#745).
+  return calculosDaEmpresa.reduce((acc, calculo) => {
+    const proventos = salarioGravadoParaSaida(calculo) + Number(calculo.valor_horas_extras ?? 0);
+    return {
       totalFuncionarios: acc.totalFuncionarios + 1,
-      totalBruto: arredondar(acc.totalBruto + Number(calculo.salario_bruto)),
-      totalEncargos: arredondar(acc.totalEncargos + Number(calculo.inss) + Number(calculo.fgts) + Number(calculo.ir)),
+      totalProventos: arredondar(acc.totalProventos + proventos),
+      totalDescontos: arredondar(acc.totalDescontos + (proventos - Number(calculo.liquido))),
+      totalFgts: arredondar(acc.totalFgts + Number(calculo.fgts)),
       totalLiquido: arredondar(acc.totalLiquido + Number(calculo.liquido)),
-    }),
-    { totalFuncionarios: 0, totalBruto: 0, totalEncargos: 0, totalLiquido: 0 },
-  );
+    };
+  }, { totalFuncionarios: 0, totalProventos: 0, totalDescontos: 0, totalFgts: 0, totalLiquido: 0 });
 }
 
 const COLUNAS_TABELA_FUNCIONARIOS = (larguraUtil) => [
@@ -1186,7 +1314,7 @@ const COLUNAS_TABELA_FUNCIONARIOS = (larguraUtil) => [
 // e a lista de funcionários incluídos nesse fechamento. Mesmo vocabulário visual do
 // holerite (caixa com borda, tabela com header em negrito), simplificado: aqui não há
 // grid de verbas, só uma lista tabular de funcionários.
-export function gerarRelatorioFechamentoPDF({ empresa, mesReferenciaFormatado, calculos, totais }) {
+export function gerarRelatorioFechamentoPDF({ empresa, cnpjEmpresa = null, mesReferenciaFormatado, calculos, totais }) {
   return documentoParaBuffer((doc) => {
     const x0 = doc.page.margins.left;
     const larguraUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -1201,22 +1329,28 @@ export function gerarRelatorioFechamentoPDF({ empresa, mesReferenciaFormatado, c
     doc.lineWidth(0.5).moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 
     doc.font("Helvetica-Bold").fontSize(11).fillColor("black")
-      .text(empresa, x0 + 6, y + 8, { width: larguraUtil * 0.6 });
+      .text(empresa, x0 + 6, y + 6, { width: larguraUtil * 0.6 });
+    doc.font("Helvetica").fontSize(8)
+      .text(cnpjEmpresa ? `CNPJ: ${mascararCnpj(cnpjEmpresa)}` : "CNPJ não informado", x0 + 6, y + 22, {
+        width: larguraUtil * 0.6,
+      });
     doc.font("Helvetica").fontSize(9)
       .text(`Referência: ${mesReferenciaFormatado}`, x0 + larguraUtil * 0.6, y + 10, {
         width: larguraUtil * 0.4 - 6,
         align: "right",
       });
-    y += 26;
+    y += 36;
     doc.moveTo(x0, y).lineTo(x0 + larguraUtil, y).stroke();
 
+    // Proventos − descontos do empregado = líquido; o FGTS é encargo do empregador, à parte.
     const alturaTotais = 26;
-    const larguraCelulaTotal = larguraUtil / 4;
+    const larguraCelulaTotal = larguraUtil / 5;
     desenharLinhaCelulas(doc, x0, y, alturaTotais, [
-      { largura: larguraCelulaTotal, rotulo: "TOTAL FUNCIONÁRIOS", texto: String(totais.totalFuncionarios), alinhamento: "right" },
-      { largura: larguraCelulaTotal, rotulo: "TOTAL BRUTO", texto: formatarDecimalBR(totais.totalBruto), alinhamento: "right" },
-      { largura: larguraCelulaTotal, rotulo: "TOTAL ENCARGOS", texto: formatarDecimalBR(totais.totalEncargos), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "FUNCIONÁRIOS", texto: String(totais.totalFuncionarios), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "TOTAL PROVENTOS", texto: formatarDecimalBR(totais.totalProventos), alinhamento: "right" },
+      { largura: larguraCelulaTotal, rotulo: "TOTAL DESCONTOS", texto: formatarDecimalBR(totais.totalDescontos), alinhamento: "right" },
       { largura: larguraCelulaTotal, rotulo: "TOTAL LÍQUIDO", texto: formatarDecimalBR(totais.totalLiquido), alinhamento: "right", negrito: true },
+      { largura: larguraCelulaTotal, rotulo: "FGTS (EMPREGADOR)", texto: formatarDecimalBR(totais.totalFgts), alinhamento: "right" },
     ]);
     y += alturaTotais;
     y += 10;
