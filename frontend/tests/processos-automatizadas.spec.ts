@@ -30,7 +30,7 @@ type EstadoApi = {
   respostaFinalizacaoProcessoNoPatch: boolean;
 };
 
-const API_URL = 'http://localhost:3001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 function criarToken() {
   const payload = Buffer.from(
@@ -237,6 +237,53 @@ async function preencherContrato(page: Page, participacao = '100') {
   await page.getByLabel('Endereço').fill('Rua das Flores, 100, São Paulo - SP');
   await page.getByLabel('Objeto social').fill('Prestação de serviços de tecnologia.');
 }
+
+test.fixme('BUG (FRONT-PROC-1) etapas automáticas da folha avançam sem controles manuais', async ({ page }) => {
+  const estado = criarEstadoApi();
+  const automaticas = [
+    { acao: 'folha_planilha_recebida', descricao: 'Planilha da folha recebida', concluida: true },
+    { acao: 'folha_calculada', descricao: 'Folha calculada (INSS, IRRF e FGTS)', concluida: true },
+    { acao: 'folha_holerites_gerados', descricao: 'Holerites e relatório de fechamento gerados', concluida: false },
+  ];
+  const manuais = [
+    { id: 'revisar', descricao: 'Revisar holerites gerados' },
+    { id: 'enviar', descricao: 'Enviar holerites às empresas' },
+    { id: 'arquivar', descricao: 'Arquivar documentação do mês' },
+  ];
+  estado.processo = {
+    ...estado.processo,
+    titulo: 'Folha de teste de setembro',
+    tipo: 'folha_pagamento',
+    etapas: [
+      ...automaticas.map((etapa) => ({
+        ...etapa,
+        id: etapa.acao,
+        tipo: 'automatizada',
+        status: etapa.concluida ? 'concluida' : 'pendente',
+      })),
+      ...manuais.map((etapa) => ({
+        ...etapa, tipo: 'manual', acao: null, status: 'pendente', concluida: false,
+      })),
+    ],
+  };
+  await prepararPagina(page, estado);
+
+  for (const etapa of automaticas) {
+    const item = etapaPorId(page, etapa.acao);
+    await expect(item.getByText(etapa.descricao, { exact: true })).toBeVisible();
+    const texto = await item.innerText();
+    expect.soft(texto).toMatch(/automátic[ao]|automatizad[ao]|avança.*processamento da folha/i);
+    expect.soft(texto).toMatch(etapa.concluida ? /concluíd[ao]/i : /pendente/i);
+    const acoes = item.getByRole('button', { includeHidden: true })
+      .and(item.locator(':not(details > summary:first-of-type)'));
+    await expect(acoes).toHaveCount(0);
+    await expect(item.getByRole('checkbox')).toHaveCount(0);
+    expect.soft(texto).not.toContain('Ação automatizada não suportada');
+  }
+  for (const etapa of manuais) {
+    await expect(etapaPorId(page, etapa.id).getByRole('checkbox')).toBeEnabled();
+  }
+});
 
 test.describe('Processos — etapas manuais e automatizadas', () => {
   test('renderiza checkbox apenas para etapa manual e formulário conforme a ação', async ({

@@ -1,5 +1,7 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { login } from './helpers/auth';
 
 /**
@@ -16,8 +18,81 @@ import { login } from './helpers/auth';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const MENSAGENS_403 = /Acesso negado|não pertence a este cliente|nao pertence a este cliente/i;
+const EMAIL_OUTRO_ESCRITORIO = process.env.TEST_OTHER_OFFICE_EMAIL;
+const SENHA_OUTRO_ESCRITORIO = process.env.TEST_OTHER_OFFICE_PASSWORD;
+
+async function sessaoDoEscritorio(page: Page) {
+  const token = await page.evaluate(() => localStorage.getItem('token'));
+  if (!token) throw new Error('O login de teste não gravou o token da sessão.');
+  const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+  expect(claims.perfil).toBe('admin_cliente');
+  expect(claims.cliente_id).toBeTruthy();
+  return { clienteId: claims.cliente_id as string, headers: { Authorization: `Bearer ${token}` } };
+}
 
 test.describe('Folha — isolamento multi-tenant (#441)', () => {
+  test('outro escritório não recebe os dados de uma folha existente (#781)', async ({ page, browser, baseURL }) => {
+    test.skip(!EMAIL_OUTRO_ESCRITORIO || !SENHA_OUTRO_ESCRITORIO,
+      'Configure TEST_OTHER_OFFICE_EMAIL e TEST_OTHER_OFFICE_PASSWORD com outro escritório sintético.');
+    test.setTimeout(60_000);
+
+    await login(page, EMAIL_OUTRO_ESCRITORIO, SENHA_OUTRO_ESCRITORIO);
+    const proprietario = await sessaoDoEscritorio(page);
+    const upload = await page.request.post(`${API_BASE}/folha/upload`, {
+      headers: proprietario.headers,
+      multipart: {
+        mes_referencia: '2026-09',
+        planilha: {
+          name: 'folha-437.xlsx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          buffer: readFileSync(path.join(__dirname, 'fixtures/folha-437.xlsx')),
+        },
+      },
+    });
+    expect(upload.status()).toBe(201);
+    const { processamento_id: id } = await upload.json();
+    expect(id).toBeTruthy();
+    const urlDetalhe = `${API_BASE}/folha/${id}`;
+    const urlTela = `/dashboard/folha/status?processamento_id=${id}`;
+
+    let holerite: { nome: string; funcionario: string } | undefined;
+    await expect.poll(async () => {
+      const resposta = await page.request.get(urlDetalhe, { headers: proprietario.headers });
+      await expect(resposta).toBeOK();
+      const detalhe = await resposta.json();
+      expect(detalhe.processamento_id).toBe(id);
+      holerite = detalhe.arquivos.find((arquivo: { tipo: string }) => arquivo.tipo === 'holerite');
+      return detalhe.status === 'concluido' && Boolean(holerite?.funcionario);
+    }, { timeout: 20_000 }).toBe(true);
+    if (!holerite) throw new Error('A folha do escritório proprietário não retornou holerite.');
+
+    const outroContexto = await browser.newContext({ baseURL });
+    try {
+      const outraPagina = await outroContexto.newPage();
+      await login(outraPagina);
+      const outroEscritorio = await sessaoDoEscritorio(outraPagina);
+      expect(outroEscritorio.clienteId).not.toBe(proprietario.clienteId);
+
+      const consulta = outraPagina.waitForResponse((resposta) =>
+        resposta.request().method() === 'GET' && resposta.url() === urlDetalhe);
+      await outraPagina.goto(urlTela);
+      const resposta = await consulta;
+      expect(resposta.status()).toBe(404);
+      expect(await resposta.json()).toEqual({ erro: 'Processamento não encontrado' });
+      await expect(outraPagina.getByText('Processamento não encontrado', { exact: true }).first()).toBeVisible();
+      await expect(outraPagina.getByText(holerite.nome, { exact: true })).toHaveCount(0);
+      await expect(outraPagina.getByText(holerite.funcionario)).toHaveCount(0);
+      await expect(outraPagina.getByRole('button', { name: 'Baixar', exact: true })).toHaveCount(0);
+
+      const listagem = await outraPagina.request.get(`${API_BASE}/folha`, { headers: outroEscritorio.headers });
+      await expect(listagem).toBeOK();
+      const { processamentos } = await listagem.json();
+      expect(processamentos).not.toContainEqual(expect.objectContaining({ id }));
+    } finally {
+      await outroContexto.close();
+    }
+  });
+
   test('tela de status: processamento não visível aparece como "não encontrado", sem vazar 403', async ({ page }) => {
     await login(page);
 
